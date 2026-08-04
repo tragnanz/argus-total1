@@ -168,7 +168,8 @@ export const fetchCanal = (geom: Polygon, target_permille: number) =>
 
 export type GuidedResult = { geojson: GeoJSONFC; meta: Record<string, number> };
 export const fetchGuided = (geom: Polygon, p: {
-  target_permille: number; radius_m: number; gap_m: number; per_side: number; conn_max_permille: number;
+  target_permille: number; radius_m: number; gap_m: number; per_side: number;
+  conn_max_permille: number; fill: boolean;
 }) => req<GuidedResult>("/api/guided", { method: "POST", body: JSON.stringify({ geom, ...p }) });
 
 export const fetchSuitability = (geom: Polygon, date: string, p: SuitParams) =>

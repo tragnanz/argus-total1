@@ -180,6 +180,7 @@ class GuidedIn(BaseModel):
     gap_m: float = Field(default=0.0, ge=0, le=2000)
     per_side: int = Field(default=2, ge=1, le=4)
     conn_max_permille: float = Field(default=5.0, ge=0.1, le=100)
+    fill: bool = True                                  # riempi gli spazi vuoti
 
 
 class GuidedOut(BaseModel):

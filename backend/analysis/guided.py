@@ -32,6 +32,17 @@ def _sample_polyline(xy: list, dists: list, target: float):
     return (x1, y1), ((x1 - x0) / tn, (y1 - y0) / tn)
 
 
+def _decide(drop: float, grad_pm: float, conn_max: float) -> str:
+    """Connessione consigliata: canaletta a gravità se a valle e dolce, altrimenti tubazione."""
+    if drop != drop:
+        return "pipe"
+    if drop < 0:
+        return "pipe"                                 # a monte → pompa
+    if grad_pm == grad_pm and grad_pm <= conn_max:
+        return "canal"                                # a valle, dolce → gravità
+    return "pipe"                                     # a valle ma ripido → interrata
+
+
 def design_pivots(client, geom: dict, params: dict) -> dict:
     R = float(params.get("radius_m", 400.0))
     gap = max(0.0, float(params.get("gap_m", 0.0)))
@@ -64,57 +75,75 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
     ang = np.linspace(0, 2 * math.pi, 24, endpoint=False)
     circ = np.stack([np.cos(ang), np.sin(ang)], 1) * (R * 0.999)
 
+    def pivot_feature(cx, cy, conn, drop, grad_pm, origin):
+        pts = circ + np.array([cx, cy])
+        ring = [list(to_wgs.transform(x, y)) for x, y in pts.tolist()]
+        ring.append(ring[0])
+        return {
+            "type": "Feature",
+            "properties": {"kind": "pivot", "phase": 1 if conn == "canal" else 2,
+                           "connection": conn, "origin": origin,
+                           "drop_m": round(drop, 2) if drop == drop else None,
+                           "grad_permille": round(grad_pm, 1) if grad_pm == grad_pm else None},
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+        }
+
     feats = []
-    n_canal = n_pipe = 0
-    centers_ll = []
+    n_canal = n_pipe = n_along = n_fill = 0
+    centers = []                                      # centri UTM (per anti-sovrapposizione)
+    stations = []                                     # (x, y, quota) lungo il canale
     d = s / 2.0
     while d <= max(total - s / 2.0, 0.0) + 1e-6:
         (px, py), (tx, ty) = _sample_polyline(xy, dists, d)
         nx, ny = -ty, tx                              # perpendicolare
         e_canal = elev(px, py)
+        stations.append((px, py, e_canal))
         for side in (+1, -1):
             for k in range(per_side):
                 off = R + k * (2 * R + gap)
                 cx, cy = px + nx * side * off, py + ny * side * off
-                # pivot interamente dentro il campo
                 pts = circ + np.array([cx, cy])
                 if not (field.contains_point((cx, cy)) and field.contains_points(pts).all()):
                     continue
                 e_piv = elev(cx, cy)
                 drop = (e_canal - e_piv) if (e_canal == e_canal and e_piv == e_piv) else float("nan")
                 grad_pm = (1000.0 * drop / off) if (drop == drop and off > 0) else float("nan")
-                if drop != drop:
-                    conn = "pipe"
-                elif drop < 0:
-                    conn = "pipe"                     # a monte → pompa
-                elif grad_pm <= conn_max:
-                    conn = "canal"                    # a valle, dolce → gravità
-                else:
-                    conn = "pipe"                     # a valle ma ripido → interrata
-                if conn == "canal":
-                    n_canal += 1
-                else:
-                    n_pipe += 1
-                # cerchio pivot (lon/lat)
-                ring = [list(to_wgs.transform(x, y)) for x, y in pts.tolist()]
-                ring.append(ring[0])
-                feats.append({
-                    "type": "Feature",
-                    "properties": {"kind": "pivot", "phase": 1 if conn == "canal" else 2,
-                                   "connection": conn,
-                                   "drop_m": round(drop, 2) if drop == drop else None,
-                                   "grad_permille": round(grad_pm, 1) if grad_pm == grad_pm else None},
-                    "geometry": {"type": "Polygon", "coordinates": [ring]},
-                })
-                # connessione canale → pivot
+                conn = _decide(drop, grad_pm, conn_max)
+                n_canal += conn == "canal"; n_pipe += conn == "pipe"; n_along += 1
+                feats.append(pivot_feature(cx, cy, conn, drop, grad_pm, "canal"))
                 a = list(to_wgs.transform(px, py)); b = list(to_wgs.transform(cx, cy))
                 feats.append({
                     "type": "Feature",
                     "properties": {"kind": "pipe" if conn == "pipe" else "canal", "connection": conn},
                     "geometry": {"type": "LineString", "coordinates": [a, b]},
                 })
-                centers_ll.append((cx, cy))
+                centers.append((cx, cy))
         d += s
+
+    # --- riempimento degli spazi vuoti con pivot della stessa dimensione ---
+    if bool(params.get("fill", True)) and stations:
+        xs = [p[0] for p in ring_utm]; ys = [p[1] for p in ring_utm]
+        minx_, maxx_, miny_, maxy_ = min(xs), max(xs), min(ys), max(ys)
+        min_sep2 = (2 * R * 0.99) ** 2
+        yy = miny_ + R
+        while yy <= maxy_ - R + 1e-6:
+            xx = minx_ + R
+            while xx <= maxx_ - R + 1e-6:
+                pts = circ + np.array([xx, yy])
+                if field.contains_point((xx, yy)) and field.contains_points(pts).all() \
+                        and all((xx - ex) ** 2 + (yy - ey) ** 2 >= min_sep2 for ex, ey in centers):
+                    # connessione stimata rispetto alla stazione di canale più vicina
+                    best = min(stations, key=lambda st: (xx - st[0]) ** 2 + (yy - st[1]) ** 2)
+                    cdist = ((xx - best[0]) ** 2 + (yy - best[1]) ** 2) ** 0.5
+                    e_piv = elev(xx, yy)
+                    drop = (best[2] - e_piv) if (best[2] == best[2] and e_piv == e_piv) else float("nan")
+                    grad_pm = (1000.0 * drop / cdist) if (drop == drop and cdist > 0) else float("nan")
+                    conn = _decide(drop, grad_pm, conn_max)
+                    n_canal += conn == "canal"; n_pipe += conn == "pipe"; n_fill += 1
+                    feats.append(pivot_feature(xx, yy, conn, drop, grad_pm, "fill"))
+                    centers.append((xx, yy))
+                xx += s
+            yy += s
 
     # canale principale
     feats.append({
@@ -128,6 +157,7 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
     drop_m = float(dem[r["path"][0]]) - float(dem[r["path"][-1]])
     meta = {
         "n_pivots": n, "n_canal_conn": n_canal, "n_pipe_conn": n_pipe,
+        "n_along_canal": n_along, "n_fill": n_fill,
         "per_side": per_side, "radius_m": R, "gap_m": gap,
         "net_ha": round(n * pivot_ha, 1),
         "canal_length_m": round(length_m, 1),

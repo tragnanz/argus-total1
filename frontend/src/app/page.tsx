@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.2";
+const REV = "v0.6.3";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -23,6 +23,17 @@ const INDICES: { id: string; label: string }[] = [
   { id: "msi", label: "stress idrico" },
   { id: "rgb", label: "Colore reale (RGB)" },
 ];
+
+// Tipi di suolo → infiltrazione tipica (mm/h). L'utente può correggere il valore.
+const SOILS: { key: string; label: string; inf: number }[] = [
+  { key: "sabbioso", label: "Sabbioso", inf: 30 },
+  { key: "franco_sabbioso", label: "Franco-sabbioso", inf: 20 },
+  { key: "franco", label: "Franco", inf: 12 },
+  { key: "franco_limoso", label: "Franco-limoso", inf: 8 },
+  { key: "franco_argilloso", label: "Franco-argilloso", inf: 4 },
+  { key: "argilloso", label: "Argilloso", inf: 2 },
+];
+const PIVOT_WET_W = 40;   // larghezza bagnata del pacchetto irriguo (m), assunzione
 
 // Impostazioni tecniche di un campo (idoneità + layout). Possono essere globali
 // (stesse regole per tutti) oppure specifiche del singolo campo.
@@ -120,6 +131,18 @@ export default function Page() {
   // pivot lungo il canale (M6, fase 3)
   const [guided, setGuided] = useState<GuidedResult | null>(null);
   const [perSide, setPerSide] = useState(2);
+  const [fillEmpty, setFillEmpty] = useState(true);
+  const [soilKey, setSoilKey] = useState("franco");
+  const [infiltration, setInfiltration] = useState(12);   // mm/h
+  const [et0Peak, setEt0Peak] = useState(7);               // mm/g
+  // raggio consigliato: intensità di pioggia di punta al bordo ≤ infiltrazione del suolo.
+  // I_picco = 2π·R·Dg /(H·w) ≤ infiltrazione → R ≤ infiltrazione·H·w /(2π·Dg).
+  const recRadius = useMemo(() => {
+    const dg = et0Peak * cur.kc / (cur.eff || 1);          // fabbisogno lordo (mm/g)
+    if (dg <= 0) return cur.radius;
+    const rr = infiltration * cur.hours * PIVOT_WET_W / (2 * Math.PI * dg);
+    return Math.max(50, Math.min(800, Math.round(rr / 10) * 10));
+  }, [et0Peak, infiltration, cur.kc, cur.eff, cur.hours, cur.radius]);
 
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState<string>("");
@@ -333,7 +356,7 @@ export default function Page() {
     try {
       const g = await api.fetchGuided(activeGeom, {
         target_permille: canalPermille, radius_m: cur.radius, gap_m: cur.gap,
-        per_side: perSide, conn_max_permille: 5,
+        per_side: perSide, conn_max_permille: 5, fill: fillEmpty,
       });
       setGuided(g);
       mapApi.current?.showLayouts([{ id: -1, fc: g.geojson }]);
@@ -763,6 +786,34 @@ export default function Page() {
           <section className="border-t border-black/5 pt-3">
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Pivot lungo il canale")}</h3>
             <p className="hint mb-2">{t("Usa raggio e spaziatura dalle impostazioni Layout.")}</p>
+
+            <div className="bg-panel rounded-lg p-2 mb-2">
+              <div className="text-xs font-semibold text-sage-dark mb-1">{t("Dimensione pivot consigliata")}</div>
+              <label className="text-xs text-sage-dark block">{t("Tipo di suolo")}
+                <select className="field-input mt-1" value={soilKey}
+                  onChange={(e) => { const so = SOILS.find((x) => x.key === e.target.value); setSoilKey(e.target.value); if (so) setInfiltration(so.inf); }}>
+                  {SOILS.map((so) => <option key={so.key} value={so.key}>{t(so.label)}</option>)}
+                </select>
+              </label>
+              <div className="flex gap-2 mt-2">
+                <label className="text-xs text-sage-dark flex-1">{t("Infiltrazione (mm/h)")}
+                  <input type="number" min={0.5} max={200} step={0.5} value={infiltration}
+                    onChange={(e) => setInfiltration(Number(e.target.value))} className="field-input mt-1" /></label>
+                <label className="text-xs text-sage-dark flex-1">{t("ET₀ di punta")} (mm/g)
+                  <input type="number" min={1} max={20} step={0.5} value={et0Peak}
+                    onChange={(e) => setEt0Peak(Number(e.target.value))} className="field-input mt-1" /></label>
+              </div>
+              <div className="flex items-center justify-between mt-2 text-xs">
+                <span>{t("Raggio consigliato")}: <b>{recRadius} m</b></span>
+                <button className="text-brand-mid" onClick={() => patch({ radius: recRadius })}>{t("Usa raggio consigliato")}</button>
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 text-xs text-sage-dark mb-2">
+              <input type="checkbox" checked={fillEmpty} onChange={(e) => setFillEmpty(e.target.checked)} />
+              {t("Riempi spazi vuoti")}
+            </label>
+
             <label className="text-xs text-sage-dark block">{t("Pivot per lato")}
               <select className="field-input mt-1" value={perSide} onChange={(e) => setPerSide(Number(e.target.value))}>
                 {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
@@ -791,7 +842,8 @@ export default function Page() {
                   </div>
                 </div>
                 <div className="text-xs text-sage-dark bg-panel rounded-lg p-2">
-                  {t("Superficie netta")}: <b>{fmt(guided.meta.net_ha, { maximumFractionDigits: 0 })} ha</b>
+                  {t("Superficie netta")}: <b>{fmt(guided.meta.net_ha, { maximumFractionDigits: 0 })} ha</b><br />
+                  {guided.meta.n_along_canal} {t("lungo il canale")} · {guided.meta.n_fill} {t("riempimento")}
                 </div>
               </div>
             )}
