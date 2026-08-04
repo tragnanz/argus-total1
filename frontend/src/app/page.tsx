@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.3";
+const REV = "v0.6.4";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -34,6 +34,17 @@ const SOILS: { key: string; label: string; inf: number }[] = [
   { key: "argilloso", label: "Argilloso", inf: 2 },
 ];
 const PIVOT_WET_W = 40;   // larghezza bagnata del pacchetto irriguo (m), assunzione
+
+// Schede del pannello destro, in ordine progressivo del flusso di progetto.
+const TABS: { key: string; label: string }[] = [
+  { key: "sat", label: "Satellite" },
+  { key: "suit", label: "Idoneità" },
+  { key: "macro", label: "Macro-aree" },
+  { key: "canal", label: "Canale" },
+  { key: "guided", label: "Pivot" },
+  { key: "layout", label: "Layout" },
+  { key: "export", label: "Esporta" },
+];
 
 // Impostazioni tecniche di un campo (idoneità + layout). Possono essere globali
 // (stesse regole per tutti) oppure specifiche del singolo campo.
@@ -143,6 +154,9 @@ export default function Page() {
     const rr = infiltration * cur.hours * PIVOT_WET_W / (2 * Math.PI * dg);
     return Math.max(50, Math.min(800, Math.round(rr / 10) * 10));
   }, [et0Peak, infiltration, cur.kc, cur.eff, cur.hours, cur.radius]);
+
+  const [tab, setTab] = useState("sat");
+  const secShow = (k: string) => (tab === k ? "" : "hidden");
 
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState<string>("");
@@ -607,7 +621,19 @@ export default function Page() {
               {t("Stai modificando: {name}", { name: active.name })}
             </div>
           )}
-          <section>
+
+          {/* Schede progressive del flusso */}
+          <div className="flex flex-wrap gap-1 sticky top-0 z-10 bg-white/95 backdrop-blur -mx-4 px-4 py-2 -mt-1">
+            {TABS.map((tb, i) => (
+              <button key={tb.key} onClick={() => setTab(tb.key)}
+                className={"text-xs px-2 py-1 rounded-lg transition " +
+                  (tab === tb.key ? "bg-brand text-white font-semibold" : "bg-panel text-sage-dark")}>
+                <span className="opacity-60 mr-1">{i + 1}</span>{t(tb.label)}
+              </button>
+            ))}
+          </div>
+
+          <section className={secShow("sat")}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Anteprima satellitare")}</h3>
             <label className="text-xs text-sage-dark">{t("Indice")}</label>
             <select className="field-input mt-1" value={index} onChange={(e) => setIndex(e.target.value)}>
@@ -643,7 +669,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className="border-t border-black/5 pt-3">
+          <section className={secShow("sat") + " border-t border-black/5 pt-3"}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Quota (DEM)")}</h3>
             <div className="flex gap-2">
               <button className="btn-primary flex-1 basis-0" disabled={busy === "dem" || !activeGeom} onClick={showDem}>
@@ -661,7 +687,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className="border-t border-black/5 pt-3">
+          <section className={secShow("suit")}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Idoneità del terreno")}</h3>
             <div className="text-xs text-sage-dark mb-1">{t("Pesi dei fattori")}</div>
             <WeightRow label={t("Pendenza")} v={cur.weights.slope} onChange={(v) => setW("slope", v)} />
@@ -722,7 +748,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className="border-t border-black/5 pt-3">
+          <section className={secShow("macro")}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Macro-aree")}</h3>
             <p className="hint mb-2">{t("Individua le zone idonee nell'area attiva; usale come campi o rifinisci.")}</p>
             <div className="flex gap-2">
@@ -759,7 +785,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className="border-t border-black/5 pt-3">
+          <section className={secShow("canal")}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Canale principale")}</h3>
             <p className="hint mb-2">{t("Traccia il canale a gravità a pendenza costante dal punto più alto.")}</p>
             <label className="text-xs text-sage-dark block">{t("Pendenza target (‰)")}
@@ -783,7 +809,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className="border-t border-black/5 pt-3">
+          <section className={secShow("guided")}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Pivot lungo il canale")}</h3>
             <p className="hint mb-2">{t("Usa raggio e spaziatura dalle impostazioni Layout.")}</p>
 
@@ -849,7 +875,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className="border-t border-black/5 pt-3">
+          <section className={secShow("layout")}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Layout pivot")}</h3>
 
             <label className="text-xs text-sage-dark">{t("Configurazione")}</label>
@@ -984,7 +1010,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className="border-t border-black/5 pt-3">
+          <section className={secShow("export")}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Esporta progetto")}</h3>
             <label className="text-xs text-sage-dark">{t("Note (facoltative)")}
               <input className="field-input mt-1" value={notes} onChange={(e) => setNotes(e.target.value)}
@@ -999,7 +1025,7 @@ export default function Page() {
             <p className="hint mt-2">{t("La scheda include idoneità, layout, dimensionamento idrico, fasi e schema dell'impianto.")}</p>
           </section>
 
-          <p className="hint">
+          <p className={"hint " + secShow("export")}>
             {t("Fonte: Sentinel-2 L2A / DEM Copernicus.")}
             {providerMode === "synthetic" && <><br />{t("Dati sintetici (demo) — nessun credito Copernicus consumato.")}</>}
           </p>
