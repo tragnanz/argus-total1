@@ -166,6 +166,11 @@ export type Canal = {
 export const fetchCanal = (geom: Polygon, target_permille: number) =>
   req<Canal>("/api/canal", { method: "POST", body: JSON.stringify({ geom, target_permille }) });
 
+export type GuidedResult = { geojson: GeoJSONFC; meta: Record<string, number> };
+export const fetchGuided = (geom: Polygon, p: {
+  target_permille: number; radius_m: number; gap_m: number; per_side: number; conn_max_permille: number;
+}) => req<GuidedResult>("/api/guided", { method: "POST", body: JSON.stringify({ geom, ...p }) });
+
 export const fetchSuitability = (geom: Polygon, date: string, p: SuitParams) =>
   req<Suitability>("/api/suitability", {
     method: "POST",

@@ -8,11 +8,11 @@ import { parseFieldsFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
 import type {
   Area, Client, Polygon, Project, Scene, ColorScale, SuitMeta, SuitWeights,
-  LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea, Canal,
+  LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea, Canal, GuidedResult,
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.1";
+const REV = "v0.6.2";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -117,6 +117,9 @@ export default function Page() {
   // canale principale (M6, fase 2)
   const [canal, setCanal] = useState<Canal | null>(null);
   const [canalPermille, setCanalPermille] = useState(1);
+  // pivot lungo il canale (M6, fase 3)
+  const [guided, setGuided] = useState<GuidedResult | null>(null);
+  const [perSide, setPerSide] = useState(2);
 
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState<string>("");
@@ -322,6 +325,21 @@ export default function Page() {
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   function clearCanalUI() { setCanal(null); mapApi.current?.clearCanal(); }
+
+  // ---- pivot lungo il canale (M6, fase 3) ----
+  async function designGuided() {
+    if (!activeGeom) return needField();
+    setBusy("guided"); setMsg("");
+    try {
+      const g = await api.fetchGuided(activeGeom, {
+        target_permille: canalPermille, radius_m: cur.radius, gap_m: cur.gap,
+        per_side: perSide, conn_max_permille: 5,
+      });
+      setGuided(g);
+      mapApi.current?.showLayouts([{ id: -1, fc: g.geojson }]);
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  function clearGuided() { setGuided(null); mapApi.current?.clearLayout(); }
 
   // ---- layout pivot (tutti i campi) ----
   function paramsFrom(s: Settings): LayoutParams {
@@ -738,6 +756,43 @@ export default function Page() {
                 {canal.mean_permille > canal.target_permille * 1.5 && (
                   <><br /><span className="text-danger">{t("Pendenza reale oltre il target: terreno acclive.")}</span></>
                 )}
+              </div>
+            )}
+          </section>
+
+          <section className="border-t border-black/5 pt-3">
+            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Pivot lungo il canale")}</h3>
+            <p className="hint mb-2">{t("Usa raggio e spaziatura dalle impostazioni Layout.")}</p>
+            <label className="text-xs text-sage-dark block">{t("Pivot per lato")}
+              <select className="field-input mt-1" value={perSide} onChange={(e) => setPerSide(Number(e.target.value))}>
+                {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+            <div className="flex gap-2 mt-2">
+              <button className="btn-primary flex-1 basis-0" disabled={busy === "guided" || !activeGeom} onClick={designGuided}>
+                {busy === "guided" ? t("Calcolo…") : t("Disponi pivot sul canale")}
+              </button>
+              <button className="btn-ghost flex-1 basis-0" onClick={clearGuided}>{t("Rimuovi")}</button>
+            </div>
+            {guided && (
+              <div className="mt-3 space-y-2">
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-panel rounded-lg p-2">
+                    <div className="text-lg font-semibold text-brand">{guided.meta.n_pivots}</div>
+                    <div className="text-[11px] text-sage-dark">pivot</div>
+                  </div>
+                  <div className="bg-panel rounded-lg p-2">
+                    <div className="text-lg font-semibold text-brand">{guided.meta.n_canal_conn}</div>
+                    <div className="text-[11px] text-sage-dark">{t("a gravità (canaletta)")}</div>
+                  </div>
+                  <div className="bg-panel rounded-lg p-2">
+                    <div className="text-lg font-semibold text-brand">{guided.meta.n_pipe_conn}</div>
+                    <div className="text-[11px] text-sage-dark">{t("in tubazione")}</div>
+                  </div>
+                </div>
+                <div className="text-xs text-sage-dark bg-panel rounded-lg p-2">
+                  {t("Superficie netta")}: <b>{fmt(guided.meta.net_ha, { maximumFractionDigits: 0 })} ha</b>
+                </div>
               </div>
             )}
           </section>

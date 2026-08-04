@@ -172,6 +172,21 @@ class CanalOut(BaseModel):
     profile: list[list[float]]
 
 
+# ---------- Pivot lungo il canale (M6, Fase 3) ----------
+class GuidedIn(BaseModel):
+    geom: GeoPolygon
+    target_permille: float = Field(default=1.0, ge=0.1, le=100)
+    radius_m: float = Field(default=400.0, ge=30, le=1000)
+    gap_m: float = Field(default=0.0, ge=0, le=2000)
+    per_side: int = Field(default=2, ge=1, le=4)
+    conn_max_permille: float = Field(default=5.0, ge=0.1, le=100)
+
+
+class GuidedOut(BaseModel):
+    geojson: dict[str, Any]
+    meta: dict[str, Any]
+
+
 # ---------- Layout pivot + dimensionamento idrico (M3) ----------
 class LayoutIn(BaseModel):
     geom: GeoPolygon

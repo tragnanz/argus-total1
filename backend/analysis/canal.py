@@ -31,8 +31,10 @@ def _dem_and_grid(client, geom: dict, max_dim: int = 360):
 _NB = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
 
 
-def trace_canal(client, geom: dict, target_permille: float = 1.0,
-                tol_up_m: float = 0.05) -> dict:
+def _route(client, geom: dict, target_permille: float = 1.0,
+           tol_up_m: float = 0.05) -> dict:
+    """Instrada il canale e ritorna dati grezzi (dem, mask, ctx, percorso in
+    celle e in UTM). Riusato dalla Fase 2 (API) e dalla Fase 3 (pivot)."""
     dem, mask, ctx = _dem_and_grid(client, geom)
     res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
     to_wgs = ctx["to_wgs"]
@@ -107,12 +109,20 @@ def trace_canal(client, geom: dict, target_permille: float = 1.0,
         r, c = pr, pc
     path.reverse()                            # dalla presa (alto) allo sbocco (basso)
 
-    # cella → UTM (centro) → profilo (distanza, quota)
     def cell_xy(rc):
         rr, cc = rc
         return (ctx["minx"] + (cc + 0.5) * res, ctx["top"] - (rr + 0.5) * res)
 
     xy = [cell_xy(p) for p in path]
+    return {"dem": dem, "mask": mask, "ctx": ctx, "path": path, "xy": xy}
+
+
+def trace_canal(client, geom: dict, target_permille: float = 1.0) -> dict:
+    """API Fase 2: canale + profilo + statistiche (lon/lat)."""
+    r = _route(client, geom, target_permille)
+    dem, ctx, path, xy = r["dem"], r["ctx"], r["path"], r["xy"]
+    res = ctx["res"]; to_wgs = ctx["to_wgs"]
+
     profile = []
     cum = 0.0
     for k, (x, y) in enumerate(xy):
