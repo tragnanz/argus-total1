@@ -58,11 +58,13 @@ _NB = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
 
 
 def _route(client, geom: dict, target_permille: float = 1.0,
-           tol_up_m: float = 1.0, start_ll=None, end_ll=None) -> dict:
+           tol_up_m: float = 1.0, start_ll=None, end_ll=None, bundle=None) -> dict:
     """Instrada il canale e ritorna dati grezzi (dem, mask, ctx, percorso in
     celle e in UTM). Riusato dalla Fase 2 (API) e dalla Fase 3 (pivot).
-    Se start_ll/end_ll (lon,lat) sono dati, presa/finale sono manuali."""
-    dem, mask, ctx = _dem_and_grid(client, geom)
+    Se start_ll/end_ll (lon,lat) sono dati, presa/finale sono manuali.
+    `bundle` = (dem, mask, ctx) precalcolato, per riusare il DEM fra più segmenti
+    (tracciatura con waypoint) senza rifare la chiamata satellitare."""
+    dem, mask, ctx = bundle if bundle is not None else _dem_and_grid(client, geom)
     res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
     to_wgs = ctx["to_wgs"]
     to_utm = pyproj.Transformer.from_crs(4326, ctx["epsg"], always_xy=True)
@@ -167,14 +169,9 @@ def _route(client, geom: dict, target_permille: float = 1.0,
     return {"dem": dem, "mask": mask, "ctx": ctx, "path": path, "xy": xy}
 
 
-def trace_canal(client, geom: dict, target_permille: float = 1.0,
-                start_ll=None, end_ll=None) -> dict:
-    """API Fase 2: canale + profilo + statistiche (lon/lat).
-    Se start_ll/end_ll (lon,lat) sono dati, presa/finale sono manuali."""
-    r = _route(client, geom, target_permille, start_ll=start_ll, end_ll=end_ll)
-    dem, ctx, path, xy = r["dem"], r["ctx"], r["path"], r["xy"]
+def _finalize(dem, ctx, path, xy, target_permille, waypoints_ll=None) -> dict:
+    """Da (path in celle, xy in UTM) → output API: geojson, profilo, statistiche."""
     res = ctx["res"]; to_wgs = ctx["to_wgs"]
-
     profile = []
     cum = 0.0
     for k, (x, y) in enumerate(xy):
@@ -185,25 +182,53 @@ def trace_canal(client, geom: dict, target_permille: float = 1.0,
     drop_m = float(dem[path[0]]) - float(dem[path[-1]])
     mean_permille = round(1000.0 * drop_m / length_m, 2) if length_m > 0 else 0.0
 
-    # semplifica la polilinea (RDP in UTM) e proietta in lon/lat
     xy_s = _rdp([(float(x), float(y)) for x, y in xy], res * 0.8)
     line_ll = [list(to_wgs.transform(x, y)) for x, y in xy_s]
 
-    # profilo alleggerito (~60 punti)
     if len(profile) > 60:
         step = len(profile) / 60.0
         profile = [profile[int(i * step)] for i in range(60)] + [profile[-1]]
 
-    start_ll = list(to_wgs.transform(*xy[0]))
-    end_ll = list(to_wgs.transform(*xy[-1]))
     return {
         "geojson": {"type": "LineString", "coordinates": line_ll},
         "length_m": round(length_m, 1),
         "drop_m": round(drop_m, 2),
         "mean_permille": mean_permille,
         "target_permille": round(float(target_permille), 2),
-        "start": start_ll, "end": end_ll,
+        "start": list(to_wgs.transform(*xy[0])),
+        "end": list(to_wgs.transform(*xy[-1])),
         "elev_start_m": round(float(dem[path[0]]), 1),
         "elev_end_m": round(float(dem[path[-1]]), 1),
         "profile": profile,
+        "waypoints": [list(w) for w in (waypoints_ll or [])],
     }
+
+
+def trace_canal(client, geom: dict, target_permille: float = 1.0,
+                start_ll=None, end_ll=None, waypoints=None) -> dict:
+    """API Fase 2: canale + profilo + statistiche (lon/lat).
+    Se start_ll/end_ll (lon,lat) sono dati, presa/finale sono manuali.
+    Se `waypoints` (lista di [lon,lat]) è data, il percorso passa in ordine per
+    quei punti: la tracciatura è la concatenazione di segmenti presa→wp1→…→finale,
+    ognuno instradato in DISCESA (l'acqua scorre a gravità). Un waypoint più in
+    alto del punto precedente rende il segmento non percorribile → errore chiaro."""
+    wps = [list(w) for w in (waypoints or [])]
+    if not wps:
+        r = _route(client, geom, target_permille, start_ll=start_ll, end_ll=end_ll)
+        return _finalize(r["dem"], r["ctx"], r["path"], r["xy"], target_permille)
+
+    if start_ll is None or end_ll is None:
+        raise RuntimeError("Con i waypoint servono presa e finale definiti.")
+    bundle = _dem_and_grid(client, geom)          # DEM una sola volta per tutti i segmenti
+    pts = [list(start_ll)] + wps + [list(end_ll)]
+    path_all: list = []
+    xy_all: list = []
+    for i in range(len(pts) - 1):
+        seg = _route(client, geom, target_permille,
+                     start_ll=pts[i], end_ll=pts[i + 1], bundle=bundle)
+        p, x = seg["path"], seg["xy"]
+        if i > 0:                                  # evita di duplicare il nodo condiviso
+            p = p[1:]; x = x[1:]
+        path_all.extend(p); xy_all.extend(x)
+    dem, _mask, ctx = bundle
+    return _finalize(dem, ctx, path_all, xy_all, target_permille, waypoints_ll=wps)

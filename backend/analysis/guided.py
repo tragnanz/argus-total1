@@ -46,6 +46,8 @@ def _decide(drop: float, grad_pm: float, conn_max: float) -> str:
 def design_pivots(client, geom: dict, params: dict) -> dict:
     R = float(params.get("radius_m", 400.0))
     gap = max(0.0, float(params.get("gap_m", 0.0)))
+    safety = max(0.0, float(params.get("safety_m", 20.0)))     # distanza di sicurezza tra i bordi
+    clear = max(gap, safety)                                   # franco effettivo fra i bordi
     per_side = max(1, min(4, int(params.get("per_side", 2))))
     target_permille = float(params.get("target_permille", 1.0))
     conn_max = float(params.get("conn_max_permille", 5.0))     # canaletta: pendenza max dolce
@@ -71,9 +73,14 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
         dists.append(dists[-1] + math.hypot(xy[i][0] - xy[i - 1][0], xy[i][1] - xy[i - 1][1]))
     total = dists[-1]
 
-    s = 2 * R + gap                                   # interasse pivot
+    s = 2 * R + clear                                 # interasse pivot (bordi a distanza `clear`)
+    min_d2 = s * s                                     # distanza minima² fra due centri
     ang = np.linspace(0, 2 * math.pi, 24, endpoint=False)
     circ = np.stack([np.cos(ang), np.sin(ang)], 1) * (R * 0.999)
+
+    def _free(cx, cy, cen):
+        """True se il pivot non si sovrappone a nessuno già posato (con franco)."""
+        return all((cx - ex) ** 2 + (cy - ey) ** 2 >= min_d2 - 1e-6 for ex, ey in cen)
 
     def pivot_feature(cx, cy, conn, drop, grad_pm, origin):
         pts = circ + np.array([cx, cy])
@@ -100,10 +107,14 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
         stations.append((px, py, e_canal))
         for side in (+1, -1):
             for k in range(per_side):
-                off = R + k * (2 * R + gap)
+                # 1ª fila a R+clear/2 dal canale: i due lati restano a s l'uno
+                # dall'altro (bordi a distanza `clear`); file successive a passo s.
+                off = R + clear / 2.0 + k * s
                 cx, cy = px + nx * side * off, py + ny * side * off
                 pts = circ + np.array([cx, cy])
                 if not (field.contains_point((cx, cy)) and field.contains_points(pts).all()):
+                    continue
+                if not _free(cx, cy, centers):        # niente sovrapposizioni (canale curvo)
                     continue
                 e_piv = elev(cx, cy)
                 drop = (e_canal - e_piv) if (e_canal == e_canal and e_piv == e_piv) else float("nan")
@@ -124,14 +135,13 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
     if bool(params.get("fill", True)) and stations:
         xs = [p[0] for p in ring_utm]; ys = [p[1] for p in ring_utm]
         minx_, maxx_, miny_, maxy_ = min(xs), max(xs), min(ys), max(ys)
-        min_sep2 = (2 * R * 0.99) ** 2
         yy = miny_ + R
         while yy <= maxy_ - R + 1e-6:
             xx = minx_ + R
             while xx <= maxx_ - R + 1e-6:
                 pts = circ + np.array([xx, yy])
                 if field.contains_point((xx, yy)) and field.contains_points(pts).all() \
-                        and all((xx - ex) ** 2 + (yy - ey) ** 2 >= min_sep2 for ex, ey in centers):
+                        and _free(xx, yy, centers):        # niente sovrapposizioni (con franco)
                     # connessione stimata rispetto alla stazione di canale più vicina
                     best = min(stations, key=lambda st: (xx - st[0]) ** 2 + (yy - st[1]) ** 2)
                     cdist = ((xx - best[0]) ** 2 + (yy - best[1]) ** 2) ** 0.5
@@ -159,6 +169,8 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
         "n_pivots": n, "n_canal_conn": n_canal, "n_pipe_conn": n_pipe,
         "n_along_canal": n_along, "n_fill": n_fill,
         "per_side": per_side, "radius_m": R, "gap_m": gap,
+        "safety_m": round(clear, 1), "spacing_m": round(s, 1),
+        "pivot_ha": round(pivot_ha, 1),
         "net_ha": round(n * pivot_ha, 1),
         "canal_length_m": round(length_m, 1),
         "canal_drop_m": round(drop_m, 2),

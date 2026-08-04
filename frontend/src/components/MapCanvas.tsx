@@ -29,6 +29,9 @@ export type MapHandle = {
   locate: () => void;
   startMeasure: (cb: (text: string) => void) => void;
   stopMeasure: () => void;
+  editCanal: (coords: number[][], start: number[], end: number[], waypoints: number[][],
+    cb: (start: number[], end: number[], waypoints: number[][]) => void) => void;
+  endCanalEdit: () => void;
   armPick: (cb: (lon: number, lat: number) => void) => void;
   disarmPick: () => void;
 };
@@ -71,6 +74,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
   const pendingRef = useRef<L.LayerGroup | null>(null);
   const contourRef = useRef<L.LayerGroup | null>(null);
   const reachRef = useRef<L.LayerGroup | null>(null);
+  const canalEditRef = useRef<L.LayerGroup | null>(null);
   const pickCbRef = useRef<((lon: number, lat: number) => void) | null>(null);
   const measureRef = useRef<L.LayerGroup | null>(null);
   const measuringRef = useRef(false);
@@ -92,6 +96,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
     contourRef.current = L.layerGroup().addTo(map);
     reachRef.current = L.layerGroup().addTo(map);
     canalRef.current = L.layerGroup().addTo(map);
+    canalEditRef.current = L.layerGroup().addTo(map);
     pendingRef.current = L.layerGroup().addTo(map);
     layoutRef.current = L.layerGroup().addTo(map);
     measureRef.current = L.layerGroup().addTo(map);
@@ -229,7 +234,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         const groups: Record<string, (L.LayerGroup | null)[]> = {
           fields: [fieldsGroupRef.current],
           macro: [macroRef.current],
-          canal: [canalRef.current, pendingRef.current],
+          canal: [canalRef.current, pendingRef.current, canalEditRef.current],
           layout: [layoutRef.current],
         };
         for (const g of groups[key] || []) {
@@ -395,6 +400,52 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         measureRef.current?.clearLayers();
         try { if (map) map.getContainer().style.cursor = ""; } catch { /* */ }
       },
+      editCanal(coords, start, end, waypoints, cb) {
+        const map = mapRef.current, g = canalEditRef.current;
+        if (!map || !g) return;
+        g.clearLayers();
+        let s = [...start], e = [...end];
+        const wps = waypoints.map((w) => [...w]);
+        const fire = () => cb([...s], [...e], wps.map((w) => [...w]));
+        // linea di riferimento (percorso attuale) + clic per inserire un punto
+        const line = L.polyline(coords.map((p) => [p[1], p[0]] as [number, number]),
+          { color: "#0284c7", weight: 4, opacity: 0.55, dashArray: "5,5" });
+        g.addLayer(line);
+        const pin = (color: string) => L.divIcon({
+          className: "canal-handle",
+          html: `<div style="background:${color};border:2px solid #fff;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 2px ${color},0 1px 3px rgba(0,0,0,.4);cursor:grab"></div>`,
+          iconSize: [16, 16], iconAnchor: [8, 8],
+        });
+        const handle = (pt: number[], color: string, label: string, onDrag: (p: number[]) => void) => {
+          const m = L.marker([pt[1], pt[0]], { draggable: true, icon: pin(color), zIndexOffset: 1000 });
+          m.bindTooltip(label, { permanent: false, direction: "top" });
+          m.on("dragend", () => { const ll = m.getLatLng(); onDrag([ll.lng, ll.lat]); fire(); });
+          g.addLayer(m);
+        };
+        handle(s, "#038037", "Presa", (p) => { s = p; });
+        handle(e, "#b23b1e", "Finale", (p) => { e = p; });
+        wps.forEach((w, i) => handle(w, "#f0b429", `Waypoint ${i + 1}`, (p) => { wps[i] = p; }));
+        // clic sulla linea: inserisci un waypoint mantenendo l'ordine presa→finale
+        line.on("click", (ev: L.LeafletMouseEvent) => {
+          const cl = ev.latlng;
+          const ctrl = [s, ...wps, e];
+          let best = 0, bestD = Infinity;
+          for (let i = 0; i < ctrl.length - 1; i++) {
+            const a = L.latLng(ctrl[i][1], ctrl[i][0]);
+            const b = L.latLng(ctrl[i + 1][1], ctrl[i + 1][0]);
+            // distanza punto-segmento in gradi (area piccola: sufficiente)
+            const ax = a.lng, ay = a.lat, bx = b.lng, by = b.lat, px = cl.lng, py = cl.lat;
+            const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1e-12;
+            let tt = ((px - ax) * dx + (py - ay) * dy) / L2; tt = Math.max(0, Math.min(1, tt));
+            const qx = ax + tt * dx, qy = ay + tt * dy;
+            const d = (px - qx) ** 2 + (py - qy) ** 2;
+            if (d < bestD) { bestD = d; best = i; }
+          }
+          wps.splice(best, 0, [cl.lng, cl.lat]);
+          fire();
+        });
+      },
+      endCanalEdit() { canalEditRef.current?.clearLayers(); },
       armPick(cb) {
         pickCbRef.current = cb;
         try { if (mapRef.current) mapRef.current.getContainer().style.cursor = "crosshair"; } catch { /* */ }

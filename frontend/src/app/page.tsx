@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.9";
+const REV = "v0.6.10";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -82,10 +82,18 @@ type Field = {
 };
 
 // ---- KMZ (KML zippato) lato client per l'export delle geometrie ----
-function kmlForPolys(items: { name: string; geom: Polygon }[]): string {
+// Supporta poligoni (campi/sotto-aree) e linee (canali).
+type ExportGeom = { type: "Polygon"; coordinates: number[][][] } | { type: "LineString"; coordinates: number[][] };
+function kmlForGeoms(items: { name: string; geom: ExportGeom }[]): string {
   const esc = (s: string) => s.replace(/[<&>]/g, (c) => ({ "<": "&lt;", "&": "&amp;", ">": "&gt;" }[c] || c));
   const pm = items.map((it) => {
-    const ring = (it.geom.coordinates?.[0] || []).map(([lo, la]) => `${lo},${la},0`).join(" ");
+    const g = it.geom;
+    if (g.type === "LineString") {
+      const line = (g.coordinates || []).map(([lo, la]) => `${lo},${la},0`).join(" ");
+      return `<Placemark><name>${esc(it.name)}</name><Style><LineStyle><color>ffc78402</color><width>3</width></LineStyle></Style>`
+        + `<LineString><tessellate>1</tessellate><coordinates>${line}</coordinates></LineString></Placemark>`;
+    }
+    const ring = (g.coordinates?.[0] || []).map(([lo, la]) => `${lo},${la},0`).join(" ");
     return `<Placemark><name>${esc(it.name)}</name><Style><LineStyle><color>ff2780f0</color><width>2</width></LineStyle>`
       + `<PolyStyle><color>3300a0f0</color></PolyStyle></Style>`
       + `<Polygon><outerBoundaryIs><LinearRing><coordinates>${ring}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
@@ -215,10 +223,12 @@ export default function Page() {
   const [canalStart, setCanalStart] = useState<number[] | null>(null);
   const [canalEnd, setCanalEnd] = useState<number[] | null>(null);
   const [pickMode, setPickMode] = useState<"start" | "end" | null>(null);
+  const [editingCanal, setEditingCanal] = useState<number | null>(null);
   // pivot lungo il canale (M6, fase 3)
   const [guided, setGuided] = useState<GuidedResult | null>(null);
   const [perSide, setPerSide] = useState(2);
   const [fillEmpty, setFillEmpty] = useState(true);
+  const [safetyM, setSafetyM] = useState(20);   // distanza di sicurezza fra i bordi (m)
   const [soilKey, setSoilKey] = useState("franco");
   const [infiltration, setInfiltration] = useState(12);   // mm/h
   const [et0Peak, setEt0Peak] = useState(7);               // mm/g
@@ -297,10 +307,10 @@ export default function Page() {
       return nv;
     });
   }
-  async function exportKmz(filename: string, items: { name: string; geom: Polygon }[]) {
+  async function exportKmz(filename: string, items: { name: string; geom: ExportGeom }[]) {
     if (!items.length) return;
     const zip = new JSZip();
-    zip.file("doc.kml", kmlForPolys(items));
+    zip.file("doc.kml", kmlForGeoms(items));
     const blob = await zip.generateAsync({ type: "blob", mimeType: "application/vnd.google-earth.kmz" });
     saveBlob(blob, filename.toLowerCase().endsWith(".kmz") ? filename : `${filename}.kmz`);
   }
@@ -589,6 +599,7 @@ export default function Page() {
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   function removeCanal(i: number) {
+    if (editingCanal === i) endEditCanal();
     const next = canals.filter((_, k) => k !== i);
     setCanals(next);
     mapApi.current?.showCanals(
@@ -596,8 +607,39 @@ export default function Page() {
       t("Presa"), t("Sbocco"));
   }
   function clearCanalUI() {
-    setCanals([]); setCanalStart(null); setCanalEnd(null); setPickMode(null);
+    setCanals([]); setCanalStart(null); setCanalEnd(null); setPickMode(null); setEditingCanal(null);
     mapApi.current?.disarmPick(); mapApi.current?.clearCanal(); mapApi.current?.clearReachable();
+    mapApi.current?.endCanalEdit();
+  }
+  // ---- percorso del canale trascinabile (mantiene la discesa a gravità) ----
+  function installCanalEditor(i: number, c: Canal) {
+    if (!activeGeom) return;
+    mapApi.current?.editCanal(c.geojson.coordinates, c.start, c.end, c.waypoints || [],
+      async (start, end, waypoints) => {
+        try {
+          const cc = await api.fetchCanal(activeGeom, c.target_permille, start, end, waypoints);
+          setCanals((prev) => {
+            const arr = [...prev]; arr[i] = cc;
+            mapApi.current?.showCanals(arr.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end })), t("Presa"), t("Sbocco"));
+            return arr;
+          });
+          installCanalEditor(i, cc);   // reinstalla le maniglie sul percorso ricalcolato
+          setMsg("");
+        } catch (e) {
+          showErr(e);                  // es. waypoint più in alto: percorso non in discesa
+          installCanalEditor(i, c);    // ripristina le maniglie sull'ultimo percorso valido
+        }
+      });
+  }
+  function startEditCanal(i: number) {
+    if (!activeGeom) return needField();
+    setEditingCanal(i);
+    setMsg(t("Trascina presa, finale o i punti del percorso. Clicca sulla linea per aggiungere un punto. Il canale resta sempre in discesa."));
+    installCanalEditor(i, canals[i]);
+  }
+  function endEditCanal() { setEditingCanal(null); setMsg(""); mapApi.current?.endCanalEdit(); }
+  function exportCanalKmz(i: number, c: Canal) {
+    exportKmz(`canale_${i + 1}`, [{ name: `${t("Canale")} ${i + 1}`, geom: { type: "LineString", coordinates: c.geojson.coordinates } }]);
   }
 
   // ---- pivot lungo il canale (M6, fase 3) ----
@@ -607,7 +649,7 @@ export default function Page() {
     try {
       const g = await api.fetchGuided(activeGeom, {
         target_permille: canalPermille, radius_m: cur.radius, gap_m: cur.gap,
-        per_side: perSide, conn_max_permille: 5, fill: fillEmpty,
+        safety_m: safetyM, per_side: perSide, conn_max_permille: 5, fill: fillEmpty,
       });
       setGuided(g);
       mapApi.current?.showLayouts([{ id: -1, fc: g.geojson }]);
@@ -1165,10 +1207,17 @@ export default function Page() {
             {canals.length > 0 && (
               <ul className="mt-3 space-y-2">
                 {canals.map((c, i) => (
-                  <li key={i} className="text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
+                  <li key={i} className={"text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed " + (editingCanal === i ? "ring-1 ring-brand/50" : "")}>
                     <div className="flex items-center justify-between mb-1">
-                      <b className="text-brand-darker">{t("Canale")} {i + 1}</b>
-                      <button className="text-xs text-danger shrink-0" onClick={() => removeCanal(i)}>{t("Rimuovi")}</button>
+                      <b className="text-brand-darker">{t("Canale")} {i + 1}{!!(c.waypoints?.length) && <span className="font-normal text-sage-dark"> · {c.waypoints.length} {t("punti")}</span>}</b>
+                      <span className="flex gap-2 shrink-0">
+                        <button className={editingCanal === i ? "text-brand font-semibold" : "text-brand-mid"}
+                          onClick={() => (editingCanal === i ? endEditCanal() : startEditCanal(i))}>
+                          {editingCanal === i ? t("Fine modifica") : t("Modifica percorso")}
+                        </button>
+                        <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportCanalKmz(i, c)}>⤓ KMZ</button>
+                        <button className="text-danger" onClick={() => removeCanal(i)}>{t("Rimuovi")}</button>
+                      </span>
                     </div>
                     {t("Lunghezza")}: <b>{fmt(c.length_m / 1000, { maximumFractionDigits: 2 })} km</b> · {t("Dislivello")}: {fmt(c.drop_m, { maximumFractionDigits: 1 })} m<br />
                     {t("Pendenza media")}: <b>{fmt(c.mean_permille)}‰</b> · {t("Pendenza target (‰)")}: {fmt(c.target_permille)}‰
@@ -1212,11 +1261,21 @@ export default function Page() {
               {t("Riempi spazi vuoti")}
             </label>
 
-            <label className="text-xs text-sage-dark block">{t("Pivot per lato")}
-              <select className="field-input mt-1" value={perSide} onChange={(e) => setPerSide(Number(e.target.value))}>
-                {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </label>
+            <div className="flex gap-2">
+              <label className="text-xs text-sage-dark flex-1">{t("Pivot per lato")}
+                <select className="field-input mt-1" value={perSide} onChange={(e) => setPerSide(Number(e.target.value))}>
+                  {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
+              <label className="text-xs text-sage-dark flex-1">{t("Distanza di sicurezza (m)")}
+                <input type="number" min={0} max={500} step={5} value={safetyM}
+                  onChange={(e) => setSafetyM(Number(e.target.value))} className="field-input mt-1" /></label>
+            </div>
+            <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 mt-2 leading-relaxed">
+              {t("Raggio")}: <b>{fmt(cur.radius)} m</b> · {t("Area per pivot")}: <b>{fmt(Math.PI * cur.radius * cur.radius / 10000, { maximumFractionDigits: 1 })} ha</b><br />
+              {t("Distanza di sicurezza tra i bordi")}: <b>{fmt(Math.max(cur.gap, safetyM))} m</b> · {t("Interasse (centro-centro)")}: <b>{fmt(2 * cur.radius + Math.max(cur.gap, safetyM))} m</b><br />
+              <span className="text-brand-mid">{t("I pivot non si sovrappongono: i centri restano ad almeno l'interasse indicato.")}</span>
+            </div>
             <div className="flex gap-2 mt-2">
               <button className="btn-primary flex-1 basis-0" disabled={busy === "guided" || !activeGeom} onClick={designGuided}>
                 {busy === "guided" ? t("Calcolo…") : t("Disponi pivot sul canale")}
@@ -1239,9 +1298,10 @@ export default function Page() {
                     <div className="text-[11px] text-sage-dark">{t("in tubazione")}</div>
                   </div>
                 </div>
-                <div className="text-xs text-sage-dark bg-panel rounded-lg p-2">
-                  {t("Superficie netta")}: <b>{fmt(guided.meta.net_ha, { maximumFractionDigits: 0 })} ha</b><br />
-                  {guided.meta.n_along_canal} {t("lungo il canale")} · {guided.meta.n_fill} {t("riempimento")}
+                <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
+                  {t("Raggio")}: <b>{fmt(guided.meta.radius_m)} m</b> · {t("Area per pivot")}: <b>{fmt(guided.meta.pivot_ha, { maximumFractionDigits: 1 })} ha</b><br />
+                  {t("Distanza di sicurezza")}: <b>{fmt(guided.meta.safety_m)} m</b> · {t("Interasse")}: <b>{fmt(guided.meta.spacing_m)} m</b><br />
+                  {t("Superficie netta")}: <b>{fmt(guided.meta.net_ha, { maximumFractionDigits: 0 })} ha</b> · {guided.meta.n_along_canal} {t("lungo il canale")} · {guided.meta.n_fill} {t("riempimento")}
                 </div>
               </div>
             )}

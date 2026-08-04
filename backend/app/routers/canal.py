@@ -17,7 +17,7 @@ def canal(body: CanalIn, client=Depends(get_client)):
         out = trace_canal(
             client, body.geom.model_dump(),
             target_permille=body.target_permille,
-            start_ll=body.start, end_ll=body.end,
+            start_ll=body.start, end_ll=body.end, waypoints=body.waypoints,
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Errore tracciamento canale: {e}")

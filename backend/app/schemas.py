@@ -163,6 +163,7 @@ class CanalIn(BaseModel):
     target_permille: float = Field(default=1.0, ge=0.1, le=100)
     start: list[float] | None = None  # [lon, lat] presa manuale
     end: list[float] | None = None    # [lon, lat] finale manuale
+    waypoints: list[list[float]] | None = None  # punti intermedi [lon,lat] (percorso trascinabile)
 
 
 class CanalOut(BaseModel):
@@ -176,6 +177,7 @@ class CanalOut(BaseModel):
     elev_start_m: float
     elev_end_m: float
     profile: list[list[float]]
+    waypoints: list[list[float]] = []
 
 
 # ---------- Leggibilità del terreno (rilievo + isoipse, zona a valle) ----------
@@ -212,6 +214,7 @@ class GuidedIn(BaseModel):
     target_permille: float = Field(default=1.0, ge=0.1, le=100)
     radius_m: float = Field(default=400.0, ge=30, le=1000)
     gap_m: float = Field(default=0.0, ge=0, le=2000)
+    safety_m: float = Field(default=20.0, ge=0, le=500)  # distanza di sicurezza tra i bordi
     per_side: int = Field(default=2, ge=1, le=4)
     conn_max_permille: float = Field(default=5.0, ge=0.1, le=100)
     fill: bool = True                                  # riempi gli spazi vuoti

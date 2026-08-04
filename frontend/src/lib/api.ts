@@ -163,15 +163,15 @@ export type Canal = {
   geojson: { type: "LineString"; coordinates: number[][] };
   length_m: number; drop_m: number; mean_permille: number; target_permille: number;
   start: number[]; end: number[]; elev_start_m: number; elev_end_m: number;
-  profile: number[][];
+  profile: number[][]; waypoints: number[][];
 };
 export const fetchCanal = (
   geom: Polygon, target_permille: number,
-  start?: number[] | null, end?: number[] | null,
+  start?: number[] | null, end?: number[] | null, waypoints?: number[][] | null,
 ) =>
   req<Canal>("/api/canal", {
     method: "POST",
-    body: JSON.stringify({ geom, target_permille, start: start ?? null, end: end ?? null }),
+    body: JSON.stringify({ geom, target_permille, start: start ?? null, end: end ?? null, waypoints: waypoints ?? null }),
   });
 
 // ---- Leggibilità terreno: rilievo + isoipse, zona a valle della presa ----
@@ -188,7 +188,7 @@ export const fetchReachable = (geom: Polygon, start: number[]) =>
 
 export type GuidedResult = { geojson: GeoJSONFC; meta: Record<string, number> };
 export const fetchGuided = (geom: Polygon, p: {
-  target_permille: number; radius_m: number; gap_m: number; per_side: number;
+  target_permille: number; radius_m: number; gap_m: number; safety_m: number; per_side: number;
   conn_max_permille: number; fill: boolean;
 }) => req<GuidedResult>("/api/guided", { method: "POST", body: JSON.stringify({ geom, ...p }) });
 
