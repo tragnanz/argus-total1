@@ -114,7 +114,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     to_utm = pyproj.Transformer.from_crs(4326, epsg, always_xy=True)
     to_wgs = g["to_wgs"]
     from matplotlib.path import Path
-    ring_utm = [to_utm.transform(lon, lat) for lon, lat in geom["coordinates"][0]]
+    ring_utm = [to_utm.transform(lon, lat) for lon, lat, *_ in geom["coordinates"][0]]
 
     # griglia di idoneità (M2): serve se posiamo solo su aree idonee OPPURE se le
     # fasi sono ordinate per idoneità

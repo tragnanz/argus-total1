@@ -52,7 +52,7 @@ def _grid_for(geom: dict, res_m: float = 10.0, max_dim: int = 1200):
     epsg = utm_epsg(lon0, lat0)
     to_utm = pyproj.Transformer.from_crs(4326, epsg, always_xy=True)
     xs, ys = [], []
-    for x, y in pts:
+    for x, y, *_ in pts:
         ux, uy = to_utm.transform(x, y)
         xs.append(ux); ys.append(uy)
     minx, maxx = min(xs), max(xs)
@@ -283,7 +283,7 @@ def _utm_bbox(geom: dict):
     to_utm = pyproj.Transformer.from_crs(4326, epsg, always_xy=True)
     to_wgs = pyproj.Transformer.from_crs(epsg, 4326, always_xy=True)
     xs, ys = [], []
-    for x, y in pts:
+    for x, y, *_ in pts:
         ux, uy = to_utm.transform(x, y)
         xs.append(ux); ys.append(uy)
     return epsg, min(xs), min(ys), max(xs), max(ys), to_wgs

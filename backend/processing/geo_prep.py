@@ -30,7 +30,7 @@ def prepare_field(polygon_lonlat: dict, res_m: float = 10.0, neg_buffer_m: float
     epsg = utm_epsg(lon0, lat0)
     to_utm = pyproj.Transformer.from_crs(4326, epsg, always_xy=True)
     to_wgs = pyproj.Transformer.from_crs(epsg, 4326, always_xy=True)
-    ring_utm = np.array([to_utm.transform(x, y) for x, y in ring])
+    ring_utm = np.array([to_utm.transform(x, y) for x, y, *_ in ring])
 
     minx, miny = ring_utm.min(0)
     maxx, maxy = ring_utm.max(0)

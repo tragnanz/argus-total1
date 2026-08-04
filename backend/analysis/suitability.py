@@ -62,7 +62,7 @@ def _poly_mask(geom: dict, epsg, minx, top, res, wp, hp) -> np.ndarray:
     to_utm = pyproj.Transformer.from_crs(4326, epsg, always_xy=True)
     ring = geom["coordinates"][0]
     pix = []
-    for lon, lat in ring:
+    for lon, lat, *_ in ring:
         x, y = to_utm.transform(lon, lat)
         pix.append(((x - minx) / res, (top - y) / res))     # (col, row)
     path = Path(pix)

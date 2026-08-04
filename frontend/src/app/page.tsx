@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.5.0";
+const REV = "v0.5.1";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
