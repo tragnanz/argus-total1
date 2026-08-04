@@ -33,3 +33,6 @@ Thumbs.db
 # TypeScript incremental build info
 frontend/tsconfig.tsbuildinfo
 *.tsbuildinfo
+
+# bundle di deploy
+*.tar.gz
