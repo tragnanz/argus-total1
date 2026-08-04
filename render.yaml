@@ -1,0 +1,53 @@
+# Blueprint Render per Argus Total — servizi e DB SEPARATI da Argus Smart.
+# NB: le credenziali del SECONDO account Copernicus si impostano a mano nel
+# dashboard (sync:false) → non finiscono mai nel repo.
+#
+# Deploy: Render → New + → Blueprint → collega il repo → Apply.
+# Poi imposta le env var sync:false (vedi DEPLOY.md) e ridistribuisci il frontend.
+
+databases:
+  - name: argus-total-db
+    databaseName: argus_total
+    plan: free
+
+services:
+  # ---------------- Backend FastAPI ----------------
+  - type: web
+    name: argus-total-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    healthCheckPath: /api/health
+    buildCommand: pip install -r requirements-backend.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: argus-total-db
+          property: connectionString
+      - key: PROVIDER_MODE
+        value: synthetic          # passare a "cdse" quando l'account è pronto
+      - key: CDSE_CLIENT_ID
+        sync: false               # SECONDO account CDSE — inserire nel dashboard
+      - key: CDSE_CLIENT_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false               # URL del frontend, es. https://argus-total-web.onrender.com
+
+  # ---------------- Frontend Next.js ----------------
+  # NB: NEXT_PUBLIC_API_BASE viene "incorporato" nel build → dopo averlo impostato
+  # va rifatto il deploy del frontend (Clear build cache & deploy).
+  - type: web
+    name: argus-total-web
+    runtime: node
+    plan: free
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "20.11.1"
+      - key: NEXT_PUBLIC_API_BASE
+        sync: false               # URL del backend, es. https://argus-total-api.onrender.com

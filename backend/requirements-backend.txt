@@ -1,0 +1,26 @@
+# Argus Total — backend completo (API + motore satellitare).
+# Installazione: pip install -r requirements-backend.txt
+
+# --- Web API ---
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.8
+pydantic-settings>=2.4
+
+# --- Database (SQLite in dev, Postgres in prod) ---
+SQLAlchemy>=2.0
+psycopg[binary]>=3.2
+
+# --- Motore satellitare (processing/) + analisi Total (analysis/) ---
+numpy>=2.0
+scipy>=1.11
+scikit-image>=0.22
+matplotlib>=3.8
+pyproj>=3.6
+requests>=2.31
+Pillow>=10.0
+reportlab>=4.0            # scheda progetto PDF (M4)
+arabic-reshaper>=3.0     # shaping arabo per la scheda PDF (RTL)
+python-bidi>=0.4         # ordinamento bidirezionale (arabo)
+# Necessario solo con PROVIDER_MODE=cdse (lettura GeoTIFF dalla Process API):
+rasterio>=1.3

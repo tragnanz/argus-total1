@@ -1,0 +1,7 @@
+# Dipendenze del core di processing (demo eseguibile senza credenziali).
+# Il servizio completo aggiungerà: fastapi, uvicorn, sqlalchemy, geoalchemy2,
+# alembic, celery, redis, rasterio, shapely, geopandas, pyproj, boto3, reportlab.
+numpy>=2.0
+scipy>=1.11
+scikit-image>=0.22
+matplotlib>=3.8

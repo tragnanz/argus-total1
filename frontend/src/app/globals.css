@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body { height: 100%; }
+body {
+  @apply bg-brand-darker text-brand-dark antialiased;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* ---------- Layout mappa a pagina intera + widget in overlay ---------- */
+/* La mappa riempie il viewport; il layer degli overlay non intercetta il
+   mouse (pointer-events:none) tranne sui singoli widget, così la mappa resta
+   trascinabile negli spazi vuoti. */
+.map-root { position: fixed; inset: 0; z-index: 0; }
+.overlay-layer { position: fixed; inset: 0; z-index: 400; pointer-events: none; }
+.overlay-layer > * { pointer-events: auto; }
+
+@layer components {
+  .widget {
+    @apply bg-white/95 backdrop-blur rounded-xl2 shadow-widget border border-black/5;
+  }
+  .pill-dark {
+    @apply bg-brand-darker text-white rounded-full shadow-pill;
+  }
+  .pill-light {
+    @apply bg-white/95 backdrop-blur text-brand-dark rounded-full shadow-pill border border-black/5;
+  }
+  .btn-primary {
+    @apply bg-brand-dark text-white rounded-lg px-4 py-2 text-sm font-medium
+           hover:bg-brand-darker transition disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-ghost {
+    @apply bg-panel text-brand-mid rounded-lg px-3 py-1.5 text-sm font-medium
+           hover:bg-brand-mint/20 transition;
+  }
+  /* segmented control (Tutte / Selezionate / …) */
+  .seg { @apply flex bg-panel rounded-lg p-1 gap-1; }
+  .seg-item {
+    @apply flex-1 text-center text-sm rounded-md py-1.5 px-2 text-sage-dark cursor-pointer transition;
+  }
+  .seg-item[data-active="true"] { @apply bg-brand-light text-white shadow-sm; }
+  .field-input {
+    @apply w-full border border-black/10 rounded-lg px-3 py-2 text-sm bg-white
+           focus:outline-none focus:ring-2 focus:ring-brand-mint/60 focus:border-brand-light;
+  }
+  .hint {
+    @apply text-xs text-sage-dark bg-panel rounded-lg p-3 leading-relaxed;
+  }
+}
+
+/* Scrollbar morbida per i pannelli */
+.scroll-soft { scrollbar-width: thin; scrollbar-color: #cbd6cd transparent; }
+.scroll-soft::-webkit-scrollbar { width: 7px; }
+.scroll-soft::-webkit-scrollbar-thumb { background: #cbd6cd; border-radius: 8px; }
+
+/* ---------- Ritocchi ai controlli Leaflet ---------- */
+.leaflet-container { font-family: Inter, system-ui, sans-serif; background: #0d3b26; }
+.leaflet-bar, .leaflet-control-layers, .argus-legend {
+  border: none !important;
+  border-radius: 12px !important;
+  box-shadow: 0 6px 24px -6px rgba(13,59,38,.35) !important;
+  overflow: hidden;
+}
+.leaflet-bar a {
+  color: #14351f !important; background: #ffffff !important;
+  width: 32px; height: 32px; line-height: 32px;
+}
+.leaflet-bar a:hover { background: #eef3ef !important; }
+.leaflet-control-attribution {
+  background: rgba(255,255,255,.82) !important;
+  border-radius: 8px 0 0 0; font-size: 10px;
+}
+.leaflet-popup-content-wrapper {
+  border-radius: 12px; box-shadow: 0 8px 30px -8px rgba(13,59,38,.45);
+}
+.leaflet-popup-content { margin: 12px 14px; font-size: 13px; line-height: 1.5; }
+.argus-legend { background: #fff; padding: 9px 11px; font-size: 12px; line-height: 1.5; }
+.argus-legend b { font-size: 12.5px; color: #14351f; }
+.argus-legend .sw {
+  display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+  margin-right: 7px; vertical-align: -1px;
+}
+/* etichetta permanente del pin "Agrostar" */
+.argus-pin {
+  background: #08341c; color: #fff; border: none; border-radius: 6px;
+  font-size: 11px; font-weight: 600; padding: 2px 7px; box-shadow: 0 2px 8px rgba(13,59,38,.4);
+}
+.argus-pin::before { border-top-color: #08341c !important; }
