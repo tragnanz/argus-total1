@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.5.3";
+const REV = "v0.5.4";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -550,10 +550,10 @@ export default function Page() {
                   {t("Vista normalizzata (contrasto sull'area)")}
                 </label>
                 <div className="flex gap-2 mt-2">
-                  <button className="btn-primary flex-1" disabled={busy === "preview"} onClick={showPreview}>
+                  <button className="btn-primary flex-1 basis-0" disabled={busy === "preview"} onClick={showPreview}>
                     {busy === "preview" ? t("Ricompongo…") : t("Anteprima sulla mappa")}
                   </button>
-                  <button className="btn-ghost" onClick={clearPreview}>{t("Rimuovi anteprima")}</button>
+                  <button className="btn-ghost flex-1 basis-0" onClick={clearPreview}>{t("Rimuovi anteprima")}</button>
                 </div>
                 {scale && index !== "rgb" && <ScaleBar scale={scale} />}
               </>
@@ -563,10 +563,10 @@ export default function Page() {
           <section className="border-t border-black/5 pt-3">
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Quota (DEM)")}</h3>
             <div className="flex gap-2">
-              <button className="btn-primary flex-1" disabled={busy === "dem" || !activeGeom} onClick={showDem}>
+              <button className="btn-primary flex-1 basis-0" disabled={busy === "dem" || !activeGeom} onClick={showDem}>
                 {busy === "dem" ? t("Ricompongo…") : t("Mostra DEM")}
               </button>
-              <button className="btn-ghost" onClick={clearDem}>{t("Rimuovi DEM")}</button>
+              <button className="btn-ghost flex-1 basis-0" onClick={clearDem}>{t("Rimuovi DEM")}</button>
             </div>
             {demInfo && (
               <div className="mt-2">
@@ -598,10 +598,10 @@ export default function Page() {
               </label>
             </div>
             <div className="flex gap-2 mt-2">
-              <button className="btn-primary flex-1" disabled={busy === "suit" || !activeGeom || !date} onClick={computeSuit}>
+              <button className="btn-primary flex-1 basis-0" disabled={busy === "suit" || !activeGeom || !date} onClick={computeSuit}>
                 {busy === "suit" ? t("Calcolo…") : t("Calcola idoneità")}
               </button>
-              <button className="btn-ghost" onClick={clearSuit}>{t("Rimuovi idoneità")}</button>
+              <button className="btn-ghost flex-1 basis-0" onClick={clearSuit}>{t("Rimuovi idoneità")}</button>
             </div>
 
             {suit && (
@@ -732,10 +732,10 @@ export default function Page() {
             </div>
 
             <div className="flex gap-2 mt-2">
-              <button className="btn-primary flex-1" disabled={busy === "layout" || !hasFields} onClick={genLayout}>
+              <button className="btn-primary flex-1 basis-0" disabled={busy === "layout" || !hasFields} onClick={genLayout}>
                 {busy === "layout" ? t("Genero…") : t("Genera layout")}
               </button>
-              <button className="btn-ghost" onClick={clearLayout}>{t("Rimuovi layout")}</button>
+              <button className="btn-ghost flex-1 basis-0" onClick={clearLayout}>{t("Rimuovi layout")}</button>
             </div>
 
             {agg.count > 0 && (
@@ -781,10 +781,10 @@ export default function Page() {
                 placeholder={t("es. coltura, cliente, fase")} />
             </label>
             <div className="flex gap-2 mt-2">
-              <button className="btn-primary flex-1" disabled={busy === "pdf" || !hasFields} onClick={downloadPdf}>
+              <button className="btn-primary flex-1 basis-0" disabled={busy === "pdf" || !hasFields} onClick={downloadPdf}>
                 {busy === "pdf" ? t("Preparo…") : (fields.length > 1 ? t("Scarica schede PDF (ZIP)") : t("Scarica scheda PDF"))}
               </button>
-              <button className="btn-ghost" disabled={!laid.length} onClick={downloadGeoJSON}>{t("Layout GeoJSON")}</button>
+              <button className="btn-ghost flex-1 basis-0" disabled={!laid.length} onClick={downloadGeoJSON}>{t("Layout GeoJSON")}</button>
             </div>
             <p className="hint mt-2">{t("La scheda include idoneità, layout, dimensionamento idrico, fasi e schema dell'impianto.")}</p>
           </section>
