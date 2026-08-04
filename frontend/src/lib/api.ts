@@ -39,7 +39,7 @@ export type SuitClass = { key: string; label: string; color: string; ha: number;
 export type SuitWeights = { slope: number; vigor: number; moisture: number; climate: number };
 export type SuitMeta = {
   date: string; res_m: number; cached: boolean; calls: number;
-  total_ha: number; suitable_ha: number; mean_score: number;
+  total_ha: number; suitable_ha: number; mean_score: number; wetland_ha?: number;
   classes: SuitClass[];
   slope: { mean_pct: number; max_pct: number; ideal_pct: number; max_allowed_pct: number };
   climate: {
@@ -173,6 +173,18 @@ export const fetchCanal = (
     method: "POST",
     body: JSON.stringify({ geom, target_permille, start: start ?? null, end: end ?? null }),
   });
+
+// ---- Leggibilità terreno: rilievo + isoipse, zona a valle della presa ----
+export type Terrain = {
+  image: string; bounds: [[number, number], [number, number]];
+  contours: GeoJSONFC; interval_m: number; elev_min: number; elev_max: number;
+};
+export const fetchTerrain = (geom: Polygon, vert_exag = 2) =>
+  req<Terrain>("/api/terrain", { method: "POST", body: JSON.stringify({ geom, vert_exag }) });
+
+export type Reach = { polygons: Polygon[]; elev_start_m: number; elev_min_m: number; area_ha: number };
+export const fetchReachable = (geom: Polygon, start: number[]) =>
+  req<Reach>("/api/canal/reachable", { method: "POST", body: JSON.stringify({ geom, start }) });
 
 export type GuidedResult = { geojson: GeoJSONFC; meta: Record<string, number> };
 export const fetchGuided = (geom: Polygon, p: {

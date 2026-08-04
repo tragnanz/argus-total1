@@ -22,6 +22,10 @@ export type MapHandle = {
   showCanals: (canals: { coords: number[][]; start: number[]; end: number[] }[], startLabel: string, endLabel: string) => void;
   showPending: (start: number[] | null, end: number[] | null, startLabel: string, endLabel: string) => void;
   clearCanal: () => void;
+  showContours: (fc: GeoJSONFC) => void;
+  clearContours: () => void;
+  showReachable: (polys: { type: "Polygon"; coordinates: number[][][] }[], label: string) => void;
+  clearReachable: () => void;
   armPick: (cb: (lon: number, lat: number) => void) => void;
   disarmPick: () => void;
 };
@@ -62,6 +66,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
   const macroRef = useRef<L.LayerGroup | null>(null);
   const canalRef = useRef<L.LayerGroup | null>(null);
   const pendingRef = useRef<L.LayerGroup | null>(null);
+  const contourRef = useRef<L.LayerGroup | null>(null);
+  const reachRef = useRef<L.LayerGroup | null>(null);
   const pickCbRef = useRef<((lon: number, lat: number) => void) | null>(null);
 
   // Callback sempre aggiornate (la mappa viene creata una sola volta).
@@ -76,6 +82,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
     L.control.zoom({ position: "bottomleft" }).addTo(map);
     fieldsGroupRef.current = L.layerGroup().addTo(map);
     macroRef.current = L.layerGroup().addTo(map);
+    contourRef.current = L.layerGroup().addTo(map);
+    reachRef.current = L.layerGroup().addTo(map);
     canalRef.current = L.layerGroup().addTo(map);
     pendingRef.current = L.layerGroup().addTo(map);
     layoutRef.current = L.layerGroup().addTo(map);
@@ -284,6 +292,40 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         if (end) g.addLayer(mk(end, "#b23b1e", endLabel));
       },
       clearCanal() { canalRef.current?.clearLayers(); pendingRef.current?.clearLayers(); },
+      showContours(fc) {
+        const g = contourRef.current; if (!g) return;
+        g.clearLayers();
+        const gj = L.geoJSON(fc as never, {
+          style: (f) => {
+            const p = f?.properties?.principal;
+            return { color: "#5a3410", weight: p ? 1.8 : 0.7, opacity: p ? 0.95 : 0.7 };
+          },
+          onEachFeature: (f, layer) => {
+            if (f?.properties?.principal) {
+              layer.bindTooltip(`${f.properties.elev} m`,
+                { permanent: true, direction: "center", className: "field-label" });
+            }
+          },
+        });
+        g.addLayer(gj);
+      },
+      clearContours() { contourRef.current?.clearLayers(); },
+      showReachable(polys, label) {
+        const map = mapRef.current, g = reachRef.current;
+        if (!map || !g) return;
+        g.clearLayers();
+        let b: L.LatLngBounds | null = null;
+        for (let i = 0; i < polys.length; i++) {
+          const ly = L.polygon(toLatLng(polys[i].coordinates[0]),
+            { color: "#0a7d34", weight: 2, fillColor: "#22c55e", fillOpacity: 0.28, dashArray: "5,4" });
+          if (i === 0 && label) ly.bindTooltip(label, { permanent: true, direction: "center", className: "field-label" });
+          g.addLayer(ly);
+          const gb = ly.getBounds();
+          if (gb.isValid()) b = b ? b.extend(gb) : L.latLngBounds(gb.getSouthWest(), gb.getNorthEast());
+        }
+        if (b && b.isValid()) map.fitBounds(b, { padding: [50, 50] });
+      },
+      clearReachable() { reachRef.current?.clearLayers(); },
       armPick(cb) {
         pickCbRef.current = cb;
         try { if (mapRef.current) mapRef.current.getContainer().style.cursor = "crosshair"; } catch { /* */ }

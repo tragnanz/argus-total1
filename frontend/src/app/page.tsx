@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.6";
+const REV = "v0.6.7";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -148,6 +148,7 @@ export default function Page() {
   const [normalized, setNormalized] = useState(false);
   const [scale, setScale] = useState<ColorScale | null>(null);
   const [demInfo, setDemInfo] = useState<{ min: number; max: number; scale: ColorScale } | null>(null);
+  const [terrainInfo, setTerrainInfo] = useState<{ interval: number; min: number; max: number } | null>(null);
   const suit = active?.suit ?? null;
 
   // macro-aree (M6, fase 1)
@@ -350,7 +351,22 @@ export default function Page() {
       setDemInfo({ min: Number(d.meta.elev_min), max: Number(d.meta.elev_max), scale: d.meta.scale as ColorScale });
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
-  function clearDem() { mapApi.current?.clearOverlay("dem"); setDemInfo(null); }
+  function clearDem() {
+    mapApi.current?.clearOverlay("dem"); mapApi.current?.clearContours();
+    setDemInfo(null); setTerrainInfo(null);
+  }
+  // Rilievo ombreggiato + isoipse: rende leggibili dislivelli, sensi e pendenze.
+  async function showTerrain() {
+    if (!activeGeom) return needField();
+    setBusy("terrain"); setMsg("");
+    try {
+      const tr = await api.fetchTerrain(activeGeom);
+      mapApi.current?.showOverlay("dem", tr.image, tr.bounds);
+      mapApi.current?.showContours(tr.contours);
+      setDemInfo(null);
+      setTerrainInfo({ interval: tr.interval_m, min: tr.elev_min, max: tr.elev_max });
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
 
   // ---- idoneità (campo attivo) ----
   async function computeSuit() {
@@ -462,24 +478,46 @@ export default function Page() {
   }
 
   // ---- canale principale (M6, fase 2) ----
-  function armPick(kind: "start" | "end") {
+  const arm = (kind: "start" | "end") => {
     setPickMode(kind);
-    setMsg(kind === "start" ? t("Clicca sulla mappa per posizionare la presa.")
-                            : t("Clicca sulla mappa per posizionare il finale."));
     mapApi.current?.armPick((lon, lat) => {
       const pt = [lon, lat];
-      if (kind === "start") setCanalStart(pt); else setCanalEnd(pt);
+      if (kind === "start") { setCanalStart(pt); mapApi.current?.clearReachable(); }
+      else setCanalEnd(pt);
       setPickMode(null); setMsg("");
+      mapApi.current?.clearReachable();
       mapApi.current?.showPending(
         kind === "start" ? pt : canalStart,
         kind === "end" ? pt : canalEnd,
         t("Presa"), t("Finale"));
     });
+  };
+  async function armPick(kind: "start" | "end") {
+    if (kind === "end" && canalStart && activeGeom) {
+      // Mostra prima dove il finale è realisticamente collocabile: la zona a
+      // valle della presa (raggiungibile a gravità, in discesa).
+      setBusy("reach"); setMsg("");
+      try {
+        const r = await api.fetchReachable(activeGeom, canalStart);
+        if (!r.polygons.length) {
+          setMsg(t("Nessuna zona a valle della presa: spostala più in alto.")); setBusy(""); return;
+        }
+        mapApi.current?.showReachable(r.polygons, t("Finale collocabile qui (a valle della presa)"));
+        setMsg(t("Zona a valle: {a} ha, fino a −{d} m. Clicca nell'area evidenziata.",
+          { a: fmt(r.area_ha, { maximumFractionDigits: 0 }), d: fmt(r.elev_start_m - r.elev_min_m, { maximumFractionDigits: 1 }) }));
+      } catch (e) { showErr(e); setBusy(""); return; }
+      setBusy("");
+    } else {
+      setMsg(kind === "start" ? t("Clicca sulla mappa per posizionare la presa.")
+                              : t("Clicca sulla mappa per posizionare il finale."));
+    }
+    arm(kind);
   }
-  function cancelPick() { setPickMode(null); setMsg(""); mapApi.current?.disarmPick(); }
+  function cancelPick() { setPickMode(null); setMsg(""); mapApi.current?.disarmPick(); mapApi.current?.clearReachable(); }
   function resetPicks() {
     setCanalStart(null); setCanalEnd(null);
     mapApi.current?.showPending(null, null, t("Presa"), t("Finale"));
+    mapApi.current?.clearReachable();
   }
   async function traceCanal() {
     if (!activeGeom) return needField();
@@ -490,6 +528,7 @@ export default function Page() {
       setCanals(next);
       setCanalStart(null); setCanalEnd(null);
       mapApi.current?.showPending(null, null, t("Presa"), t("Finale"));
+      mapApi.current?.clearReachable();
       mapApi.current?.showCanals(
         next.map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end })),
         t("Presa"), t("Sbocco"));
@@ -504,7 +543,7 @@ export default function Page() {
   }
   function clearCanalUI() {
     setCanals([]); setCanalStart(null); setCanalEnd(null); setPickMode(null);
-    mapApi.current?.disarmPick(); mapApi.current?.clearCanal();
+    mapApi.current?.disarmPick(); mapApi.current?.clearCanal(); mapApi.current?.clearReachable();
   }
 
   // ---- pivot lungo il canale (M6, fase 3) ----
@@ -872,12 +911,22 @@ export default function Page() {
               </button>
               <button className="btn-ghost flex-1 basis-0" onClick={clearDem}>{t("Rimuovi DEM")}</button>
             </div>
+            <button className="btn-primary w-full mt-2" disabled={busy === "terrain" || !activeGeom} onClick={showTerrain}>
+              {busy === "terrain" ? t("Ricompongo…") : t("Rilievo + isoipse (dislivelli)")}
+            </button>
+            <p className="hint mt-1">{t("Il rilievo ombreggiato mostra i sensi delle pendenze; le isoipse ravvicinate = terreno più ripido.")}</p>
             {demInfo && (
               <div className="mt-2">
                 <ScaleBar scale={demInfo.scale} unit=" m" />
                 <p className="text-xs text-sage-dark mt-1">
                   {t("min")} {fmt(demInfo.min)} m · {t("max")} {fmt(demInfo.max)} m
                 </p>
+              </div>
+            )}
+            {terrainInfo && (
+              <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
+                {t("Isoipse ogni")} <b>{fmt(terrainInfo.interval)} m</b> · {t("quota")} {fmt(terrainInfo.min)}–{fmt(terrainInfo.max)} m<br />
+                {t("Le linee marcate riportano la quota; più sono fitte, più il versante è ripido.")}
               </div>
             )}
           </section>
@@ -921,6 +970,11 @@ export default function Page() {
                     <div className="text-[11px] text-sage-dark">{t("Idoneità media")}</div>
                   </div>
                 </div>
+                {!!suit.wetland_ha && suit.wetland_ha > 0 && (
+                  <div className="text-xs text-danger bg-danger/10 rounded-lg p-2">
+                    {t("Aree paludose/acqua escluse (NDWI + vegetazione)")}: <b>{fmt(suit.wetland_ha, { maximumFractionDigits: 0 })} ha</b>
+                  </div>
+                )}
                 <div>
                   <div className="text-xs font-semibold text-sage-dark mb-1">{t("Ripartizione classi")}</div>
                   {suit.classes.map((c) => (

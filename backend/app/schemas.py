@@ -178,6 +178,34 @@ class CanalOut(BaseModel):
     profile: list[list[float]]
 
 
+# ---------- Leggibilità del terreno (rilievo + isoipse, zona a valle) ----------
+class TerrainIn(BaseModel):
+    geom: GeoPolygon
+    vert_exag: float = Field(default=2.0, ge=0.5, le=6)
+
+
+class TerrainOut(BaseModel):
+    image: str
+    bounds: list[list[float]]
+    contours: dict[str, Any]     # FeatureCollection di isoipse
+    interval_m: float
+    elev_min: float
+    elev_max: float
+
+
+class ReachIn(BaseModel):
+    geom: GeoPolygon
+    start: list[float]           # [lon, lat] presa
+    tol_up_m: float = Field(default=0.1, ge=0.0, le=5.0)
+
+
+class ReachOut(BaseModel):
+    polygons: list[dict[str, Any]]
+    elev_start_m: float
+    elev_min_m: float
+    area_ha: float
+
+
 # ---------- Pivot lungo il canale (M6, Fase 3) ----------
 class GuidedIn(BaseModel):
     geom: GeoPolygon

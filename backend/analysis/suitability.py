@@ -77,7 +77,8 @@ def _grid_sig(epsg, minx, miny, wp, hp, date) -> str:
 
 
 def _fetch_layers(client, geom, date):
-    """DEM + NDVI + NDMI sulla griglia comune. Usa la cache se disponibile."""
+    """DEM + NDVI + NDMI + NDWI sulla griglia comune. Usa la cache se disponibile.
+    NDWI (McFeeters) serve a riconoscere acqua/aree paludose (saturate)."""
     epsg, minx, miny, maxx, maxy, to_wgs = _utm_bbox(geom)
     res, wp, hp, nx, ny = _plan_grid(minx, miny, maxx, maxy, max_dim=MAX_DIM, max_tiles=1)
     top = miny + hp * res
@@ -87,23 +88,23 @@ def _fetch_layers(client, geom, date):
                res=res, wp=wp, hp=hp, to_wgs=to_wgs)
 
     if sig in _CACHE:
-        dem, ndvi, ndmi = _CACHE[sig]
-        return dem, ndvi, ndmi, ctx, 0, True
+        dem, ndvi, ndmi, ndwi = _CACHE[sig]
+        return dem, ndvi, ndmi, ndwi, ctx, 0, True
 
     mos, n_calls, n_ok = _stitch(client, epsg, minx, miny, top, res, wp, hp, nx, ny,
-                                 date, ["ndvi", "ndmi"])
+                                 date, ["ndvi", "ndmi", "ndwi"])
     if n_ok == 0:
         raise RuntimeError("Nessuna scena disponibile per la data scelta.")
-    ndvi, ndmi = mos["ndvi"], mos["ndmi"]
+    ndvi, ndmi, ndwi = mos["ndvi"], mos["ndmi"], mos["ndwi"]
     dem = client.fetch_dem([minx, south, east, top], epsg, wp, hp)
     n_calls += 1
 
-    _CACHE[sig] = (dem, ndvi, ndmi)
+    _CACHE[sig] = (dem, ndvi, ndmi, ndwi)
     _CACHE_ORDER.append(sig)
     while len(_CACHE_ORDER) > _CACHE_MAX:
         old = _CACHE_ORDER.pop(0)
         _CACHE.pop(old, None)
-    return dem, ndvi, ndmi, ctx, n_calls, False
+    return dem, ndvi, ndmi, ndwi, ctx, n_calls, False
 
 
 def score_grid(client, geom: dict, date: str, params: dict) -> dict:
@@ -124,8 +125,15 @@ def score_grid(client, geom: dict, date: str, params: dict) -> dict:
     ndmi_min = float(params.get("ndmi_min", 0.00))
     ndmi_good = float(params.get("ndmi_good", 0.40))
     allow_net = bool(params.get("allow_climate_network", True))
+    # Esclusione aree paludose/acqua (default attivo): NDWI (acqua) + vegetazione
+    # bagnata (NDVI alto con NDWI/NDMI elevati = suolo saturo).
+    exclude_wetland = bool(params.get("exclude_wetland", True))
+    ndwi_water = float(params.get("ndwi_water", 0.20))   # acqua libera
+    ndvi_wet = float(params.get("ndvi_wet", 0.30))       # vegetazione presente
+    ndwi_wet = float(params.get("ndwi_wet", -0.05))      # umido (meno negativo)
+    ndmi_wet = float(params.get("ndmi_wet", 0.55))       # canopy/suolo molto bagnati
 
-    dem, ndvi, ndmi, ctx, n_calls, cached = _fetch_layers(client, geom, date)
+    dem, ndvi, ndmi, ndwi, ctx, n_calls, cached = _fetch_layers(client, geom, date)
     res = ctx["res"]
 
     gy, gx = np.gradient(dem.astype("float64"), res, res)
@@ -146,12 +154,20 @@ def score_grid(client, geom: dict, date: str, params: dict) -> dict:
     score = (w_slope * slope_score + w_vigor * vigor_score +
              w_moist * moist_score + w_clim * clim_score) / wsum
     score = np.where(slope_pct > slope_max, np.minimum(score, 0.35), score)  # troppo ripido
+
+    # Aree paludose/acqua: escluse dall'idoneità (punteggio azzerato).
+    water = ndwi > ndwi_water
+    marsh = (ndvi > ndvi_wet) & ((ndwi > ndwi_wet) | (ndmi > ndmi_wet))
+    wet = np.isfinite(ndwi) & (water | marsh)
+    if exclude_wetland:
+        score = np.where(wet, np.minimum(score, 0.05), score)
+
     score100 = score * 100.0
     valid = np.isfinite(ndvi) & np.isfinite(dem)
 
     return {"score100": score100, "slope_pct": slope_pct, "valid": valid, "ctx": ctx,
             "et": et, "clim_score": clim_score, "elev": elev, "n_calls": n_calls,
-            "cached": cached, "slope_ideal": slope_ideal, "slope_max": slope_max,
+            "cached": cached, "slope_ideal": slope_ideal, "slope_max": slope_max, "wet": wet,
             "weights": {"slope": w_slope, "vigor": w_vigor, "moisture": w_moist, "climate": w_clim}}
 
 
@@ -202,6 +218,8 @@ def compute_suitability(client, geom: dict, date: str, params: dict) -> dict:
     suitable_ha = round(sum(c["ha"] for c in classes_out if c["key"] in ("idoneo", "ottimale")), 1)
     mean_score = round(float(np.nanmean(score100[mask])), 1) if total_px else 0.0
     slope_in = slope_pct[mask]
+    wet_mask = sg.get("wet")
+    wetland_ha = round(int((wet_mask & mask).sum()) * pixel_ha, 1) if wet_mask is not None else 0.0
 
     corners = [(ctx["minx"], ctx["south"]), (ctx["east"], ctx["south"]),
                (ctx["east"], ctx["top"]), (ctx["minx"], ctx["top"])]
@@ -212,6 +230,7 @@ def compute_suitability(client, geom: dict, date: str, params: dict) -> dict:
     meta = {
         "date": date, "res_m": round(res, 1), "cached": cached, "calls": n_calls,
         "total_ha": total_ha, "suitable_ha": suitable_ha, "mean_score": mean_score,
+        "wetland_ha": wetland_ha,
         "classes": classes_out,
         "slope": {
             "mean_pct": round(float(np.nanmean(slope_in)), 1) if slope_in.size else 0.0,
