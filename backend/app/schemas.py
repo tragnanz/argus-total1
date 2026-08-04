@@ -136,6 +136,23 @@ class SuitabilityOut(BaseModel):
     meta: dict[str, Any]
 
 
+# ---------- Macro-aree di intervento (M6, Fase 1) ----------
+class MacroAreasIn(BaseModel):
+    geom: GeoPolygon
+    date: str
+    weights: SuitWeights = Field(default_factory=SuitWeights)
+    slope_ideal_pct: float = Field(default=0.5, ge=0, le=45)
+    slope_max_pct: float = Field(default=7.0, ge=0, le=60)
+    min_suitability: float = Field(default=60.0, ge=0, le=100)
+    min_area_ha: float = Field(default=10.0, ge=0, le=1_000_000)
+
+
+class MacroArea(BaseModel):
+    geojson: GeoPolygon
+    area_ha: float
+    mean_score: float
+
+
 # ---------- Layout pivot + dimensionamento idrico (M3) ----------
 class LayoutIn(BaseModel):
     geom: GeoPolygon

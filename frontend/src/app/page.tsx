@@ -8,11 +8,11 @@ import { parseFieldsFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
 import type {
   Area, Client, Polygon, Project, Scene, ColorScale, SuitMeta, SuitWeights,
-  LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC,
+  LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea,
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.5.4";
+const REV = "v0.6.0";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -109,6 +109,11 @@ export default function Page() {
   const [scale, setScale] = useState<ColorScale | null>(null);
   const [demInfo, setDemInfo] = useState<{ min: number; max: number; scale: ColorScale } | null>(null);
   const suit = active?.suit ?? null;
+
+  // macro-aree (M6, fase 1)
+  const [macroAreas, setMacroAreas] = useState<MacroArea[]>([]);
+  const [macroThr, setMacroThr] = useState(60);
+  const [macroMinHa, setMacroMinHa] = useState(10);
 
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState<string>("");
@@ -279,6 +284,28 @@ export default function Page() {
   function clearSuit() {
     mapApi.current?.clearOverlay("suitability");
     if (active) setFields((fs) => fs.map((f) => f.id === active.id ? { ...f, suit: null } : f));
+  }
+
+  // ---- macro-aree (M6, fase 1) ----
+  async function detectMacroareas() {
+    if (!activeGeom) return needField();
+    if (!date) { setMsg(t("Cerca e scegli prima una data.")); return; }
+    setBusy("macro"); setMsg("");
+    try {
+      const rows = await api.fetchMacroareas(activeGeom, date, {
+        weights: cur.weights, slope_ideal_pct: cur.slopeIdeal / 10, slope_max_pct: cur.slopeMax / 10,
+        min_suitability: macroThr, min_area_ha: macroMinHa,
+      });
+      setMacroAreas(rows);
+      mapApi.current?.showMacroareas(rows.map((m) => ({ geom: m.geojson, label: `${fmt(m.area_ha, { maximumFractionDigits: 0 })} ha` })));
+      if (!rows.length) setMsg(t("Nessuna macro-area trovata con questi criteri."));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  function clearMacro() { setMacroAreas([]); mapApi.current?.clearMacroareas(); }
+  function addMacroAsField(m: MacroArea, i: number) { addField(m.geojson, `${t("Macro-area")} ${i + 1}`); }
+  function addAllMacro() {
+    macroAreas.forEach((m, i) => addField(m.geojson, `${t("Macro-area")} ${i + 1}`, false));
+    setTimeout(() => mapApi.current?.fitAll(), 30);
   }
 
   // ---- layout pivot (tutti i campi) ----
@@ -635,6 +662,43 @@ export default function Page() {
                   {t("Deficit idrico")}: {fmt(suit.climate.deficit_year_mm)} mm · {t("Indice di aridità")}: {suit.climate.aridity_index != null ? fmt(suit.climate.aridity_index) : "—"}
                 </div>
                 {suit.cached && <p className="text-[11px] text-brand-light">↻ {t("Ricalcolo dai dati in cache: nessun consumo di quota.")}</p>}
+              </div>
+            )}
+          </section>
+
+          <section className="border-t border-black/5 pt-3">
+            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Macro-aree")}</h3>
+            <p className="hint mb-2">{t("Individua le zone idonee nell'area attiva; usale come campi o rifinisci.")}</p>
+            <div className="flex gap-2">
+              <label className="text-xs text-sage-dark flex-1">{t("Soglia idoneità")}: {macroThr}/100
+                <input type="range" min={40} max={90} step={5} value={macroThr}
+                  onChange={(e) => setMacroThr(Number(e.target.value))} className="w-full accent-brand" />
+              </label>
+              <label className="text-xs text-sage-dark w-24">{t("Area minima (ha)")}
+                <input type="number" min={1} max={100000} step={1} value={macroMinHa}
+                  onChange={(e) => setMacroMinHa(Number(e.target.value))} className="field-input mt-1" />
+              </label>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button className="btn-primary flex-1 basis-0" disabled={busy === "macro" || !activeGeom || !date} onClick={detectMacroareas}>
+                {busy === "macro" ? t("Calcolo…") : t("Individua macro-aree")}
+              </button>
+              <button className="btn-ghost flex-1 basis-0" onClick={clearMacro}>{t("Rimuovi")}</button>
+            </div>
+            {!!macroAreas.length && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-xs font-semibold text-sage-dark">{macroAreas.length} {t("Macro-aree")}</div>
+                  <button className="text-xs text-brand-mid" onClick={addAllMacro}>{t("Aggiungi tutte come campi")}</button>
+                </div>
+                <ul className="space-y-1">
+                  {macroAreas.map((m, i) => (
+                    <li key={i} className="flex items-center justify-between text-sm bg-panel rounded-lg px-2 py-1">
+                      <span className="flex-1 truncate">{t("Macro-area")} {i + 1} · {fmt(m.area_ha, { maximumFractionDigits: 0 })} ha · {t("Idoneità")} {fmt(m.mean_score)}</span>
+                      <button className="text-xs text-brand-mid shrink-0" onClick={() => addMacroAsField(m, i)}>+ {t("Campo")}</button>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </section>

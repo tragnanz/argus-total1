@@ -151,6 +151,12 @@ export const fetchDem = (geom: Polygon) =>
   req<Preview>("/api/satellite/dem", { method: "POST", body: JSON.stringify({ geom }) });
 
 // ---- Idoneità ----
+export type MacroArea = { geojson: Polygon; area_ha: number; mean_score: number };
+export const fetchMacroareas = (geom: Polygon, date: string, p: SuitParams & { min_suitability: number; min_area_ha: number }) =>
+  req<MacroArea[]>("/api/macroareas", {
+    method: "POST", body: JSON.stringify({ geom, date, ...p }),
+  });
+
 export const fetchSuitability = (geom: Polygon, date: string, p: SuitParams) =>
   req<Suitability>("/api/suitability", {
     method: "POST",

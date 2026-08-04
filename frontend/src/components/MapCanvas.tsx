@@ -16,6 +16,8 @@ export type MapHandle = {
   clearOverlay: (key: OverlayKey) => void;
   showLayouts: (items: { id: number; fc: GeoJSONFC }[]) => void;
   clearLayout: () => void;
+  showMacroareas: (items: { geom: Polygon; label: string }[]) => void;
+  clearMacroareas: () => void;
 };
 
 const ESRI =
@@ -51,6 +53,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
   const overlaysRef = useRef<Record<OverlayKey, L.ImageOverlay | null>>(
     { index: null, dem: null, suitability: null });
   const layoutRef = useRef<L.LayerGroup | null>(null);
+  const macroRef = useRef<L.LayerGroup | null>(null);
 
   // Callback sempre aggiornate (la mappa viene creata una sola volta).
   const cbRef = useRef({ onCreate, onEditActive, onSelect });
@@ -63,6 +66,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
     L.tileLayer(ESRI, { maxZoom: 20, attribution: "Imagery © Esri, Maxar, Earthstar" }).addTo(map);
     L.control.zoom({ position: "bottomleft" }).addTo(map);
     fieldsGroupRef.current = L.layerGroup().addTo(map);
+    macroRef.current = L.layerGroup().addTo(map);
     layoutRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
@@ -192,6 +196,22 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         if (lb && lb.isValid()) map.fitBounds(lb, { padding: [40, 40] });
       },
       clearLayout() { layoutRef.current?.clearLayers(); },
+      showMacroareas(items) {
+        const map = mapRef.current, g = macroRef.current;
+        if (!map || !g) return;
+        g.clearLayers();
+        let b: L.LatLngBounds | null = null;
+        for (const it of items) {
+          const ly = L.polygon(toLatLng(it.geom.coordinates[0]),
+            { color: "#f0b429", weight: 2, fillColor: "#f0b429", fillOpacity: 0.18, dashArray: "6,4" });
+          if (it.label) ly.bindTooltip(it.label, { permanent: true, direction: "center", className: "field-label" });
+          g.addLayer(ly);
+          const gb = ly.getBounds();
+          if (gb.isValid()) b = b ? b.extend(gb) : L.latLngBounds(gb.getSouthWest(), gb.getNorthEast());
+        }
+        if (b && b.isValid()) map.fitBounds(b, { padding: [40, 40] });
+      },
+      clearMacroareas() { macroRef.current?.clearLayers(); },
     };
   });
 
