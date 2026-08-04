@@ -26,6 +26,9 @@ export type MapHandle = {
   clearContours: () => void;
   showReachable: (polys: { type: "Polygon"; coordinates: number[][][] }[], label: string) => void;
   clearReachable: () => void;
+  locate: () => void;
+  startMeasure: (cb: (text: string) => void) => void;
+  stopMeasure: () => void;
   armPick: (cb: (lon: number, lat: number) => void) => void;
   disarmPick: () => void;
 };
@@ -69,6 +72,10 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
   const contourRef = useRef<L.LayerGroup | null>(null);
   const reachRef = useRef<L.LayerGroup | null>(null);
   const pickCbRef = useRef<((lon: number, lat: number) => void) | null>(null);
+  const measureRef = useRef<L.LayerGroup | null>(null);
+  const measuringRef = useRef(false);
+  const mptsRef = useRef<L.LatLng[]>([]);
+  const mcbRef = useRef<((text: string) => void) | null>(null);
 
   // Callback sempre aggiornate (la mappa viene creata una sola volta).
   const cbRef = useRef({ onCreate, onEditActive, onSelect });
@@ -87,10 +94,12 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
     canalRef.current = L.layerGroup().addTo(map);
     pendingRef.current = L.layerGroup().addTo(map);
     layoutRef.current = L.layerGroup().addTo(map);
+    measureRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
-    // Selezione di un punto (presa/finale del canale): un solo clic quando armato.
+    // Clic sulla mappa: misura (se attiva) oppure selezione punto (presa/finale).
     map.on("click", (e: L.LeafletMouseEvent) => {
+      if (measuringRef.current) { mptsRef.current.push(e.latlng); _redrawMeasure(); return; }
       const cb = pickCbRef.current;
       if (!cb) return;
       pickCbRef.current = null;
@@ -145,6 +154,42 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
     layer.pm?.enable({ allowSelfIntersection: false });
     bindEdit(layer);
   }
+  // ---- misura distanze/aree ----
+  function _fmtLen(m: number): string {
+    return m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
+  }
+  function _areaHa(pts: L.LatLng[]): number {
+    const R = 6378137, n = pts.length;
+    if (n < 3) return 0;
+    let a = 0;
+    for (let i = 0; i < n; i++) {
+      const p1 = pts[i], p2 = pts[(i + 1) % n];
+      a += ((p2.lng - p1.lng) * Math.PI / 180) *
+        (2 + Math.sin(p1.lat * Math.PI / 180) + Math.sin(p2.lat * Math.PI / 180));
+    }
+    return Math.abs((a * R * R) / 2) / 10000;
+  }
+  function _redrawMeasure() {
+    const map = mapRef.current, g = measureRef.current;
+    if (!map || !g) return;
+    g.clearLayers();
+    const pts = mptsRef.current;
+    if (pts.length) {
+      L.polyline(pts, { color: "#f0b429", weight: 3, dashArray: "6,4" }).addTo(g);
+      pts.forEach((p) => L.circleMarker(p, { radius: 4, color: "#08341c", weight: 1.5, fillColor: "#f0b429", fillOpacity: 1 }).addTo(g));
+    }
+    let dist = 0;
+    for (let i = 1; i < pts.length; i++) dist += map.distance(pts[i - 1], pts[i]);
+    let text = pts.length < 2 ? "" : _fmtLen(dist);
+    if (pts.length >= 3) text += ` · ${_areaHa(pts).toFixed(1)} ha`;
+    if (text && pts.length) {
+      L.marker(pts[pts.length - 1], { opacity: 0, interactive: false })
+        .bindTooltip(text, { permanent: true, direction: "top", className: "field-label" })
+        .addTo(g).openTooltip();
+    }
+    mcbRef.current?.(text);
+  }
+
   function allBounds(): L.LatLngBounds | null {
     let b: L.LatLngBounds | null = null;
     const add = (ly: L.Layer) => {
@@ -326,6 +371,30 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         if (b && b.isValid()) map.fitBounds(b, { padding: [50, 50] });
       },
       clearReachable() { reachRef.current?.clearLayers(); },
+      locate() {
+        const map = mapRef.current; if (!map) return;
+        map.locate({ setView: true, maxZoom: 15, enableHighAccuracy: true });
+        map.once("locationfound", (e: L.LocationEvent) => {
+          L.circleMarker(e.latlng, { radius: 7, color: "#1d4ed8", weight: 2, fillColor: "#3b82f6", fillOpacity: 0.9 })
+            .bindTooltip("GPS", { permanent: false, direction: "top" }).addTo(map);
+        });
+      },
+      startMeasure(cb) {
+        const map = mapRef.current; if (!map) return;
+        mcbRef.current = cb;
+        measuringRef.current = true;
+        mptsRef.current = [];
+        measureRef.current?.clearLayers();
+        try { map.getContainer().style.cursor = "crosshair"; } catch { /* */ }
+      },
+      stopMeasure() {
+        const map = mapRef.current;
+        measuringRef.current = false;
+        mptsRef.current = [];
+        mcbRef.current = null;
+        measureRef.current?.clearLayers();
+        try { if (map) map.getContainer().style.cursor = ""; } catch { /* */ }
+      },
       armPick(cb) {
         pickCbRef.current = cb;
         try { if (mapRef.current) mapRef.current.getContainer().style.cursor = "crosshair"; } catch { /* */ }

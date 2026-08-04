@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.7";
+const REV = "v0.6.8";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -108,6 +108,15 @@ function ringAreaHa(coords: number[][][]): number {
 }
 const safe = (s: string) => s.replace(/[^a-z0-9]+/gi, "_");
 
+// Icone (stile lineare, 16px) per la barra strumenti in alto.
+const svgProps = { width: 16, height: 16, viewBox: "0 0 24 24", fill: "none",
+  stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+const IcoUndo = () => (<svg {...svgProps}><path d="M9 14 4 9l5-5" /><path d="M4 9h11a5 5 0 0 1 0 10h-1" /></svg>);
+const IcoRedo = () => (<svg {...svgProps}><path d="m15 14 5-5-5-5" /><path d="M20 9H9a5 5 0 0 0 0 10h1" /></svg>);
+const IcoLayers = () => (<svg {...svgProps}><path d="m12 2 9 5-9 5-9-5 9-5Z" /><path d="m3 12 9 5 9-5" /><path d="m3 17 9 5 9-5" /></svg>);
+const IcoRuler = () => (<svg {...svgProps}><path d="M3 15 15 3l6 6L9 21z" /><path d="M7.5 10.5 9 12M10.5 7.5 12 9M13.5 4.5 15 6" /></svg>);
+const IcoCross = () => (<svg {...svgProps}><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></svg>);
+
 export default function Page() {
   const { t, lang, setLang, fmt, fmtDate } = useI18n();
   const mapApi = useRef<MapHandle | null>(null);
@@ -127,6 +136,51 @@ export default function Page() {
   const nextId = useRef(1);
   // visibilità dei livelli sulla mappa (accendi/spegni dal widget sinistro)
   const [layerVis, setLayerVis] = useState({ fields: true, macro: true, canal: true, layout: true });
+  // barra strumenti in alto: annulla/ripristina, misura, menu livelli
+  const [layersOpen, setLayersOpen] = useState(false);
+  const [measuring, setMeasuring] = useState(false);
+  const [measureTxt, setMeasureTxt] = useState("");
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const hist = useRef<{ past: { f: Field[]; a: number | null }[]; fut: { f: Field[]; a: number | null }[] }>({ past: [], fut: [] });
+  const prevFields = useRef<Field[]>([]);
+  const activeIdRef = useRef<number | null>(null);
+  const applyingHist = useRef(false);
+  const histMounted = useRef(false);
+  activeIdRef.current = activeId;
+  // Cronologia dei campi (disegno/import/modifica/rimozione/sotto-aree/visibilità)
+  // per Annulla/Ripristina.
+  useEffect(() => {
+    if (!histMounted.current) { histMounted.current = true; prevFields.current = fields; return; }
+    if (applyingHist.current) { applyingHist.current = false; prevFields.current = fields; return; }
+    hist.current.past.push({ f: prevFields.current, a: activeIdRef.current });
+    if (hist.current.past.length > 60) hist.current.past.shift();
+    hist.current.fut = [];
+    prevFields.current = fields;
+    setCanUndo(true); setCanRedo(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fields]);
+  function undo() {
+    const h = hist.current; if (!h.past.length) return;
+    h.fut.push({ f: prevFields.current, a: activeIdRef.current });
+    const s = h.past.pop()!;
+    applyingHist.current = true; prevFields.current = s.f;
+    setActiveId(s.a); setFields(s.f); renderFields(s.f, s.a);
+    setCanUndo(h.past.length > 0); setCanRedo(true);
+  }
+  function redo() {
+    const h = hist.current; if (!h.fut.length) return;
+    h.past.push({ f: prevFields.current, a: activeIdRef.current });
+    const s = h.fut.pop()!;
+    applyingHist.current = true; prevFields.current = s.f;
+    setActiveId(s.a); setFields(s.f); renderFields(s.f, s.a);
+    setCanUndo(true); setCanRedo(h.fut.length > 0);
+  }
+  function toggleMeasure() {
+    if (measuring) { setMeasuring(false); setMeasureTxt(""); mapApi.current?.stopMeasure(); setMsg(""); return; }
+    setMeasuring(true); setMsg(t("Misura: clicca i punti sulla mappa. 2 punti = distanza, 3+ = area."));
+    mapApi.current?.startMeasure((txt) => setMeasureTxt(txt));
+  }
 
   const active = useMemo(() => fields.find((f) => f.id === activeId) ?? null, [fields, activeId]);
   const activeGeom = active?.geom ?? null;
@@ -676,8 +730,8 @@ export default function Page() {
       <MapCanvas apiRef={mapApi} onCreate={addDrawnField} onEditActive={updateActiveGeom} onSelect={selectField} />
 
       <div className="overlay-layer">
-        {/* Testata */}
-        <div className="absolute top-4 left-4 flex items-center gap-3">
+        {/* Testata + barra strumenti */}
+        <div className="absolute top-4 left-4 flex items-center gap-2">
           <div className="pill-light flex items-center gap-2 px-3 py-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/nabu-logo-color.png" alt="Nabu" className="h-6 w-auto" />
@@ -686,14 +740,54 @@ export default function Page() {
               <div className="text-[11px] text-sage-dark">{t("Progettazione di grandi progetti agroindustriali")}</div>
             </div>
           </div>
+
+          {/* Annulla / Ripristina */}
+          <div className="pill-light flex items-center gap-1 px-1.5 py-1.5">
+            <button title={t("Annulla")} disabled={!canUndo} onClick={undo}
+              className="p-1.5 rounded-lg text-sage-dark disabled:opacity-30 hover:bg-black/5"><IcoUndo /></button>
+            <span className="w-px h-5 bg-black/10" />
+            <button title={t("Ripristina")} disabled={!canRedo} onClick={redo}
+              className="p-1.5 rounded-lg text-sage-dark disabled:opacity-30 hover:bg-black/5"><IcoRedo /></button>
+          </div>
+
+          {/* Livelli / Misura */}
+          <div className="relative">
+            <div className="pill-light flex items-center gap-1 px-1.5 py-1.5">
+              <button title={t("Livelli sulla mappa")} onClick={() => setLayersOpen((o) => !o)}
+                className={"p-1.5 rounded-lg hover:bg-black/5 " + (layersOpen ? "bg-brand/10 text-brand" : "text-sage-dark")}><IcoLayers /></button>
+              <span className="w-px h-5 bg-black/10" />
+              <button title={t("Misura distanze/aree")} onClick={toggleMeasure}
+                className={"p-1.5 rounded-lg " + (measuring ? "bg-brand text-white" : "text-sage-dark hover:bg-black/5")}><IcoRuler /></button>
+            </div>
+            {layersOpen && (
+              <div className="absolute mt-2 left-0 z-30 widget p-2 w-56">
+                <div className="text-xs font-semibold text-sage-dark mb-1 px-1">{t("Livelli sulla mappa")}</div>
+                {([
+                  ["fields", t("Campi")], ["macro", t("Macro-aree")],
+                  ["canal", t("Canali")], ["layout", t("Layout pivot")],
+                ] as const).map(([k, lbl]) => (
+                  <button key={k} onClick={() => toggleLayer(k)}
+                    className="w-full flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg hover:bg-black/5">
+                    <span className={layerVis[k] ? "text-brand" : "text-sage-dark opacity-50"}>{layerVis[k] ? "◉" : "○"}</span>
+                    <span className={layerVis[k] ? "" : "line-through opacity-60"}>{lbl}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {measuring && measureTxt && <div className="pill-dark px-3 py-2 text-sm">{measureTxt}</div>}
         </div>
 
         {/* Ricerca + lingua */}
         <div className="absolute top-4 right-4 flex items-center gap-2">
-          <form onSubmit={geocode} className="pill-light flex items-center px-3 py-1.5">
+          <form onSubmit={geocode} className="pill-light flex items-center gap-1.5 pl-1.5 pr-1.5 py-1.5">
+            <button type="button" title={t("Usa la mia posizione (GPS)")} onClick={() => mapApi.current?.locate()}
+              className="bg-brand text-white rounded-lg p-1.5 flex items-center justify-center shrink-0"><IcoCross /></button>
             <input value={q} onChange={(e) => setQ(e.target.value)}
-              placeholder={t("Cerca indirizzo o coordinate (lat, lon)")}
-              className="bg-transparent outline-none text-sm w-64" />
+              placeholder={t("Indirizzo o coordinate GPS")}
+              className="bg-transparent outline-none text-sm w-56" />
+            <button type="submit" className="btn-primary px-3 py-1.5 rounded-lg text-sm shrink-0">{t("Cerca")}</button>
           </form>
           <select value={lang} onChange={(e) => setLang(e.target.value as Lang)}
             className="pill-light px-3 py-2 text-sm outline-none">
