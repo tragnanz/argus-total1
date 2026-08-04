@@ -9,12 +9,17 @@ progetto/repo/deploy/DB **completamente separati**.
 > "Area di progetto" con anteprima indici e DEM.
 > **M2**: mappa di **idoneità del terreno** (pendenza da DEM + vigore/umidità +
 > clima ET₀) con pesi e soglie regolabili; ET₀ FAO-56 Penman-Monteith.
-> **M3**: **layout automatico dei pivot** (maglia quadrata o rettangolare
-> sfalsata) + **dimensionamento idrico**; il vincolo di pendenza dipende dal
+> **M3**: **layout automatico dei pivot** (maglia quadrata o triangolare) +
+> **dimensionamento idrico**; il vincolo di pendenza dipende dal
 > tipo di trasporto acqua (canali vs tubazioni interrate); reticolo orientato al
 > canale, spaziatura e sbordo regolabili, rete a spine + collettore.
 > **M4**: **fasi di sviluppo** + **export scheda progetto PDF** brandizzata Nabu
 > (con schema dell'impianto) e layout in GeoJSON.
+> **M5**: **multi-campo** — import di KMZ/KML/GeoJSON con **più poligoni** (più
+> appezzamenti); ogni campo si può selezionare/rinominare e le regole tecniche
+> possono essere **le stesse per tutti** oppure **diverse per campo**. Layout,
+> KPI e portate sono aggregati sul progetto; export PDF per campo (ZIP) e
+> GeoJSON combinato.
 
 ## Struttura
 
@@ -97,7 +102,7 @@ servizio web. Le variabili sensibili (credenziali CDSE, `NEXT_PUBLIC_API_BASE`,
 
 La revisione software è nella costante **`REV`** — frontend:
 `frontend/src/app/page.tsx`; backend: `backend/app/main.py`. Aggiornarle a ogni
-versione consegnata (attuale: **v0.4.0**).
+versione consegnata (attuale: **v0.5.0**).
 
 ## Note sul layout pivot (M3)
 
@@ -105,7 +110,7 @@ Due configurazioni scelte dall'utente (come negli schemi di progetto):
 
 - **Maglia quadrata**: file e colonne allineate, adduttrici dritte e
   perpendicolari al canale. Efficienza d'impacchettamento ≈ **78,5%** (π/4).
-- **Maglia rettangolare (sfalsata / quinconce)**: file sfalsate, adduttrici
+- **Maglia triangolare (sfalsata / quinconce)**: file sfalsate, adduttrici
   diagonali più lunghe. Efficienza → **90,7%** (π/2√3), limitata dai bordi.
 
 Il campo `packing_pct` riproduce la metrica degli schemi ("Gross Area for … Ha
