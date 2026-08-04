@@ -21,7 +21,7 @@ from rasterio import features
 from rasterio.transform import from_origin
 
 from processing.satellite_export import _get_cmap, _png_from_rgb
-from .canal import _NB, _dem_and_grid, _snap_cell
+from .canal import _NB, _dem_and_grid, _smooth, _snap_cell
 from .macroareas import _rdp, _simplify_ring
 
 
@@ -132,28 +132,38 @@ def terrain_readability(client, geom: dict, vert_exag: float = 2.0) -> dict:
     }
 
 
-def _reach_mask(dem, valid, s_row, s_col, tol_up_m) -> np.ndarray:
-    """Flood dalla presa: cella raggiungibile se collegata da un percorso che
-    non risale (entro tol). Coincide con la zona instradabile a gravità."""
+def _reach_mask(dem, valid, s_row, s_col, head, head_tol) -> np.ndarray:
+    """Flood dalla presa a gravità. Un canale a gravità non può portare l'acqua
+    sopra la quota della presa (il 'carico' idraulico di partenza), ma può
+    attraversare avvallamenti e piccoli dossi: quello che conta è NON superare la
+    quota della presa. Quindi la cella è transitabile se `quota <= quota_presa +
+    tol`. Il `tol` assorbe il rumore del DEM (dossi fittizi di pochi decimetri)
+    che altrimenti bloccherebbero la propagazione a valle già a pochi metri.
+    (Un flood 'strettamente in discesa' cella-per-cella si ferma al primo dosso
+    e fa sembrare la zona a valle piccolissima: era il bug segnalato.)"""
     hp, wp = dem.shape
+    thr = head + head_tol
     reach = np.zeros((hp, wp), dtype=bool)
     reach[s_row, s_col] = True
     dq = deque([(s_row, s_col)])
     while dq:
         r, c = dq.popleft()
-        er = dem[r, c]
         for dr, dc in _NB:
             nr, nc = r + dr, c + dc
             if not (0 <= nr < hp and 0 <= nc < wp):
                 continue
-            if valid[nr, nc] and not reach[nr, nc] and dem[nr, nc] <= er + tol_up_m:
+            if valid[nr, nc] and not reach[nr, nc] and dem[nr, nc] <= thr:
                 reach[nr, nc] = True
                 dq.append((nr, nc))
     return reach
 
 
-def reachable_region(client, geom: dict, start_ll, tol_up_m: float = 0.1) -> dict:
-    """Zona a valle della presa (raggiungibile in discesa): poligoni lon/lat."""
+def reachable_region(client, geom: dict, start_ll, tol_up_m: float = 0.5,
+                     min_drop_m: float = 0.3) -> dict:
+    """Zona dove il finale è realisticamente collocabile: le celle collegate alla
+    presa senza superarne la quota (carico idraulico) E più basse della presa.
+    `tol_up_m` = tolleranza sul rumore DEM; `min_drop_m` = dislivello minimo
+    perché una cella conti come 'a valle'."""
     dem, mask, ctx = _dem_and_grid(client, geom)
     res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
     to_wgs = ctx["to_wgs"]
@@ -164,11 +174,15 @@ def reachable_region(client, geom: dict, start_ll, tol_up_m: float = 0.1) -> dic
         raise RuntimeError("Area troppo piccola o DEM non disponibile.")
 
     s_row, s_col = _snap_cell(ctx, valid, to_utm, start_ll[0], start_ll[1])
-    reach = _reach_mask(dem, valid, s_row, s_col, tol_up_m)
-    reach[s_row, s_col] = False  # la presa stessa non è un 'finale'
+    demS = _smooth(dem)                       # stesso DEM lisciato del routing
+    head = float(demS[s_row, s_col])
+    # corridoio raggiungibile senza superare il carico della presa
+    corridor = _reach_mask(demS, valid, s_row, s_col, head, tol_up_m)
+    # finale valido = raggiungibile E realmente più in basso della presa
+    reach = corridor & (demS <= head - min_drop_m)
     if int(reach.sum()) < 1:
-        return {"polygons": [], "elev_start_m": round(float(dem[s_row, s_col]), 1),
-                "elev_min_m": round(float(dem[s_row, s_col]), 1), "area_ha": 0.0}
+        return {"polygons": [], "elev_start_m": round(head, 1),
+                "elev_min_m": round(head, 1), "area_ha": 0.0}
 
     transform = from_origin(ctx["minx"], ctx["top"], res, res)
     m = reach.astype("uint8")
@@ -186,7 +200,7 @@ def reachable_region(client, geom: dict, start_ll, tol_up_m: float = 0.1) -> dic
     pixel_ha = (res * res) / 10000.0
     return {
         "polygons": polys,
-        "elev_start_m": round(float(dem[s_row, s_col]), 1),
-        "elev_min_m": round(float(dem[reach].min()), 1),
+        "elev_start_m": round(head, 1),
+        "elev_min_m": round(float(demS[reach].min()), 1),
         "area_ha": round(float(reach.sum()) * pixel_ha, 1),
     }

@@ -17,6 +17,17 @@ from .suitability import _poly_mask
 from .macroareas import _rdp
 
 
+def _smooth(dem: np.ndarray) -> np.ndarray:
+    """DEM lisciato (mediana 3×3) per il routing a gravità: elimina i dossi/buche
+    di un solo pixel (rumore) che altrimenti bloccano la propagazione a valle o
+    rendono la presa un falso minimo locale. Le quote grezze restano per il
+    profilo mostrato all'utente."""
+    from scipy.ndimage import median_filter
+    fill = float(np.nanmedian(dem)) if np.isfinite(dem).any() else 0.0
+    demf = np.where(np.isfinite(dem), dem, fill)
+    return median_filter(demf, size=3, mode="nearest")
+
+
 def _snap_cell(ctx, valid, to_utm, lon: float, lat: float):
     """Cella (row, col) del punto lon/lat, agganciata alla cella valida più vicina."""
     x, y = to_utm.transform(lon, lat)
@@ -47,7 +58,7 @@ _NB = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
 
 
 def _route(client, geom: dict, target_permille: float = 1.0,
-           tol_up_m: float = 0.05, start_ll=None, end_ll=None) -> dict:
+           tol_up_m: float = 1.0, start_ll=None, end_ll=None) -> dict:
     """Instrada il canale e ritorna dati grezzi (dem, mask, ctx, percorso in
     celle e in UTM). Riusato dalla Fase 2 (API) e dalla Fase 3 (pivot).
     Se start_ll/end_ll (lon,lat) sono dati, presa/finale sono manuali."""
@@ -68,6 +79,9 @@ def _route(client, geom: dict, target_permille: float = 1.0,
         demx = np.where(valid, dem, -np.inf)
         s_row, s_col = (int(i) for i in np.unravel_index(int(np.argmax(demx)), demx.shape))
 
+    demS = _smooth(dem)                       # quote lisciate per il routing
+    head = float(demS[s_row, s_col])          # carico idraulico della presa
+    head_cap = head + max(0.5, float(tol_up_m))  # mai sopra il carico (tol rumore)
     INF = float("inf")
     dist = np.full((hp, wp), INF)
     prev = np.full((hp, wp, 2), -1, dtype=np.int32)
@@ -79,17 +93,22 @@ def _route(client, geom: dict, target_permille: float = 1.0,
         d, r, c = heapq.heappop(pq)
         if d > dist[r, c]:
             continue
-        er = dem[r, c]
+        er = demS[r, c]
         for dr, dc in _NB:
             nr, nc = r + dr, c + dc
             if not (0 <= nr < hp and 0 <= nc < wp) or not valid[nr, nc]:
                 continue
-            en = dem[nr, nc]
-            if en > er + tol_up_m:            # vietata la risalita (gravità)
+            en = demS[nr, nc]
+            # A gravità l'acqua non può superare la quota (carico) della presa.
+            # Sul DEM lisciato questo basta: il costo quadratico spinge comunque
+            # verso una discesa regolare. Un blocco 'strettamente in discesa'
+            # cella-per-cella si ferma al primo dosso di rumore e non raggiunge i
+            # finali lontani anche quando il dislivello complessivo c'è.
+            if en > head_cap:
                 continue
             dd = res * (1.41421356 if (dr and dc) else 1.0)
             desired = grad * dd
-            actual = er - en                  # dislivello reale (>= -tol)
+            actual = er - en                  # dislivello reale (può essere <0)
             # scarto QUADRATICO dal dislivello desiderato → dislivelli uniformi
             # (pendenza il più costante possibile lungo il canale).
             step_cost = (actual - desired) ** 2 + eps * dd

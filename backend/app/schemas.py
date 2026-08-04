@@ -196,7 +196,7 @@ class TerrainOut(BaseModel):
 class ReachIn(BaseModel):
     geom: GeoPolygon
     start: list[float]           # [lon, lat] presa
-    tol_up_m: float = Field(default=0.1, ge=0.0, le=5.0)
+    tol_up_m: float = Field(default=0.5, ge=0.0, le=5.0)  # tolleranza rumore DEM
 
 
 class ReachOut(BaseModel):
