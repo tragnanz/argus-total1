@@ -10,7 +10,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.4.4";
+const REV = "v0.4.5";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -284,7 +284,7 @@ export default function Page() {
         </div>
 
         {/* Pannello sinistro: flusso di progetto */}
-        <div className="absolute top-24 left-4 w-80 max-h-[78vh] overflow-auto scroll-soft widget p-4 space-y-4">
+        <div className="absolute top-24 left-4 w-[440px] max-w-[calc(100vw_-_2rem)] max-h-[78vh] overflow-auto scroll-soft widget p-4 space-y-4">
           <section>
             <h3 className="text-sm font-semibold text-brand-darker mb-1">{t("Cliente")}</h3>
             <div className="flex gap-2">
@@ -349,7 +349,7 @@ export default function Page() {
         </div>
 
         {/* Pannello destro: anteprima satellitare */}
-        <div className="absolute top-24 right-4 w-80 max-h-[78vh] overflow-auto scroll-soft widget p-4 space-y-4">
+        <div className="absolute top-24 right-4 w-[440px] max-w-[calc(100vw_-_2rem)] max-h-[78vh] overflow-auto scroll-soft widget p-4 space-y-4">
           <section>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Anteprima satellitare")}</h3>
             <label className="text-xs text-sage-dark">{t("Indice")}</label>
