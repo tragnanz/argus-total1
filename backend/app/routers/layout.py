@@ -26,6 +26,8 @@ def layout(body: LayoutIn, client=Depends(get_client)):
     }
     if body.slope_max_pct is not None:
         params["slope_max_pct"] = body.slope_max_pct
+    if body.slope_ideal_pct is not None:
+        params["slope_ideal_pct"] = body.slope_ideal_pct
     try:
         out = compute_layout(client, body.geom.model_dump(), params)
     except Exception as e:  # noqa: BLE001

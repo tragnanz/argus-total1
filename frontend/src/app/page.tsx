@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.5.1";
+const REV = "v0.5.2";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -33,9 +33,14 @@ type Settings = {
   onlySuitable: boolean; minSuit: number; overhang: number;
   nPhases: number; phaseOrder: PhaseOrder; kc: number; eff: number; hours: number;
 };
+// Pendenza ideale/massima predefinita per tipo di trasporto, in ‰ (per mille).
+const SLOPE_PM: Record<Transport, { ideal: number; max: number }> = {
+  canal: { ideal: 2, max: 5 },
+  buried: { ideal: 5, max: 70 },
+};
 const DEFAULTS: Settings = {
   weights: { slope: 0.45, vigor: 0.25, moisture: 0.15, climate: 0.15 },
-  slopeIdeal: 3, slopeMax: 12,
+  slopeIdeal: SLOPE_PM.buried.ideal, slopeMax: SLOPE_PM.buried.max,   // ‰
   layoutCfg: "staggered", radius: 400, gap: 0, transport: "buried",
   orientMode: "auto", azimuth: 0, canalFlip: false,
   onlySuitable: false, minSuit: 60, overhang: 0,
@@ -264,7 +269,8 @@ export default function Page() {
     setBusy("suit"); setMsg("");
     try {
       const s = await api.fetchSuitability(activeGeom, date, {
-        weights: cur.weights, slope_ideal_pct: cur.slopeIdeal, slope_max_pct: cur.slopeMax,
+        weights: cur.weights,
+        slope_ideal_pct: cur.slopeIdeal / 10, slope_max_pct: cur.slopeMax / 10,  // ‰ → %
       });
       mapApi.current?.showOverlay("suitability", s.image, s.bounds);
       setFields((fs) => fs.map((f) => f.id === active.id ? { ...f, suit: s.meta } : f));
@@ -279,6 +285,7 @@ export default function Page() {
   function paramsFrom(s: Settings): LayoutParams {
     return {
       config: s.layoutCfg, radius_m: s.radius, gap_m: s.gap, transport: s.transport,
+      slope_ideal_pct: s.slopeIdeal / 10, slope_max_pct: s.slopeMax / 10,  // ‰ → %
       auto_orient: s.orientMode === "auto",
       canal_azimuth_deg: s.orientMode === "manual" ? s.azimuth : null,
       canal_flip: s.canalFlip,
@@ -580,13 +587,13 @@ export default function Page() {
             <WeightRow label={t("Clima")} v={cur.weights.climate} onChange={(v) => setW("climate", v)} />
             <div className="flex gap-2 mt-2">
               <label className="text-xs text-sage-dark flex-1">
-                {t("Pendenza ideale (%)")}
-                <input type="number" min={0} max={45} step={0.5} value={cur.slopeIdeal}
+                {t("Pendenza ideale (‰)")}
+                <input type="number" min={0} max={100} step={0.5} value={cur.slopeIdeal}
                   onChange={(e) => patch({ slopeIdeal: Number(e.target.value) })} className="field-input mt-1" />
               </label>
               <label className="text-xs text-sage-dark flex-1">
-                {t("Pendenza massima (%)")}
-                <input type="number" min={1} max={60} step={0.5} value={cur.slopeMax}
+                {t("Pendenza massima (‰)")}
+                <input type="number" min={0} max={200} step={0.5} value={cur.slopeMax}
                   onChange={(e) => patch({ slopeMax: Number(e.target.value) })} className="field-input mt-1" />
               </label>
             </div>
@@ -623,7 +630,7 @@ export default function Page() {
                   ))}
                 </div>
                 <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
-                  {t("Pendenza")}: {fmt(suit.slope.mean_pct)}% ({t("max")} {fmt(suit.slope.max_pct)}%)<br />
+                  {t("Pendenza")}: {fmt(suit.slope.mean_pct * 10)}‰ ({t("max")} {fmt(suit.slope.max_pct * 10)}‰)<br />
                   {t("ET₀ annua")}: {fmt(suit.climate.eto_year_mm)} mm · {t("Pioggia annua")}: {fmt(suit.climate.rain_year_mm)} mm<br />
                   {t("Deficit idrico")}: {fmt(suit.climate.deficit_year_mm)} mm · {t("Indice di aridità")}: {suit.climate.aridity_index != null ? fmt(suit.climate.aridity_index) : "—"}
                 </div>
@@ -642,14 +649,15 @@ export default function Page() {
             </div>
 
             <label className="text-xs text-sage-dark mt-2 block">{t("Trasporto acqua")}</label>
-            <select className="field-input mt-1" value={cur.transport} onChange={(e) => patch({ transport: e.target.value as Transport })}>
+            <select className="field-input mt-1" value={cur.transport}
+              onChange={(e) => { const tp = e.target.value as Transport; patch({ transport: tp, slopeIdeal: SLOPE_PM[tp].ideal, slopeMax: SLOPE_PM[tp].max }); }}>
               <option value="buried">{t("Tubazioni interrate (pressione)")}</option>
               <option value="canal">{t("Canali (gravità)")}</option>
             </select>
             <p className="text-[11px] text-sage-dark mt-1">
               {cur.transport === "canal"
-                ? t("Con i canali il vincolo di pendenza è severo (max {p}%): serve terreno pianeggiante.", { p: 2 })
-                : t("Con tubazioni in pressione la pendenza tollerata è maggiore (max {p}%).", { p: 12 })}
+                ? t("Con i canali il vincolo di pendenza è severo (max {p}‰): serve terreno pianeggiante.", { p: 5 })
+                : t("Con tubazioni in pressione la pendenza tollerata è maggiore (max {p}‰).", { p: 70 })}
             </p>
 
             <div className="flex gap-2 mt-2">

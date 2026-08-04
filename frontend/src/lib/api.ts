@@ -81,7 +81,7 @@ export type GeoJSONFC = { type: "FeatureCollection"; features: any[] };
 export type LayoutResult = { geojson: GeoJSONFC; bounds: [[number, number], [number, number]]; meta: LayoutMeta };
 export type LayoutParams = {
   config: LayoutConfig; radius_m: number; gap_m: number; transport: Transport;
-  slope_max_pct?: number | null;
+  slope_max_pct?: number | null; slope_ideal_pct?: number | null;
   auto_orient: boolean; canal_azimuth_deg?: number | null; canal_flip: boolean;
   only_suitable: boolean; min_suitability: number; date?: string | null;
   overhang_pct: number; n_phases: number; phase_order: PhaseOrder;

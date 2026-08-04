@@ -268,7 +268,7 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
         (T("eff_pack"), f"{N(lm.get('packing_pct', 0), 1)}%"),
         (T("copertura"), f"{N(lm.get('coverage_pct', 0), 1)}%"),
         (T("trasporto"), tr(lang, "tr_" + str(lm.get("transport", "")))),
-        (T("pend_max"), f"{N(lm.get('slope_max_pct', 0), 1)}%"),
+        (T("pend_max"), f"{N(lm.get('slope_max_pct', 0) * 10, 1)}‰"),
     ]))
 
     # --- rete idraulica ---

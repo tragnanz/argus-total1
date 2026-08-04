@@ -7,8 +7,8 @@ Due configurazioni scelte dall'utente:
                    adduttrici diagonali più lunghe. Densità → π/(2√3) = 90,7%.
 
 Il tipo di trasporto acqua imposta il vincolo di PENDENZA (dal DEM):
-  - "canal"  → canali a gravità: serve terreno pianeggiante (max ~2%).
-  - "buried" → tubazioni interrate in pressione: tollera più pendenza (~12%),
+  - "canal"  → canali a gravità: serve terreno pianeggiante (max ~5‰).
+  - "buried" → tubazioni interrate in pressione: tollera più pendenza (~70‰),
                ma cresce l'energia di sollevamento.
 
 I pivot sono posati solo se il cerchio sta INTERO nell'area (niente sbordo) e la
@@ -38,10 +38,13 @@ from .suitability import score_grid, sample_grid
 
 _DEM_CACHE: dict[str, tuple] = {}
 
-# soglie di pendenza (%) per tipo di trasporto: (ideale, massima)
+# soglie di pendenza (%) per tipo di trasporto: (ideale, massima).
+# NB: l'interfaccia le mostra in ‰ (per mille) → qui in % = ‰/10.
+#   canali:    ideale 2‰ (0,2%),  massima 5‰ (0,5%)
+#   tubazioni: ideale 5‰ (0,5%),  massima 70‰ (7,0%)
 TRANSPORT_SLOPE = {
-    "canal":  {"ideal": 0.5, "max": 2.0},
-    "buried": {"ideal": 5.0, "max": 12.0},
+    "canal":  {"ideal": 0.2, "max": 0.5},
+    "buried": {"ideal": 0.5, "max": 7.0},
 }
 
 
@@ -120,7 +123,8 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     # fasi sono ordinate per idoneità
     suit = None
     if (only_suitable or phase_order == "suitability") and suit_date:
-        sparams = {"slope_ideal_pct": tslope["ideal"], "slope_max_pct": slope_max,
+        sparams = {"slope_ideal_pct": float(params.get("slope_ideal_pct", tslope["ideal"])),
+                   "slope_max_pct": slope_max,
                    "allow_climate_network": params.get("allow_climate_network", True)}
         sg = score_grid(client, geom, suit_date, sparams)
         suit = (sg["score100"], sg["ctx"])

@@ -122,8 +122,8 @@ class SuitabilityIn(BaseModel):
     geom: GeoPolygon
     date: str
     weights: SuitWeights = Field(default_factory=SuitWeights)
-    slope_ideal_pct: float = Field(default=3.0, ge=0, le=45)
-    slope_max_pct: float = Field(default=12.0, ge=1, le=60)
+    slope_ideal_pct: float = Field(default=0.5, ge=0, le=45)   # % ( = ‰/10 lato UI)
+    slope_max_pct: float = Field(default=7.0, ge=0, le=60)
     ndvi_min: float = 0.20
     ndvi_good: float = 0.60
     ndmi_min: float = 0.00
@@ -143,7 +143,8 @@ class LayoutIn(BaseModel):
     radius_m: float = Field(default=400.0, ge=30, le=1000)
     gap_m: float = Field(default=0.0, ge=0, le=2000)              # distanza tra i bordi
     transport: Literal["canal", "buried"] = "buried"
-    slope_max_pct: float | None = Field(default=None, ge=0, le=60)  # override vincolo pendenza
+    slope_max_pct: float | None = Field(default=None, ge=0, le=60)  # override vincolo pendenza (%)
+    slope_ideal_pct: float | None = Field(default=None, ge=0, le=45)  # pendenza ideale (%) per idoneità
     # orientamento del reticolo (rispetto al canale/campo)
     auto_orient: bool = True                                       # allinea al bordo più lungo
     canal_azimuth_deg: float | None = Field(default=None, ge=-360, le=360)
