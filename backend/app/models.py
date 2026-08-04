@@ -49,6 +49,12 @@ class Area(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    # Sotto-livelli: una macro-area è figlia del campo (poligono) in cui è
+    # inscritta. parent_area_id nullo = area di primo livello (campo).
+    parent_area_id: Mapped[int | None] = mapped_column(
+        ForeignKey("areas.id", ondelete="CASCADE"), nullable=True, index=True)
+    # "field" = poligono importato/disegnato; "macro" = sotto-area idonea.
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="field")
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     # GeoJSON Polygon (lon/lat) serializzato come stringa.
     geojson: Mapped[str] = mapped_column(Text, nullable=False)

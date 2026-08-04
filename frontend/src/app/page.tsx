@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.5";
+const REV = "v0.6.6";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -36,10 +36,9 @@ const SOILS: { key: string; label: string; inf: number }[] = [
 const PIVOT_WET_W = 40;   // larghezza bagnata del pacchetto irriguo (m), assunzione
 
 // Schede del pannello destro, in ordine progressivo del flusso di progetto.
+// "Analisi" raggruppa satellite + idoneità + macro-aree in un'unica finestra.
 const TABS: { key: string; label: string }[] = [
-  { key: "sat", label: "Satellite" },
-  { key: "suit", label: "Idoneità" },
-  { key: "macro", label: "Macro-aree" },
+  { key: "analisi", label: "Analisi" },
   { key: "canal", label: "Canale" },
   { key: "guided", label: "Pivot" },
   { key: "layout", label: "Layout" },
@@ -69,13 +68,30 @@ const DEFAULTS: Settings = {
   nPhases: 1, phaseOrder: "canal_distance", kc: 1.15, eff: 0.85, hours: 20,
 };
 
+// Sotto-area (macro-area) inscritta in un campo.
+type FieldMacro = { id: number; name: string; geom: Polygon; area_ha: number; mean_score: number; savedId?: number };
 type Field = {
   id: number; name: string; geom: Polygon;
   settings?: Settings;                 // override per-campo (usato se non "stesse regole")
   suit?: SuitMeta | null;
   lay?: LayoutMeta | null;
   layGeo?: GeoJSONFC | null;
+  macros?: FieldMacro[];               // sotto-livelli (macro-aree) del campo
+  hidden?: boolean;                    // campo spento sulla mappa
+  savedId?: number;                    // id dell'area salvata nel progetto
 };
+
+// ---- KMZ (KML zippato) lato client per l'export delle geometrie ----
+function kmlForPolys(items: { name: string; geom: Polygon }[]): string {
+  const esc = (s: string) => s.replace(/[<&>]/g, (c) => ({ "<": "&lt;", "&": "&amp;", ">": "&gt;" }[c] || c));
+  const pm = items.map((it) => {
+    const ring = (it.geom.coordinates?.[0] || []).map(([lo, la]) => `${lo},${la},0`).join(" ");
+    return `<Placemark><name>${esc(it.name)}</name><Style><LineStyle><color>ff2780f0</color><width>2</width></LineStyle>`
+      + `<PolyStyle><color>3300a0f0</color></PolyStyle></Style>`
+      + `<Polygon><outerBoundaryIs><LinearRing><coordinates>${ring}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>${pm}</Document></kml>`;
+}
 
 function ringAreaHa(coords: number[][][]): number {
   const R = 6378137;
@@ -109,6 +125,8 @@ export default function Page() {
   const [sameRules, setSameRules] = useState(true);
   const [gset, setGset] = useState<Settings>(DEFAULTS);
   const nextId = useRef(1);
+  // visibilità dei livelli sulla mappa (accendi/spegni dal widget sinistro)
+  const [layerVis, setLayerVis] = useState({ fields: true, macro: true, canal: true, layout: true });
 
   const active = useMemo(() => fields.find((f) => f.id === activeId) ?? null, [fields, activeId]);
   const activeGeom = active?.geom ?? null;
@@ -158,7 +176,7 @@ export default function Page() {
     return Math.max(50, Math.min(800, Math.round(rr / 10) * 10));
   }, [et0Peak, infiltration, cur.kc, cur.eff, cur.hours, cur.radius]);
 
-  const [tab, setTab] = useState("sat");
+  const [tab, setTab] = useState("analisi");
   const secShow = (k: string) => (tab === k ? "" : "hidden");
 
   const [notes, setNotes] = useState("");
@@ -199,7 +217,37 @@ export default function Page() {
     setScale(null); setDemInfo(null);
   }
   function renderFields(fs: Field[], aId: number | null) {
-    mapApi.current?.setFields(fs.map((f) => ({ id: f.id, name: f.name, geom: f.geom })), aId);
+    const hidden = fs.filter((f) => f.hidden).map((f) => f.id);
+    mapApi.current?.setFields(fs.map((f) => ({ id: f.id, name: f.name, geom: f.geom })), aId, hidden);
+  }
+  // Ridisegna sulla mappa tutte le macro-aree: candidate (da individuazione) +
+  // sotto-aree già assegnate ai campi.
+  function renderMacrosOnMap(fs: Field[], cands: MacroArea[]) {
+    const committed = fs.flatMap((f) => (f.macros ?? []).map((mm) => ({ geom: mm.geom, label: mm.name })));
+    const candItems = cands.map((m) => ({ geom: m.geojson, label: `${fmt(m.area_ha, { maximumFractionDigits: 0 })} ha` }));
+    mapApi.current?.showMacroareas([...committed, ...candItems]);
+  }
+  // Visibilità: campo singolo (occhio) e livelli interi.
+  function toggleFieldHidden(id: number) {
+    setFields((fs) => {
+      const arr = fs.map((f) => f.id === id ? { ...f, hidden: !f.hidden } : f);
+      renderFields(arr, activeId);
+      return arr;
+    });
+  }
+  function toggleLayer(key: "fields" | "macro" | "canal" | "layout") {
+    setLayerVis((v) => {
+      const nv = { ...v, [key]: !v[key] };
+      mapApi.current?.setLayerVisible(key, nv[key]);
+      return nv;
+    });
+  }
+  async function exportKmz(filename: string, items: { name: string; geom: Polygon }[]) {
+    if (!items.length) return;
+    const zip = new JSZip();
+    zip.file("doc.kml", kmlForPolys(items));
+    const blob = await zip.generateAsync({ type: "blob", mimeType: "application/vnd.google-earth.kmz" });
+    saveBlob(blob, filename.toLowerCase().endsWith(".kmz") ? filename : `${filename}.kmz`);
   }
   function draw() { setMsg(""); mapApi.current?.draw(); }
   function addField(geom: Polygon, name?: string, focus = true) {
@@ -260,16 +308,7 @@ export default function Page() {
     } catch (e) { showErr(e); }
   }
 
-  // ---- aree salvate (una per campo, sul progetto) ----
-  async function saveArea() {
-    if (!projectId) { setMsg(t("Serve un progetto selezionato per salvare l'area.")); return; }
-    if (!active) { setMsg(t("Seleziona o aggiungi un campo.")); return; }
-    setBusy("save");
-    try {
-      await api.createArea({ project_id: projectId, name: active.name, geojson: active.geom, area_ha: Math.round(ringAreaHa(active.geom.coordinates)) });
-      await refreshAreas(projectId); setMsg(t("Area salvata ✓"));
-    } catch (e) { showErr(e); } finally { setBusy(""); }
-  }
+  // ---- aree salvate (campo + sotto-aree, sul progetto) ----
   function loadArea(a: Area) { addField(a.geojson, a.name); setMsg(""); setTimeout(() => mapApi.current?.fitAll(), 30); }
   async function renameArea(a: Area) {
     const name = prompt(t("Nome area"), a.name); if (!name || name === a.name) return;
@@ -343,15 +382,83 @@ export default function Page() {
         min_suitability: macroThr, min_area_ha: macroMinHa,
       });
       setMacroAreas(rows);
-      mapApi.current?.showMacroareas(rows.map((m) => ({ geom: m.geojson, label: `${fmt(m.area_ha, { maximumFractionDigits: 0 })} ha` })));
+      renderMacrosOnMap(fields, rows);
       if (!rows.length) setMsg(t("Nessuna macro-area trovata con questi criteri."));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
-  function clearMacro() { setMacroAreas([]); mapApi.current?.clearMacroareas(); }
-  function addMacroAsField(m: MacroArea, i: number) { addField(m.geojson, `${t("Macro-area")} ${i + 1}`); }
-  function addAllMacro() {
-    macroAreas.forEach((m, i) => addField(m.geojson, `${t("Macro-area")} ${i + 1}`, false));
-    setTimeout(() => mapApi.current?.fitAll(), 30);
+  function clearMacro() { setMacroAreas([]); renderMacrosOnMap(fields, []); }
+
+  // Aggiunge una macro-area come SOTTO-LIVELLO del campo attivo (il poligono in
+  // cui è inscritta), non come nuovo campo di primo livello.
+  function addMacroToField(m: MacroArea) {
+    if (activeId == null) { needField(); return; }
+    setFields((fs) => {
+      const arr = fs.map((f) => {
+        if (f.id !== activeId) return f;
+        const n = (f.macros?.length ?? 0) + 1;
+        const mm: FieldMacro = {
+          id: nextId.current++, name: `${f.name} · M${n}`,
+          geom: m.geojson, area_ha: m.area_ha, mean_score: m.mean_score,
+        };
+        return { ...f, macros: [...(f.macros ?? []), mm] };
+      });
+      const rest = macroAreas.filter((x) => x !== m);
+      setMacroAreas(rest);
+      renderMacrosOnMap(arr, rest);
+      return arr;
+    });
+  }
+  function addAllMacroToField() {
+    if (activeId == null) { needField(); return; }
+    setFields((fs) => {
+      const arr = fs.map((f) => {
+        if (f.id !== activeId) return f;
+        let n = f.macros?.length ?? 0;
+        const add = macroAreas.map((m) => {
+          n += 1;
+          return { id: nextId.current++, name: `${f.name} · M${n}`, geom: m.geojson, area_ha: m.area_ha, mean_score: m.mean_score } as FieldMacro;
+        });
+        return { ...f, macros: [...(f.macros ?? []), ...add] };
+      });
+      setMacroAreas([]);
+      renderMacrosOnMap(arr, []);
+      return arr;
+    });
+  }
+  function removeFieldMacro(fieldId: number, macroId: number) {
+    setFields((fs) => {
+      const arr = fs.map((f) => f.id === fieldId ? { ...f, macros: (f.macros ?? []).filter((mm) => mm.id !== macroId) } : f);
+      renderMacrosOnMap(arr, macroAreas);
+      return arr;
+    });
+  }
+  function renameFieldMacro(fieldId: number, mm: FieldMacro) {
+    const name = prompt(t("Nome sotto-area"), mm.name); if (!name || name === mm.name) return;
+    setFields((fs) => {
+      const arr = fs.map((f) => f.id === fieldId ? { ...f, macros: (f.macros ?? []).map((x) => x.id === mm.id ? { ...x, name } : x) } : f);
+      renderMacrosOnMap(arr, macroAreas);
+      return arr;
+    });
+  }
+  // Salva un campo e le sue sotto-aree nel progetto (le macro come figlie).
+  async function saveFieldTree(f: Field) {
+    if (!projectId) { setMsg(t("Serve un progetto selezionato per salvare l'area.")); return; }
+    setBusy("save");
+    try {
+      const fa = await api.createArea({
+        project_id: projectId, name: f.name, geojson: f.geom,
+        area_ha: Math.round(ringAreaHa(f.geom.coordinates)), kind: "field",
+      });
+      for (const mm of f.macros ?? []) {
+        await api.createArea({
+          project_id: projectId, name: mm.name, geojson: mm.geom,
+          area_ha: Math.round(mm.area_ha), parent_area_id: fa.id, kind: "macro",
+        });
+      }
+      setFields((fs) => fs.map((x) => x.id === f.id ? { ...x, savedId: fa.id } : x));
+      await refreshAreas(projectId);
+      setMsg(t("Campo e {n} sotto-aree salvati ✓", { n: (f.macros ?? []).length }));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
   }
 
   // ---- canale principale (M6, fase 2) ----
@@ -602,20 +709,60 @@ export default function Page() {
                 <ul className="space-y-1 mt-2">
                   {fields.map((f) => (
                     <li key={f.id}
-                      className={`flex items-center justify-between text-sm rounded-lg px-2 py-1 ${f.id === activeId ? "bg-brand/10 ring-1 ring-brand/40" : "bg-panel"}`}>
-                      <button className="truncate text-left flex-1" title={t("Campo attivo")} onClick={() => selectField(f.id)}>
-                        <span className={f.id === activeId ? "font-semibold text-brand" : ""}>{f.name}</span>
-                        <span className="text-sage"> · {fmt(ringAreaHa(f.geom.coordinates), { maximumFractionDigits: 0 })} ha</span>
-                        {f.lay && <span className="text-brand-light"> · {f.lay.n_pivots} pivot</span>}
-                      </button>
-                      <span className="flex gap-1 shrink-0">
-                        <button className="text-xs text-brand-mid" title={t("Nome campo")} onClick={() => renameField(f)}>✎</button>
-                        <button className="text-xs text-danger" onClick={() => removeField(f)}>✕</button>
-                      </span>
+                      className={`text-sm rounded-lg px-2 py-1 ${f.id === activeId ? "bg-brand/10 ring-1 ring-brand/40" : "bg-panel"} ${f.hidden ? "opacity-50" : ""}`}>
+                      <div className="flex items-center justify-between">
+                        <button className="truncate text-left flex-1" title={t("Seleziona campo")} onClick={() => selectField(f.id)}>
+                          <span className={f.id === activeId ? "font-semibold text-brand" : ""}>{f.name}</span>
+                          <span className="text-sage"> · {fmt(ringAreaHa(f.geom.coordinates), { maximumFractionDigits: 0 })} ha</span>
+                          {!!f.macros?.length && <span className="text-brand-light"> · {f.macros.length} {t("sotto-aree")}</span>}
+                          {f.lay && <span className="text-brand-light"> · {f.lay.n_pivots} pivot</span>}
+                        </button>
+                        <span className="flex gap-1 shrink-0 items-center">
+                          <button className="text-xs text-brand-mid w-4" title={f.hidden ? t("Mostra sulla mappa") : t("Nascondi dalla mappa")} onClick={() => toggleFieldHidden(f.id)}>{f.hidden ? "○" : "◉"}</button>
+                          <button className="text-xs text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(f.name), [{ name: f.name, geom: f.geom }, ...(f.macros ?? []).map((mm) => ({ name: mm.name, geom: mm.geom }))])}>⤓</button>
+                          <button className="text-xs text-brand-mid" title={t("Nome campo")} onClick={() => renameField(f)}>✎</button>
+                          <button className="text-xs text-danger" title={t("Rimuovi")} onClick={() => removeField(f)}>✕</button>
+                        </span>
+                      </div>
+                      {!!f.macros?.length && (
+                        <ul className="mt-1 ml-1 space-y-0.5 border-l-2 border-brand/20 pl-2">
+                          {f.macros.map((mm) => (
+                            <li key={mm.id} className="flex items-center justify-between text-[11px] text-sage-dark">
+                              <span className="truncate flex-1">↳ {mm.name} · {fmt(mm.area_ha, { maximumFractionDigits: 0 })} ha · {t("Idoneità")} {fmt(mm.mean_score)}{mm.savedId ? " ✓" : ""}</span>
+                              <span className="flex gap-1 shrink-0">
+                                <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(mm.name), [{ name: mm.name, geom: mm.geom }])}>⤓</button>
+                                <button className="text-brand-mid" title={t("Nome sotto-area")} onClick={() => renameFieldMacro(f.id, mm)}>✎</button>
+                                <button className="text-danger" title={t("Rimuovi")} onClick={() => removeFieldMacro(f.id, mm.id)}>✕</button>
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </li>
                   ))}
                 </ul>
               )}
+
+            {/* Livelli: accendi/spegni ciò che è disegnato sulla mappa */}
+            {hasFields && (
+              <div className="mt-3">
+                <label className="text-xs text-sage-dark block mb-1">{t("Livelli sulla mappa")}</label>
+                <div className="flex flex-wrap gap-1">
+                  {([
+                    ["fields", t("Campi")],
+                    ["macro", t("Macro-aree")],
+                    ["canal", t("Canali")],
+                    ["layout", t("Layout pivot")],
+                  ] as const).map(([k, lbl]) => (
+                    <button key={k} onClick={() => toggleLayer(k)}
+                      className={"text-[11px] px-2 py-1 rounded-lg transition flex items-center gap-1 " +
+                        (layerVis[k] ? "bg-brand text-white" : "bg-panel text-sage-dark line-through opacity-70")}>
+                      <span>{layerVis[k] ? "◉" : "○"}</span>{lbl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Stesse regole per tutti vs impostazioni per campo */}
             <label className="text-xs text-sage-dark mt-3 block">{t("Regole di progetto")}</label>
@@ -627,22 +774,33 @@ export default function Page() {
               <p className="text-[11px] text-brand-mid mt-1">{t("Stai modificando: {name}", { name: active.name })}</p>
             )}
 
-            <button className="btn-primary w-full mt-3" disabled={busy === "save" || !active || !projectId} onClick={saveArea}>
-              {busy === "save" ? t("Salvo…") : t("Salva area nel progetto")}
+            <button className="btn-primary w-full mt-3" disabled={busy === "save" || !active || !projectId} onClick={() => active && saveFieldTree(active)}>
+              {busy === "save" ? t("Salvo…") : t("Salva campo e sotto-aree nel progetto")}
             </button>
             {!!areas.length && (
               <div className="mt-3">
                 <div className="text-xs font-semibold text-sage-dark mb-1">{t("Aree salvate")}</div>
                 <ul className="space-y-1">
-                  {areas.map((a) => (
-                    <li key={a.id} className="flex items-center justify-between text-sm bg-panel rounded-lg px-2 py-1">
-                      <button className="truncate text-left flex-1" title={t("Carica")} onClick={() => loadArea(a)}>
-                        {a.name} <span className="text-sage">· {a.area_ha ?? "?"} ha</span>
-                      </button>
-                      <span className="flex gap-1 shrink-0">
-                        <button className="text-xs text-brand-mid" onClick={() => renameArea(a)}>✎</button>
-                        <button className="text-xs text-danger" onClick={() => delArea(a)}>✕</button>
-                      </span>
+                  {areas.filter((a) => a.parent_area_id == null).map((a) => (
+                    <li key={a.id} className="text-sm bg-panel rounded-lg px-2 py-1">
+                      <div className="flex items-center justify-between">
+                        <button className="truncate text-left flex-1" title={t("Carica")} onClick={() => loadArea(a)}>
+                          {a.name} <span className="text-sage">· {a.area_ha ?? "?"} ha</span>
+                        </button>
+                        <span className="flex gap-1 shrink-0">
+                          <button className="text-xs text-brand-mid" title={t("Nome area")} onClick={() => renameArea(a)}>✎</button>
+                          <button className="text-xs text-danger" title={t("Rimuovi")} onClick={() => delArea(a)}>✕</button>
+                        </span>
+                      </div>
+                      {areas.filter((c) => c.parent_area_id === a.id).map((c) => (
+                        <div key={c.id} className="flex items-center justify-between text-[11px] text-sage-dark ml-1 mt-0.5 border-l-2 border-brand/20 pl-2">
+                          <button className="truncate text-left flex-1" title={t("Carica")} onClick={() => loadArea(c)}>↳ {c.name} · {c.area_ha ?? "?"} ha</button>
+                          <span className="flex gap-1 shrink-0">
+                            <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(c.name), [{ name: c.name, geom: c.geojson }])}>⤓</button>
+                            <button className="text-danger" title={t("Rimuovi")} onClick={() => delArea(c)}>✕</button>
+                          </span>
+                        </div>
+                      ))}
                     </li>
                   ))}
                 </ul>
@@ -670,7 +828,7 @@ export default function Page() {
             ))}
           </div>
 
-          <section className={secShow("sat")}>
+          <section className={secShow("analisi")}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Anteprima satellitare")}</h3>
             <label className="text-xs text-sage-dark">{t("Indice")}</label>
             <select className="field-input mt-1" value={index} onChange={(e) => setIndex(e.target.value)}>
@@ -706,7 +864,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className={secShow("sat") + " border-t border-black/5 pt-3"}>
+          <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Quota (DEM)")}</h3>
             <div className="flex gap-2">
               <button className="btn-primary flex-1 basis-0" disabled={busy === "dem" || !activeGeom} onClick={showDem}>
@@ -724,7 +882,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className={secShow("suit")}>
+          <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Idoneità del terreno")}</h3>
             <div className="text-xs text-sage-dark mb-1">{t("Pesi dei fattori")}</div>
             <WeightRow label={t("Pendenza")} v={cur.weights.slope} onChange={(v) => setW("slope", v)} />
@@ -785,7 +943,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className={secShow("macro")}>
+          <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Macro-aree")}</h3>
             <p className="hint mb-2">{t("Individua le zone idonee nell'area attiva; usale come campi o rifinisci.")}</p>
             <div className="flex gap-2">
@@ -808,13 +966,14 @@ export default function Page() {
               <div className="mt-3">
                 <div className="flex items-center justify-between mb-1">
                   <div className="text-xs font-semibold text-sage-dark">{macroAreas.length} {t("Macro-aree")}</div>
-                  <button className="text-xs text-brand-mid" onClick={addAllMacro}>{t("Aggiungi tutte come campi")}</button>
+                  <button className="text-xs text-brand-mid disabled:opacity-40" disabled={activeId == null} onClick={addAllMacroToField}>{t("Aggiungi tutte al campo")}</button>
                 </div>
+                <p className="hint mb-1">{active ? t("Verranno aggiunte come sotto-aree di: {name}", { name: active.name }) : t("Seleziona un campo a sinistra per aggiungerle.")}</p>
                 <ul className="space-y-1">
                   {macroAreas.map((m, i) => (
                     <li key={i} className="flex items-center justify-between text-sm bg-panel rounded-lg px-2 py-1">
                       <span className="flex-1 truncate">{t("Macro-area")} {i + 1} · {fmt(m.area_ha, { maximumFractionDigits: 0 })} ha · {t("Idoneità")} {fmt(m.mean_score)}</span>
-                      <button className="text-xs text-brand-mid shrink-0" onClick={() => addMacroAsField(m, i)}>+ {t("Campo")}</button>
+                      <button className="text-xs text-brand-mid shrink-0 disabled:opacity-40" disabled={activeId == null} onClick={() => addMacroToField(m)}>+ {t("Sotto-area")}</button>
                     </li>
                   ))}
                 </ul>

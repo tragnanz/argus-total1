@@ -35,6 +35,29 @@ def get_db():
         db.close()
 
 
+def _ensure_columns() -> None:
+    """Micro-migrazione idempotente: aggiunge colonne nuove a tabelle già
+    esistenti (create_all non altera tabelle preesistenti). Sicura su
+    SQLite e Postgres; ignora l'errore se la colonna c'è già."""
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    if "areas" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("areas")}
+    stmts = []
+    if "parent_area_id" not in cols:
+        stmts.append("ALTER TABLE areas ADD COLUMN parent_area_id INTEGER")
+    if "kind" not in cols:
+        stmts.append("ALTER TABLE areas ADD COLUMN kind VARCHAR(20) DEFAULT 'field'")
+    for s in stmts:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(s))
+        except Exception:  # noqa: BLE001  (colonna già presente / race)
+            pass
+
+
 def init_db() -> None:
     from . import models  # noqa: F401  (registra le tabelle)
     Base.metadata.create_all(bind=engine)
+    _ensure_columns()

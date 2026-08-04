@@ -17,7 +17,10 @@ router = APIRouter(prefix="/api", tags=["projects"])
 
 def _area_out(a: Area) -> AreaOut:
     return AreaOut(
-        id=a.id, project_id=a.project_id, name=a.name,
+        id=a.id, project_id=a.project_id,
+        parent_area_id=getattr(a, "parent_area_id", None),
+        kind=getattr(a, "kind", None) or "field",
+        name=a.name,
         geojson=json.loads(a.geojson), area_ha=a.area_ha, created_at=a.created_at)
 
 
@@ -112,8 +115,13 @@ def list_areas(project_id: int, db: Session = Depends(get_db)):
 def create_area(body: AreaIn, db: Session = Depends(get_db)):
     if not db.get(Project, body.project_id):
         raise HTTPException(400, "Progetto inesistente")
+    if body.parent_area_id is not None:
+        parent = db.get(Area, body.parent_area_id)
+        if not parent or parent.project_id != body.project_id:
+            raise HTTPException(400, "Area padre inesistente o di un altro progetto")
     a = Area(project_id=body.project_id, name=body.name,
-             geojson=body.geojson.model_dump_json(), area_ha=body.area_ha)
+             geojson=body.geojson.model_dump_json(), area_ha=body.area_ha,
+             parent_area_id=body.parent_area_id, kind=body.kind or "field")
     db.add(a); db.commit(); db.refresh(a)
     return _area_out(a)
 
@@ -147,4 +155,8 @@ def delete_area(area_id: int, db: Session = Depends(get_db)):
     a = db.get(Area, area_id)
     if not a:
         raise HTTPException(404, "Area non trovata")
+    # elimina anche le eventuali sotto-aree (il FK cascade non è garantito su
+    # tutti i backend, es. SQLite senza PRAGMA foreign_keys).
+    for child in db.scalars(select(Area).where(Area.parent_area_id == area_id)).all():
+        db.delete(child)
     db.delete(a); db.commit()

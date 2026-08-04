@@ -64,6 +64,8 @@ class AreaIn(BaseModel):
     name: str
     geojson: GeoPolygon
     area_ha: float | None = None
+    parent_area_id: int | None = None   # se valorizzato, è una sotto-area
+    kind: str = "field"                  # "field" | "macro"
 
 
 class AreaPatch(BaseModel):
@@ -75,6 +77,8 @@ class AreaPatch(BaseModel):
 class AreaOut(BaseModel):
     id: int
     project_id: int
+    parent_area_id: int | None = None
+    kind: str = "field"
     name: str
     geojson: GeoPolygon
     area_ha: float | None = None

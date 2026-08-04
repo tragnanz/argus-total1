@@ -21,6 +21,7 @@ export type Project = {
 };
 export type Area = {
   id: number; project_id: number; name: string;
+  parent_area_id?: number | null; kind?: string;
   geojson: Polygon; area_ha?: number | null; created_at: string;
 };
 
@@ -131,6 +132,7 @@ export const listAreas = (projectId: number) =>
   req<Area[]>(`/api/projects/${projectId}/areas`);
 export const createArea = (body: {
   project_id: number; name: string; geojson: Polygon; area_ha?: number | null;
+  parent_area_id?: number | null; kind?: string;
 }) => req<Area>("/api/areas", { method: "POST", body: JSON.stringify(body) });
 export const updateArea = (id: number, patch: {
   name?: string; geojson?: Polygon; area_ha?: number | null;

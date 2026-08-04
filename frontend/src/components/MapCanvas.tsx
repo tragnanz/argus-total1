@@ -8,7 +8,8 @@ export type OverlayKey = "index" | "dem" | "suitability";
 export type FieldGeom = { id: number; name: string; geom: Polygon };
 export type MapHandle = {
   draw: () => void;
-  setFields: (fields: FieldGeom[], activeId: number | null) => void;
+  setFields: (fields: FieldGeom[], activeId: number | null, hidden?: number[]) => void;
+  setLayerVisible: (key: "fields" | "macro" | "canal" | "layout", on: boolean) => void;
   clearAll: () => void;
   fitAll: () => void;
   flyTo: (lat: number, lon: number, zoom?: number) => void;
@@ -28,8 +29,8 @@ export type MapHandle = {
 const ESRI =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 // Campo attivo (in modifica): azzurro pieno. Campi inattivi: verde tratteggiato.
-const ACTIVE_STYLE = { color: "#20aae2", weight: 2, fillColor: "#20aae2", fillOpacity: 0.12 };
-const IDLE_STYLE = { color: "#038037", weight: 2, fillColor: "#038037", fillOpacity: 0.06, dashArray: "5,4" };
+const ACTIVE_STYLE = { color: "#20aae2", weight: 3, fillColor: "#20aae2", fillOpacity: 0.15 };
+const IDLE_STYLE = { color: "#03a047", weight: 3, fillColor: "#038037", fillOpacity: 0.14, dashArray: "6,4" };
 const PHASE = ["#038037", "#20aae2", "#87bf59", "#f0b429", "#b23b1e", "#6b21a8"];
 
 const toLatLng = (ring: number[][]) => ring.map((p) => [p[1], p[0]] as [number, number]);
@@ -156,16 +157,32 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (map as any).pm.enableDraw("Polygon", { allowSelfIntersection: false });
       },
-      setFields(fields, activeId) {
+      setFields(fields, activeId, hidden = []) {
         const map = mapRef.current, grp = fieldsGroupRef.current;
         if (!map || !grp) return;
+        const hide = new Set(hidden);
         clearActive(); grp.clearLayers();
         for (const f of fields) {
+          if (hide.has(f.id)) continue;                 // campo spento: non disegnare
           if (f.id === activeId) { placeActive(f); continue; }
           const ly = L.polygon(toLatLng(f.geom.coordinates[0]), IDLE_STYLE);
           ly.on("click", () => cbRef.current.onSelect?.(f.id));
           if (f.name) ly.bindTooltip(f.name, { permanent: true, direction: "center", className: "field-label" });
           grp.addLayer(ly);
+        }
+      },
+      setLayerVisible(key, on) {
+        const map = mapRef.current; if (!map) return;
+        const groups: Record<string, (L.LayerGroup | null)[]> = {
+          fields: [fieldsGroupRef.current],
+          macro: [macroRef.current],
+          canal: [canalRef.current, pendingRef.current],
+          layout: [layoutRef.current],
+        };
+        for (const g of groups[key] || []) {
+          if (!g) continue;
+          if (on) { if (!map.hasLayer(g)) g.addTo(map); }
+          else { if (map.hasLayer(g)) map.removeLayer(g); }
         }
       },
       clearAll() { clearActive(); fieldsGroupRef.current?.clearLayers(); },
