@@ -55,17 +55,17 @@ def _dem_grid(client, geom):
     top = miny + hp * res
     sig = hashlib.sha1(f"{epsg}|{round(minx)}|{round(miny)}|{wp}|{hp}".encode()).hexdigest()[:16]
     if sig in _DEM_CACHE:
-        slope = _DEM_CACHE[sig]
+        dem, slope = _DEM_CACHE[sig]
     else:
         south, east = top - hp * res, minx + wp * res
         dem = client.fetch_dem([minx, south, east, top], epsg, wp, hp).astype("float64")
         gy, gx = np.gradient(dem, res, res)
         slope = np.sqrt(gx ** 2 + gy ** 2) * 100.0
-        _DEM_CACHE[sig] = slope
-    # top/res/wp/hp = griglia DEM (per campionare la pendenza).
+        _DEM_CACHE[sig] = (dem, slope)
+    # top/res/wp/hp = griglia DEM (per campionare pendenza e quota).
     # minx/miny/maxx/maxy = bbox VERO del poligono (per reticolo e canale).
     return dict(epsg=epsg, minx=minx, miny=miny, maxx=maxx, maxy=maxy,
-                top=top, res=res, wp=wp, hp=hp, to_wgs=to_wgs, slope=slope)
+                top=top, res=res, wp=wp, hp=hp, to_wgs=to_wgs, slope=slope, dem=dem)
 
 
 def _slope_at(g, x, y) -> float:
@@ -75,6 +75,16 @@ def _slope_at(g, x, y) -> float:
         v = g["slope"][row, col]
         return float(v) if np.isfinite(v) else 0.0
     return 0.0
+
+
+def _elev_at(g, x, y) -> float:
+    """Quota (m) dal DEM nel punto UTM (x, y); NaN se fuori griglia/non finita."""
+    col = int((x - g["minx"]) / g["res"])
+    row = int((g["top"] - y) / g["res"])
+    if 0 <= row < g["hp"] and 0 <= col < g["wp"]:
+        v = g["dem"][row, col]
+        return float(v) if np.isfinite(v) else float("nan")
+    return float("nan")
 
 
 def _azimuth_longest_edge(ring_xy) -> float:
@@ -164,8 +174,21 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
                 best_len = d; mid = ((x1 + x2) / 2, (y1 + y2) / 2)
         le_mid = rot(*mid)
     top = True if le_mid is None else (le_mid[1] >= (rminy + rmaxy) / 2)
+    # Canali a gravità: l'acqua scende dall'alto verso il basso → il canale va
+    # sul bordo PIÙ ALTO, così serve i pivot a valle. (Le tubazioni in pressione
+    # spingono anche in salita: nessun vincolo di direzione.)
+    if transport == "canal":
+        xs_s = np.linspace(rminx + R, rmaxx - R, 20)
+        def _edge_elev(cry):
+            vals = [_elev_at(g, *unrot(float(sx), cry)) for sx in xs_s]
+            vals = [v for v in vals if v == v]
+            return (sum(vals) / len(vals)) if vals else float("nan")
+        e_top, e_bot = _edge_elev(rmaxy), _edge_elev(rminy)
+        if e_top == e_top and e_bot == e_bot:
+            top = e_top >= e_bot
     if canal_flip:
         top = not top
+    canal_ry = rmaxy if top else rminy      # riga del canale nel frame ruotato
 
     # --- reticolo dei centri (parte dal canale) ---
     s = 2 * R + gap                                             # interasse minimo tra pivot
@@ -188,6 +211,12 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
             if path_rot.contains_point((rx, ry)) and path_rot.contains_points(pts).all():
                 x, y = unrot(rx, ry)
                 ok = _slope_at(g, x, y) <= slope_max
+                if ok and transport == "canal":
+                    # gravità: il pivot dev'essere a valle del canale (quota ≤ canale)
+                    e_p = _elev_at(g, x, y)
+                    e_c = _elev_at(g, *unrot(rx, canal_ry))
+                    if e_p == e_p and e_c == e_c:
+                        ok = e_p <= e_c + 1e-6
                 if ok and only_suitable and suit is not None:
                     sc = sample_grid(suit[0], suit[1], x, y)
                     ok = (sc == sc) and sc >= min_suit          # sc==sc → non NaN

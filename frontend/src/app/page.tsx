@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.5.2";
+const REV = "v0.5.3";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -455,9 +455,9 @@ export default function Page() {
               {hasFields && <span className="text-[11px] text-sage-dark">{fields.length} {t("campi")} · {fmt(totalHa, { maximumFractionDigits: 0 })} ha</span>}
             </div>
             <div className="flex gap-2">
-              <button className="btn-primary flex-1" onClick={draw}>{t("Disegna area")}</button>
-              <button className="btn-ghost" onClick={() => fileRef.current?.click()}>{t("Importa")}</button>
-              <button className="btn-ghost" onClick={clearAllFields}>{t("Svuota campi")}</button>
+              <button className="btn-primary flex-1 basis-0" onClick={draw}>{t("Disegna area")}</button>
+              <button className="btn-ghost flex-1 basis-0" onClick={() => fileRef.current?.click()}>{t("Importa")}</button>
+              <button className="btn-ghost flex-1 basis-0" onClick={clearAllFields}>{t("Svuota campi")}</button>
             </div>
             <input ref={fileRef} type="file" accept=".geojson,.json,.kml,.kmz" className="hidden"
               onChange={(e) => { importFile(e.target.files?.[0] ?? undefined); if (e.target) e.target.value = ""; }} />
