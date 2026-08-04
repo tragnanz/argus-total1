@@ -153,6 +153,25 @@ class MacroArea(BaseModel):
     mean_score: float
 
 
+# ---------- Canale principale automatico (M6, Fase 2) ----------
+class CanalIn(BaseModel):
+    geom: GeoPolygon
+    target_permille: float = Field(default=1.0, ge=0.1, le=100)
+
+
+class CanalOut(BaseModel):
+    geojson: dict[str, Any]
+    length_m: float
+    drop_m: float
+    mean_permille: float
+    target_permille: float
+    start: list[float]
+    end: list[float]
+    elev_start_m: float
+    elev_end_m: float
+    profile: list[list[float]]
+
+
 # ---------- Layout pivot + dimensionamento idrico (M3) ----------
 class LayoutIn(BaseModel):
     geom: GeoPolygon

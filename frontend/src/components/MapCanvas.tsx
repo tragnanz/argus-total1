@@ -18,6 +18,8 @@ export type MapHandle = {
   clearLayout: () => void;
   showMacroareas: (items: { geom: Polygon; label: string }[]) => void;
   clearMacroareas: () => void;
+  showCanal: (coords: number[][], start: number[], end: number[], startLabel: string, endLabel: string) => void;
+  clearCanal: () => void;
 };
 
 const ESRI =
@@ -54,6 +56,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
     { index: null, dem: null, suitability: null });
   const layoutRef = useRef<L.LayerGroup | null>(null);
   const macroRef = useRef<L.LayerGroup | null>(null);
+  const canalRef = useRef<L.LayerGroup | null>(null);
 
   // Callback sempre aggiornate (la mappa viene creata una sola volta).
   const cbRef = useRef({ onCreate, onEditActive, onSelect });
@@ -67,6 +70,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
     L.control.zoom({ position: "bottomleft" }).addTo(map);
     fieldsGroupRef.current = L.layerGroup().addTo(map);
     macroRef.current = L.layerGroup().addTo(map);
+    canalRef.current = L.layerGroup().addTo(map);
     layoutRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
@@ -212,6 +216,21 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         if (b && b.isValid()) map.fitBounds(b, { padding: [40, 40] });
       },
       clearMacroareas() { macroRef.current?.clearLayers(); },
+      showCanal(coords, start, end, startLabel, endLabel) {
+        const map = mapRef.current, g = canalRef.current;
+        if (!map || !g) return;
+        g.clearLayers();
+        const latlngs = coords.map((p) => [p[1], p[0]] as [number, number]);
+        const line = L.polyline(latlngs, { color: "#0284c7", weight: 4, opacity: 0.9 });
+        g.addLayer(line);
+        const mk = (p: number[], color: string, label: string) =>
+          L.circleMarker([p[1], p[0]], { radius: 6, color: "#08341c", weight: 2, fillColor: color, fillOpacity: 1 })
+            .bindTooltip(label, { permanent: true, direction: "top", className: "field-label" });
+        g.addLayer(mk(start, "#038037", startLabel));   // presa (alto)
+        g.addLayer(mk(end, "#b23b1e", endLabel));        // sbocco (basso)
+        try { const b = line.getBounds(); if (b.isValid()) map.fitBounds(b, { padding: [50, 50] }); } catch { /* */ }
+      },
+      clearCanal() { canalRef.current?.clearLayers(); },
     };
   });
 

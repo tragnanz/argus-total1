@@ -8,11 +8,11 @@ import { parseFieldsFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
 import type {
   Area, Client, Polygon, Project, Scene, ColorScale, SuitMeta, SuitWeights,
-  LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea,
+  LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea, Canal,
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.0";
+const REV = "v0.6.1";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -114,6 +114,9 @@ export default function Page() {
   const [macroAreas, setMacroAreas] = useState<MacroArea[]>([]);
   const [macroThr, setMacroThr] = useState(60);
   const [macroMinHa, setMacroMinHa] = useState(10);
+  // canale principale (M6, fase 2)
+  const [canal, setCanal] = useState<Canal | null>(null);
+  const [canalPermille, setCanalPermille] = useState(1);
 
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState<string>("");
@@ -307,6 +310,18 @@ export default function Page() {
     macroAreas.forEach((m, i) => addField(m.geojson, `${t("Macro-area")} ${i + 1}`, false));
     setTimeout(() => mapApi.current?.fitAll(), 30);
   }
+
+  // ---- canale principale (M6, fase 2) ----
+  async function traceCanal() {
+    if (!activeGeom) return needField();
+    setBusy("canal"); setMsg("");
+    try {
+      const cc = await api.fetchCanal(activeGeom, canalPermille);
+      setCanal(cc);
+      mapApi.current?.showCanal(cc.geojson.coordinates, cc.start, cc.end, t("Presa"), t("Sbocco"));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  function clearCanalUI() { setCanal(null); mapApi.current?.clearCanal(); }
 
   // ---- layout pivot (tutti i campi) ----
   function paramsFrom(s: Settings): LayoutParams {
@@ -699,6 +714,30 @@ export default function Page() {
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+          </section>
+
+          <section className="border-t border-black/5 pt-3">
+            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Canale principale")}</h3>
+            <p className="hint mb-2">{t("Traccia il canale a gravità a pendenza costante dal punto più alto.")}</p>
+            <label className="text-xs text-sage-dark block">{t("Pendenza target (‰)")}
+              <input type="number" min={0.1} max={100} step={0.5} value={canalPermille}
+                onChange={(e) => setCanalPermille(Number(e.target.value))} className="field-input mt-1" />
+            </label>
+            <div className="flex gap-2 mt-2">
+              <button className="btn-primary flex-1 basis-0" disabled={busy === "canal" || !activeGeom} onClick={traceCanal}>
+                {busy === "canal" ? t("Calcolo…") : t("Traccia canale")}
+              </button>
+              <button className="btn-ghost flex-1 basis-0" onClick={clearCanalUI}>{t("Rimuovi")}</button>
+            </div>
+            {canal && (
+              <div className="mt-3 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
+                {t("Lunghezza")}: <b>{fmt(canal.length_m / 1000, { maximumFractionDigits: 2 })} km</b> · {t("Dislivello")}: {fmt(canal.drop_m, { maximumFractionDigits: 1 })} m<br />
+                {t("Pendenza media")}: <b>{fmt(canal.mean_permille)}‰</b> · {t("Pendenza target (‰)")}: {fmt(canal.target_permille)}‰
+                {canal.mean_permille > canal.target_permille * 1.5 && (
+                  <><br /><span className="text-danger">{t("Pendenza reale oltre il target: terreno acclive.")}</span></>
+                )}
               </div>
             )}
           </section>

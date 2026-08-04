@@ -157,6 +157,15 @@ export const fetchMacroareas = (geom: Polygon, date: string, p: SuitParams & { m
     method: "POST", body: JSON.stringify({ geom, date, ...p }),
   });
 
+export type Canal = {
+  geojson: { type: "LineString"; coordinates: number[][] };
+  length_m: number; drop_m: number; mean_permille: number; target_permille: number;
+  start: number[]; end: number[]; elev_start_m: number; elev_end_m: number;
+  profile: number[][];
+};
+export const fetchCanal = (geom: Polygon, target_permille: number) =>
+  req<Canal>("/api/canal", { method: "POST", body: JSON.stringify({ geom, target_permille }) });
+
 export const fetchSuitability = (geom: Polygon, date: string, p: SuitParams) =>
   req<Suitability>("/api/suitability", {
     method: "POST",
