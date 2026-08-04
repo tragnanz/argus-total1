@@ -8,7 +8,7 @@
 databases:
   - name: argus-total-db
     databaseName: argus_total
-    plan: free
+    plan: basic-256mb
 
 services:
   # ---------------- Backend FastAPI ----------------
