@@ -163,8 +163,14 @@ export type Canal = {
   start: number[]; end: number[]; elev_start_m: number; elev_end_m: number;
   profile: number[][];
 };
-export const fetchCanal = (geom: Polygon, target_permille: number) =>
-  req<Canal>("/api/canal", { method: "POST", body: JSON.stringify({ geom, target_permille }) });
+export const fetchCanal = (
+  geom: Polygon, target_permille: number,
+  start?: number[] | null, end?: number[] | null,
+) =>
+  req<Canal>("/api/canal", {
+    method: "POST",
+    body: JSON.stringify({ geom, target_permille, start: start ?? null, end: end ?? null }),
+  });
 
 export type GuidedResult = { geojson: GeoJSONFC; meta: Record<string, number> };
 export const fetchGuided = (geom: Polygon, p: {

@@ -14,7 +14,7 @@ from .routers import canal, guided, layout, macroareas, projects, report, satell
 from .schemas import HealthOut
 
 # Revisione backend: allineala alla REV del frontend a ogni versione.
-REV = "0.6.4"
+REV = "0.6.5"
 
 app = FastAPI(title=settings.app_name, version=REV)
 

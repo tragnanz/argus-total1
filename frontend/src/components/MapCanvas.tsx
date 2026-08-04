@@ -18,8 +18,11 @@ export type MapHandle = {
   clearLayout: () => void;
   showMacroareas: (items: { geom: Polygon; label: string }[]) => void;
   clearMacroareas: () => void;
-  showCanal: (coords: number[][], start: number[], end: number[], startLabel: string, endLabel: string) => void;
+  showCanals: (canals: { coords: number[][]; start: number[]; end: number[] }[], startLabel: string, endLabel: string) => void;
+  showPending: (start: number[] | null, end: number[] | null, startLabel: string, endLabel: string) => void;
   clearCanal: () => void;
+  armPick: (cb: (lon: number, lat: number) => void) => void;
+  disarmPick: () => void;
 };
 
 const ESRI =
@@ -57,6 +60,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
   const layoutRef = useRef<L.LayerGroup | null>(null);
   const macroRef = useRef<L.LayerGroup | null>(null);
   const canalRef = useRef<L.LayerGroup | null>(null);
+  const pendingRef = useRef<L.LayerGroup | null>(null);
+  const pickCbRef = useRef<((lon: number, lat: number) => void) | null>(null);
 
   // Callback sempre aggiornate (la mappa viene creata una sola volta).
   const cbRef = useRef({ onCreate, onEditActive, onSelect });
@@ -71,8 +76,18 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
     fieldsGroupRef.current = L.layerGroup().addTo(map);
     macroRef.current = L.layerGroup().addTo(map);
     canalRef.current = L.layerGroup().addTo(map);
+    pendingRef.current = L.layerGroup().addTo(map);
     layoutRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
+
+    // Selezione di un punto (presa/finale del canale): un solo clic quando armato.
+    map.on("click", (e: L.LeafletMouseEvent) => {
+      const cb = pickCbRef.current;
+      if (!cb) return;
+      pickCbRef.current = null;
+      try { map.getContainer().style.cursor = ""; } catch { /* */ }
+      cb(e.latlng.lng, e.latlng.lat);
+    });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (map as any).pm?.setGlobalOptions({
@@ -216,21 +231,50 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         if (b && b.isValid()) map.fitBounds(b, { padding: [40, 40] });
       },
       clearMacroareas() { macroRef.current?.clearLayers(); },
-      showCanal(coords, start, end, startLabel, endLabel) {
+      showCanals(canals, startLabel, endLabel) {
         const map = mapRef.current, g = canalRef.current;
         if (!map || !g) return;
         g.clearLayers();
-        const latlngs = coords.map((p) => [p[1], p[0]] as [number, number]);
-        const line = L.polyline(latlngs, { color: "#0284c7", weight: 4, opacity: 0.9 });
-        g.addLayer(line);
+        let b: L.LatLngBounds | null = null;
         const mk = (p: number[], color: string, label: string) =>
           L.circleMarker([p[1], p[0]], { radius: 6, color: "#08341c", weight: 2, fillColor: color, fillOpacity: 1 })
             .bindTooltip(label, { permanent: true, direction: "top", className: "field-label" });
-        g.addLayer(mk(start, "#038037", startLabel));   // presa (alto)
-        g.addLayer(mk(end, "#b23b1e", endLabel));        // sbocco (basso)
-        try { const b = line.getBounds(); if (b.isValid()) map.fitBounds(b, { padding: [50, 50] }); } catch { /* */ }
+        for (let i = 0; i < canals.length; i++) {
+          const cc = canals[i];
+          const latlngs = cc.coords.map((p) => [p[1], p[0]] as [number, number]);
+          const line = L.polyline(latlngs, { color: "#0284c7", weight: 4, opacity: 0.9 });
+          line.bindTooltip(`${startLabel.charAt(0)}${i + 1}`, { permanent: false, direction: "center" });
+          g.addLayer(line);
+          g.addLayer(mk(cc.start, "#038037", `${startLabel} ${i + 1}`));  // presa (alto)
+          g.addLayer(mk(cc.end, "#b23b1e", `${endLabel} ${i + 1}`));      // sbocco (basso)
+          try { const lb = line.getBounds(); if (lb.isValid()) b = b ? b.extend(lb) : L.latLngBounds(lb.getSouthWest(), lb.getNorthEast()); } catch { /* */ }
+        }
+        if (b && b.isValid()) map.fitBounds(b, { padding: [50, 50] });
       },
-      clearCanal() { canalRef.current?.clearLayers(); },
+      showPending(start, end, startLabel, endLabel) {
+        const g = pendingRef.current;
+        if (!g) return;
+        g.clearLayers();
+        const mk = (p: number[], color: string, label: string) =>
+          L.marker([p[1], p[0]], {
+            icon: L.divIcon({
+              className: "canal-pin",
+              html: `<div style="background:${color};border:2px solid #fff;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 2px ${color}"></div>`,
+              iconSize: [16, 16], iconAnchor: [8, 8],
+            }),
+          }).bindTooltip(label, { permanent: true, direction: "top", className: "field-label" });
+        if (start) g.addLayer(mk(start, "#038037", startLabel));
+        if (end) g.addLayer(mk(end, "#b23b1e", endLabel));
+      },
+      clearCanal() { canalRef.current?.clearLayers(); pendingRef.current?.clearLayers(); },
+      armPick(cb) {
+        pickCbRef.current = cb;
+        try { if (mapRef.current) mapRef.current.getContainer().style.cursor = "crosshair"; } catch { /* */ }
+      },
+      disarmPick() {
+        pickCbRef.current = null;
+        try { if (mapRef.current) mapRef.current.getContainer().style.cursor = ""; } catch { /* */ }
+      },
     };
   });
 

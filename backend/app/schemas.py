@@ -157,6 +157,8 @@ class MacroArea(BaseModel):
 class CanalIn(BaseModel):
     geom: GeoPolygon
     target_permille: float = Field(default=1.0, ge=0.1, le=100)
+    start: list[float] | None = None  # [lon, lat] presa manuale
+    end: list[float] | None = None    # [lon, lat] finale manuale
 
 
 class CanalOut(BaseModel):

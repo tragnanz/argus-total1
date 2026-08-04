@@ -10,10 +10,25 @@ from __future__ import annotations
 
 import heapq
 import numpy as np
+import pyproj
 
 from processing.satellite_export import _utm_bbox, _plan_grid
 from .suitability import _poly_mask
 from .macroareas import _rdp
+
+
+def _snap_cell(ctx, valid, to_utm, lon: float, lat: float):
+    """Cella (row, col) del punto lon/lat, agganciata alla cella valida più vicina."""
+    x, y = to_utm.transform(lon, lat)
+    col = int((x - ctx["minx"]) / ctx["res"]); row = int((ctx["top"] - y) / ctx["res"])
+    hp, wp = ctx["hp"], ctx["wp"]
+    if 0 <= row < hp and 0 <= col < wp and valid[row, col]:
+        return row, col
+    ys, xs = np.where(valid)
+    if len(xs) == 0:
+        raise RuntimeError("Area non valida per il canale.")
+    k = int(np.argmin((xs - col) ** 2 + (ys - row) ** 2))
+    return int(ys[k]), int(xs[k])
 
 
 def _dem_and_grid(client, geom: dict, max_dim: int = 360):
@@ -32,21 +47,26 @@ _NB = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
 
 
 def _route(client, geom: dict, target_permille: float = 1.0,
-           tol_up_m: float = 0.05) -> dict:
+           tol_up_m: float = 0.05, start_ll=None, end_ll=None) -> dict:
     """Instrada il canale e ritorna dati grezzi (dem, mask, ctx, percorso in
-    celle e in UTM). Riusato dalla Fase 2 (API) e dalla Fase 3 (pivot)."""
+    celle e in UTM). Riusato dalla Fase 2 (API) e dalla Fase 3 (pivot).
+    Se start_ll/end_ll (lon,lat) sono dati, presa/finale sono manuali."""
     dem, mask, ctx = _dem_and_grid(client, geom)
     res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
     to_wgs = ctx["to_wgs"]
+    to_utm = pyproj.Transformer.from_crs(4326, ctx["epsg"], always_xy=True)
     grad = max(1e-4, float(target_permille) / 1000.0)
 
     valid = mask & np.isfinite(dem)
     if int(valid.sum()) < 10:
         raise RuntimeError("Area troppo piccola o DEM non disponibile.")
 
-    # presa = cella valida più alta; costo Dijkstra da lì (solo discesa)
-    demx = np.where(valid, dem, -np.inf)
-    s_row, s_col = (int(i) for i in np.unravel_index(int(np.argmax(demx)), demx.shape))
+    # presa: manuale se indicata, altrimenti la cella valida più alta
+    if start_ll is not None:
+        s_row, s_col = _snap_cell(ctx, valid, to_utm, start_ll[0], start_ll[1])
+    else:
+        demx = np.where(valid, dem, -np.inf)
+        s_row, s_col = (int(i) for i in np.unravel_index(int(np.argmax(demx)), demx.shape))
 
     INF = float("inf")
     dist = np.full((hp, wp), INF)
@@ -79,24 +99,35 @@ def _route(client, geom: dict, target_permille: float = 1.0,
                 prev[nr, nc] = (r, c)
                 heapq.heappush(pq, (nd, nr, nc))
 
-    # sbocco = cella di BORDO raggiungibile con quota più bassa (il canale
-    # attraversa l'area dalla presa fino a uscire sul lato basso).
+    # sbocco: manuale se indicato, altrimenti la cella di BORDO raggiungibile
+    # con quota più bassa (il canale attraversa l'area dalla presa fino a
+    # uscire sul lato basso).
     reach = np.isfinite(dist)
     if int(reach.sum()) < 2:
         raise RuntimeError("Impossibile tracciare un canale a gravità nell'area.")
-    border = np.zeros((hp, wp), dtype=bool)
-    border[:, :] = valid
-    inner = np.zeros((hp, wp), dtype=bool)
-    inner[1:-1, 1:-1] = (valid[1:-1, 1:-1] & valid[:-2, 1:-1] & valid[2:, 1:-1]
-                         & valid[1:-1, :-2] & valid[1:-1, 2:])
-    border = valid & ~inner                  # celle valide sul bordo dell'area
-    cand = reach & border
-    if int(cand.sum()) < 1:
-        cand = reach
-    demn = np.where(cand, dem, np.inf)
-    e_row, e_col = (int(i) for i in np.unravel_index(int(np.argmin(demn)), demn.shape))
-    if (e_row, e_col) == (s_row, s_col):
-        raise RuntimeError("L'area è pianeggiante o senza dislivello sfruttabile.")
+    if end_ll is not None:
+        e_row, e_col = _snap_cell(ctx, valid, to_utm, end_ll[0], end_ll[1])
+        if not np.isfinite(dist[e_row, e_col]):
+            raise RuntimeError(
+                "Punto finale non raggiungibile in discesa dalla presa: "
+                "si trova più in alto o oltre una risalita. Scegli un finale "
+                "più a valle o sposta la presa.")
+        if (e_row, e_col) == (s_row, s_col):
+            raise RuntimeError("Presa e finale coincidono: scegli due punti distinti.")
+    else:
+        border = np.zeros((hp, wp), dtype=bool)
+        border[:, :] = valid
+        inner = np.zeros((hp, wp), dtype=bool)
+        inner[1:-1, 1:-1] = (valid[1:-1, 1:-1] & valid[:-2, 1:-1] & valid[2:, 1:-1]
+                             & valid[1:-1, :-2] & valid[1:-1, 2:])
+        border = valid & ~inner              # celle valide sul bordo dell'area
+        cand = reach & border
+        if int(cand.sum()) < 1:
+            cand = reach
+        demn = np.where(cand, dem, np.inf)
+        e_row, e_col = (int(i) for i in np.unravel_index(int(np.argmin(demn)), demn.shape))
+        if (e_row, e_col) == (s_row, s_col):
+            raise RuntimeError("L'area è pianeggiante o senza dislivello sfruttabile.")
 
     # ricostruzione percorso presa → sbocco
     path = []
@@ -117,9 +148,11 @@ def _route(client, geom: dict, target_permille: float = 1.0,
     return {"dem": dem, "mask": mask, "ctx": ctx, "path": path, "xy": xy}
 
 
-def trace_canal(client, geom: dict, target_permille: float = 1.0) -> dict:
-    """API Fase 2: canale + profilo + statistiche (lon/lat)."""
-    r = _route(client, geom, target_permille)
+def trace_canal(client, geom: dict, target_permille: float = 1.0,
+                start_ll=None, end_ll=None) -> dict:
+    """API Fase 2: canale + profilo + statistiche (lon/lat).
+    Se start_ll/end_ll (lon,lat) sono dati, presa/finale sono manuali."""
+    r = _route(client, geom, target_permille, start_ll=start_ll, end_ll=end_ll)
     dem, ctx, path, xy = r["dem"], r["ctx"], r["path"], r["xy"]
     res = ctx["res"]; to_wgs = ctx["to_wgs"]
 

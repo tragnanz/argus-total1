@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.4";
+const REV = "v0.6.5";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -136,9 +136,12 @@ export default function Page() {
   const [macroAreas, setMacroAreas] = useState<MacroArea[]>([]);
   const [macroThr, setMacroThr] = useState(60);
   const [macroMinHa, setMacroMinHa] = useState(10);
-  // canale principale (M6, fase 2)
-  const [canal, setCanal] = useState<Canal | null>(null);
+  // canale principale (M6, fase 2) — più canali, presa/finale manuali
+  const [canals, setCanals] = useState<Canal[]>([]);
   const [canalPermille, setCanalPermille] = useState(1);
+  const [canalStart, setCanalStart] = useState<number[] | null>(null);
+  const [canalEnd, setCanalEnd] = useState<number[] | null>(null);
+  const [pickMode, setPickMode] = useState<"start" | "end" | null>(null);
   // pivot lungo il canale (M6, fase 3)
   const [guided, setGuided] = useState<GuidedResult | null>(null);
   const [perSide, setPerSide] = useState(2);
@@ -352,16 +355,50 @@ export default function Page() {
   }
 
   // ---- canale principale (M6, fase 2) ----
+  function armPick(kind: "start" | "end") {
+    setPickMode(kind);
+    setMsg(kind === "start" ? t("Clicca sulla mappa per posizionare la presa.")
+                            : t("Clicca sulla mappa per posizionare il finale."));
+    mapApi.current?.armPick((lon, lat) => {
+      const pt = [lon, lat];
+      if (kind === "start") setCanalStart(pt); else setCanalEnd(pt);
+      setPickMode(null); setMsg("");
+      mapApi.current?.showPending(
+        kind === "start" ? pt : canalStart,
+        kind === "end" ? pt : canalEnd,
+        t("Presa"), t("Finale"));
+    });
+  }
+  function cancelPick() { setPickMode(null); setMsg(""); mapApi.current?.disarmPick(); }
+  function resetPicks() {
+    setCanalStart(null); setCanalEnd(null);
+    mapApi.current?.showPending(null, null, t("Presa"), t("Finale"));
+  }
   async function traceCanal() {
     if (!activeGeom) return needField();
     setBusy("canal"); setMsg("");
     try {
-      const cc = await api.fetchCanal(activeGeom, canalPermille);
-      setCanal(cc);
-      mapApi.current?.showCanal(cc.geojson.coordinates, cc.start, cc.end, t("Presa"), t("Sbocco"));
+      const cc = await api.fetchCanal(activeGeom, canalPermille, canalStart, canalEnd);
+      const next = [...canals, cc];
+      setCanals(next);
+      setCanalStart(null); setCanalEnd(null);
+      mapApi.current?.showPending(null, null, t("Presa"), t("Finale"));
+      mapApi.current?.showCanals(
+        next.map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end })),
+        t("Presa"), t("Sbocco"));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
-  function clearCanalUI() { setCanal(null); mapApi.current?.clearCanal(); }
+  function removeCanal(i: number) {
+    const next = canals.filter((_, k) => k !== i);
+    setCanals(next);
+    mapApi.current?.showCanals(
+      next.map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end })),
+      t("Presa"), t("Sbocco"));
+  }
+  function clearCanalUI() {
+    setCanals([]); setCanalStart(null); setCanalEnd(null); setPickMode(null);
+    mapApi.current?.disarmPick(); mapApi.current?.clearCanal();
+  }
 
   // ---- pivot lungo il canale (M6, fase 3) ----
   async function designGuided() {
@@ -787,25 +824,53 @@ export default function Page() {
 
           <section className={secShow("canal")}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Canale principale")}</h3>
-            <p className="hint mb-2">{t("Traccia il canale a gravità a pendenza costante dal punto più alto.")}</p>
+            <p className="hint mb-2">{t("Traccia uno o più canali a gravità a pendenza costante. Definisci presa e finale, oppure lascia automatico.")}</p>
             <label className="text-xs text-sage-dark block">{t("Pendenza target (‰)")}
               <input type="number" min={0.1} max={100} step={0.5} value={canalPermille}
                 onChange={(e) => setCanalPermille(Number(e.target.value))} className="field-input mt-1" />
             </label>
+
+            <div className="bg-panel rounded-lg p-2 mt-2">
+              <div className="text-xs font-semibold text-sage-dark mb-1">{t("Presa e finale (opzionali)")}</div>
+              <div className="flex gap-2">
+                <button className={`flex-1 basis-0 ${pickMode === "start" ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() => (pickMode === "start" ? cancelPick() : armPick("start"))}>
+                  {pickMode === "start" ? t("Clicca sulla mappa…") : (canalStart ? "✓ " : "") + t("Imposta presa")}
+                </button>
+                <button className={`flex-1 basis-0 ${pickMode === "end" ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() => (pickMode === "end" ? cancelPick() : armPick("end"))}>
+                  {pickMode === "end" ? t("Clicca sulla mappa…") : (canalEnd ? "✓ " : "") + t("Imposta finale")}
+                </button>
+              </div>
+              {(canalStart || canalEnd) && (
+                <button className="text-xs text-brand-mid mt-1" onClick={resetPicks}>{t("Azzera presa/finale")}</button>
+              )}
+              <p className="hint mt-1">{t("Se non impostati: presa nel punto più alto, finale sul bordo più basso.")}</p>
+            </div>
+
             <div className="flex gap-2 mt-2">
               <button className="btn-primary flex-1 basis-0" disabled={busy === "canal" || !activeGeom} onClick={traceCanal}>
-                {busy === "canal" ? t("Calcolo…") : t("Traccia canale")}
+                {busy === "canal" ? t("Calcolo…") : t("Aggiungi canale")}
               </button>
-              <button className="btn-ghost flex-1 basis-0" onClick={clearCanalUI}>{t("Rimuovi")}</button>
+              <button className="btn-ghost flex-1 basis-0" disabled={!canals.length && !canalStart && !canalEnd} onClick={clearCanalUI}>{t("Rimuovi tutti")}</button>
             </div>
-            {canal && (
-              <div className="mt-3 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
-                {t("Lunghezza")}: <b>{fmt(canal.length_m / 1000, { maximumFractionDigits: 2 })} km</b> · {t("Dislivello")}: {fmt(canal.drop_m, { maximumFractionDigits: 1 })} m<br />
-                {t("Pendenza media")}: <b>{fmt(canal.mean_permille)}‰</b> · {t("Pendenza target (‰)")}: {fmt(canal.target_permille)}‰
-                {canal.mean_permille > canal.target_permille * 1.5 && (
-                  <><br /><span className="text-danger">{t("Pendenza reale oltre il target: terreno acclive.")}</span></>
-                )}
-              </div>
+
+            {canals.length > 0 && (
+              <ul className="mt-3 space-y-2">
+                {canals.map((c, i) => (
+                  <li key={i} className="text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
+                    <div className="flex items-center justify-between mb-1">
+                      <b className="text-brand-darker">{t("Canale")} {i + 1}</b>
+                      <button className="text-xs text-danger shrink-0" onClick={() => removeCanal(i)}>{t("Rimuovi")}</button>
+                    </div>
+                    {t("Lunghezza")}: <b>{fmt(c.length_m / 1000, { maximumFractionDigits: 2 })} km</b> · {t("Dislivello")}: {fmt(c.drop_m, { maximumFractionDigits: 1 })} m<br />
+                    {t("Pendenza media")}: <b>{fmt(c.mean_permille)}‰</b> · {t("Pendenza target (‰)")}: {fmt(c.target_permille)}‰
+                    {c.mean_permille > c.target_permille * 1.5 && (
+                      <><br /><span className="text-danger">{t("Pendenza reale oltre il target: terreno acclive.")}</span></>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
           </section>
 
