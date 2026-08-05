@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.16";
+const REV = "v0.6.17";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -125,6 +125,25 @@ const IcoRedo = () => (<svg {...svgProps}><path d="m15 14 5-5-5-5" /><path d="M2
 const IcoLayers = () => (<svg {...svgProps}><path d="m12 2 9 5-9 5-9-5 9-5Z" /><path d="m3 12 9 5 9-5" /><path d="m3 17 9 5 9-5" /></svg>);
 const IcoRuler = () => (<svg {...svgProps}><path d="M3 15 15 3l6 6L9 21z" /><path d="M7.5 10.5 9 12M10.5 7.5 12 9M13.5 4.5 15 6" /></svg>);
 const IcoCross = () => (<svg {...svgProps}><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></svg>);
+
+// Intestazione di sezione con testo-guida apribile/chiudibile da "?"
+// (compatta la vista: i suggerimenti restano nascosti finché non servono).
+function SectionHead({ title, help, mb = "mb-2" }: { title: string; help?: string; mb?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={mb}>
+      <div className="flex items-center gap-1.5">
+        <h3 className="text-sm font-semibold text-brand-darker">{title}</h3>
+        {help && (
+          <button type="button" onClick={() => setOpen((v) => !v)} aria-label="Aiuto"
+            className={"inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold leading-none transition "
+              + (open ? "bg-brand text-white" : "bg-sage/20 text-sage-dark hover:bg-brand hover:text-white")}>?</button>
+        )}
+      </div>
+      {help && open && <p className="hint mt-1">{help}</p>}
+    </div>
+  );
+}
 
 export default function Page() {
   const { t, lang, setLang, fmt, fmtDate } = useI18n();
@@ -1161,7 +1180,7 @@ export default function Page() {
           </section>
 
           <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
-            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Quota (DEM)")}</h3>
+            <SectionHead title={t("Quota (DEM)")} help={t("Il rilievo ombreggiato mostra i sensi delle pendenze; le isoipse ravvicinate = terreno più ripido.")} />
             <div className="flex gap-2">
               <button className="btn-primary flex-1 basis-0" disabled={busy === "dem" || !activeGeom} onClick={showDem}>
                 {busy === "dem" ? t("Ricompongo…") : t("Mostra DEM")}
@@ -1171,7 +1190,6 @@ export default function Page() {
             <button className="btn-primary w-full mt-2" disabled={busy === "terrain" || !activeGeom} onClick={showTerrain}>
               {busy === "terrain" ? t("Ricompongo…") : t("Rilievo + isoipse (dislivelli)")}
             </button>
-            <p className="hint mt-1">{t("Il rilievo ombreggiato mostra i sensi delle pendenze; le isoipse ravvicinate = terreno più ripido.")}</p>
             {demInfo && (
               <div className="mt-2">
                 <ScaleBar scale={demInfo.scale} unit=" m" />
@@ -1189,8 +1207,7 @@ export default function Page() {
           </section>
 
           <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
-            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Corsi d'acqua esistenti")}</h3>
-            <p className="hint mb-2">{t("Rileva e ricalca fiumi, canali naturali e paludi (NDWI). Falla prima di progettare canali e pivot: i pivot li evitano automaticamente.")}</p>
+            <SectionHead title={t("Corsi d'acqua esistenti")} help={t("Rileva e ricalca fiumi, canali naturali e paludi (NDWI). Falla prima di progettare canali e pivot: i pivot li evitano automaticamente.")} />
             <label className="text-xs text-sage-dark block">{t("Sensibilità")}: {waterSens}/5 {waterSens >= 4 ? t("(rileva anche corsi stretti/deboli)") : ""}
               <input type="range" min={1} max={5} step={1} value={waterSens}
                 onChange={(e) => setWaterSens(Number(e.target.value))} className="w-full accent-brand" disabled={waterPreview} />
@@ -1295,8 +1312,7 @@ export default function Page() {
           </section>
 
           <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
-            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Macro-aree")}</h3>
-            <p className="hint mb-2">{t("Individua le zone idonee nell'area attiva; usale come campi o rifinisci.")}</p>
+            <SectionHead title={t("Macro-aree")} help={t("Individua le zone idonee nell'area attiva; usale come campi o rifinisci.")} />
             <div className="flex gap-2">
               <label className="text-xs text-sage-dark flex-1">{t("Soglia idoneità")}: {macroThr}/100
                 <input type="range" min={40} max={90} step={5} value={macroThr}
@@ -1334,8 +1350,7 @@ export default function Page() {
           </section>
 
           <section className={secShow("canal")}>
-            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Canale principale")}</h3>
-            <p className="hint mb-2">{t("Traccia uno o più canali a gravità a pendenza costante. Definisci presa e finale, oppure lascia automatico.")}</p>
+            <SectionHead title={t("Canale principale")} help={t("Traccia uno o più canali a gravità a pendenza costante. Definisci presa e finale, oppure lascia automatico.")} />
             <label className="text-xs text-sage-dark block">{t("Pendenza target (‰)")}
               <input type="number" min={0.1} max={100} step={0.5} value={canalPermille}
                 onChange={(e) => setCanalPermille(Number(e.target.value))} className="field-input mt-1" />
@@ -1394,8 +1409,7 @@ export default function Page() {
           </section>
 
           <section className={secShow("guided")}>
-            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Pivot lungo il canale")}</h3>
-            <p className="hint mb-2">{t("Parametri di disegno dei pivot (raggio, sicurezza) qui sotto. I pivot vanno solo su terreno libero: fuori dal canale e dall'acqua.")}</p>
+            <SectionHead title={t("Pivot lungo il canale")} help={t("Parametri di disegno dei pivot (raggio, sicurezza) qui sotto. I pivot vanno solo su terreno libero: fuori dal canale e dall'acqua.")} />
 
             <div className="bg-panel rounded-lg p-2 mb-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Dimensione pivot consigliata")}</div>
@@ -1617,7 +1631,7 @@ export default function Page() {
           </section>
 
           <section className={secShow("export")}>
-            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Esporta progetto")}</h3>
+            <SectionHead title={t("Esporta progetto")} help={t("La scheda include idoneità, layout, dimensionamento idrico, fasi e schema dell'impianto.")} />
             <label className="text-xs text-sage-dark">{t("Note (facoltative)")}
               <input className="field-input mt-1" value={notes} onChange={(e) => setNotes(e.target.value)}
                 placeholder={t("es. coltura, cliente, fase")} />
@@ -1628,7 +1642,6 @@ export default function Page() {
               </button>
               <button className="btn-ghost flex-1 basis-0" disabled={!laid.length} onClick={downloadGeoJSON}>{t("Layout GeoJSON")}</button>
             </div>
-            <p className="hint mt-2">{t("La scheda include idoneità, layout, dimensionamento idrico, fasi e schema dell'impianto.")}</p>
           </section>
 
           <p className={"hint " + secShow("export")}>
