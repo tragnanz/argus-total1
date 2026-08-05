@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.23";
+const REV = "v0.6.24";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -148,6 +148,18 @@ function SectionHead({ title, help, mb = "mb-2" }: { title: string; help?: strin
 
 export default function Page() {
   const { t, lang, setLang, fmt, fmtDate } = useI18n();
+  // Unità di misura: metrico (default) o imperiale. Converte i valori mostrati.
+  const [units, setUnits] = useState<"metric" | "imperial">("metric");
+  const imperial = units === "imperial";
+  const uHa = (ha: number, dp = 0) => imperial
+    ? `${fmt(ha * 2.47105, { maximumFractionDigits: dp })} ac`
+    : `${fmt(ha, { maximumFractionDigits: dp })} ha`;
+  const uM = (m: number, dp = 0) => imperial
+    ? `${fmt(m * 3.28084, { maximumFractionDigits: dp })} ft`
+    : `${fmt(m, { maximumFractionDigits: dp })} m`;
+  const uKm = (km: number, dp = 2) => imperial
+    ? `${fmt(km * 0.621371, { maximumFractionDigits: dp })} mi`
+    : `${fmt(km, { maximumFractionDigits: dp })} km`;
   const mapApi = useRef<MapHandle | null>(null);
 
   const [providerMode, setProviderMode] = useState<string>("");
@@ -280,6 +292,7 @@ export default function Page() {
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   // ---- caricamenti iniziali ----
+  useEffect(() => { mapApi.current?.setUnits(imperial); }, [imperial]);
   useEffect(() => { api.getHealth().then((h) => setProviderMode(h.provider_mode)).catch(() => {}); }, []);
   useEffect(() => { refreshClients(); }, []);
   useEffect(() => { refreshProjects(clientId); setProjectId(null); }, [clientId]);
@@ -1004,6 +1017,12 @@ export default function Page() {
               className="bg-transparent outline-none text-sm w-56" />
             <button type="submit" className="btn-primary px-3 py-1.5 rounded-lg text-sm shrink-0">{t("Cerca")}</button>
           </form>
+          <div className="pill-light flex items-center p-0.5 text-xs">
+            <button onClick={() => setUnits("metric")}
+              className={"px-2 py-1.5 rounded-lg " + (!imperial ? "bg-brand text-white font-semibold" : "text-sage-dark")}>m</button>
+            <button onClick={() => setUnits("imperial")}
+              className={"px-2 py-1.5 rounded-lg " + (imperial ? "bg-brand text-white font-semibold" : "text-sage-dark")}>ft</button>
+          </div>
           <select value={lang} onChange={(e) => setLang(e.target.value as Lang)}
             className="pill-light px-3 py-2 text-sm outline-none">
             {LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
@@ -1041,7 +1060,7 @@ export default function Page() {
           <section>
             <div className="flex items-center justify-between mb-1">
               <h3 className="text-sm font-semibold text-brand-darker">{t("Campi")}</h3>
-              {hasFields && <span className="text-[11px] text-sage-dark">{fields.length} {t("campi")} · {fmt(totalHa, { maximumFractionDigits: 0 })} ha</span>}
+              {hasFields && <span className="text-[11px] text-sage-dark">{fields.length} {t("campi")} · {uHa(totalHa)}</span>}
             </div>
             <div className="flex gap-2">
               <button className="btn-primary flex-1 basis-0" onClick={draw}>{t("Disegna area")}</button>
@@ -1061,7 +1080,7 @@ export default function Page() {
                       <div className="flex items-center justify-between">
                         <button className="truncate text-left flex-1" title={t("Seleziona campo")} onClick={() => selectField(f.id)}>
                           <span className={f.id === activeId ? "font-semibold text-brand" : ""}>{f.name}</span>
-                          <span className="text-sage"> · {fmt(ringAreaHa(f.geom.coordinates), { maximumFractionDigits: 0 })} ha</span>
+                          <span className="text-sage"> · {uHa(ringAreaHa(f.geom.coordinates))}</span>
                           {!!f.macros?.length && <span className="text-brand-light"> · {f.macros.length} {t("sotto-aree")}</span>}
                           {f.lay && <span className="text-brand-light"> · {f.lay.n_pivots} pivot</span>}
                         </button>
@@ -1076,7 +1095,7 @@ export default function Page() {
                         <ul className="mt-1 ml-1 space-y-0.5 border-l-2 border-brand/20 pl-2">
                           {f.macros.map((mm) => (
                             <li key={mm.id} className="flex items-center justify-between text-[11px] text-sage-dark">
-                              <span className="truncate flex-1">↳ {mm.name} · {fmt(mm.area_ha, { maximumFractionDigits: 0 })} ha · {t("Idoneità")} {fmt(mm.mean_score)}{mm.savedId ? " ✓" : ""}</span>
+                              <span className="truncate flex-1">↳ {mm.name} · {uHa(mm.area_ha)} · {t("Idoneità")} {fmt(mm.mean_score)}{mm.savedId ? " ✓" : ""}</span>
                               <span className="flex gap-1 shrink-0">
                                 <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(mm.name), [{ name: mm.name, geom: mm.geom }])}>⤓</button>
                                 <button className="text-brand-mid" title={t("Nome sotto-area")} onClick={() => renameFieldMacro(f.id, mm)}>✎</button>
@@ -1134,7 +1153,7 @@ export default function Page() {
                     <li key={a.id} className="text-sm bg-panel rounded-lg px-2 py-1">
                       <div className="flex items-center justify-between">
                         <button className="truncate text-left flex-1" title={t("Carica")} onClick={() => loadArea(a)}>
-                          {a.name} <span className="text-sage">· {a.area_ha ?? "?"} ha</span>
+                          {a.name} <span className="text-sage">· {a.area_ha != null ? uHa(a.area_ha) : "?"}</span>
                         </button>
                         <span className="flex gap-1 shrink-0">
                           <button className="text-xs text-brand-mid" title={t("Nome area")} onClick={() => renameArea(a)}>✎</button>
@@ -1143,7 +1162,7 @@ export default function Page() {
                       </div>
                       {areas.filter((c) => c.parent_area_id === a.id).map((c) => (
                         <div key={c.id} className="flex items-center justify-between text-[11px] text-sage-dark ml-1 mt-0.5 border-l-2 border-brand/20 pl-2">
-                          <button className="truncate text-left flex-1" title={t("Carica")} onClick={() => loadArea(c)}>↳ {c.name} · {c.area_ha ?? "?"} ha</button>
+                          <button className="truncate text-left flex-1" title={t("Carica")} onClick={() => loadArea(c)}>↳ {c.name} · {c.area_ha != null ? uHa(c.area_ha) : "?"}</button>
                           <span className="flex gap-1 shrink-0">
                             <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(c.name), [{ name: c.name, geom: c.geojson }])}>⤓</button>
                             <button className="text-danger" title={t("Rimuovi")} onClick={() => delArea(c)}>✕</button>
@@ -1254,13 +1273,13 @@ export default function Page() {
               <div className="mt-2">
                 <ScaleBar scale={demInfo.scale} unit=" m" />
                 <p className="text-xs text-sage-dark mt-1">
-                  {t("min")} {fmt(demInfo.min)} m · {t("max")} {fmt(demInfo.max)} m
+                  {t("min")} {uM(demInfo.min)} · {t("max")} {uM(demInfo.max)}
                 </p>
               </div>
             )}
             {terrainInfo && (
               <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
-                {t("Isoipse ogni")} <b>{fmt(terrainInfo.interval)} m</b> · {t("quota")} {fmt(terrainInfo.min)}–{fmt(terrainInfo.max)} m<br />
+                {t("Isoipse ogni")} <b>{uM(terrainInfo.interval, 1)}</b> · {t("quota")} {uM(terrainInfo.min)}–{uM(terrainInfo.max)}<br />
                 {t("Le linee marcate riportano la quota; più sono fitte, più il versante è ripido.")}
               </div>
             )}
@@ -1298,7 +1317,7 @@ export default function Page() {
             {!waterPreview && !!watercourses.length && (
               <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
                 {watercourses.filter((w) => w.geojson.type === "LineString").length} {t("fiumi/canali (asse)")} · {watercourses.filter((w) => w.kind === "basin").length} {t("bacini")} · {watercourses.filter((w) => w.kind === "wetland").length} {t("paludi")}<br />
-                {fmt(watercourses.reduce((s, w) => s + w.area_ha, 0), { maximumFractionDigits: 0 })} ha {t("totali")}
+                {uHa(watercourses.reduce((s, w) => s + w.area_ha, 0))} {t("totali")}
                 <button className="text-brand-mid ml-2" onClick={() => exportKmz("corsi_dacqua", watercourses.map((w, i) => ({ name: `${w.kind} ${i + 1}`, geom: w.geojson })))}>⤓ KMZ</button>
               </div>
             )}
@@ -1336,8 +1355,8 @@ export default function Page() {
                 <div className="grid grid-cols-2 gap-2 text-center">
                   <div className="bg-panel rounded-lg p-2">
                     <div className="text-lg font-semibold text-brand">
-                      {fmt(suit.suitable_ha, { maximumFractionDigits: 0 })}</div>
-                    <div className="text-[11px] text-sage-dark">{t("Superficie idonea")} (ha)</div>
+                      {fmt(imperial ? suit.suitable_ha * 2.47105 : suit.suitable_ha, { maximumFractionDigits: 0 })}</div>
+                    <div className="text-[11px] text-sage-dark">{t("Superficie idonea")} ({imperial ? "ac" : "ha"})</div>
                   </div>
                   <div className="bg-panel rounded-lg p-2">
                     <div className="text-lg font-semibold text-brand">{fmt(suit.mean_score)}/100</div>
@@ -1346,7 +1365,7 @@ export default function Page() {
                 </div>
                 {!!suit.wetland_ha && suit.wetland_ha > 0 && (
                   <div className="text-xs text-danger bg-danger/10 rounded-lg p-2">
-                    {t("Aree paludose/acqua escluse (NDWI + vegetazione)")}: <b>{fmt(suit.wetland_ha, { maximumFractionDigits: 0 })} ha</b>
+                    {t("Aree paludose/acqua escluse (NDWI + vegetazione)")}: <b>{uHa(suit.wetland_ha)}</b>
                   </div>
                 )}
                 <div>
@@ -1356,7 +1375,7 @@ export default function Page() {
                       <span className="inline-block w-3 h-3 rounded-sm mr-2" style={{ background: c.color }} />
                       <span className="flex-1">{t(c.label)}</span>
                       <span className="text-sage-dark">
-                        {fmt(c.ha, { maximumFractionDigits: 0 })} ha · {fmt(c.pct)}%
+                        {uHa(c.ha)} · {fmt(c.pct)}%
                       </span>
                     </div>
                   ))}
@@ -1400,7 +1419,7 @@ export default function Page() {
                 <ul className="space-y-1">
                   {macroAreas.map((m, i) => (
                     <li key={i} className="flex items-center justify-between text-sm bg-panel rounded-lg px-2 py-1">
-                      <span className="flex-1 truncate">{t("Macro-area")} {i + 1} · {fmt(m.area_ha, { maximumFractionDigits: 0 })} ha · {t("Idoneità")} {fmt(m.mean_score)}</span>
+                      <span className="flex-1 truncate">{t("Macro-area")} {i + 1} · {uHa(m.area_ha)} · {t("Idoneità")} {fmt(m.mean_score)}</span>
                       <button className="text-xs text-brand-mid shrink-0 disabled:opacity-40" disabled={activeId == null} onClick={() => addMacroToField(m)}>+ {t("Sotto-area")}</button>
                     </li>
                   ))}
@@ -1469,7 +1488,7 @@ export default function Page() {
                         <button className="text-danger" onClick={() => removeCanal(i)}>{t("Rimuovi")}</button>
                       </span>
                     </div>
-                    {t("Lunghezza")}: <b>{fmt(c.length_m / 1000, { maximumFractionDigits: 2 })} km</b> · {t("Dislivello")}: {fmt(c.drop_m, { maximumFractionDigits: 1 })} m<br />
+                    {t("Lunghezza")}: <b>{uKm(c.length_m / 1000)}</b> · {t("Dislivello")}: {uM(c.drop_m, 1)}<br />
                     {t("Pendenza media")}: <b>{fmt(c.mean_permille)}‰</b> · {t("Pendenza target (‰)")}: {fmt(c.target_permille)}‰
                     {c.mean_permille > c.target_permille * 1.5 && (
                       <><br /><span className="text-danger">{t("Pendenza reale oltre il target: terreno acclive.")}</span></>
@@ -1530,8 +1549,8 @@ export default function Page() {
               </select>
             </label>
             <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 mt-2 leading-relaxed">
-              {t("Raggio")}: <b>{fmt(pivotR)} m</b> · {t("Area per pivot")}: <b>{fmt(Math.PI * pivotR * pivotR / 10000, { maximumFractionDigits: 1 })} ha</b><br />
-              {t("Distanza di sicurezza tra i bordi")}: <b>{fmt(safetyM)} m</b> · {t("Interasse (centro-centro)")}: <b>{fmt(2 * pivotR + safetyM)} m</b><br />
+              {t("Raggio")}: <b>{uM(pivotR)}</b> · {t("Area per pivot")}: <b>{uHa(Math.PI * pivotR * pivotR / 10000, 1)}</b><br />
+              {t("Distanza di sicurezza tra i bordi")}: <b>{uM(safetyM)}</b> · {t("Interasse (centro-centro)")}: <b>{uM(2 * pivotR + safetyM)}</b><br />
               <span className="text-brand-mid">{t("I pivot non si sovrappongono e stanno solo su terreno libero (no canali, no acqua).")}</span>
             </div>
             <div className="flex gap-2 mt-2">
@@ -1557,9 +1576,9 @@ export default function Page() {
                   </div>
                 </div>
                 <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
-                  {t("Raggio")}: <b>{fmt(guided.meta.radius_m)} m</b> · {t("Area per pivot")}: <b>{fmt(guided.meta.pivot_ha, { maximumFractionDigits: 1 })} ha</b><br />
-                  {t("Distanza di sicurezza")}: <b>{fmt(guided.meta.safety_m)} m</b> · {t("Interasse")}: <b>{fmt(guided.meta.spacing_m)} m</b><br />
-                  {t("Superficie netta")}: <b>{fmt(guided.meta.net_ha, { maximumFractionDigits: 0 })} ha</b> · {guided.meta.n_along_canal} {t("lungo il canale")} · {guided.meta.n_fill} {t("riempimento")}
+                  {t("Raggio")}: <b>{uM(guided.meta.radius_m)}</b> · {t("Area per pivot")}: <b>{uHa(guided.meta.pivot_ha, 1)}</b><br />
+                  {t("Distanza di sicurezza")}: <b>{uM(guided.meta.safety_m)}</b> · {t("Interasse")}: <b>{uM(guided.meta.spacing_m)}</b><br />
+                  {t("Superficie netta")}: <b>{uHa(guided.meta.net_ha)}</b> · {guided.meta.n_along_canal} {t("lungo il canale")} · {guided.meta.n_fill} {t("riempimento")}
                   {!!guided.meta.water_excluded && <><br /><span className="text-brand-mid">{t("Esclusi canale e aree con acqua/paludi (NDWI).")}</span></>}
                 </div>
                 <button className="btn-primary w-full" disabled={!projectId} onClick={savePivotsLayer}>{t("Salva pivot nel progetto")}</button>
@@ -1674,8 +1693,8 @@ export default function Page() {
                     <div className="text-[11px] text-sage-dark">{t("Totale pivot")}</div>
                   </div>
                   <div className="bg-panel rounded-lg p-2">
-                    <div className="text-lg font-semibold text-brand">{fmt(agg.net, { maximumFractionDigits: 0 })}</div>
-                    <div className="text-[11px] text-sage-dark">{t("Totale superficie netta (ha)")}</div>
+                    <div className="text-lg font-semibold text-brand">{fmt(imperial ? agg.net * 2.47105 : agg.net, { maximumFractionDigits: 0 })}</div>
+                    <div className="text-[11px] text-sage-dark">{t("Totale superficie netta")} ({imperial ? "ac" : "ha"})</div>
                   </div>
                   <div className="bg-panel rounded-lg p-2">
                     <div className="text-lg font-semibold text-brand">{fmt(agg.q, { maximumFractionDigits: 0 })}</div>
@@ -1689,14 +1708,14 @@ export default function Page() {
                       <div key={f.id} className="flex items-center text-xs py-0.5">
                         <span className="flex-1 truncate">{f.name}</span>
                         <span className="text-sage-dark">
-                          {f.lay!.n_pivots} pivot · {fmt(f.lay!.net_ha, { maximumFractionDigits: 0 })} ha · {fmt(f.lay!.water.q_total_ls, { maximumFractionDigits: 0 })} l/s
+                          {f.lay!.n_pivots} pivot · {uHa(f.lay!.net_ha)} · {fmt(f.lay!.water.q_total_ls, { maximumFractionDigits: 0 })} l/s
                         </span>
                       </div>
                     ))}
                   </div>
                 )}
                 <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
-                  {t("Rete totale")}: <b>{fmt(agg.pipe / 1000, { maximumFractionDigits: 1 })} km</b>
+                  {t("Rete totale")}: <b>{uKm(agg.pipe / 1000, 1)}</b>
                 </div>
               </div>
             )}

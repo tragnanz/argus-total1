@@ -39,6 +39,7 @@ export type MapHandle = {
   locate: () => void;
   startMeasure: (cb: (text: string) => void) => void;
   stopMeasure: () => void;
+  setUnits: (imperial: boolean) => void;
   editCanal: (coords: number[][], start: number[], end: number[], waypoints: number[][],
     cb: (start: number[], end: number[], waypoints: number[][]) => void) => void;
   endCanalEdit: () => void;
@@ -96,6 +97,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
   const measuringRef = useRef(false);
   const mptsRef = useRef<L.LatLng[]>([]);
   const mcbRef = useRef<((text: string) => void) | null>(null);
+  const imperialRef = useRef(false);
 
   // Callback sempre aggiornate (la mappa viene creata una sola volta).
   const cbRef = useRef({ onCreate, onEditActive, onSelect });
@@ -200,7 +202,14 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
   }
   // ---- misura distanze/aree ----
   function _fmtLen(m: number): string {
+    if (imperialRef.current) {
+      const ft = m * 3.28084;
+      return ft >= 5280 ? `${(ft / 5280).toFixed(2)} mi` : `${Math.round(ft)} ft`;
+    }
     return m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
+  }
+  function _fmtArea(ha: number): string {
+    return imperialRef.current ? `${(ha * 2.47105).toFixed(1)} ac` : `${ha.toFixed(1)} ha`;
   }
   function _areaHa(pts: L.LatLng[]): number {
     const R = 6378137, n = pts.length;
@@ -225,7 +234,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
     let dist = 0;
     for (let i = 1; i < pts.length; i++) dist += map.distance(pts[i - 1], pts[i]);
     let text = pts.length < 2 ? "" : _fmtLen(dist);
-    if (pts.length >= 3) text += ` · ${_areaHa(pts).toFixed(1)} ha`;
+    if (pts.length >= 3) text += ` · ${_fmtArea(_areaHa(pts))}`;
     if (text && pts.length) {
       L.marker(pts[pts.length - 1], { opacity: 0, interactive: false })
         .bindTooltip(text, { permanent: true, direction: "top", className: "field-label" })
@@ -517,6 +526,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         measureRef.current?.clearLayers();
         try { map.getContainer().style.cursor = "crosshair"; } catch { /* */ }
       },
+      setUnits(imp) { imperialRef.current = imp; if (measuringRef.current) _redrawMeasure(); },
       stopMeasure() {
         const map = mapRef.current;
         measuringRef.current = false;
