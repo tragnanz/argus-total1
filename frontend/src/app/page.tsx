@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.26";
+const REV = "v0.6.27";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -960,72 +960,78 @@ export default function Page() {
         onCanalProfile={(i) => setProfileCanal(i)} />
 
       <div className="overlay-layer">
-        {/* Header stile Argus (barra verde scuro) */}
-        <div className="absolute top-0 inset-x-0 z-30 flex items-center gap-2 px-3 h-14 shadow-lg" style={{ background: "#0c3a2b" }}>
-          {/* Logo + marchio */}
-          <div className="flex items-center gap-2 pr-1">
+        {/* Header stile Argus Smart: pillole flottanti (verde scuro / bianco) */}
+        <div className="absolute top-3 left-3 right-3 z-30 flex items-center gap-2"
+          style={{ fontFamily: '"IBM Plex Sans", Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' }}>
+          {/* Marchio */}
+          <div className="flex items-center gap-2 px-3 rounded-xl shadow" style={{ background: "#123524", height: 44 }}>
             <div className="bg-white rounded-full p-1 flex items-center justify-center shrink-0">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/argusmark.png" alt="Argus" className="h-6 w-6" />
             </div>
-            <div className="leading-tight">
-              <div className="font-semibold text-white text-[15px]">Argus <span style={{ color: "#7fd39b" }}>Total</span></div>
-              <div className="text-[9px] tracking-[0.22em] text-white/55">NABU</div>
+            <div className="leading-tight pr-1">
+              <div className="font-semibold text-white text-[15px]">Argus Total</div>
+              <div className="text-[9px] tracking-[0.22em]" style={{ color: "#b9d3c0" }}>NABU</div>
             </div>
           </div>
 
-          {/* Strumenti: annulla/ripristina · livelli · misura */}
-          <div className="flex items-center gap-1 rounded-xl px-1 py-1" style={{ background: "rgba(255,255,255,.10)" }}>
-            <button title={t("Annulla")} disabled={!canUndo} onClick={undo}
-              className="p-1.5 rounded-lg text-white disabled:opacity-30 hover:bg-white/10"><IcoUndo /></button>
-            <button title={t("Ripristina")} disabled={!canRedo} onClick={redo}
-              className="p-1.5 rounded-lg text-white disabled:opacity-30 hover:bg-white/10"><IcoRedo /></button>
-            <span className="w-px h-5 bg-white/20" />
-            <button title={t("Livelli sulla mappa")} onClick={() => setLayersOpen((o) => !o)}
-              className={"p-1.5 rounded-lg " + (layersOpen ? "bg-white/20 text-white" : "text-white hover:bg-white/10")}><IcoLayers /></button>
-            <button title={t("Misura distanze/aree")} onClick={toggleMeasure}
-              className={"p-1.5 rounded-lg " + (measuring ? "bg-white text-brand" : "text-white hover:bg-white/10")}><IcoRuler /></button>
-          </div>
-          {layersOpen && (
-            <div className="absolute top-16 left-40 z-40 widget p-2 w-56">
-              <div className="text-xs font-semibold text-sage-dark mb-1 px-1">{t("Livelli sulla mappa")}</div>
-              {([
-                ["fields", t("Campi")], ["macro", t("Macro-aree")],
-                ["canal", t("Canali")], ["water", t("Corsi d'acqua")], ["layout", t("Layout pivot")],
-              ] as const).map(([k, lbl]) => (
-                <button key={k} onClick={() => toggleLayer(k)}
-                  className="w-full flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg hover:bg-black/5">
-                  <span className={layerVis[k] ? "text-brand" : "text-sage-dark opacity-50"}>{layerVis[k] ? "◉" : "○"}</span>
-                  <span className={layerVis[k] ? "" : "line-through opacity-60"}>{lbl}</span>
-                </button>
-              ))}
+          {/* Strumenti (pillola bianca): annulla/ripristina · livelli · misura */}
+          <div className="relative">
+            <div className="flex items-center gap-1 px-1.5 rounded-xl shadow" style={{ background: "#fbfdfb", height: 44 }}>
+              <button title={t("Annulla")} disabled={!canUndo} onClick={undo}
+                className="p-1.5 rounded-[9px] text-brand-darker disabled:opacity-30 hover:bg-black/5"><IcoUndo /></button>
+              <button title={t("Ripristina")} disabled={!canRedo} onClick={redo}
+                className="p-1.5 rounded-[9px] text-brand-darker disabled:opacity-30 hover:bg-black/5"><IcoRedo /></button>
+              <span className="w-px h-5 bg-black/10" />
+              <button title={t("Livelli sulla mappa")} onClick={() => setLayersOpen((o) => !o)}
+                className={"p-1.5 rounded-[9px] " + (layersOpen ? "bg-brand/10 text-brand" : "text-brand-darker hover:bg-black/5")}><IcoLayers /></button>
+              <button title={t("Misura distanze/aree")} onClick={toggleMeasure}
+                className={"p-1.5 rounded-[9px] " + (measuring ? "text-white" : "text-brand-darker hover:bg-black/5")}
+                style={measuring ? { background: "#3f8e4e" } : undefined}><IcoRuler /></button>
             </div>
+            {layersOpen && (
+              <div className="absolute top-full mt-2 left-0 z-40 widget p-2 w-56">
+                <div className="text-xs font-semibold text-sage-dark mb-1 px-1">{t("Livelli sulla mappa")}</div>
+                {([
+                  ["fields", t("Campi")], ["macro", t("Macro-aree")],
+                  ["canal", t("Canali")], ["water", t("Corsi d'acqua")], ["layout", t("Layout pivot")],
+                ] as const).map(([k, lbl]) => (
+                  <button key={k} onClick={() => toggleLayer(k)}
+                    className="w-full flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg hover:bg-black/5">
+                    <span className={layerVis[k] ? "text-brand" : "text-sage-dark opacity-50"}>{layerVis[k] ? "◉" : "○"}</span>
+                    <span className={layerVis[k] ? "" : "line-through opacity-60"}>{lbl}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {measuring && measureTxt && (
+            <div className="px-3 rounded-xl text-sm text-white flex items-center shadow" style={{ background: "#123524", height: 44 }}>{measureTxt}</div>
           )}
-          {measuring && measureTxt && <div className="px-3 py-1.5 rounded-lg text-sm text-white" style={{ background: "rgba(255,255,255,.14)" }}>{measureTxt}</div>}
 
           <div className="flex-1" />
 
-          {/* Ricerca */}
-          <form onSubmit={geocode} className="flex items-center gap-1.5 bg-white rounded-xl pl-1.5 pr-1.5 py-1">
+          {/* Ricerca (pillola bianca) */}
+          <form onSubmit={geocode} className="flex items-center gap-1.5 px-1.5 rounded-xl shadow" style={{ background: "#fbfdfb", height: 44 }}>
             <button type="button" title={t("Usa la mia posizione (GPS)")} onClick={() => mapApi.current?.locate()}
-              className="bg-brand text-white rounded-lg p-1.5 flex items-center justify-center shrink-0"><IcoCross /></button>
+              className="text-white rounded-[9px] p-1.5 flex items-center justify-center shrink-0" style={{ background: "#3f8e4e" }}><IcoCross /></button>
             <input value={q} onChange={(e) => setQ(e.target.value)}
               placeholder={t("Indirizzo o coordinate GPS")}
               className="bg-transparent outline-none text-sm w-48" />
-            <button type="submit" className="btn-primary px-3 py-1.5 rounded-lg text-sm shrink-0">{t("Cerca")}</button>
+            <button type="submit" className="text-white text-[13px] font-semibold rounded-[9px] px-3.5 py-2 shrink-0" style={{ background: "#3f8e4e" }}>{t("Cerca")}</button>
           </form>
 
-          {/* Metrico / Imperiale */}
-          <div className="flex items-center p-0.5 rounded-xl text-xs" style={{ background: "rgba(255,255,255,.12)" }}>
+          {/* Metrico / Imperiale (pillola verde scuro) */}
+          <div className="flex items-center gap-0.5 px-1 rounded-xl text-[13px] shadow" style={{ background: "#123524", height: 44 }}>
             <button onClick={() => setUnits("metric")}
-              className={"px-2 py-1.5 rounded-lg " + (!imperial ? "bg-white text-brand font-semibold" : "text-white")}>m</button>
+              className="px-3 py-1.5 rounded-[9px] font-medium" style={!imperial ? { background: "#3f8e4e", color: "#fff" } : { color: "#b9d3c0" }}>{t("Metrico")}</button>
             <button onClick={() => setUnits("imperial")}
-              className={"px-2 py-1.5 rounded-lg " + (imperial ? "bg-white text-brand font-semibold" : "text-white")}>ft</button>
+              className="px-3 py-1.5 rounded-[9px] font-medium" style={imperial ? { background: "#3f8e4e", color: "#fff" } : { color: "#b9d3c0" }}>{t("Imperiale")}</button>
           </div>
 
-          {/* Lingua */}
+          {/* Lingua (pillola verde scuro) */}
           <select value={lang} onChange={(e) => setLang(e.target.value as Lang)}
-            className="rounded-xl px-2 py-2 text-sm outline-none text-white border-none" style={{ background: "rgba(255,255,255,.12)" }}>
+            className="rounded-xl px-3 text-[13px] outline-none border-none text-white shadow" style={{ background: "#123524", height: 44 }}>
             {LANGS.map((l) => <option key={l.code} value={l.code} className="text-black">{l.label}</option>)}
           </select>
         </div>
