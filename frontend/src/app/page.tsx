@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import JSZip from "jszip";
 import type { MapHandle } from "@/components/MapCanvas";
 import { useI18n, LANGS, type Lang } from "@/lib/i18n";
-import { parseFieldsFromFile } from "@/lib/importGeo";
+import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
 import type {
   Area, Client, Polygon, Project, Scene, ColorScale, SuitMeta, SuitWeights,
@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.19";
+const REV = "v0.6.20";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -663,6 +663,34 @@ export default function Page() {
       mapApi.current?.showCanals(
         next.map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end })),
         t("Presa"), t("Sbocco"));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  // importa canali da KMZ/KML/GeoJSON: ogni polilinea diventa un canale
+  // (quota campionata dal DEM sul bounding box della linea).
+  const canalFileRef = useRef<HTMLInputElement | null>(null);
+  function _bboxPoly(coords: number[][]): Polygon {
+    let mnx = 180, mny = 90, mxx = -180, mxy = -90;
+    for (const [lo, la] of coords) { mnx = Math.min(mnx, lo); mny = Math.min(mny, la); mxx = Math.max(mxx, lo); mxy = Math.max(mxy, la); }
+    const m = 0.004;
+    return { type: "Polygon", coordinates: [[[mnx - m, mny - m], [mxx + m, mny - m], [mxx + m, mxy + m], [mnx - m, mxy + m], [mnx - m, mny - m]]] };
+  }
+  async function importCanals(files?: FileList | null) {
+    if (!files || !files.length) return;
+    setBusy("canal"); setMsg("");
+    try {
+      let next = [...canals]; let added = 0;
+      for (const f of Array.from(files)) {
+        const lines = await parseLinesFromFile(f);
+        for (const ln of lines) {
+          if (ln.coords.length < 2) continue;
+          setMsg(t("Importo canali… ({n})", { n: added + 1 }));
+          const cc = await api.fetchCanal(_bboxPoly(ln.coords), canalPermille, null, null, null, ln.coords);
+          next = [...next, cc]; added += 1;
+        }
+      }
+      setCanals(next);
+      mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end })), t("Presa"), t("Sbocco"));
+      setMsg(added ? t("Importati {n} canali da file.", { n: added }) : t("Nessuna linea trovata nei file (KMZ/KML/GeoJSON)."));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   function traceCanalManual() {
@@ -1396,7 +1424,12 @@ export default function Page() {
                 {t("Traccia a mano")}
               </button>
             </div>
-            <button className="btn-ghost w-full mt-2" disabled={!canals.length && !canalStart && !canalEnd} onClick={clearCanalUI}>{t("Rimuovi tutti")}</button>
+            <div className="flex gap-2 mt-2">
+              <button className="btn-ghost flex-1 basis-0" disabled={busy === "canal"} onClick={() => canalFileRef.current?.click()}>{t("Importa KMZ come canali")}</button>
+              <button className="btn-ghost flex-1 basis-0" disabled={!canals.length && !canalStart && !canalEnd} onClick={clearCanalUI}>{t("Rimuovi tutti")}</button>
+            </div>
+            <input ref={canalFileRef} type="file" accept=".kmz,.kml,.geojson,.json" multiple className="hidden"
+              onChange={(e) => { importCanals(e.target.files); if (e.target) e.target.value = ""; }} />
 
             {canals.length > 0 && (
               <ul className="mt-3 space-y-2">

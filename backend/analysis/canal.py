@@ -213,7 +213,7 @@ def trace_manual(client, geom: dict, coords_ll: list, target_permille: float = 1
     dem, mask, ctx = _dem_and_grid(client, geom)
     res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
     to_utm = pyproj.Transformer.from_crs(4326, ctx["epsg"], always_xy=True)
-    pts = [to_utm.transform(float(lo), float(la)) for lo, la in coords_ll]
+    pts = [to_utm.transform(float(lo), float(la)) for lo, la, *_ in coords_ll]
     # densifica a passo ~res per un profilo regolare
     xy = [pts[0]]
     for i in range(1, len(pts)):
