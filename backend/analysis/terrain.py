@@ -70,18 +70,29 @@ def _hillshade_rgb(dem, valid, res, vmin, vmax, vert_exag=2.0) -> np.ndarray:
     return rgb
 
 
+def _seg_len(seg) -> float:
+    d = 0.0
+    for i in range(1, len(seg)):
+        d += math.hypot(seg[i][0] - seg[i - 1][0], seg[i][1] - seg[i - 1][1])
+    return d
+
+
 def _contours(dem, valid, ctx, vmin, vmax, interval) -> list[dict]:
-    """Isoipse come LineString (lon/lat) con quota; ogni 5ª è 'principale'."""
+    """Isoipse come LineString (lon/lat). DEM lisciato per linee pulite; i segmenti
+    troppo corti (rumore) sono scartati; ogni 5ª isoipsa è 'principale' e viene
+    etichettata UNA sola volta (sul suo tratto più lungo) per non riempire la
+    mappa di etichette."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
     minx, top, to_wgs = ctx["minx"], ctx["top"], ctx["to_wgs"]
+    demS = _smooth(dem)                                   # linee più pulite (meno rumore)
     cols = minx + (np.arange(wp) + 0.5) * res
     rows = top - (np.arange(hp) + 0.5) * res
     X, Y = np.meshgrid(cols, rows)
-    demm = np.ma.masked_where(~valid, dem)
+    demm = np.ma.masked_where(~valid, demS)
 
     lo = math.ceil(vmin / interval) * interval
     levels = list(np.arange(lo, vmax + interval * 0.5, interval))
@@ -91,19 +102,22 @@ def _contours(dem, valid, ctx, vmin, vmax, interval) -> list[dict]:
     fig = plt.figure()
     ax = fig.add_subplot(111)
     cs = ax.contour(X, Y, demm, levels=levels)
+    min_len = max(4 * res, 120.0)                         # scarta i frammenti di rumore
     feats: list[dict] = []
     for lvl, segs in zip(cs.levels, cs.allsegs):
         principal = (round(lvl / interval) % 5 == 0)
-        for seg in segs:
-            if len(seg) < 2:
-                continue
+        kept = [s for s in segs if len(s) >= 2 and _seg_len(s) >= min_len]
+        # su ogni isoipsa principale etichetto solo il tratto più lungo
+        label_idx = max(range(len(kept)), key=lambda i: _seg_len(kept[i])) if (principal and kept) else -1
+        for i, seg in enumerate(kept):
             simp = _rdp([(float(x), float(y)) for x, y in seg], res * 0.7)
             if len(simp) < 2:
                 continue
             ll = [list(to_wgs.transform(x, y)) for x, y in simp]
             feats.append({
                 "type": "Feature",
-                "properties": {"elev": round(float(lvl), 1), "principal": principal},
+                "properties": {"elev": round(float(lvl), 1), "principal": principal,
+                               "label": (i == label_idx)},
                 "geometry": {"type": "LineString", "coordinates": ll},
             })
     plt.close(fig)

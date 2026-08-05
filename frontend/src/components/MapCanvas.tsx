@@ -377,10 +377,11 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         const gj = L.geoJSON(fc as never, {
           style: (f) => {
             const p = f?.properties?.principal;
-            return { color: "#5a3410", weight: p ? 1.8 : 0.7, opacity: p ? 0.95 : 0.7 };
+            return { color: "#5a3410", weight: p ? 2.2 : 0.8, opacity: p ? 1 : 0.6 };
           },
           onEachFeature: (f, layer) => {
-            if (f?.properties?.principal) {
+            // una sola etichetta per isoipsa principale (sul tratto più lungo)
+            if (f?.properties?.label) {
               layer.bindTooltip(`${f.properties.elev} m`,
                 { permanent: true, direction: "center", className: "field-label" });
             }
