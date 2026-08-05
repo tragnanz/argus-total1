@@ -12,13 +12,14 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.17";
+const REV = "v0.6.18";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
 const INDICES: { id: string; label: string }[] = [
   { id: "ndvi", label: "vegetazione" },
   { id: "ndmi", label: "umidità" },
+  { id: "ndwi", label: "acqua" },
   { id: "ndre", label: "clorofilla" },
   { id: "msi", label: "stress idrico" },
   { id: "rgb", label: "Colore reale (RGB)" },
