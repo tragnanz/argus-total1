@@ -195,8 +195,8 @@ export type Terrain = {
   image: string; bounds: [[number, number], [number, number]];
   contours: GeoJSONFC; interval_m: number; elev_min: number; elev_max: number;
 };
-export const fetchTerrain = (geom: Polygon, vert_exag = 2) =>
-  req<Terrain>("/api/terrain", { method: "POST", body: JSON.stringify({ geom, vert_exag }) });
+export const fetchTerrain = (geom: Polygon, vert_exag = 2, interval_m = 0) =>
+  req<Terrain>("/api/terrain", { method: "POST", body: JSON.stringify({ geom, vert_exag, interval_m }) });
 
 export type Reach = { polygons: Polygon[]; elev_start_m: number; elev_min_m: number; area_ha: number };
 export const fetchReachable = (geom: Polygon, start: number[]) =>
@@ -210,8 +210,8 @@ export type Watercourse = {
   kind: string; area_ha: number; length_m?: number; mean_width_m?: number;
 };
 export type WaterResult = { features: Watercourse[]; water_ha: number; n_river: number; n_basin: number; n_wetland: number; n_drainage: number };
-export const fetchWatercourses = (geom: Polygon, date: string, min_area_ha = 0.2, ndwi_thr = 0.20, use_dem = true, dem_channel_ha = 25) =>
-  req<WaterResult>("/api/watercourses", { method: "POST", body: JSON.stringify({ geom, date, min_area_ha, ndwi_thr, use_dem, dem_channel_ha }) });
+export const fetchWatercourses = (geom: Polygon, date: string, min_area_ha = 0.2, ndwi_thr = 0.20, use_dem = true, dem_channel_ha = 25, dem_depth_m = 1.2) =>
+  req<WaterResult>("/api/watercourses", { method: "POST", body: JSON.stringify({ geom, date, min_area_ha, ndwi_thr, use_dem, dem_channel_ha, dem_depth_m }) });
 
 export type GuidedResult = { geojson: GeoJSONFC; meta: Record<string, number> };
 export const fetchGuided = (geom: Polygon, p: {

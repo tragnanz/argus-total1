@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.21";
+const REV = "v0.6.22";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -237,6 +237,7 @@ export default function Page() {
   const [scale, setScale] = useState<ColorScale | null>(null);
   const [demInfo, setDemInfo] = useState<{ min: number; max: number; scale: ColorScale } | null>(null);
   const [terrainInfo, setTerrainInfo] = useState<{ interval: number; min: number; max: number } | null>(null);
+  const [isoInterval, setIsoInterval] = useState(0);   // 0 = automatico; oppure 0.5,1,2,5,10 m
   const suit = active?.suit ?? null;
 
   // macro-aree (M6, fase 1)
@@ -456,7 +457,7 @@ export default function Page() {
     if (!activeGeom) return needField();
     setBusy("terrain"); setMsg("");
     try {
-      const tr = await api.fetchTerrain(activeGeom);
+      const tr = await api.fetchTerrain(activeGeom, 2, isoInterval);
       mapApi.current?.showOverlay("dem", tr.image, tr.bounds);
       mapApi.current?.showContours(tr.contours);
       setDemInfo(null);
@@ -509,6 +510,7 @@ export default function Page() {
       ndwi_thr: 0.20 - (s - 1) * 0.075,
       min_area_ha: [0.6, 0.4, 0.25, 0.15, 0.08][s - 1],
       dem_channel_ha: [80, 50, 25, 12, 6][s - 1],  // impluvi DEM: soglia bacino
+      dem_depth_m: [3.0, 2.0, 1.2, 0.7, 0.4][s - 1],  // alvei incisi: profondità min
     };
   }
   async function detectWater() {
@@ -517,7 +519,7 @@ export default function Page() {
     setBusy("water"); setMsg("");
     try {
       const p = waterParams();
-      const w = await api.fetchWatercourses(activeGeom, date, p.min_area_ha, p.ndwi_thr, true, p.dem_channel_ha);
+      const w = await api.fetchWatercourses(activeGeom, date, p.min_area_ha, p.ndwi_thr, true, p.dem_channel_ha, p.dem_depth_m);
       if (!w.features.length) { setMsg(t("Nessun corso d'acqua rilevato: prova ad alzare la sensibilità.")); return; }
       // ANTEPRIMA modificabile a mano: conferma o annulla
       mapApi.current?.previewWater(w.features.map((f) => ({ geom: f.geojson, kind: f.kind })));
@@ -1233,6 +1235,12 @@ export default function Page() {
               </button>
               <button className="btn-ghost flex-1 basis-0" onClick={clearDem}>{t("Rimuovi DEM")}</button>
             </div>
+            <label className="text-xs text-sage-dark block mt-2">{t("Isoipse ogni")}
+              <select className="field-input mt-1" value={isoInterval} onChange={(e) => setIsoInterval(Number(e.target.value))}>
+                <option value={0}>{t("Automatico")}</option>
+                {[0.5, 1, 2, 2.5, 5, 10, 20, 25, 50].map((v) => <option key={v} value={v}>{v} m</option>)}
+              </select>
+            </label>
             <button className="btn-primary w-full mt-2" disabled={busy === "terrain" || !activeGeom} onClick={showTerrain}>
               {busy === "terrain" ? t("Ricompongo…") : t("Rilievo + isoipse (dislivelli)")}
             </button>

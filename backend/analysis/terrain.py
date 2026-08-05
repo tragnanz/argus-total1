@@ -131,14 +131,16 @@ def _contours(dem, valid, ctx, vmin, vmax, interval) -> list[dict]:
     return feats
 
 
-def terrain_readability(client, geom: dict, vert_exag: float = 2.0) -> dict:
+def terrain_readability(client, geom: dict, vert_exag: float = 2.0,
+                        interval_m: float = 0.0) -> dict:
     dem, mask, ctx = _dem_and_grid(client, geom, max_dim=420)
     valid = np.isfinite(dem)                 # rilievo su tutto il riquadro DEM
     vmin, vmax = _range(dem, valid)
     infield = mask & valid                   # isoipse solo dentro l'area
     if int(infield.sum()) < 16:
         infield = valid
-    interval = _nice_interval(vmax - vmin)
+    # intervallo scelto dall'utente (0,5 / 1 / 2 / 5 m…) oppure automatico
+    interval = float(interval_m) if interval_m and interval_m > 0 else _nice_interval(vmax - vmin)
     rgb = _hillshade_rgb(dem, valid, ctx["res"], vmin, vmax, vert_exag)
     png = _png_from_rgb(rgb)
     image = "data:image/png;base64," + base64.b64encode(png).decode()
@@ -242,9 +244,27 @@ def _dem_channels(dem, valid, res, min_cells):
     return binary_dilation(channels, iterations=1) & valid
 
 
+def _dem_lows(dem, valid, res, depth_thr):
+    """Alvei INCISI: celle più basse delle zone circostanti (il letto blu scuro
+    contornato da sponde più chiare del DEM). Confronta la quota col livello delle
+    sponde (apertura morfologica con finestra più larga del letto): dove la
+    profondità supera `depth_thr` è alveo. Segue i meandri (lo zig-zag)."""
+    from scipy.ndimage import grey_opening, binary_opening
+    hp, wp = dem.shape
+    fillv = float(np.nanmax(dem[valid])) if valid.any() else 0.0
+    demf = np.where(valid, dem, fillv).astype("float64")
+    win = max(5, int(round(350.0 / res)))            # > larghezza tipica dell'alveo
+    if win % 2 == 0:
+        win += 1
+    bank = grey_opening(demf, size=win)              # livello delle sponde
+    depth = bank - demf                              # quanto è inciso sotto le sponde
+    low = valid & (depth >= float(depth_thr))
+    return binary_opening(low, iterations=1) & valid
+
+
 def detect_watercourses(client, geom: dict, date: str, min_area_ha: float = 0.2,
                         ndwi_thr: float = 0.20, use_dem: bool = True,
-                        dem_channel_ha: float = 25.0) -> dict:
+                        dem_channel_ha: float = 25.0, dem_depth_m: float = 1.2) -> dict:
     """Rileva e 'ricalca' i corsi d'acqua esistenti dall'NDWI. Distingue:
     - fiumi/canali stretti (allungati) → ASSE (LineString);
     - bacini (invasi, laghi) → poligono del contorno (kind 'basin');
@@ -338,7 +358,9 @@ def detect_watercourses(client, geom: dict, date: str, min_area_ha: float = 0.2,
         try:
             demv = np.isfinite(dem)
             min_cells = max(20, int(float(dem_channel_ha) * 10000.0 / (res * res)))
-            ch = _dem_channels(np.where(demv, dem, np.nan), demv, res, min_cells)
+            demx = np.where(demv, dem, np.nan)
+            # accumulo di flusso (impluvi) + alvei incisi (depressione relativa)
+            ch = _dem_channels(demx, demv, res, min_cells) | _dem_lows(demx, demv, res, dem_depth_m)
             ch = ch & ~water                              # non duplicare l'acqua NDWI
             lblc, nc = label(ch)
             for v in range(1, nc + 1):

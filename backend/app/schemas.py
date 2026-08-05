@@ -207,6 +207,7 @@ class CanalOut(BaseModel):
 class TerrainIn(BaseModel):
     geom: GeoPolygon
     vert_exag: float = Field(default=2.0, ge=0.5, le=6)
+    interval_m: float = Field(default=0.0, ge=0, le=1000)  # 0 = automatico
 
 
 class TerrainOut(BaseModel):
@@ -239,6 +240,7 @@ class WaterIn(BaseModel):
     ndwi_thr: float = Field(default=0.20, ge=-0.5, le=0.8)  # soglia acqua (sensibilità)
     use_dem: bool = True                                    # drenaggio dal DEM (alvei asciutti)
     dem_channel_ha: float = Field(default=25.0, ge=1.0, le=100000)  # area di bacino minima
+    dem_depth_m: float = Field(default=1.2, ge=0.1, le=50)  # profondità incisione min (alvei)
 
 
 class WaterOut(BaseModel):

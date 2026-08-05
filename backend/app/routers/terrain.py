@@ -14,7 +14,8 @@ router = APIRouter(prefix="/api", tags=["terrain"])
 @router.post("/terrain", response_model=TerrainOut)
 def terrain(body: TerrainIn, client=Depends(get_client)):
     try:
-        out = terrain_readability(client, body.geom.model_dump(), vert_exag=body.vert_exag)
+        out = terrain_readability(client, body.geom.model_dump(), vert_exag=body.vert_exag,
+                                  interval_m=body.interval_m)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Errore rilievo terreno: {e}")
     return TerrainOut(**out)
@@ -34,7 +35,8 @@ def watercourses(body: WaterIn, client=Depends(get_client)):
     try:
         out = detect_watercourses(client, body.geom.model_dump(), body.date,
                                   min_area_ha=body.min_area_ha, ndwi_thr=body.ndwi_thr,
-                                  use_dem=body.use_dem, dem_channel_ha=body.dem_channel_ha)
+                                  use_dem=body.use_dem, dem_channel_ha=body.dem_channel_ha,
+                                  dem_depth_m=body.dem_depth_m)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Errore rilevamento corsi d'acqua: {e}")
     return WaterOut(**out)
