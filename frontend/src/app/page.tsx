@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.25";
+const REV = "v0.6.26";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -960,79 +960,78 @@ export default function Page() {
         onCanalProfile={(i) => setProfileCanal(i)} />
 
       <div className="overlay-layer">
-        {/* Testata + barra strumenti */}
-        <div className="absolute top-4 left-4 flex items-center gap-2">
-          <div className="pill-light flex items-center gap-2 px-3 py-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/nabu-logo-color.png" alt="Nabu" className="h-6 w-auto" />
+        {/* Header stile Argus (barra verde scuro) */}
+        <div className="absolute top-0 inset-x-0 z-30 flex items-center gap-2 px-3 h-14 shadow-lg" style={{ background: "#0c3a2b" }}>
+          {/* Logo + marchio */}
+          <div className="flex items-center gap-2 pr-1">
+            <div className="bg-white rounded-full p-1 flex items-center justify-center shrink-0">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/argusmark.png" alt="Argus" className="h-6 w-6" />
+            </div>
             <div className="leading-tight">
-              <div className="font-semibold text-brand">Argus <span className="text-brand-light">Total</span></div>
-              <div className="text-[11px] text-sage-dark">{t("Progettazione di grandi progetti agroindustriali")}</div>
+              <div className="font-semibold text-white text-[15px]">Argus <span style={{ color: "#7fd39b" }}>Total</span></div>
+              <div className="text-[9px] tracking-[0.22em] text-white/55">NABU</div>
             </div>
           </div>
 
-          {/* Annulla / Ripristina */}
-          <div className="pill-light flex items-center gap-1 px-1.5 py-1.5">
+          {/* Strumenti: annulla/ripristina · livelli · misura */}
+          <div className="flex items-center gap-1 rounded-xl px-1 py-1" style={{ background: "rgba(255,255,255,.10)" }}>
             <button title={t("Annulla")} disabled={!canUndo} onClick={undo}
-              className="p-1.5 rounded-lg text-sage-dark disabled:opacity-30 hover:bg-black/5"><IcoUndo /></button>
-            <span className="w-px h-5 bg-black/10" />
+              className="p-1.5 rounded-lg text-white disabled:opacity-30 hover:bg-white/10"><IcoUndo /></button>
             <button title={t("Ripristina")} disabled={!canRedo} onClick={redo}
-              className="p-1.5 rounded-lg text-sage-dark disabled:opacity-30 hover:bg-black/5"><IcoRedo /></button>
+              className="p-1.5 rounded-lg text-white disabled:opacity-30 hover:bg-white/10"><IcoRedo /></button>
+            <span className="w-px h-5 bg-white/20" />
+            <button title={t("Livelli sulla mappa")} onClick={() => setLayersOpen((o) => !o)}
+              className={"p-1.5 rounded-lg " + (layersOpen ? "bg-white/20 text-white" : "text-white hover:bg-white/10")}><IcoLayers /></button>
+            <button title={t("Misura distanze/aree")} onClick={toggleMeasure}
+              className={"p-1.5 rounded-lg " + (measuring ? "bg-white text-brand" : "text-white hover:bg-white/10")}><IcoRuler /></button>
           </div>
-
-          {/* Livelli / Misura */}
-          <div className="relative">
-            <div className="pill-light flex items-center gap-1 px-1.5 py-1.5">
-              <button title={t("Livelli sulla mappa")} onClick={() => setLayersOpen((o) => !o)}
-                className={"p-1.5 rounded-lg hover:bg-black/5 " + (layersOpen ? "bg-brand/10 text-brand" : "text-sage-dark")}><IcoLayers /></button>
-              <span className="w-px h-5 bg-black/10" />
-              <button title={t("Misura distanze/aree")} onClick={toggleMeasure}
-                className={"p-1.5 rounded-lg " + (measuring ? "bg-brand text-white" : "text-sage-dark hover:bg-black/5")}><IcoRuler /></button>
+          {layersOpen && (
+            <div className="absolute top-16 left-40 z-40 widget p-2 w-56">
+              <div className="text-xs font-semibold text-sage-dark mb-1 px-1">{t("Livelli sulla mappa")}</div>
+              {([
+                ["fields", t("Campi")], ["macro", t("Macro-aree")],
+                ["canal", t("Canali")], ["water", t("Corsi d'acqua")], ["layout", t("Layout pivot")],
+              ] as const).map(([k, lbl]) => (
+                <button key={k} onClick={() => toggleLayer(k)}
+                  className="w-full flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg hover:bg-black/5">
+                  <span className={layerVis[k] ? "text-brand" : "text-sage-dark opacity-50"}>{layerVis[k] ? "◉" : "○"}</span>
+                  <span className={layerVis[k] ? "" : "line-through opacity-60"}>{lbl}</span>
+                </button>
+              ))}
             </div>
-            {layersOpen && (
-              <div className="absolute mt-2 left-0 z-30 widget p-2 w-56">
-                <div className="text-xs font-semibold text-sage-dark mb-1 px-1">{t("Livelli sulla mappa")}</div>
-                {([
-                  ["fields", t("Campi")], ["macro", t("Macro-aree")],
-                  ["canal", t("Canali")], ["water", t("Corsi d'acqua")], ["layout", t("Layout pivot")],
-                ] as const).map(([k, lbl]) => (
-                  <button key={k} onClick={() => toggleLayer(k)}
-                    className="w-full flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg hover:bg-black/5">
-                    <span className={layerVis[k] ? "text-brand" : "text-sage-dark opacity-50"}>{layerVis[k] ? "◉" : "○"}</span>
-                    <span className={layerVis[k] ? "" : "line-through opacity-60"}>{lbl}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          )}
+          {measuring && measureTxt && <div className="px-3 py-1.5 rounded-lg text-sm text-white" style={{ background: "rgba(255,255,255,.14)" }}>{measureTxt}</div>}
 
-          {measuring && measureTxt && <div className="pill-dark px-3 py-2 text-sm">{measureTxt}</div>}
-        </div>
+          <div className="flex-1" />
 
-        {/* Ricerca + lingua */}
-        <div className="absolute top-4 right-4 flex items-center gap-2">
-          <form onSubmit={geocode} className="pill-light flex items-center gap-1.5 pl-1.5 pr-1.5 py-1.5">
+          {/* Ricerca */}
+          <form onSubmit={geocode} className="flex items-center gap-1.5 bg-white rounded-xl pl-1.5 pr-1.5 py-1">
             <button type="button" title={t("Usa la mia posizione (GPS)")} onClick={() => mapApi.current?.locate()}
               className="bg-brand text-white rounded-lg p-1.5 flex items-center justify-center shrink-0"><IcoCross /></button>
             <input value={q} onChange={(e) => setQ(e.target.value)}
               placeholder={t("Indirizzo o coordinate GPS")}
-              className="bg-transparent outline-none text-sm w-56" />
+              className="bg-transparent outline-none text-sm w-48" />
             <button type="submit" className="btn-primary px-3 py-1.5 rounded-lg text-sm shrink-0">{t("Cerca")}</button>
           </form>
-          <div className="pill-light flex items-center p-0.5 text-xs">
+
+          {/* Metrico / Imperiale */}
+          <div className="flex items-center p-0.5 rounded-xl text-xs" style={{ background: "rgba(255,255,255,.12)" }}>
             <button onClick={() => setUnits("metric")}
-              className={"px-2 py-1.5 rounded-lg " + (!imperial ? "bg-brand text-white font-semibold" : "text-sage-dark")}>m</button>
+              className={"px-2 py-1.5 rounded-lg " + (!imperial ? "bg-white text-brand font-semibold" : "text-white")}>m</button>
             <button onClick={() => setUnits("imperial")}
-              className={"px-2 py-1.5 rounded-lg " + (imperial ? "bg-brand text-white font-semibold" : "text-sage-dark")}>ft</button>
+              className={"px-2 py-1.5 rounded-lg " + (imperial ? "bg-white text-brand font-semibold" : "text-white")}>ft</button>
           </div>
+
+          {/* Lingua */}
           <select value={lang} onChange={(e) => setLang(e.target.value as Lang)}
-            className="pill-light px-3 py-2 text-sm outline-none">
-            {LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+            className="rounded-xl px-2 py-2 text-sm outline-none text-white border-none" style={{ background: "rgba(255,255,255,.12)" }}>
+            {LANGS.map((l) => <option key={l.code} value={l.code} className="text-black">{l.label}</option>)}
           </select>
         </div>
 
         {/* Pannello sinistro: flusso di progetto */}
-        <div className="absolute top-24 left-4 w-[440px] max-w-[calc(100vw_-_2rem)] max-h-[78vh] overflow-auto scroll-soft widget p-4 space-y-4">
+        <div className="absolute top-[4.5rem] left-4 w-[440px] max-w-[calc(100vw_-_2rem)] max-h-[78vh] overflow-auto scroll-soft widget p-4 space-y-4">
           <section>
             <h3 className="text-sm font-semibold text-brand-darker mb-1">{t("Cliente")}</h3>
             <div className="flex gap-2">
@@ -1200,7 +1199,7 @@ export default function Page() {
         </div>
 
         {/* Pannello destro: anteprima / idoneità / layout */}
-        <div className="absolute top-24 right-4 w-[440px] max-w-[calc(100vw_-_2rem)] max-h-[78vh] overflow-auto scroll-soft widget p-4 space-y-4">
+        <div className="absolute top-[4.5rem] right-4 w-[440px] max-w-[calc(100vw_-_2rem)] max-h-[78vh] overflow-auto scroll-soft widget p-4 space-y-4">
           {!sameRules && active && (
             <div className="text-[11px] text-brand-mid bg-brand/10 rounded-lg px-2 py-1">
               {t("Stai modificando: {name}", { name: active.name })}
