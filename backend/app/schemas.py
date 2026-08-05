@@ -237,6 +237,8 @@ class WaterIn(BaseModel):
     date: str
     min_area_ha: float = Field(default=0.2, ge=0.0, le=10000)
     ndwi_thr: float = Field(default=0.20, ge=-0.5, le=0.8)  # soglia acqua (sensibilità)
+    use_dem: bool = True                                    # drenaggio dal DEM (alvei asciutti)
+    dem_channel_ha: float = Field(default=25.0, ge=1.0, le=100000)  # area di bacino minima
 
 
 class WaterOut(BaseModel):
@@ -245,6 +247,7 @@ class WaterOut(BaseModel):
     n_river: int
     n_basin: int
     n_wetland: int
+    n_drainage: int = 0
 
 
 # ---------- Pivot lungo il canale (M6, Fase 3) ----------

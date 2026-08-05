@@ -88,7 +88,14 @@ def _contours(dem, valid, ctx, vmin, vmax, interval) -> list[dict]:
 
     res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
     minx, top, to_wgs = ctx["minx"], ctx["top"], ctx["to_wgs"]
-    demS = _smooth(dem)                                   # linee più pulite (meno rumore)
+    # doppia lisciatura (mediana anti-rumore + gaussiana) → curve morbide e
+    # concentriche, come su una carta topografica.
+    demS = _smooth(dem)
+    try:
+        from scipy.ndimage import gaussian_filter
+        demS = gaussian_filter(demS, sigma=1.4)
+    except Exception:  # noqa: BLE001
+        pass
     cols = minx + (np.arange(wp) + 0.5) * res
     rows = top - (np.arange(hp) + 0.5) * res
     X, Y = np.meshgrid(cols, rows)
@@ -186,8 +193,58 @@ def _centerline_cells(comp: np.ndarray):
     return path if len(path) >= 2 else None
 
 
+def _dem_channels(dem, valid, res, min_cells):
+    """Rete di drenaggio dal DEM: riempie le depressioni, calcola direzione di
+    deflusso (D8) e accumulo di flusso; le celle con molto bacino a monte sono
+    impluvi/alvei (anche asciutti) → assi (LineString). Coglie i corsi d'acqua
+    visibili nella morfologia che l'NDWI non vede (letti secchi, wadi)."""
+    from skimage.morphology import reconstruction, skeletonize
+    from scipy.ndimage import label as _label
+    hp, wp = dem.shape
+    fillv = float(np.nanmax(dem[valid])) if valid.any() else 0.0
+    demf = np.where(valid, dem, fillv).astype("float64")
+    # riempimento depressioni (ricostruzione morfologica per erosione)
+    seed = np.full_like(demf, demf.max())
+    seed[0, :] = demf[0, :]; seed[-1, :] = demf[-1, :]
+    seed[:, 0] = demf[:, 0]; seed[:, -1] = demf[:, -1]
+    filled = reconstruction(seed, demf, method="erosion")
+
+    nb = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
+    dl = [res, res, res, res, res * 1.41421356, res * 1.41421356, res * 1.41421356, res * 1.41421356]
+    dr_n = np.full((hp, wp), -1, np.int32); dc_n = np.full((hp, wp), -1, np.int32)
+    for r in range(hp):
+        for c in range(wp):
+            if not valid[r, c]:
+                continue
+            e = filled[r, c]; best = 0.0; br = -1; bc = -1
+            for k, (dr, dc) in enumerate(nb):
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < hp and 0 <= nc < wp and valid[nr, nc]:
+                    s = (e - filled[nr, nc]) / dl[k]
+                    if s > best:
+                        best = s; br = nr; bc = nc
+            dr_n[r, c] = br; dc_n[r, c] = bc
+
+    acc = np.ones((hp, wp), dtype="float64")
+    order = np.argsort(filled, axis=None)[::-1]        # dalla quota più alta
+    rows, cols = np.unravel_index(order, (hp, wp))
+    for r, c in zip(rows.tolist(), cols.tolist()):
+        if not valid[r, c]:
+            continue
+        nr, nc = int(dr_n[r, c]), int(dc_n[r, c])
+        if nr >= 0:
+            acc[nr, nc] += acc[r, c]
+
+    channels = valid & (acc >= float(min_cells))
+    if not channels.any():
+        return channels
+    from scipy.ndimage import binary_dilation
+    return binary_dilation(channels, iterations=1) & valid
+
+
 def detect_watercourses(client, geom: dict, date: str, min_area_ha: float = 0.2,
-                        ndwi_thr: float = 0.20) -> dict:
+                        ndwi_thr: float = 0.20, use_dem: bool = True,
+                        dem_channel_ha: float = 25.0) -> dict:
     """Rileva e 'ricalca' i corsi d'acqua esistenti dall'NDWI. Distingue:
     - fiumi/canali stretti (allungati) → ASSE (LineString);
     - bacini (invasi, laghi) → poligono del contorno (kind 'basin');
@@ -275,12 +332,40 @@ def detect_watercourses(client, geom: dict, date: str, min_area_ha: float = 0.2,
             out.append({"geojson": {"type": "Polygon", "coordinates": [ring]},
                         "kind": "wetland", "area_ha": round(area_ha, 1)})
 
+    # --- DRENAGGIO DAL DEM: impluvi/alvei (anche asciutti) come assi ---
+    n_dem = 0
+    if use_dem and np.isfinite(dem).any():
+        try:
+            demv = np.isfinite(dem)
+            min_cells = max(20, int(float(dem_channel_ha) * 10000.0 / (res * res)))
+            ch = _dem_channels(np.where(demv, dem, np.nan), demv, res, min_cells)
+            ch = ch & ~water                              # non duplicare l'acqua NDWI
+            lblc, nc = label(ch)
+            for v in range(1, nc + 1):
+                comp = lblc == v
+                path = _centerline_cells(comp)
+                if not path or len(path) < 3:
+                    continue
+                xy = [cell_xy(p) for p in path]
+                length_m = sum(math.hypot(xy[i][0] - xy[i - 1][0], xy[i][1] - xy[i - 1][1])
+                               for i in range(1, len(xy)))
+                if length_m < 4 * res:
+                    continue
+                xy_s = _rdp([(float(x), float(y)) for x, y in xy], res * 0.8)
+                line_ll = [list(to_wgs.transform(x, y)) for x, y in xy_s]
+                out.append({"geojson": {"type": "LineString", "coordinates": line_ll},
+                            "kind": "drainage", "area_ha": 0.0, "length_m": round(length_m, 1)})
+                n_dem += 1
+        except Exception:  # noqa: BLE001 — se il calcolo idrologico fallisce, salto
+            pass
+
     out.sort(key=lambda a: a["area_ha"], reverse=True)
     tot = round(sum(a["area_ha"] for a in out), 1)
     return {"features": out, "water_ha": tot,
             "n_river": sum(1 for a in out if a["kind"] == "river"),
             "n_basin": sum(1 for a in out if a["kind"] == "basin"),
-            "n_wetland": sum(1 for a in out if a["kind"] == "wetland")}
+            "n_wetland": sum(1 for a in out if a["kind"] == "wetland"),
+            "n_drainage": n_dem}
 
 
 def _ring_area_ha(ring_utm: list) -> float:

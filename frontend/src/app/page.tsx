@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.20";
+const REV = "v0.6.21";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -502,10 +502,14 @@ export default function Page() {
 
   // ---- corsi d'acqua esistenti (NDWI): rilevati e 'ricalcati' prima di
   // progettare canali e pivot; i pivot li evitano automaticamente. ----
-  // sensibilità → soglia NDWI e area minima (più alta = rileva anche corsi stretti/deboli)
+  // sensibilità → soglie NDWI/area e area di bacino DEM (più alta = più corsi rilevati)
   function waterParams() {
     const s = waterSens;                          // 1..5
-    return { ndwi_thr: 0.20 - (s - 1) * 0.075, min_area_ha: [0.6, 0.4, 0.25, 0.15, 0.08][s - 1] };
+    return {
+      ndwi_thr: 0.20 - (s - 1) * 0.075,
+      min_area_ha: [0.6, 0.4, 0.25, 0.15, 0.08][s - 1],
+      dem_channel_ha: [80, 50, 25, 12, 6][s - 1],  // impluvi DEM: soglia bacino
+    };
   }
   async function detectWater() {
     if (!activeGeom) return needField();
@@ -513,13 +517,13 @@ export default function Page() {
     setBusy("water"); setMsg("");
     try {
       const p = waterParams();
-      const w = await api.fetchWatercourses(activeGeom, date, p.min_area_ha, p.ndwi_thr);
+      const w = await api.fetchWatercourses(activeGeom, date, p.min_area_ha, p.ndwi_thr, true, p.dem_channel_ha);
       if (!w.features.length) { setMsg(t("Nessun corso d'acqua rilevato: prova ad alzare la sensibilità.")); return; }
       // ANTEPRIMA modificabile a mano: conferma o annulla
       mapApi.current?.previewWater(w.features.map((f) => ({ geom: f.geojson, kind: f.kind })));
       setWaterPreview(true); setWaterRemoveOn(false);
-      setMsg(t("Anteprima: {r} fiumi/canali, {b} bacini, {p} paludi. Modifica a mano, poi Conferma.",
-        { r: w.n_river, b: w.n_basin, p: w.n_wetland }));
+      setMsg(t("Anteprima: {r} fiumi/canali, {d} impluvi (DEM), {b} bacini, {p} paludi. Modifica a mano, poi Conferma.",
+        { r: w.n_river, d: w.n_drainage, b: w.n_basin, p: w.n_wetland }));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   function confirmWaterUI() {
@@ -1249,7 +1253,7 @@ export default function Page() {
           </section>
 
           <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
-            <SectionHead title={t("Corsi d'acqua esistenti")} help={t("Rileva e ricalca fiumi, canali naturali e paludi (NDWI). Falla prima di progettare canali e pivot: i pivot li evitano automaticamente.")} />
+            <SectionHead title={t("Corsi d'acqua esistenti")} help={t("Rileva e ricalca fiumi, canali e paludi (NDWI) e gli impluvi/alvei dalla morfologia del terreno (DEM), anche asciutti. Falla prima di progettare: i pivot li evitano automaticamente.")} />
             <label className="text-xs text-sage-dark block">{t("Sensibilità")}: {waterSens}/5 {waterSens >= 4 ? t("(rileva anche corsi stretti/deboli)") : ""}
               <input type="range" min={1} max={5} step={1} value={waterSens}
                 onChange={(e) => setWaterSens(Number(e.target.value))} className="w-full accent-brand" disabled={waterPreview} />

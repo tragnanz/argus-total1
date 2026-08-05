@@ -409,7 +409,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         if (g) {
           g.eachLayer((layer: any) => {
             const kind = layer._wcKind || "basin";
-            if (kind === "river") {
+            const isPolygon = layer instanceof L.Polygon;   // Polygon estende Polyline
+            if (!isPolygon) {
               const lls = layer.getLatLngs() as any[];
               const coords = lls.map((p: any) => [p.lng, p.lat]);
               if (coords.length >= 2) out.push({ kind, geom: { type: "LineString", coordinates: coords } });
@@ -474,14 +475,11 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         const gj = L.geoJSON(fc as never, {
           style: (f) => {
             const p = f?.properties?.principal;
-            return { color: "#5a3410", weight: p ? 2.2 : 0.8, opacity: p ? 1 : 0.6 };
+            return { color: "#b5502a", weight: p ? 2 : 1, opacity: p ? 1 : 0.75 };
           },
           onEachFeature: (f, layer) => {
-            // una sola etichetta per isoipsa principale (sul tratto più lungo)
-            if (f?.properties?.label) {
-              layer.bindTooltip(`${f.properties.elev} m`,
-                { permanent: true, direction: "center", className: "field-label" });
-            }
+            // niente riquadri fissi: la quota compare solo al passaggio del mouse
+            layer.bindTooltip(`${f?.properties?.elev} m`, { sticky: true, direction: "top", opacity: 0.9 });
           },
         });
         g.addLayer(gj);
