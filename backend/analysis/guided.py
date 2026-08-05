@@ -75,6 +75,7 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
     r = _route(client, geom, target_permille)
     dem, ctx, xy = r["dem"], r["ctx"], r["xy"]
     res = ctx["res"]; wp = ctx["wp"]; hp = ctx["hp"]; to_wgs = ctx["to_wgs"]
+    to_utm = pyproj.Transformer.from_crs(4326, ctx["epsg"], always_xy=True)
 
     # --- TERRENO LIBERO: i pivot non devono passare sopra il canale né su
     # acqua/paludi. Costruisco le distanze (in metri) dal canale e dall'acqua;
@@ -86,14 +87,42 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
     dist_canal = distance_transform_edt(~canal_mask) * res     # m dalla cella di canale
     dist_wet = np.full((hp, wp), np.inf)
     n_wet = 0
+    wet = np.zeros((hp, wp), bool)
+    # 1) corsi d'acqua CONFERMATI dall'utente (anche modificati a mano)
+    avoid = params.get("avoid")
+    if avoid:
+        try:
+            from rasterio.features import rasterize
+            from rasterio.transform import from_origin
+            from scipy.ndimage import binary_dilation
+            geoms = []
+            for f in avoid:
+                g = f.get("geojson") or f
+                typ = g.get("type"); coords = g.get("coordinates")
+                if typ == "Polygon" and coords:
+                    ring = [to_utm.transform(lon, lat) for lon, lat, *_ in coords[0]]
+                    geoms.append({"type": "Polygon", "coordinates": [ring]})
+                elif typ == "LineString" and coords:
+                    line = [to_utm.transform(lon, lat) for lon, lat, *_ in coords]
+                    geoms.append({"type": "LineString", "coordinates": line})
+            if geoms:
+                am = rasterize([(gg, 1) for gg in geoms], out_shape=(hp, wp),
+                               transform=from_origin(ctx["minx"], ctx["top"], res, res),
+                               fill=0, all_touched=True).astype(bool)
+                wet |= binary_dilation(am, iterations=1)
+        except Exception:  # noqa: BLE001
+            pass
+    # 2) NDWI automatico (se c'è una data), unito a quanto sopra
     if exclude_water and date:
         try:
-            wet = _water_mask(client, ctx, date)
-            if wet is not None and wet.any():
-                n_wet = int(wet.sum())
-                dist_wet = distance_transform_edt(~wet) * res
-        except Exception:  # noqa: BLE001 — se manca la scena, salto l'esclusione acqua
+            w = _water_mask(client, ctx, date)
+            if w is not None and w.any():
+                wet |= w
+        except Exception:  # noqa: BLE001 — se manca la scena, salto l'esclusione NDWI
             pass
+    if wet.any():
+        n_wet = int(wet.sum())
+        dist_wet = distance_transform_edt(~wet) * res
 
     def land_ok(cx, cy):
         """Terreno libero sotto il pivot: nessun canale né acqua entro il raggio."""
@@ -102,7 +131,6 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
             return False
         return dist_canal[row, col] >= R - 1.0 and dist_wet[row, col] >= R - 1.0
 
-    to_utm = pyproj.Transformer.from_crs(4326, ctx["epsg"], always_xy=True)
     ring_utm = [to_utm.transform(lon, lat) for lon, lat, *_ in geom["coordinates"][0]]
     field = Path(ring_utm)
 
@@ -219,7 +247,7 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
         "per_side": per_side, "radius_m": R, "gap_m": gap,
         "safety_m": round(clear, 1), "spacing_m": round(s, 1),
         "pivot_ha": round(pivot_ha, 1),
-        "water_excluded": bool(exclude_water and date and n_wet > 0),
+        "water_excluded": bool(n_wet > 0),
         "net_ha": round(n * pivot_ha, 1),
         "canal_length_m": round(length_m, 1),
         "canal_drop_m": round(drop_m, 2),

@@ -32,7 +32,8 @@ def canal_reachable(body: ReachIn, client=Depends(get_client)):
 @router.post("/watercourses", response_model=WaterOut)
 def watercourses(body: WaterIn, client=Depends(get_client)):
     try:
-        out = detect_watercourses(client, body.geom.model_dump(), body.date, min_area_ha=body.min_area_ha)
+        out = detect_watercourses(client, body.geom.model_dump(), body.date,
+                                  min_area_ha=body.min_area_ha, ndwi_thr=body.ndwi_thr)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Errore rilevamento corsi d'acqua: {e}")
     return WaterOut(**out)

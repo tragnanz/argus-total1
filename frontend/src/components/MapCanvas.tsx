@@ -13,6 +13,13 @@ export type MapHandle = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   showWater: (items: { geom: { type: string; coordinates: any }; kind: string }[]) => void;
   clearWater: () => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  previewWater: (items: { geom: { type: string; coordinates: any }; kind: string }[]) => void;
+  waterDraw: (kind: "river" | "basin") => void;
+  waterRemoveMode: (on: boolean) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  confirmWater: () => { kind: string; geom: { type: string; coordinates: any } }[];
+  cancelWater: () => void;
   clearAll: () => void;
   fitAll: () => void;
   flyTo: (lat: number, lon: number, zoom?: number) => void;
@@ -79,6 +86,9 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
   const reachRef = useRef<L.LayerGroup | null>(null);
   const canalEditRef = useRef<L.LayerGroup | null>(null);
   const waterRef = useRef<L.LayerGroup | null>(null);
+  const waterPreviewRef = useRef<L.FeatureGroup | null>(null);
+  const drawModeRef = useRef<"river" | "basin" | null>(null);
+  const waterRemoveRef = useRef(false);
   const pickCbRef = useRef<((lon: number, lat: number) => void) | null>(null);
   const measureRef = useRef<L.LayerGroup | null>(null);
   const measuringRef = useRef(false);
@@ -98,6 +108,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
     fieldsGroupRef.current = L.layerGroup().addTo(map);
     macroRef.current = L.layerGroup().addTo(map);
     waterRef.current = L.layerGroup().addTo(map);
+    waterPreviewRef.current = L.featureGroup().addTo(map);
     contourRef.current = L.layerGroup().addTo(map);
     reachRef.current = L.layerGroup().addTo(map);
     canalRef.current = L.layerGroup().addTo(map);
@@ -128,6 +139,17 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     map.on("pm:create", (e: any) => {
       const layer = e.layer;
+      const dm = drawModeRef.current;
+      if (dm === "river" || dm === "basin") {         // nuovo corso d'acqua (anteprima)
+        (layer as any)._wcKind = dm;
+        try { layer.setStyle?.({ color: "#0369a1", weight: 3, dashArray: "4,3", fillOpacity: 0.2 }); } catch { /* */ }
+        layer.on("click", () => { if (waterRemoveRef.current) waterPreviewRef.current?.removeLayer(layer); });
+        waterPreviewRef.current?.addLayer(layer);
+        try { (layer as any).pm?.enable({ allowSelfIntersection: false }); } catch { /* */ }
+        drawModeRef.current = null;
+        try { (map as any).pm.disableDraw(); } catch { /* */ }
+        return;
+      }
       const poly = layerToPolygon(layer);
       try { map.removeLayer(layer); } catch { /* */ }
       if (poly) cbRef.current.onCreate?.(poly);
@@ -335,6 +357,69 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         }
       },
       clearWater() { waterRef.current?.clearLayers(); },
+      previewWater(items) {
+        const map = mapRef.current, g = waterPreviewRef.current;
+        if (!map || !g) return;
+        waterRef.current?.clearLayers();          // nasconde i confermati durante l'anteprima
+        g.clearLayers();
+        waterRemoveRef.current = false; drawModeRef.current = null;
+        for (const it of items) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let layer: any;
+          if (it.geom.type === "LineString") {
+            layer = L.polyline((it.geom.coordinates as number[][]).map((p) => [p[1], p[0]] as [number, number]),
+              { color: "#0369a1", weight: 3, dashArray: "4,3", opacity: 0.95 });
+          } else {
+            const isBasin = it.kind === "basin";
+            layer = L.polygon((it.geom.coordinates as number[][][])[0].map((p) => [p[1], p[0]] as [number, number]),
+              { color: isBasin ? "#0369a1" : "#0891b2", weight: 2, fillColor: isBasin ? "#0ea5e9" : "#22d3ee", fillOpacity: 0.25, dashArray: "4,3" });
+          }
+          (layer as any)._wcKind = it.kind;
+          layer.on("click", () => { if (waterRemoveRef.current) g.removeLayer(layer); });
+          g.addLayer(layer);
+          try { (layer as any).pm?.enable({ allowSelfIntersection: false }); } catch { /* */ }
+        }
+        try { const b = g.getBounds(); if (b.isValid()) map.fitBounds(b, { padding: [50, 50] }); } catch { /* */ }
+      },
+      waterDraw(kind) {
+        const map = mapRef.current; if (!map) return;
+        drawModeRef.current = kind;
+        try { (map as any).pm.enableDraw(kind === "river" ? "Line" : "Polygon", { allowSelfIntersection: false }); } catch { /* */ }
+      },
+      waterRemoveMode(on) {
+        waterRemoveRef.current = on;
+        const map = mapRef.current;
+        try { if (map) map.getContainer().style.cursor = on ? "not-allowed" : ""; } catch { /* */ }
+      },
+      confirmWater() {
+        const map = mapRef.current, g = waterPreviewRef.current;
+        const out: { kind: string; geom: { type: string; coordinates: any } }[] = [];  // eslint-disable-line @typescript-eslint/no-explicit-any
+        if (g) {
+          g.eachLayer((layer: any) => {
+            const kind = layer._wcKind || "basin";
+            if (kind === "river") {
+              const lls = layer.getLatLngs() as any[];
+              const coords = lls.map((p: any) => [p.lng, p.lat]);
+              if (coords.length >= 2) out.push({ kind, geom: { type: "LineString", coordinates: coords } });
+            } else {
+              let ring = layer.getLatLngs() as any;
+              if (Array.isArray(ring[0])) ring = ring[0];
+              const coords = ring.map((p: any) => [p.lng, p.lat]);
+              if (coords.length >= 3) { coords.push(coords[0]); out.push({ kind, geom: { type: "Polygon", coordinates: [coords] } }); }
+            }
+          });
+        }
+        g?.clearLayers();
+        drawModeRef.current = null; waterRemoveRef.current = false;
+        try { if (map) { (map as any).pm.disableDraw(); map.getContainer().style.cursor = ""; } } catch { /* */ }
+        return out;
+      },
+      cancelWater() {
+        const map = mapRef.current;
+        waterPreviewRef.current?.clearLayers();
+        drawModeRef.current = null; waterRemoveRef.current = false;
+        try { if (map) { (map as any).pm.disableDraw(); map.getContainer().style.cursor = ""; } } catch { /* */ }
+      },
       showCanals(canals, startLabel, endLabel) {
         const map = mapRef.current, g = canalRef.current;
         if (!map || !g) return;

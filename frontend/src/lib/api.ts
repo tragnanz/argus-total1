@@ -209,13 +209,15 @@ export type Watercourse = {
   kind: string; area_ha: number; length_m?: number; mean_width_m?: number;
 };
 export type WaterResult = { features: Watercourse[]; water_ha: number; n_river: number; n_basin: number; n_wetland: number };
-export const fetchWatercourses = (geom: Polygon, date: string, min_area_ha = 0.3) =>
-  req<WaterResult>("/api/watercourses", { method: "POST", body: JSON.stringify({ geom, date, min_area_ha }) });
+export const fetchWatercourses = (geom: Polygon, date: string, min_area_ha = 0.2, ndwi_thr = 0.20) =>
+  req<WaterResult>("/api/watercourses", { method: "POST", body: JSON.stringify({ geom, date, min_area_ha, ndwi_thr }) });
 
 export type GuidedResult = { geojson: GeoJSONFC; meta: Record<string, number> };
 export const fetchGuided = (geom: Polygon, p: {
   target_permille: number; radius_m: number; gap_m: number; safety_m: number; per_side: number;
   conn_max_permille: number; fill: boolean; date?: string | null; exclude_water?: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  avoid?: any[] | null;
 }) => req<GuidedResult>("/api/guided", { method: "POST", body: JSON.stringify({ geom, ...p }) });
 
 export const fetchSuitability = (geom: Polygon, date: string, p: SuitParams) =>

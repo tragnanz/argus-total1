@@ -234,7 +234,8 @@ class ReachOut(BaseModel):
 class WaterIn(BaseModel):
     geom: GeoPolygon
     date: str
-    min_area_ha: float = Field(default=0.3, ge=0.0, le=10000)
+    min_area_ha: float = Field(default=0.2, ge=0.0, le=10000)
+    ndwi_thr: float = Field(default=0.20, ge=-0.5, le=0.8)  # soglia acqua (sensibilità)
 
 
 class WaterOut(BaseModel):
@@ -257,6 +258,7 @@ class GuidedIn(BaseModel):
     fill: bool = True                                  # riempi gli spazi vuoti
     date: str | None = None                            # per esclusione acqua (NDWI)
     exclude_water: bool = True                          # niente pivot su acqua/paludi
+    avoid: list[dict[str, Any]] | None = None          # corsi d'acqua confermati da evitare
 
 
 class GuidedOut(BaseModel):

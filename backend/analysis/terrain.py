@@ -186,13 +186,15 @@ def _centerline_cells(comp: np.ndarray):
     return path if len(path) >= 2 else None
 
 
-def detect_watercourses(client, geom: dict, date: str, min_area_ha: float = 0.3) -> dict:
+def detect_watercourses(client, geom: dict, date: str, min_area_ha: float = 0.2,
+                        ndwi_thr: float = 0.20) -> dict:
     """Rileva e 'ricalca' i corsi d'acqua esistenti dall'NDWI. Distingue:
     - fiumi/canali stretti (allungati) → ASSE (LineString);
     - bacini (invasi, laghi) → poligono del contorno (kind 'basin');
     - paludi → poligono (kind 'wetland').
-    Serve a vederli PRIMA di progettare canali e pivot (i pivot li evitano)."""
-    from scipy.ndimage import label
+    `ndwi_thr` e `min_area_ha` regolano la SENSIBILITÀ (soglie più basse = più
+    corsi d'acqua stretti/deboli rilevati). Serve a vederli PRIMA di progettare."""
+    from scipy.ndimage import label, binary_closing
     from processing.satellite_export import _stitch
     dem, mask, ctx = _dem_and_grid(client, geom, max_dim=420)
     res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
@@ -205,8 +207,12 @@ def detect_watercourses(client, geom: dict, date: str, min_area_ha: float = 0.3)
         raise RuntimeError("Nessuna scena disponibile per la data scelta.")
     ndvi, ndmi, ndwi = mos["ndvi"], mos["ndmi"], mos["ndwi"]
     fin = np.isfinite(ndwi)
-    water = fin & (ndwi > 0.20)                                  # acqua libera
-    wetland = fin & (~water) & (ndvi > 0.30) & ((ndwi > -0.05) | (ndmi > 0.55))
+    water = fin & (ndwi > ndwi_thr)                             # acqua libera
+    # chiude piccole interruzioni: collega i tratti stretti dei fiumi
+    water = binary_closing(water, iterations=1) & fin
+    # marsh: soglia legata a ndwi_thr per scalare con la sensibilità
+    marsh_ndwi = ndwi_thr - 0.25
+    wetland = fin & (~water) & (ndvi > 0.30) & ((ndwi > marsh_ndwi) | (ndmi > 0.55))
 
     transform = from_origin(minx, top, res, res)
     pixel_ha = (res * res) / 10000.0

@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.15";
+const REV = "v0.6.16";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -147,6 +147,9 @@ export default function Page() {
   // visibilità dei livelli sulla mappa (accendi/spegni dal widget sinistro)
   const [layerVis, setLayerVis] = useState({ fields: true, macro: true, canal: true, layout: true, water: true });
   const [watercourses, setWatercourses] = useState<Watercourse[]>([]);
+  const [waterSens, setWaterSens] = useState(3);       // sensibilità rilevamento (1..5)
+  const [waterPreview, setWaterPreview] = useState(false);
+  const [waterRemoveOn, setWaterRemoveOn] = useState(false);
   // barra strumenti in alto: annulla/ripristina, misura, menu livelli
   const [layersOpen, setLayersOpen] = useState(false);
   const [measuring, setMeasuring] = useState(false);
@@ -479,21 +482,38 @@ export default function Page() {
 
   // ---- corsi d'acqua esistenti (NDWI): rilevati e 'ricalcati' prima di
   // progettare canali e pivot; i pivot li evitano automaticamente. ----
+  // sensibilità → soglia NDWI e area minima (più alta = rileva anche corsi stretti/deboli)
+  function waterParams() {
+    const s = waterSens;                          // 1..5
+    return { ndwi_thr: 0.20 - (s - 1) * 0.075, min_area_ha: [0.6, 0.4, 0.25, 0.15, 0.08][s - 1] };
+  }
   async function detectWater() {
     if (!activeGeom) return needField();
     if (!date) { setMsg(t("Cerca e scegli prima una data.")); return; }
     setBusy("water"); setMsg("");
     try {
-      const w = await api.fetchWatercourses(activeGeom, date);
-      setWatercourses(w.features);
-      mapApi.current?.showWater(w.features.map((f) => ({ geom: f.geojson, kind: f.kind })));
-      setMsg(w.features.length
-        ? t("Rilevati: {r} fiumi/canali, {b} bacini, {p} paludi ({ha} ha). I pivot li eviteranno.",
-            { r: w.n_river, b: w.n_basin, p: w.n_wetland, ha: fmt(w.water_ha, { maximumFractionDigits: 0 }) })
-        : t("Nessun corso d'acqua rilevato in quest'area a questa data."));
+      const p = waterParams();
+      const w = await api.fetchWatercourses(activeGeom, date, p.min_area_ha, p.ndwi_thr);
+      if (!w.features.length) { setMsg(t("Nessun corso d'acqua rilevato: prova ad alzare la sensibilità.")); return; }
+      // ANTEPRIMA modificabile a mano: conferma o annulla
+      mapApi.current?.previewWater(w.features.map((f) => ({ geom: f.geojson, kind: f.kind })));
+      setWaterPreview(true); setWaterRemoveOn(false);
+      setMsg(t("Anteprima: {r} fiumi/canali, {b} bacini, {p} paludi. Modifica a mano, poi Conferma.",
+        { r: w.n_river, b: w.n_basin, p: w.n_wetland }));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
-  function clearWater() { setWatercourses([]); mapApi.current?.clearWater(); }
+  function confirmWaterUI() {
+    const raw = mapApi.current?.confirmWater() || [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const feats: Watercourse[] = raw.map((c) => ({ geojson: c.geom as any, kind: c.kind, area_ha: 0 }));
+    setWatercourses(feats);
+    mapApi.current?.showWater(feats.map((f) => ({ geom: f.geojson, kind: f.kind })));
+    setWaterPreview(false); setWaterRemoveOn(false);
+    setMsg(t("Corsi d'acqua confermati: {n}. I pivot li eviteranno.", { n: feats.length }));
+  }
+  function cancelWaterPreview() { mapApi.current?.cancelWater(); setWaterPreview(false); setWaterRemoveOn(false); setMsg(""); }
+  function toggleWaterRemove() { const v = !waterRemoveOn; setWaterRemoveOn(v); mapApi.current?.waterRemoveMode(v); }
+  function clearWater() { setWatercourses([]); setWaterPreview(false); mapApi.current?.clearWater(); mapApi.current?.cancelWater(); }
 
   // Aggiunge una macro-area come SOTTO-LIVELLO del campo attivo (il poligono in
   // cui è inscritta), non come nuovo campo di primo livello.
@@ -729,6 +749,7 @@ export default function Page() {
         target_permille: canalPermille, radius_m: pivotR, gap_m: 0,
         safety_m: safetyM, per_side: perSide, conn_max_permille: 5, fill: fillEmpty,
         date: date || null, exclude_water: excludeWater,
+        avoid: watercourses.length ? watercourses.map((w) => ({ kind: w.kind, geojson: w.geojson })) : null,
       });
       setGuided(g);
       mapApi.current?.showLayouts([{ id: -1, fc: g.geojson }]);
@@ -1170,15 +1191,34 @@ export default function Page() {
           <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Corsi d'acqua esistenti")}</h3>
             <p className="hint mb-2">{t("Rileva e ricalca fiumi, canali naturali e paludi (NDWI). Falla prima di progettare canali e pivot: i pivot li evitano automaticamente.")}</p>
-            <div className="flex gap-2">
-              <button className="btn-primary flex-1 basis-0" disabled={busy === "water" || !activeGeom || !date} onClick={detectWater}>
-                {busy === "water" ? t("Calcolo…") : t("Rileva corsi d'acqua")}
-              </button>
-              <button className="btn-ghost flex-1 basis-0" onClick={clearWater}>{t("Rimuovi")}</button>
-            </div>
+            <label className="text-xs text-sage-dark block">{t("Sensibilità")}: {waterSens}/5 {waterSens >= 4 ? t("(rileva anche corsi stretti/deboli)") : ""}
+              <input type="range" min={1} max={5} step={1} value={waterSens}
+                onChange={(e) => setWaterSens(Number(e.target.value))} className="w-full accent-brand" disabled={waterPreview} />
+            </label>
+            {!waterPreview ? (
+              <div className="flex gap-2 mt-1">
+                <button className="btn-primary flex-1 basis-0" disabled={busy === "water" || !activeGeom || !date} onClick={detectWater}>
+                  {busy === "water" ? t("Calcolo…") : t("Rileva corsi d'acqua")}
+                </button>
+                <button className="btn-ghost flex-1 basis-0" onClick={clearWater}>{t("Rimuovi")}</button>
+              </div>
+            ) : (
+              <div className="mt-1 bg-brand/5 rounded-lg p-2">
+                <p className="hint mb-1">{t("Anteprima modificabile: trascina i vertici, aggiungi o elimina elementi, poi Conferma.")}</p>
+                <div className="flex gap-2 flex-wrap">
+                  <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("river")}>+ {t("Fiume/canale")}</button>
+                  <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("basin")}>+ {t("Bacino")}</button>
+                  <button className={"text-xs px-2 py-1 rounded-lg " + (waterRemoveOn ? "bg-danger text-white" : "btn-ghost")} onClick={toggleWaterRemove}>{t("Elimina elemento")}</button>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button className="btn-primary flex-1 basis-0" onClick={confirmWaterUI}>{t("Conferma")}</button>
+                  <button className="btn-ghost flex-1 basis-0" onClick={cancelWaterPreview}>{t("Annulla")}</button>
+                </div>
+              </div>
+            )}
             {!activeGeom && <p className="hint mt-1 text-danger">{t("Seleziona o disegna prima un campo.")}</p>}
-            {activeGeom && !date && <p className="hint mt-1 text-danger">{t("Serve una data: clicca 'Cerca date disponibili' qui sopra e scegline una.")}</p>}
-            {!!watercourses.length && (
+            {activeGeom && !date && !waterPreview && <p className="hint mt-1 text-danger">{t("Serve una data: clicca 'Cerca date disponibili' qui sopra e scegline una.")}</p>}
+            {!waterPreview && !!watercourses.length && (
               <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
                 {watercourses.filter((w) => w.geojson.type === "LineString").length} {t("fiumi/canali (asse)")} · {watercourses.filter((w) => w.kind === "basin").length} {t("bacini")} · {watercourses.filter((w) => w.kind === "wetland").length} {t("paludi")}<br />
                 {fmt(watercourses.reduce((s, w) => s + w.area_ha, 0), { maximumFractionDigits: 0 })} ha {t("totali")}
