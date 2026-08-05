@@ -232,6 +232,81 @@ def trace_manual(client, geom: dict, coords_ll: list, target_permille: float = 1
     return _finalize(dem, ctx, path, xy, target_permille)
 
 
+def trace_manual_snap(client, geom: dict, coords_ll: list, target_permille: float = 1.0,
+                      buffer_m: float = 250.0) -> dict:
+    """Aggancia la linea disegnata all'ALVEO reale usando il DEM: dentro un
+    corridoio attorno al tracciato dell'utente cerca il percorso continuo che
+    passa per le quote più basse (talweg). Così basta un tracciato grezzo lungo
+    il canale e viene raffinato sul letto inciso (dislivelli). Usa il DEM ad alta
+    risoluzione perché l'area è solo l'intorno della linea."""
+    if not coords_ll or len(coords_ll) < 2:
+        raise RuntimeError("Servono almeno due punti.")
+    from scipy.ndimage import binary_dilation
+    dem, mask, ctx = _dem_and_grid(client, geom)
+    res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
+    to_utm = pyproj.Transformer.from_crs(4326, ctx["epsg"], always_xy=True)
+    pts = [to_utm.transform(float(lo), float(la)) for lo, la, *_ in coords_ll]
+
+    def cell(x, y):
+        return (min(hp - 1, max(0, int((ctx["top"] - y) / res))),
+                min(wp - 1, max(0, int((x - ctx["minx"]) / res))))
+
+    # corridoio: linea densificata + dilatazione (buffer_m)
+    corr = np.zeros((hp, wp), bool)
+    for i in range(1, len(pts)):
+        x0, y0 = pts[i - 1]; x1, y1 = pts[i]
+        d = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+        n = max(1, int(d / res))
+        for k in range(n + 1):
+            r, c = cell(x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n)
+            corr[r, c] = True
+    rad = max(1, int(round(buffer_m / res)))
+    valid = np.isfinite(dem)
+    corr = binary_dilation(corr, iterations=rad) & valid
+    if int(corr.sum()) < 3:
+        raise RuntimeError("Corridoio non valido per l'aggancio.")
+
+    demf = np.where(valid, dem, np.nanmax(dem[valid])).astype("float64")
+    cmin = float(demf[corr].min()); cmax = float(demf[corr].max())
+    rng = (cmax - cmin) or 1.0
+    s = cell(*pts[0]); e = cell(*pts[-1])
+
+    # Dijkstra: costo che privilegia FORTEMENTE le quote basse (talweg)
+    INF = float("inf")
+    dist = np.full((hp, wp), INF); prev = np.full((hp, wp, 2), -1, np.int32)
+    dist[s] = 0.0; pq = [(0.0, s[0], s[1])]
+    while pq:
+        d0, r, c = heapq.heappop(pq)
+        if d0 > dist[r, c]:
+            continue
+        if (r, c) == e:
+            break
+        for dr, dc in _NB:
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < hp and 0 <= nc < wp) or not corr[nr, nc]:
+                continue
+            dd = res * (1.41421356 if (dr and dc) else 1.0)
+            hnorm = (demf[nr, nc] - cmin) / rng
+            step = dd * (1.0 + 60.0 * hnorm * hnorm)     # basso = economico → segue il fondo
+            nd = d0 + step
+            if nd < dist[nr, nc]:
+                dist[nr, nc] = nd; prev[nr, nc] = (r, c)
+                heapq.heappush(pq, (nd, nr, nc))
+    if not np.isfinite(dist[e]):
+        raise RuntimeError("Aggancio non riuscito: allarga il corridoio o traccia più vicino all'alveo.")
+
+    path = []; r, c = e
+    while (r, c) != (-1, -1):
+        path.append((r, c))
+        pr, pc = int(prev[r, c, 0]), int(prev[r, c, 1])
+        if (pr, pc) == (-1, -1):
+            break
+        r, c = pr, pc
+    path.reverse()
+    xy = [(ctx["minx"] + (cc + 0.5) * res, ctx["top"] - (rr + 0.5) * res) for rr, cc in path]
+    return _finalize(dem, ctx, path, xy, target_permille)
+
+
 def trace_canal(client, geom: dict, target_permille: float = 1.0,
                 start_ll=None, end_ll=None, waypoints=None) -> dict:
     """API Fase 2: canale + profilo + statistiche (lon/lat).

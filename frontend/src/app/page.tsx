@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.22";
+const REV = "v0.6.23";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -251,6 +251,7 @@ export default function Page() {
   const [canalEnd, setCanalEnd] = useState<number[] | null>(null);
   const [pickMode, setPickMode] = useState<"start" | "end" | null>(null);
   const [editingCanal, setEditingCanal] = useState<number | null>(null);
+  const [snapCanal, setSnapCanal] = useState(true);   // aggancia il tracciato a mano all'alveo (DEM)
   // pivot lungo il canale (M6, fase 3)
   const [guided, setGuided] = useState<GuidedResult | null>(null);
   const [perSide, setPerSide] = useState(2);
@@ -701,14 +702,19 @@ export default function Page() {
   }
   function traceCanalManual() {
     if (!activeGeom) return needField();
-    setMsg(t("Traccia a mano: clicca i punti del canale sulla mappa, doppio clic per finire."));
+    setMsg(snapCanal
+      ? t("Traccia grezza lungo il canale (doppio clic per finire): la aggancio all'alveo col DEM.")
+      : t("Traccia a mano: clicca i punti del canale sulla mappa, doppio clic per finire."));
     mapApi.current?.drawCanalManual(async (coords) => {
-      setBusy("canal"); setMsg("");
+      setBusy("canal"); setMsg(snapCanal ? t("Aggancio all'alveo (DEM)…") : "");
       try {
-        const cc = await api.fetchCanal(activeGeom, canalPermille, null, null, null, coords);
+        // usa il riquadro della linea come area: DEM ad alta risoluzione sull'intorno
+        const geomForDem = _bboxPoly(coords);
+        const cc = await api.fetchCanal(geomForDem, canalPermille, null, null, null, coords, snapCanal);
         const next = [...canals, cc];
         setCanals(next);
         mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end })), t("Presa"), t("Sbocco"));
+        setMsg("");
       } catch (e) { showErr(e); } finally { setBusy(""); }
     });
   }
@@ -1436,6 +1442,10 @@ export default function Page() {
                 {t("Traccia a mano")}
               </button>
             </div>
+            <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
+              <input type="checkbox" checked={snapCanal} onChange={(e) => setSnapCanal(e.target.checked)} />
+              {t("Aggancia il tracciato a mano all'alveo reale (DEM)")}
+            </label>
             <div className="flex gap-2 mt-2">
               <button className="btn-ghost flex-1 basis-0" disabled={busy === "canal"} onClick={() => canalFileRef.current?.click()}>{t("Importa KMZ come canali")}</button>
               <button className="btn-ghost flex-1 basis-0" disabled={!canals.length && !canalStart && !canalEnd} onClick={clearCanalUI}>{t("Rimuovi tutti")}</button>

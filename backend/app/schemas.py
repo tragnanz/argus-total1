@@ -187,6 +187,8 @@ class CanalIn(BaseModel):
     end: list[float] | None = None    # [lon, lat] finale manuale
     waypoints: list[list[float]] | None = None  # punti intermedi [lon,lat] (percorso trascinabile)
     manual: list[list[float]] | None = None     # polilinea disegnata a mano [lon,lat]…
+    snap: bool = False                           # aggancia il tracciato all'alveo (DEM)
+    snap_buffer_m: float = Field(default=250.0, ge=30, le=2000)
 
 
 class CanalOut(BaseModel):
