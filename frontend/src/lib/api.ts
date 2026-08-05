@@ -202,8 +202,13 @@ export const fetchReachable = (geom: Polygon, start: number[]) =>
   req<Reach>("/api/canal/reachable", { method: "POST", body: JSON.stringify({ geom, start }) });
 
 // ---- Corsi d'acqua esistenti (NDWI) ----
-export type Watercourse = { geojson: Polygon; kind: string; area_ha: number };
-export type WaterResult = { features: Watercourse[]; water_ha: number; n_water: number; n_wetland: number };
+// geojson: Polygon (bacino/palude) oppure LineString (asse di fiume/canale).
+export type Watercourse = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  geojson: { type: "Polygon" | "LineString"; coordinates: any };
+  kind: string; area_ha: number; length_m?: number; mean_width_m?: number;
+};
+export type WaterResult = { features: Watercourse[]; water_ha: number; n_river: number; n_basin: number; n_wetland: number };
 export const fetchWatercourses = (geom: Polygon, date: string, min_area_ha = 0.3) =>
   req<WaterResult>("/api/watercourses", { method: "POST", body: JSON.stringify({ geom, date, min_area_ha }) });
 

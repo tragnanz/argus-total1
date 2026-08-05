@@ -132,16 +132,60 @@ def terrain_readability(client, geom: dict, vert_exag: float = 2.0) -> dict:
     }
 
 
+def _centerline_cells(comp: np.ndarray):
+    """Asse (scheletro) di una componente lineare: ritorna il percorso più lungo
+    del suo scheletro come lista di celle (row, col), o None se troppo corto."""
+    from collections import deque
+    from skimage.morphology import skeletonize
+    sk = skeletonize(comp)
+    ys, xs = np.where(sk)
+    if len(xs) < 2:
+        return None
+    S = set(zip(ys.tolist(), xs.tolist()))
+    adj = {p: [] for p in S}
+    for (r, c) in S:
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                if dr or dc:
+                    q = (r + dr, c + dc)
+                    if q in S:
+                        adj[(r, c)].append(q)
+
+    def bfs(src):
+        dist = {src: 0}; par = {src: None}; dq = deque([src]); far = src
+        while dq:
+            u = dq.popleft()
+            for v in adj[u]:
+                if v not in dist:
+                    dist[v] = dist[u] + 1; par[v] = u; dq.append(v)
+                    if dist[v] > dist[far]:
+                        far = v
+        return far, par
+
+    start = next(iter(S))
+    a, _ = bfs(start)
+    b, par = bfs(a)                       # a→b = diametro dello scheletro
+    path = []; cur = b
+    while cur is not None:
+        path.append(cur); cur = par[cur]
+    path.reverse()
+    return path if len(path) >= 2 else None
+
+
 def detect_watercourses(client, geom: dict, date: str, min_area_ha: float = 0.3) -> dict:
-    """Rileva e 'ricalca' i corsi d'acqua esistenti (fiumi, canali naturali,
-    specchi/paludi) dall'NDWI, restituendo poligoni lon/lat. Serve a vederli
-    PRIMA di progettare canali e pivot (i pivot li evitano automaticamente)."""
+    """Rileva e 'ricalca' i corsi d'acqua esistenti dall'NDWI. Distingue:
+    - fiumi/canali stretti (allungati) → ASSE (LineString);
+    - bacini (invasi, laghi) → poligono del contorno (kind 'basin');
+    - paludi → poligono (kind 'wetland').
+    Serve a vederli PRIMA di progettare canali e pivot (i pivot li evitano)."""
+    from scipy.ndimage import label
     from processing.satellite_export import _stitch
     dem, mask, ctx = _dem_and_grid(client, geom, max_dim=420)
     res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
     to_wgs = ctx["to_wgs"]
-    miny = ctx["top"] - hp * res
-    mos, _nc, n_ok = _stitch(client, ctx["epsg"], ctx["minx"], miny, ctx["top"],
+    minx, top = ctx["minx"], ctx["top"]
+    miny = top - hp * res
+    mos, _nc, n_ok = _stitch(client, ctx["epsg"], minx, miny, top,
                              res, wp, hp, 1, 1, date, ["ndvi", "ndmi", "ndwi"])
     if n_ok == 0:
         raise RuntimeError("Nessuna scena disponibile per la data scelta.")
@@ -150,29 +194,72 @@ def detect_watercourses(client, geom: dict, date: str, min_area_ha: float = 0.3)
     water = fin & (ndwi > 0.20)                                  # acqua libera
     wetland = fin & (~water) & (ndvi > 0.30) & ((ndwi > -0.05) | (ndmi > 0.55))
 
-    transform = from_origin(ctx["minx"], ctx["top"], res, res)
+    transform = from_origin(minx, top, res, res)
     pixel_ha = (res * res) / 10000.0
-    out: list[dict] = []
-    for kind, m in (("water", water), ("wetland", wetland)):
-        if not m.any():
-            continue
-        for g, _v in features.shapes(m.astype("uint8"), mask=m, transform=transform):
+
+    def cell_xy(rc):
+        r, c = rc
+        return (minx + (c + 0.5) * res, top - (r + 0.5) * res)
+
+    def poly_from(comp):
+        for g, _v in features.shapes(comp.astype("uint8"), mask=comp, transform=transform):
             ring_utm = [(float(x), float(y)) for x, y in g["coordinates"][0]]
-            area_ha = _ring_area_ha(ring_utm)
-            if area_ha < min_area_ha:
-                continue
             ring_utm = _simplify_ring(ring_utm, res * 1.0)
             ring_ll = [list(to_wgs.transform(x, y)) for x, y in ring_utm]
-            if len(ring_ll) < 4:
-                continue
-            if ring_ll[0] != ring_ll[-1]:
-                ring_ll.append(ring_ll[0])
-            out.append({"geojson": {"type": "Polygon", "coordinates": [ring_ll]},
-                        "kind": kind, "area_ha": round(area_ha, 1)})
+            if len(ring_ll) >= 4:
+                if ring_ll[0] != ring_ll[-1]:
+                    ring_ll.append(ring_ll[0])
+                return ring_ll
+        return None
+
+    out: list[dict] = []
+    # --- ACQUA: separa fiumi/canali (lineari) dai bacini (invasi/laghi) ---
+    lbl, n = label(water)
+    for v in range(1, n + 1):
+        comp = lbl == v
+        area_m2 = float(comp.sum()) * res * res
+        area_ha = area_m2 / 10000.0
+        if area_ha < min_area_ha:
+            continue
+        path = _centerline_cells(comp)
+        length_m = 0.0
+        if path:
+            xy = [cell_xy(p) for p in path]
+            for i in range(1, len(xy)):
+                length_m += math.hypot(xy[i][0] - xy[i - 1][0], xy[i][1] - xy[i - 1][1])
+        equiv_diam = 2.0 * math.sqrt(area_m2 / math.pi) if area_m2 > 0 else 1.0
+        elong = (length_m / equiv_diam) if equiv_diam > 0 else 0.0
+        mean_width = (area_m2 / length_m) if length_m > 0 else equiv_diam
+        # lineare (fiume/canale) se allungato e non troppo largo
+        if path and elong >= 2.5 and mean_width <= 250.0 and length_m >= 2 * res:
+            xy_s = _rdp([(float(x), float(y)) for x, y in xy], res * 0.8)
+            line_ll = [list(to_wgs.transform(x, y)) for x, y in xy_s]
+            out.append({"geojson": {"type": "LineString", "coordinates": line_ll},
+                        "kind": "river", "area_ha": round(area_ha, 1),
+                        "length_m": round(length_m, 1), "mean_width_m": round(mean_width, 1)})
+        else:
+            ring = poly_from(comp)
+            if ring:
+                out.append({"geojson": {"type": "Polygon", "coordinates": [ring]},
+                            "kind": "basin", "area_ha": round(area_ha, 1)})
+
+    # --- PALUDI: sempre poligoni ---
+    lblw, nw = label(wetland)
+    for v in range(1, nw + 1):
+        comp = lblw == v
+        area_ha = float(comp.sum()) * pixel_ha
+        if area_ha < min_area_ha:
+            continue
+        ring = poly_from(comp)
+        if ring:
+            out.append({"geojson": {"type": "Polygon", "coordinates": [ring]},
+                        "kind": "wetland", "area_ha": round(area_ha, 1)})
+
     out.sort(key=lambda a: a["area_ha"], reverse=True)
     tot = round(sum(a["area_ha"] for a in out), 1)
     return {"features": out, "water_ha": tot,
-            "n_water": sum(1 for a in out if a["kind"] == "water"),
+            "n_river": sum(1 for a in out if a["kind"] == "river"),
+            "n_basin": sum(1 for a in out if a["kind"] == "basin"),
             "n_wetland": sum(1 for a in out if a["kind"] == "wetland")}
 
 

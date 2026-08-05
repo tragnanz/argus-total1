@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.12";
+const REV = "v0.6.13";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -83,17 +83,18 @@ type Field = {
 
 // ---- KMZ (KML zippato) lato client per l'export delle geometrie ----
 // Supporta poligoni (campi/sotto-aree) e linee (canali).
-type ExportGeom = { type: "Polygon"; coordinates: number[][][] } | { type: "LineString"; coordinates: number[][] };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ExportGeom = { type: "Polygon" | "LineString"; coordinates: any };
 function kmlForGeoms(items: { name: string; geom: ExportGeom }[]): string {
   const esc = (s: string) => s.replace(/[<&>]/g, (c) => ({ "<": "&lt;", "&": "&amp;", ">": "&gt;" }[c] || c));
   const pm = items.map((it) => {
     const g = it.geom;
     if (g.type === "LineString") {
-      const line = (g.coordinates || []).map(([lo, la]) => `${lo},${la},0`).join(" ");
+      const line = ((g.coordinates || []) as number[][]).map(([lo, la]) => `${lo},${la},0`).join(" ");
       return `<Placemark><name>${esc(it.name)}</name><Style><LineStyle><color>ffc78402</color><width>3</width></LineStyle></Style>`
         + `<LineString><tessellate>1</tessellate><coordinates>${line}</coordinates></LineString></Placemark>`;
     }
-    const ring = (g.coordinates?.[0] || []).map(([lo, la]) => `${lo},${la},0`).join(" ");
+    const ring = ((g.coordinates?.[0] || []) as number[][]).map(([lo, la]) => `${lo},${la},0`).join(" ");
     return `<Placemark><name>${esc(it.name)}</name><Style><LineStyle><color>ff2780f0</color><width>2</width></LineStyle>`
       + `<PolyStyle><color>3300a0f0</color></PolyStyle></Style>`
       + `<Polygon><outerBoundaryIs><LinearRing><coordinates>${ring}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
@@ -487,7 +488,8 @@ export default function Page() {
       setWatercourses(w.features);
       mapApi.current?.showWater(w.features.map((f) => ({ geom: f.geojson, kind: f.kind })));
       setMsg(w.features.length
-        ? t("Corsi d'acqua rilevati: {n} ({ha} ha). I pivot li eviteranno.", { n: w.features.length, ha: fmt(w.water_ha, { maximumFractionDigits: 0 }) })
+        ? t("Rilevati: {r} fiumi/canali, {b} bacini, {p} paludi ({ha} ha). I pivot li eviteranno.",
+            { r: w.n_river, b: w.n_basin, p: w.n_wetland, ha: fmt(w.water_ha, { maximumFractionDigits: 0 }) })
         : t("Nessun corso d'acqua rilevato in quest'area a questa data."));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
@@ -1175,8 +1177,10 @@ export default function Page() {
               <button className="btn-ghost flex-1 basis-0" onClick={clearWater}>{t("Rimuovi")}</button>
             </div>
             {!!watercourses.length && (
-              <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2">
-                {watercourses.length} {t("corsi d'acqua")} · {fmt(watercourses.reduce((s, w) => s + w.area_ha, 0), { maximumFractionDigits: 0 })} ha
+              <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
+                {watercourses.filter((w) => w.geojson.type === "LineString").length} {t("fiumi/canali (asse)")} · {watercourses.filter((w) => w.kind === "basin").length} {t("bacini")} · {watercourses.filter((w) => w.kind === "wetland").length} {t("paludi")}<br />
+                {fmt(watercourses.reduce((s, w) => s + w.area_ha, 0), { maximumFractionDigits: 0 })} ha {t("totali")}
+                <button className="text-brand-mid ml-2" onClick={() => exportKmz("corsi_dacqua", watercourses.map((w, i) => ({ name: `${w.kind} ${i + 1}`, geom: w.geojson })))}>⤓ KMZ</button>
               </div>
             )}
           </section>

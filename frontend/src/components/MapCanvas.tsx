@@ -10,7 +10,8 @@ export type MapHandle = {
   draw: () => void;
   setFields: (fields: FieldGeom[], activeId: number | null, hidden?: number[]) => void;
   setLayerVisible: (key: "fields" | "macro" | "canal" | "layout" | "water", on: boolean) => void;
-  showWater: (items: { geom: Polygon; kind: string }[]) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  showWater: (items: { geom: { type: string; coordinates: any }; kind: string }[]) => void;
   clearWater: () => void;
   clearAll: () => void;
   fitAll: () => void;
@@ -316,13 +317,20 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         if (!map || !g) return;
         g.clearLayers();
         for (const it of items) {
-          const isWater = it.kind === "water";
-          const ly = L.polygon(toLatLng(it.geom.coordinates[0]), {
-            color: isWater ? "#0369a1" : "#0891b2",
-            weight: 2, fillColor: isWater ? "#0ea5e9" : "#22d3ee",
-            fillOpacity: isWater ? 0.45 : 0.3, dashArray: isWater ? undefined : "5,4",
+          if (it.geom.type === "LineString") {           // asse fiume/canale
+            const latlngs = (it.geom.coordinates as number[][]).map((p) => [p[1], p[0]] as [number, number]);
+            const ly = L.polyline(latlngs, { color: "#0369a1", weight: 3, opacity: 0.95 });
+            ly.bindTooltip("Fiume/canale", { direction: "center" });
+            g.addLayer(ly);
+            continue;
+          }
+          const isBasin = it.kind === "basin";
+          const ly = L.polygon(toLatLng((it.geom.coordinates as number[][][])[0]), {
+            color: isBasin ? "#0369a1" : "#0891b2",
+            weight: 2, fillColor: isBasin ? "#0ea5e9" : "#22d3ee",
+            fillOpacity: isBasin ? 0.45 : 0.3, dashArray: isBasin ? undefined : "5,4",
           });
-          ly.bindTooltip(isWater ? "Acqua" : "Palude", { direction: "center" });
+          ly.bindTooltip(isBasin ? "Bacino/lago" : "Palude", { direction: "center" });
           g.addLayer(ly);
         }
       },

@@ -240,7 +240,8 @@ class WaterIn(BaseModel):
 class WaterOut(BaseModel):
     features: list[dict[str, Any]]
     water_ha: float
-    n_water: int
+    n_river: int
+    n_basin: int
     n_wetland: int
 
 
