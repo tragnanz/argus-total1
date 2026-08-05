@@ -8,11 +8,11 @@ import { parseFieldsFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
 import type {
   Area, Client, Polygon, Project, Scene, ColorScale, SuitMeta, SuitWeights,
-  LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea, Canal, GuidedResult, ProjectLayer,
+  LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea, Canal, GuidedResult, ProjectLayer, Watercourse,
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.11";
+const REV = "v0.6.12";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -144,7 +144,8 @@ export default function Page() {
   const [gset, setGset] = useState<Settings>(DEFAULTS);
   const nextId = useRef(1);
   // visibilità dei livelli sulla mappa (accendi/spegni dal widget sinistro)
-  const [layerVis, setLayerVis] = useState({ fields: true, macro: true, canal: true, layout: true });
+  const [layerVis, setLayerVis] = useState({ fields: true, macro: true, canal: true, layout: true, water: true });
+  const [watercourses, setWatercourses] = useState<Watercourse[]>([]);
   // barra strumenti in alto: annulla/ripristina, misura, menu livelli
   const [layersOpen, setLayersOpen] = useState(false);
   const [measuring, setMeasuring] = useState(false);
@@ -307,7 +308,7 @@ export default function Page() {
       return arr;
     });
   }
-  function toggleLayer(key: "fields" | "macro" | "canal" | "layout") {
+  function toggleLayer(key: "fields" | "macro" | "canal" | "layout" | "water") {
     setLayerVis((v) => {
       const nv = { ...v, [key]: !v[key] };
       mapApi.current?.setLayerVisible(key, nv[key]);
@@ -474,6 +475,23 @@ export default function Page() {
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   function clearMacro() { setMacroAreas([]); renderMacrosOnMap(fields, []); }
+
+  // ---- corsi d'acqua esistenti (NDWI): rilevati e 'ricalcati' prima di
+  // progettare canali e pivot; i pivot li evitano automaticamente. ----
+  async function detectWater() {
+    if (!activeGeom) return needField();
+    if (!date) { setMsg(t("Cerca e scegli prima una data.")); return; }
+    setBusy("water"); setMsg("");
+    try {
+      const w = await api.fetchWatercourses(activeGeom, date);
+      setWatercourses(w.features);
+      mapApi.current?.showWater(w.features.map((f) => ({ geom: f.geojson, kind: f.kind })));
+      setMsg(w.features.length
+        ? t("Corsi d'acqua rilevati: {n} ({ha} ha). I pivot li eviteranno.", { n: w.features.length, ha: fmt(w.water_ha, { maximumFractionDigits: 0 }) })
+        : t("Nessun corso d'acqua rilevato in quest'area a questa data."));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  function clearWater() { setWatercourses([]); mapApi.current?.clearWater(); }
 
   // Aggiunge una macro-area come SOTTO-LIVELLO del campo attivo (il poligono in
   // cui è inscritta), non come nuovo campo di primo livello.
@@ -865,7 +883,7 @@ export default function Page() {
                 <div className="text-xs font-semibold text-sage-dark mb-1 px-1">{t("Livelli sulla mappa")}</div>
                 {([
                   ["fields", t("Campi")], ["macro", t("Macro-aree")],
-                  ["canal", t("Canali")], ["layout", t("Layout pivot")],
+                  ["canal", t("Canali")], ["water", t("Corsi d'acqua")], ["layout", t("Layout pivot")],
                 ] as const).map(([k, lbl]) => (
                   <button key={k} onClick={() => toggleLayer(k)}
                     className="w-full flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg hover:bg-black/5">
@@ -986,6 +1004,7 @@ export default function Page() {
                     ["fields", t("Campi")],
                     ["macro", t("Macro-aree")],
                     ["canal", t("Canali")],
+                    ["water", t("Corsi d'acqua")],
                     ["layout", t("Layout pivot")],
                   ] as const).map(([k, lbl]) => (
                     <button key={k} onClick={() => toggleLayer(k)}
@@ -1142,6 +1161,22 @@ export default function Page() {
               <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
                 {t("Isoipse ogni")} <b>{fmt(terrainInfo.interval)} m</b> · {t("quota")} {fmt(terrainInfo.min)}–{fmt(terrainInfo.max)} m<br />
                 {t("Le linee marcate riportano la quota; più sono fitte, più il versante è ripido.")}
+              </div>
+            )}
+          </section>
+
+          <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
+            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Corsi d'acqua esistenti")}</h3>
+            <p className="hint mb-2">{t("Rileva e ricalca fiumi, canali naturali e paludi (NDWI). Falla prima di progettare canali e pivot: i pivot li evitano automaticamente.")}</p>
+            <div className="flex gap-2">
+              <button className="btn-primary flex-1 basis-0" disabled={busy === "water" || !activeGeom || !date} onClick={detectWater}>
+                {busy === "water" ? t("Calcolo…") : t("Rileva corsi d'acqua")}
+              </button>
+              <button className="btn-ghost flex-1 basis-0" onClick={clearWater}>{t("Rimuovi")}</button>
+            </div>
+            {!!watercourses.length && (
+              <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2">
+                {watercourses.length} {t("corsi d'acqua")} · {fmt(watercourses.reduce((s, w) => s + w.area_ha, 0), { maximumFractionDigits: 0 })} ha
               </div>
             )}
           </section>

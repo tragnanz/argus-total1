@@ -230,6 +230,20 @@ class ReachOut(BaseModel):
     area_ha: float
 
 
+# ---------- Corsi d'acqua esistenti (NDWI) ----------
+class WaterIn(BaseModel):
+    geom: GeoPolygon
+    date: str
+    min_area_ha: float = Field(default=0.3, ge=0.0, le=10000)
+
+
+class WaterOut(BaseModel):
+    features: list[dict[str, Any]]
+    water_ha: float
+    n_water: int
+    n_wetland: int
+
+
 # ---------- Pivot lungo il canale (M6, Fase 3) ----------
 class GuidedIn(BaseModel):
     geom: GeoPolygon

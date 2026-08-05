@@ -9,7 +9,9 @@ export type FieldGeom = { id: number; name: string; geom: Polygon };
 export type MapHandle = {
   draw: () => void;
   setFields: (fields: FieldGeom[], activeId: number | null, hidden?: number[]) => void;
-  setLayerVisible: (key: "fields" | "macro" | "canal" | "layout", on: boolean) => void;
+  setLayerVisible: (key: "fields" | "macro" | "canal" | "layout" | "water", on: boolean) => void;
+  showWater: (items: { geom: Polygon; kind: string }[]) => void;
+  clearWater: () => void;
   clearAll: () => void;
   fitAll: () => void;
   flyTo: (lat: number, lon: number, zoom?: number) => void;
@@ -75,6 +77,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
   const contourRef = useRef<L.LayerGroup | null>(null);
   const reachRef = useRef<L.LayerGroup | null>(null);
   const canalEditRef = useRef<L.LayerGroup | null>(null);
+  const waterRef = useRef<L.LayerGroup | null>(null);
   const pickCbRef = useRef<((lon: number, lat: number) => void) | null>(null);
   const measureRef = useRef<L.LayerGroup | null>(null);
   const measuringRef = useRef(false);
@@ -93,6 +96,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
     L.control.zoom({ position: "bottomleft" }).addTo(map);
     fieldsGroupRef.current = L.layerGroup().addTo(map);
     macroRef.current = L.layerGroup().addTo(map);
+    waterRef.current = L.layerGroup().addTo(map);
     contourRef.current = L.layerGroup().addTo(map);
     reachRef.current = L.layerGroup().addTo(map);
     canalRef.current = L.layerGroup().addTo(map);
@@ -236,6 +240,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
           macro: [macroRef.current],
           canal: [canalRef.current, pendingRef.current, canalEditRef.current],
           layout: [layoutRef.current],
+          water: [waterRef.current],
         };
         for (const g of groups[key] || []) {
           if (!g) continue;
@@ -306,6 +311,22 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         if (b && b.isValid()) map.fitBounds(b, { padding: [40, 40] });
       },
       clearMacroareas() { macroRef.current?.clearLayers(); },
+      showWater(items) {
+        const map = mapRef.current, g = waterRef.current;
+        if (!map || !g) return;
+        g.clearLayers();
+        for (const it of items) {
+          const isWater = it.kind === "water";
+          const ly = L.polygon(toLatLng(it.geom.coordinates[0]), {
+            color: isWater ? "#0369a1" : "#0891b2",
+            weight: 2, fillColor: isWater ? "#0ea5e9" : "#22d3ee",
+            fillOpacity: isWater ? 0.45 : 0.3, dashArray: isWater ? undefined : "5,4",
+          });
+          ly.bindTooltip(isWater ? "Acqua" : "Palude", { direction: "center" });
+          g.addLayer(ly);
+        }
+      },
+      clearWater() { waterRef.current?.clearLayers(); },
       showCanals(canals, startLabel, endLabel) {
         const map = mapRef.current, g = canalRef.current;
         if (!map || !g) return;

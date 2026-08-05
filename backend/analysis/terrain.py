@@ -132,6 +132,63 @@ def terrain_readability(client, geom: dict, vert_exag: float = 2.0) -> dict:
     }
 
 
+def detect_watercourses(client, geom: dict, date: str, min_area_ha: float = 0.3) -> dict:
+    """Rileva e 'ricalca' i corsi d'acqua esistenti (fiumi, canali naturali,
+    specchi/paludi) dall'NDWI, restituendo poligoni lon/lat. Serve a vederli
+    PRIMA di progettare canali e pivot (i pivot li evitano automaticamente)."""
+    from processing.satellite_export import _stitch
+    dem, mask, ctx = _dem_and_grid(client, geom, max_dim=420)
+    res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
+    to_wgs = ctx["to_wgs"]
+    miny = ctx["top"] - hp * res
+    mos, _nc, n_ok = _stitch(client, ctx["epsg"], ctx["minx"], miny, ctx["top"],
+                             res, wp, hp, 1, 1, date, ["ndvi", "ndmi", "ndwi"])
+    if n_ok == 0:
+        raise RuntimeError("Nessuna scena disponibile per la data scelta.")
+    ndvi, ndmi, ndwi = mos["ndvi"], mos["ndmi"], mos["ndwi"]
+    fin = np.isfinite(ndwi)
+    water = fin & (ndwi > 0.20)                                  # acqua libera
+    wetland = fin & (~water) & (ndvi > 0.30) & ((ndwi > -0.05) | (ndmi > 0.55))
+
+    transform = from_origin(ctx["minx"], ctx["top"], res, res)
+    pixel_ha = (res * res) / 10000.0
+    out: list[dict] = []
+    for kind, m in (("water", water), ("wetland", wetland)):
+        if not m.any():
+            continue
+        for g, _v in features.shapes(m.astype("uint8"), mask=m, transform=transform):
+            ring_utm = [(float(x), float(y)) for x, y in g["coordinates"][0]]
+            area_ha = _ring_area_ha(ring_utm)
+            if area_ha < min_area_ha:
+                continue
+            ring_utm = _simplify_ring(ring_utm, res * 1.0)
+            ring_ll = [list(to_wgs.transform(x, y)) for x, y in ring_utm]
+            if len(ring_ll) < 4:
+                continue
+            if ring_ll[0] != ring_ll[-1]:
+                ring_ll.append(ring_ll[0])
+            out.append({"geojson": {"type": "Polygon", "coordinates": [ring_ll]},
+                        "kind": kind, "area_ha": round(area_ha, 1)})
+    out.sort(key=lambda a: a["area_ha"], reverse=True)
+    tot = round(sum(a["area_ha"] for a in out), 1)
+    return {"features": out, "water_ha": tot,
+            "n_water": sum(1 for a in out if a["kind"] == "water"),
+            "n_wetland": sum(1 for a in out if a["kind"] == "wetland")}
+
+
+def _ring_area_ha(ring_utm: list) -> float:
+    """Area (ha) di un anello in coordinate UTM (metri)."""
+    n = len(ring_utm)
+    if n < 3:
+        return 0.0
+    a = 0.0
+    for i in range(n):
+        x1, y1 = ring_utm[i]
+        x2, y2 = ring_utm[(i + 1) % n]
+        a += x1 * y2 - x2 * y1
+    return abs(a) / 2.0 / 10000.0
+
+
 def _reach_mask(dem, valid, s_row, s_col, head, head_tol) -> np.ndarray:
     """Flood dalla presa a gravità. Un canale a gravità non può portare l'acqua
     sopra la quota della presa (il 'carico' idraulico di partenza), ma può

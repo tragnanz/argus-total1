@@ -4,9 +4,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..deps import get_client
-from ..schemas import ReachIn, ReachOut, TerrainIn, TerrainOut
+from ..schemas import ReachIn, ReachOut, TerrainIn, TerrainOut, WaterIn, WaterOut
 
-from analysis.terrain import reachable_region, terrain_readability
+from analysis.terrain import detect_watercourses, reachable_region, terrain_readability
 
 router = APIRouter(prefix="/api", tags=["terrain"])
 
@@ -27,3 +27,12 @@ def canal_reachable(body: ReachIn, client=Depends(get_client)):
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Errore zona a valle: {e}")
     return ReachOut(**out)
+
+
+@router.post("/watercourses", response_model=WaterOut)
+def watercourses(body: WaterIn, client=Depends(get_client)):
+    try:
+        out = detect_watercourses(client, body.geom.model_dump(), body.date, min_area_ha=body.min_area_ha)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Errore rilevamento corsi d'acqua: {e}")
+    return WaterOut(**out)

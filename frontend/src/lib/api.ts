@@ -201,6 +201,12 @@ export type Reach = { polygons: Polygon[]; elev_start_m: number; elev_min_m: num
 export const fetchReachable = (geom: Polygon, start: number[]) =>
   req<Reach>("/api/canal/reachable", { method: "POST", body: JSON.stringify({ geom, start }) });
 
+// ---- Corsi d'acqua esistenti (NDWI) ----
+export type Watercourse = { geojson: Polygon; kind: string; area_ha: number };
+export type WaterResult = { features: Watercourse[]; water_ha: number; n_water: number; n_wetland: number };
+export const fetchWatercourses = (geom: Polygon, date: string, min_area_ha = 0.3) =>
+  req<WaterResult>("/api/watercourses", { method: "POST", body: JSON.stringify({ geom, date, min_area_ha }) });
+
 export type GuidedResult = { geojson: GeoJSONFC; meta: Record<string, number> };
 export const fetchGuided = (geom: Polygon, p: {
   target_permille: number; radius_m: number; gap_m: number; safety_m: number; per_side: number;
