@@ -8,11 +8,11 @@ import { parseFieldsFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
 import type {
   Area, Client, Polygon, Project, Scene, ColorScale, SuitMeta, SuitWeights,
-  LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea, Canal, GuidedResult,
+  LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea, Canal, GuidedResult, ProjectLayer,
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.10";
+const REV = "v0.6.11";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -133,6 +133,7 @@ export default function Page() {
   const [clients, setClients] = useState<Client[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [areas, setAreas] = useState<Area[]>([]);
+  const [layers, setLayers] = useState<ProjectLayer[]>([]);
   const [clientId, setClientId] = useState<number | null>(null);
   const [projectId, setProjectId] = useState<number | null>(null);
 
@@ -229,6 +230,8 @@ export default function Page() {
   const [perSide, setPerSide] = useState(2);
   const [fillEmpty, setFillEmpty] = useState(true);
   const [safetyM, setSafetyM] = useState(20);   // distanza di sicurezza fra i bordi (m)
+  const [pivotR, setPivotR] = useState(400);    // raggio pivot (parametro proprio della scheda Pivot)
+  const [excludeWater, setExcludeWater] = useState(true);  // niente pivot su acqua/paludi (NDWI)
   const [soilKey, setSoilKey] = useState("franco");
   const [infiltration, setInfiltration] = useState(12);   // mm/h
   const [et0Peak, setEt0Peak] = useState(7);               // mm/g
@@ -253,11 +256,15 @@ export default function Page() {
   useEffect(() => { api.getHealth().then((h) => setProviderMode(h.provider_mode)).catch(() => {}); }, []);
   useEffect(() => { refreshClients(); }, []);
   useEffect(() => { refreshProjects(clientId); setProjectId(null); }, [clientId]);
-  useEffect(() => { if (projectId) refreshAreas(projectId); else setAreas([]); }, [projectId]);
+  useEffect(() => {
+    if (projectId) { refreshAreas(projectId); refreshLayers(projectId); }
+    else { setAreas([]); setLayers([]); }
+  }, [projectId]);
 
   async function refreshClients() { try { setClients(await api.listClients()); } catch (e) { showErr(e); } }
   async function refreshProjects(cid: number | null) { try { setProjects(await api.listProjects(cid)); } catch (e) { showErr(e); } }
   async function refreshAreas(pid: number) { try { setAreas(await api.listAreas(pid)); } catch (e) { showErr(e); } }
+  async function refreshLayers(pid: number) { try { setLayers(await api.listLayers(pid)); } catch (e) { showErr(e); } }
   function showErr(e: unknown) { setMsg(e instanceof Error ? e.message : String(e)); }
 
   // ---- clienti / progetti ----
@@ -642,14 +649,66 @@ export default function Page() {
     exportKmz(`canale_${i + 1}`, [{ name: `${t("Canale")} ${i + 1}`, geom: { type: "LineString", coordinates: c.geojson.coordinates } }]);
   }
 
+  // ---- salvataggio / ricarica livelli (canali, pivot) — ri-editabili ----
+  async function saveCanalLayer(i: number, c: Canal) {
+    if (!projectId) { setMsg(t("Serve un progetto selezionato per salvare.")); return; }
+    try {
+      await api.createLayer({ project_id: projectId, kind: "canal", name: `${t("Canale")} ${i + 1}`, data: c });
+      await refreshLayers(projectId); setMsg(t("Livello salvato ✓"));
+    } catch (e) { showErr(e); }
+  }
+  async function savePivotsLayer() {
+    if (!projectId) { setMsg(t("Serve un progetto selezionato per salvare.")); return; }
+    if (!guided) return;
+    try {
+      await api.createLayer({ project_id: projectId, kind: "pivots", name: t("Pivot"), data: guided });
+      await refreshLayers(projectId); setMsg(t("Livello salvato ✓"));
+    } catch (e) { showErr(e); }
+  }
+  function loadLayer(l: ProjectLayer) {
+    if (l.kind === "canal") {
+      const c = l.data as unknown as Canal;
+      setCanals((prev) => {
+        const next = [...prev, c];
+        mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end })), t("Presa"), t("Sbocco"));
+        return next;
+      });
+      setTab("canal");
+    } else if (l.kind === "pivots") {
+      const g = l.data as unknown as GuidedResult;
+      setGuided(g);
+      mapApi.current?.showLayouts([{ id: -1, fc: g.geojson }]);
+      setTab("guided");
+    }
+    setMsg(t("Livello caricato ✓"));
+  }
+  async function delLayer(l: ProjectLayer) {
+    if (!confirm(t("Eliminare \"{name}\"?", { name: l.name }))) return;
+    try { await api.deleteLayer(l.id); if (projectId) refreshLayers(projectId); } catch (e) { showErr(e); }
+  }
+  function exportLayerKmz(l: ProjectLayer) {
+    if (l.kind === "canal") {
+      const c = l.data as unknown as Canal;
+      exportKmz(safe(l.name), [{ name: l.name, geom: { type: "LineString", coordinates: c.geojson.coordinates } }]);
+    } else if (l.kind === "pivots") {
+      const g = l.data as unknown as GuidedResult;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const items = (g.geojson.features || []).filter((f: any) => f.geometry?.type === "Polygon")
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .map((f: any, k: number) => ({ name: `${l.name} ${k + 1}`, geom: { type: "Polygon" as const, coordinates: f.geometry.coordinates } }));
+      exportKmz(safe(l.name), items);
+    }
+  }
+
   // ---- pivot lungo il canale (M6, fase 3) ----
   async function designGuided() {
     if (!activeGeom) return needField();
     setBusy("guided"); setMsg("");
     try {
       const g = await api.fetchGuided(activeGeom, {
-        target_permille: canalPermille, radius_m: cur.radius, gap_m: cur.gap,
+        target_permille: canalPermille, radius_m: pivotR, gap_m: 0,
         safety_m: safetyM, per_side: perSide, conn_max_permille: 5, fill: fillEmpty,
+        date: date || null, exclude_water: excludeWater,
       });
       setGuided(g);
       mapApi.current?.showLayouts([{ id: -1, fc: g.geojson }]);
@@ -981,6 +1040,26 @@ export default function Page() {
                 </ul>
               </div>
             )}
+
+            {!!layers.length && (
+              <div className="mt-3">
+                <div className="text-xs font-semibold text-sage-dark mb-1">{t("Livelli salvati")}</div>
+                <ul className="space-y-1">
+                  {layers.map((l) => (
+                    <li key={l.id} className="flex items-center justify-between text-sm bg-panel rounded-lg px-2 py-1">
+                      <button className="truncate text-left flex-1" title={t("Carica e modifica")} onClick={() => loadLayer(l)}>
+                        <span className="text-[10px] uppercase text-brand-light mr-1">{l.kind === "canal" ? t("canale") : l.kind === "pivots" ? t("pivot") : l.kind}</span>
+                        {l.name}
+                      </button>
+                      <span className="flex gap-1 shrink-0">
+                        <button className="text-xs text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportLayerKmz(l)}>⤓</button>
+                        <button className="text-xs text-danger" title={t("Rimuovi")} onClick={() => delLayer(l)}>✕</button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </section>
         </div>
 
@@ -1216,6 +1295,7 @@ export default function Page() {
                           {editingCanal === i ? t("Fine modifica") : t("Modifica percorso")}
                         </button>
                         <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportCanalKmz(i, c)}>⤓ KMZ</button>
+                        <button className="text-brand-mid disabled:opacity-40" disabled={!projectId} title={t("Salva nel progetto")} onClick={() => saveCanalLayer(i, c)}>{t("Salva")}</button>
                         <button className="text-danger" onClick={() => removeCanal(i)}>{t("Rimuovi")}</button>
                       </span>
                     </div>
@@ -1232,7 +1312,7 @@ export default function Page() {
 
           <section className={secShow("guided")}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Pivot lungo il canale")}</h3>
-            <p className="hint mb-2">{t("Usa raggio e spaziatura dalle impostazioni Layout.")}</p>
+            <p className="hint mb-2">{t("Parametri di disegno dei pivot (raggio, sicurezza) qui sotto. I pivot vanno solo su terreno libero: fuori dal canale e dall'acqua.")}</p>
 
             <div className="bg-panel rounded-lg p-2 mb-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Dimensione pivot consigliata")}</div>
@@ -1252,29 +1332,38 @@ export default function Page() {
               </div>
               <div className="flex items-center justify-between mt-2 text-xs">
                 <span>{t("Raggio consigliato")}: <b>{recRadius} m</b></span>
-                <button className="text-brand-mid" onClick={() => patch({ radius: recRadius })}>{t("Usa raggio consigliato")}</button>
+                <button className="text-brand-mid" onClick={() => setPivotR(recRadius)}>{t("Usa raggio consigliato")}</button>
               </div>
             </div>
 
-            <label className="flex items-center gap-2 text-xs text-sage-dark mb-2">
-              <input type="checkbox" checked={fillEmpty} onChange={(e) => setFillEmpty(e.target.checked)} />
-              {t("Riempi spazi vuoti")}
-            </label>
-
             <div className="flex gap-2">
-              <label className="text-xs text-sage-dark flex-1">{t("Pivot per lato")}
-                <select className="field-input mt-1" value={perSide} onChange={(e) => setPerSide(Number(e.target.value))}>
-                  {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </label>
+              <label className="text-xs text-sage-dark flex-1">{t("Raggio pivot (m)")}
+                <input type="number" min={30} max={1000} step={10} value={pivotR}
+                  onChange={(e) => setPivotR(Number(e.target.value))} className="field-input mt-1" /></label>
               <label className="text-xs text-sage-dark flex-1">{t("Distanza di sicurezza (m)")}
                 <input type="number" min={0} max={500} step={5} value={safetyM}
                   onChange={(e) => setSafetyM(Number(e.target.value))} className="field-input mt-1" /></label>
             </div>
+
+            <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
+              <input type="checkbox" checked={fillEmpty} onChange={(e) => setFillEmpty(e.target.checked)} />
+              {t("Riempi spazi vuoti")}
+            </label>
+            <label className="flex items-center gap-2 text-xs text-sage-dark mt-1">
+              <input type="checkbox" checked={excludeWater} onChange={(e) => setExcludeWater(e.target.checked)} />
+              {t("Solo terreno libero (no canali, no acqua/paludi NDWI)")}
+            </label>
+            {excludeWater && !date && <p className="hint mt-1 text-danger">{t("Per escludere l'acqua serve una data satellitare: cercala nella scheda Analisi.")}</p>}
+
+            <label className="text-xs text-sage-dark block mt-2">{t("Pivot per lato")}
+              <select className="field-input mt-1" value={perSide} onChange={(e) => setPerSide(Number(e.target.value))}>
+                {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
             <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 mt-2 leading-relaxed">
-              {t("Raggio")}: <b>{fmt(cur.radius)} m</b> · {t("Area per pivot")}: <b>{fmt(Math.PI * cur.radius * cur.radius / 10000, { maximumFractionDigits: 1 })} ha</b><br />
-              {t("Distanza di sicurezza tra i bordi")}: <b>{fmt(Math.max(cur.gap, safetyM))} m</b> · {t("Interasse (centro-centro)")}: <b>{fmt(2 * cur.radius + Math.max(cur.gap, safetyM))} m</b><br />
-              <span className="text-brand-mid">{t("I pivot non si sovrappongono: i centri restano ad almeno l'interasse indicato.")}</span>
+              {t("Raggio")}: <b>{fmt(pivotR)} m</b> · {t("Area per pivot")}: <b>{fmt(Math.PI * pivotR * pivotR / 10000, { maximumFractionDigits: 1 })} ha</b><br />
+              {t("Distanza di sicurezza tra i bordi")}: <b>{fmt(safetyM)} m</b> · {t("Interasse (centro-centro)")}: <b>{fmt(2 * pivotR + safetyM)} m</b><br />
+              <span className="text-brand-mid">{t("I pivot non si sovrappongono e stanno solo su terreno libero (no canali, no acqua).")}</span>
             </div>
             <div className="flex gap-2 mt-2">
               <button className="btn-primary flex-1 basis-0" disabled={busy === "guided" || !activeGeom} onClick={designGuided}>
@@ -1302,7 +1391,9 @@ export default function Page() {
                   {t("Raggio")}: <b>{fmt(guided.meta.radius_m)} m</b> · {t("Area per pivot")}: <b>{fmt(guided.meta.pivot_ha, { maximumFractionDigits: 1 })} ha</b><br />
                   {t("Distanza di sicurezza")}: <b>{fmt(guided.meta.safety_m)} m</b> · {t("Interasse")}: <b>{fmt(guided.meta.spacing_m)} m</b><br />
                   {t("Superficie netta")}: <b>{fmt(guided.meta.net_ha, { maximumFractionDigits: 0 })} ha</b> · {guided.meta.n_along_canal} {t("lungo il canale")} · {guided.meta.n_fill} {t("riempimento")}
+                  {!!guided.meta.water_excluded && <><br /><span className="text-brand-mid">{t("Esclusi canale e aree con acqua/paludi (NDWI).")}</span></>}
                 </div>
+                <button className="btn-primary w-full" disabled={!projectId} onClick={savePivotsLayer}>{t("Salva pivot nel progetto")}</button>
               </div>
             )}
           </section>

@@ -62,3 +62,18 @@ class Area(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
     project: Mapped["Project"] = relationship(back_populates="areas")
+
+
+class ProjectLayer(Base):
+    """Livello salvato e ri-editabile del progetto: canale, set di pivot o altra
+    struttura disegnata. La geometria/parametri sono in `data` (JSON) per restare
+    flessibili senza vincolare lo schema a un tipo specifico."""
+    __tablename__ = "project_layers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)   # "canal" | "pivots" | ...
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    data: Mapped[str] = mapped_column(Text, nullable=False)         # JSON serializzato
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())

@@ -85,6 +85,28 @@ class AreaOut(BaseModel):
     created_at: dt.datetime
 
 
+# ---------- Livelli salvati e ri-editabili (canali, pivot, …) ----------
+class LayerIn(BaseModel):
+    project_id: int
+    kind: str
+    name: str
+    data: dict[str, Any]
+
+
+class LayerPatch(BaseModel):
+    name: str | None = None
+    data: dict[str, Any] | None = None
+
+
+class LayerOut(BaseModel):
+    id: int
+    project_id: int
+    kind: str
+    name: str
+    data: dict[str, Any]
+    created_at: dt.datetime
+
+
 # ---------- Satellite ----------
 class ScenesIn(BaseModel):
     geom: GeoPolygon
@@ -218,6 +240,8 @@ class GuidedIn(BaseModel):
     per_side: int = Field(default=2, ge=1, le=4)
     conn_max_permille: float = Field(default=5.0, ge=0.1, le=100)
     fill: bool = True                                  # riempi gli spazi vuoti
+    date: str | None = None                            # per esclusione acqua (NDWI)
+    exclude_water: bool = True                          # niente pivot su acqua/paludi
 
 
 class GuidedOut(BaseModel):

@@ -12,8 +12,26 @@ import math
 import numpy as np
 import pyproj
 from matplotlib.path import Path
+from scipy.ndimage import distance_transform_edt
 
 from .canal import _route
+
+
+def _water_mask(client, ctx, date):
+    """Maschera acqua/paludi (NDWI) sulla stessa griglia del DEM del canale.
+    Acqua libera: NDWI alto. Palude: vegetazione (NDVI) con NDWI/NDMI elevati
+    (suolo saturo). Ritorna un bool array o None se non ci sono scene."""
+    from processing.satellite_export import _stitch
+    miny = ctx["top"] - ctx["hp"] * ctx["res"]
+    mos, _nc, n_ok = _stitch(client, ctx["epsg"], ctx["minx"], miny, ctx["top"],
+                             ctx["res"], ctx["wp"], ctx["hp"], 1, 1, date,
+                             ["ndvi", "ndmi", "ndwi"])
+    if n_ok == 0:
+        return None
+    ndvi, ndmi, ndwi = mos["ndvi"], mos["ndmi"], mos["ndwi"]
+    water = ndwi > 0.20
+    marsh = (ndvi > 0.30) & ((ndwi > -0.05) | (ndmi > 0.55))
+    return np.isfinite(ndwi) & (water | marsh)
 
 
 def _sample_polyline(xy: list, dists: list, target: float):
@@ -51,10 +69,38 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
     per_side = max(1, min(4, int(params.get("per_side", 2))))
     target_permille = float(params.get("target_permille", 1.0))
     conn_max = float(params.get("conn_max_permille", 5.0))     # canaletta: pendenza max dolce
+    date = params.get("date")                                  # per l'esclusione acqua (NDWI)
+    exclude_water = bool(params.get("exclude_water", True))
 
     r = _route(client, geom, target_permille)
     dem, ctx, xy = r["dem"], r["ctx"], r["xy"]
     res = ctx["res"]; wp = ctx["wp"]; hp = ctx["hp"]; to_wgs = ctx["to_wgs"]
+
+    # --- TERRENO LIBERO: i pivot non devono passare sopra il canale né su
+    # acqua/paludi. Costruisco le distanze (in metri) dal canale e dall'acqua;
+    # un pivot è ammesso solo se il suo cerchio (raggio R) non le tocca. ---
+    canal_mask = np.zeros((hp, wp), bool)
+    for (rr, cc) in r["path"]:
+        if 0 <= rr < hp and 0 <= cc < wp:
+            canal_mask[rr, cc] = True
+    dist_canal = distance_transform_edt(~canal_mask) * res     # m dalla cella di canale
+    dist_wet = np.full((hp, wp), np.inf)
+    n_wet = 0
+    if exclude_water and date:
+        try:
+            wet = _water_mask(client, ctx, date)
+            if wet is not None and wet.any():
+                n_wet = int(wet.sum())
+                dist_wet = distance_transform_edt(~wet) * res
+        except Exception:  # noqa: BLE001 — se manca la scena, salto l'esclusione acqua
+            pass
+
+    def land_ok(cx, cy):
+        """Terreno libero sotto il pivot: nessun canale né acqua entro il raggio."""
+        col = int((cx - ctx["minx"]) / res); row = int((ctx["top"] - cy) / res)
+        if not (0 <= row < hp and 0 <= col < wp):
+            return False
+        return dist_canal[row, col] >= R - 1.0 and dist_wet[row, col] >= R - 1.0
 
     to_utm = pyproj.Transformer.from_crs(4326, ctx["epsg"], always_xy=True)
     ring_utm = [to_utm.transform(lon, lat) for lon, lat, *_ in geom["coordinates"][0]]
@@ -116,6 +162,8 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
                     continue
                 if not _free(cx, cy, centers):        # niente sovrapposizioni (canale curvo)
                     continue
+                if not land_ok(cx, cy):               # terreno libero (no canale/acqua)
+                    continue
                 e_piv = elev(cx, cy)
                 drop = (e_canal - e_piv) if (e_canal == e_canal and e_piv == e_piv) else float("nan")
                 grad_pm = (1000.0 * drop / off) if (drop == drop and off > 0) else float("nan")
@@ -141,7 +189,7 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
             while xx <= maxx_ - R + 1e-6:
                 pts = circ + np.array([xx, yy])
                 if field.contains_point((xx, yy)) and field.contains_points(pts).all() \
-                        and _free(xx, yy, centers):        # niente sovrapposizioni (con franco)
+                        and _free(xx, yy, centers) and land_ok(xx, yy):  # libero: no overlap/canale/acqua
                     # connessione stimata rispetto alla stazione di canale più vicina
                     best = min(stations, key=lambda st: (xx - st[0]) ** 2 + (yy - st[1]) ** 2)
                     cdist = ((xx - best[0]) ** 2 + (yy - best[1]) ** 2) ** 0.5
@@ -171,6 +219,7 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
         "per_side": per_side, "radius_m": R, "gap_m": gap,
         "safety_m": round(clear, 1), "spacing_m": round(s, 1),
         "pivot_ha": round(pivot_ha, 1),
+        "water_excluded": bool(exclude_water and date and n_wet > 0),
         "net_ha": round(n * pivot_ha, 1),
         "canal_length_m": round(length_m, 1),
         "canal_drop_m": round(drop_m, 2),

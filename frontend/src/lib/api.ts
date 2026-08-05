@@ -140,6 +140,21 @@ export const updateArea = (id: number, patch: {
 export const deleteArea = (id: number) =>
   req<void>(`/api/areas/${id}`, { method: "DELETE" });
 
+// ---- Livelli salvati (canali, pivot, …) ----
+export type ProjectLayer = {
+  id: number; project_id: number; kind: string; name: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: Record<string, any>; created_at: string;
+};
+export const listLayers = (projectId: number) =>
+  req<ProjectLayer[]>(`/api/projects/${projectId}/layers`);
+export const createLayer = (body: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  project_id: number; kind: string; name: string; data: Record<string, any>;
+}) => req<ProjectLayer>("/api/layers", { method: "POST", body: JSON.stringify(body) });
+export const deleteLayer = (id: number) =>
+  req<void>(`/api/layers/${id}`, { method: "DELETE" });
+
 // ---- Satellite ----
 export const fetchScenes = (geom: Polygon, months_back = 12, max_cloud = 95) =>
   req<Scene[]>("/api/satellite/scenes", {
@@ -189,7 +204,7 @@ export const fetchReachable = (geom: Polygon, start: number[]) =>
 export type GuidedResult = { geojson: GeoJSONFC; meta: Record<string, number> };
 export const fetchGuided = (geom: Polygon, p: {
   target_permille: number; radius_m: number; gap_m: number; safety_m: number; per_side: number;
-  conn_max_permille: number; fill: boolean;
+  conn_max_permille: number; fill: boolean; date?: string | null; exclude_water?: boolean;
 }) => req<GuidedResult>("/api/guided", { method: "POST", body: JSON.stringify({ geom, ...p }) });
 
 export const fetchSuitability = (geom: Polygon, date: string, p: SuitParams) =>
