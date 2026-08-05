@@ -69,10 +69,11 @@ type Props = {
   onCreate?: (geom: Polygon) => void;
   onEditActive?: (geom: Polygon) => void;
   onSelect?: (id: number) => void;
+  onCanalProfile?: (index: number) => void;
   apiRef?: MutableRefObject<MapHandle | null>;
 };
 
-export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: Props) {
+export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalProfile, apiRef }: Props) {
   const elRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -100,8 +101,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
   const imperialRef = useRef(false);
 
   // Callback sempre aggiornate (la mappa viene creata una sola volta).
-  const cbRef = useRef({ onCreate, onEditActive, onSelect });
-  useEffect(() => { cbRef.current = { onCreate, onEditActive, onSelect }; });
+  const cbRef = useRef({ onCreate, onEditActive, onSelect, onCanalProfile });
+  useEffect(() => { cbRef.current = { onCreate, onEditActive, onSelect, onCanalProfile }; });
 
   useEffect(() => {
     if (!elRef.current || mapRef.current) return;
@@ -455,6 +456,17 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
           const latlngs = cc.coords.map((p) => [p[1], p[0]] as [number, number]);
           const line = L.polyline(latlngs, { color: "#0284c7", weight: 4, opacity: 0.9 });
           line.bindTooltip(`${startLabel.charAt(0)}${i + 1}`, { permanent: false, direction: "center" });
+          // clic sul canale → finestrella con il tasto per il profilo altimetrico
+          const box = L.DomUtil.create("div");
+          box.style.cssText = "min-width:150px";
+          const ttl = L.DomUtil.create("div", "", box);
+          ttl.textContent = `Canale ${i + 1}`;
+          ttl.style.cssText = "font-weight:600;margin-bottom:6px;color:#08341c";
+          const btn = L.DomUtil.create("button", "", box);
+          btn.textContent = "📈 Vedi profilo elevazione";
+          btn.style.cssText = "background:#038037;color:#fff;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px;width:100%";
+          L.DomEvent.on(btn, "click", (e) => { L.DomEvent.stop(e); cbRef.current.onCanalProfile?.(i); });
+          line.bindPopup(box);
           g.addLayer(line);
           g.addLayer(mk(cc.start, "#038037", `${startLabel} ${i + 1}`));  // presa (alto)
           g.addLayer(mk(cc.end, "#b23b1e", `${endLabel} ${i + 1}`));      // sbocco (basso)

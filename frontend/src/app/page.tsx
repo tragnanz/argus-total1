@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.24";
+const REV = "v0.6.25";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -264,6 +264,7 @@ export default function Page() {
   const [pickMode, setPickMode] = useState<"start" | "end" | null>(null);
   const [editingCanal, setEditingCanal] = useState<number | null>(null);
   const [snapCanal, setSnapCanal] = useState(true);   // aggancia il tracciato a mano all'alveo (DEM)
+  const [profileCanal, setProfileCanal] = useState<number | null>(null);   // canale di cui mostrare il profilo
   // pivot lungo il canale (M6, fase 3)
   const [guided, setGuided] = useState<GuidedResult | null>(null);
   const [perSide, setPerSide] = useState(2);
@@ -955,7 +956,8 @@ export default function Page() {
 
   return (
     <main>
-      <MapCanvas apiRef={mapApi} onCreate={addDrawnField} onEditActive={updateActiveGeom} onSelect={selectField} />
+      <MapCanvas apiRef={mapApi} onCreate={addDrawnField} onEditActive={updateActiveGeom} onSelect={selectField}
+        onCanalProfile={(i) => setProfileCanal(i)} />
 
       <div className="overlay-layer">
         {/* Testata + barra strumenti */}
@@ -1748,10 +1750,73 @@ export default function Page() {
           </div>
         )}
 
+        {/* Profilo altimetrico del canale */}
+        {profileCanal != null && canals[profileCanal] && (
+          <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40" onClick={() => setProfileCanal(null)}>
+            <div className="widget p-4 w-[640px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-brand-darker">{t("Profilo elevazione")} — {t("Canale")} {profileCanal + 1}</h3>
+                <button className="text-sage-dark hover:text-danger" onClick={() => setProfileCanal(null)}>✕</button>
+              </div>
+              <ProfileChart canal={canals[profileCanal]} imperial={imperial} t={t} fmt={fmt} />
+              <div className="text-xs text-sage-dark mt-2 leading-relaxed">
+                {t("Lunghezza")}: <b>{uKm(canals[profileCanal].length_m / 1000)}</b> · {t("Dislivello")}: <b>{uM(canals[profileCanal].drop_m, 1)}</b> · {t("Pendenza media")}: <b>{fmt(canals[profileCanal].mean_permille)}‰</b><br />
+                {t("Quota")} {uM(canals[profileCanal].elev_start_m, 1)} → {uM(canals[profileCanal].elev_end_m, 1)}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Revisione software */}
         <div className="absolute bottom-2 left-3 text-[11px] text-white/80">Argus Total {REV}</div>
       </div>
     </main>
+  );
+}
+
+// Grafico del profilo altimetrico (quota vs distanza) del canale.
+function ProfileChart({ canal, imperial, t, fmt }: {
+  canal: Canal; imperial: boolean;
+  t: (s: string, v?: Record<string, string | number>) => string;
+  fmt: (n: number, o?: Intl.NumberFormatOptions) => string;
+}) {
+  const prof = canal.profile || [];
+  if (prof.length < 2) return <div className="hint">{t("Profilo non disponibile per questo canale.")}</div>;
+  const W = 600, H = 240, pl = 52, pr = 12, pt = 12, pb = 30;
+  const iw = W - pl - pr, ih = H - pt - pb;
+  const dMax = prof[prof.length - 1][0] || 1;
+  const elevs = prof.map((p) => p[1]);
+  let eMin = Math.min(...elevs), eMax = Math.max(...elevs);
+  if (eMax - eMin < 1) eMax = eMin + 1;
+  const cLen = (m: number) => imperial ? m * 3.28084 : m;                 // per etichette
+  const cDist = (m: number) => imperial ? m * 3.28084 : m;
+  const x = (d: number) => pl + (d / dMax) * iw;
+  const y = (e: number) => pt + (1 - (e - eMin) / (eMax - eMin)) * ih;
+  const pts = prof.map((p) => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
+  const area = `${pl},${pt + ih} ${pts} ${pl + iw},${pt + ih}`;
+  const distU = imperial ? "ft" : "m", elevU = imperial ? "ft" : "m";
+  const yticks = [eMin, (eMin + eMax) / 2, eMax];
+  const xticks = [0, dMax / 2, dMax];
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ background: "#f6faf6", borderRadius: 8 }}>
+      <polygon points={area} fill="#0284c7" opacity={0.12} />
+      <polyline points={pts} fill="none" stroke="#0284c7" strokeWidth={2} />
+      {/* assi */}
+      <line x1={pl} y1={pt} x2={pl} y2={pt + ih} stroke="#cbd5cb" />
+      <line x1={pl} y1={pt + ih} x2={pl + iw} y2={pt + ih} stroke="#cbd5cb" />
+      {yticks.map((e, k) => (
+        <g key={`y${k}`}>
+          <text x={pl - 6} y={y(e) + 3} textAnchor="end" fontSize={10} fill="#5b6b5b">{fmt(cLen(e), { maximumFractionDigits: 0 })}</text>
+          <line x1={pl} y1={y(e)} x2={pl + iw} y2={y(e)} stroke="#e5ebe5" />
+        </g>
+      ))}
+      {xticks.map((d, k) => (
+        <text key={`x${k}`} x={x(d)} y={H - 8} textAnchor={k === 0 ? "start" : k === 2 ? "end" : "middle"} fontSize={10} fill="#5b6b5b">
+          {fmt(cDist(d) / (imperial ? 1 : 1), { maximumFractionDigits: 0 })} {distU}
+        </text>
+      ))}
+      <text x={12} y={pt + 10} fontSize={10} fill="#5b6b5b" transform={`rotate(-90 12 ${pt + ih / 2})`} textAnchor="middle">{t("quota")} ({elevU})</text>
+    </svg>
   );
 }
 
