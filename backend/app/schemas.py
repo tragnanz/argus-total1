@@ -186,6 +186,7 @@ class CanalIn(BaseModel):
     start: list[float] | None = None  # [lon, lat] presa manuale
     end: list[float] | None = None    # [lon, lat] finale manuale
     waypoints: list[list[float]] | None = None  # punti intermedi [lon,lat] (percorso trascinabile)
+    manual: list[list[float]] | None = None     # polilinea disegnata a mano [lon,lat]…
 
 
 class CanalOut(BaseModel):

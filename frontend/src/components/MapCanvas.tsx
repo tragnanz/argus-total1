@@ -42,6 +42,7 @@ export type MapHandle = {
   editCanal: (coords: number[][], start: number[], end: number[], waypoints: number[][],
     cb: (start: number[], end: number[], waypoints: number[][]) => void) => void;
   endCanalEdit: () => void;
+  drawCanalManual: (cb: (coords: number[][]) => void) => void;
   armPick: (cb: (lon: number, lat: number) => void) => void;
   disarmPick: () => void;
 };
@@ -87,8 +88,9 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
   const canalEditRef = useRef<L.LayerGroup | null>(null);
   const waterRef = useRef<L.LayerGroup | null>(null);
   const waterPreviewRef = useRef<L.FeatureGroup | null>(null);
-  const drawModeRef = useRef<"river" | "basin" | null>(null);
+  const drawModeRef = useRef<"river" | "basin" | "canal-manual" | null>(null);
   const waterRemoveRef = useRef(false);
+  const canalManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
   const pickCbRef = useRef<((lon: number, lat: number) => void) | null>(null);
   const measureRef = useRef<L.LayerGroup | null>(null);
   const measuringRef = useRef(false);
@@ -140,6 +142,16 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
     map.on("pm:create", (e: any) => {
       const layer = e.layer;
       const dm = drawModeRef.current;
+      if (dm === "canal-manual") {                     // canale tracciato a mano
+        const lls = (layer.getLatLngs?.() || []) as any[];
+        const coords = lls.map((p: any) => [p.lng, p.lat]);
+        try { map.removeLayer(layer); } catch { /* */ }
+        drawModeRef.current = null;
+        try { (map as any).pm.disableDraw(); } catch { /* */ }
+        const cb = canalManualCbRef.current; canalManualCbRef.current = null;
+        if (coords.length >= 2) cb?.(coords);
+        return;
+      }
       if (dm === "river" || dm === "basin") {         // nuovo corso d'acqua (anteprima)
         (layer as any)._wcKind = dm;
         try { layer.setStyle?.({ color: "#0369a1", weight: 3, dashArray: "4,3", fillOpacity: 0.2 }); } catch { /* */ }
@@ -561,6 +573,12 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, apiRef }: 
         });
       },
       endCanalEdit() { canalEditRef.current?.clearLayers(); },
+      drawCanalManual(cb) {
+        const map = mapRef.current; if (!map) return;
+        canalManualCbRef.current = cb;
+        drawModeRef.current = "canal-manual";
+        try { (map as any).pm.enableDraw("Line", { allowSelfIntersection: true }); } catch { /* */ }
+      },
       armPick(cb) {
         pickCbRef.current = cb;
         try { if (mapRef.current) mapRef.current.getContainer().style.cursor = "crosshair"; } catch { /* */ }

@@ -204,6 +204,34 @@ def _finalize(dem, ctx, path, xy, target_permille, waypoints_ll=None) -> dict:
     }
 
 
+def trace_manual(client, geom: dict, coords_ll: list, target_permille: float = 1.0) -> dict:
+    """Canale tracciato A MANO: prende la polilinea disegnata (lon/lat) e ne
+    campiona la quota lungo il DEM per lunghezza, dislivello, pendenza e profilo.
+    Non re-instrada (è manuale); se sale, il dislivello sarà negativo."""
+    if not coords_ll or len(coords_ll) < 2:
+        raise RuntimeError("Servono almeno due punti per il canale manuale.")
+    dem, mask, ctx = _dem_and_grid(client, geom)
+    res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
+    to_utm = pyproj.Transformer.from_crs(4326, ctx["epsg"], always_xy=True)
+    pts = [to_utm.transform(float(lo), float(la)) for lo, la in coords_ll]
+    # densifica a passo ~res per un profilo regolare
+    xy = [pts[0]]
+    for i in range(1, len(pts)):
+        x0, y0 = pts[i - 1]; x1, y1 = pts[i]
+        d = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+        n = max(1, int(d / res))
+        for k in range(1, n + 1):
+            xy.append((x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n))
+
+    def to_cell(x, y):
+        row = min(hp - 1, max(0, int((ctx["top"] - y) / res)))
+        col = min(wp - 1, max(0, int((x - ctx["minx"]) / res)))
+        return (row, col)
+
+    path = [to_cell(x, y) for x, y in xy]
+    return _finalize(dem, ctx, path, xy, target_permille)
+
+
 def trace_canal(client, geom: dict, target_permille: float = 1.0,
                 start_ll=None, end_ll=None, waypoints=None) -> dict:
     """API Fase 2: canale + profilo + statistiche (lon/lat).

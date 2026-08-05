@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.18";
+const REV = "v0.6.19";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -40,7 +40,7 @@ const PIVOT_WET_W = 40;   // larghezza bagnata del pacchetto irriguo (m), assunz
 // "Analisi" raggruppa satellite + idoneità + macro-aree in un'unica finestra.
 const TABS: { key: string; label: string }[] = [
   { key: "analisi", label: "Analisi" },
-  { key: "canal", label: "Canale" },
+  { key: "canal", label: "Canali" },
   { key: "guided", label: "Pivot" },
   { key: "layout", label: "Layout" },
   { key: "export", label: "Esporta" },
@@ -664,6 +664,19 @@ export default function Page() {
         next.map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end })),
         t("Presa"), t("Sbocco"));
     } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  function traceCanalManual() {
+    if (!activeGeom) return needField();
+    setMsg(t("Traccia a mano: clicca i punti del canale sulla mappa, doppio clic per finire."));
+    mapApi.current?.drawCanalManual(async (coords) => {
+      setBusy("canal"); setMsg("");
+      try {
+        const cc = await api.fetchCanal(activeGeom, canalPermille, null, null, null, coords);
+        const next = [...canals, cc];
+        setCanals(next);
+        mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end })), t("Presa"), t("Sbocco"));
+      } catch (e) { showErr(e); } finally { setBusy(""); }
+    });
   }
   function removeCanal(i: number) {
     if (editingCanal === i) endEditCanal();
@@ -1351,7 +1364,7 @@ export default function Page() {
           </section>
 
           <section className={secShow("canal")}>
-            <SectionHead title={t("Canale principale")} help={t("Traccia uno o più canali a gravità a pendenza costante. Definisci presa e finale, oppure lascia automatico.")} />
+            <SectionHead title={t("Canali")} help={t("Traccia uno o più canali: automatici a gravità (a pendenza costante, con presa/finale opzionali) oppure a mano. Ogni canale è modificabile ed esportabile in KMZ.")} />
             <label className="text-xs text-sage-dark block">{t("Pendenza target (‰)")}
               <input type="number" min={0.1} max={100} step={0.5} value={canalPermille}
                 onChange={(e) => setCanalPermille(Number(e.target.value))} className="field-input mt-1" />
@@ -1377,10 +1390,13 @@ export default function Page() {
 
             <div className="flex gap-2 mt-2">
               <button className="btn-primary flex-1 basis-0" disabled={busy === "canal" || !activeGeom} onClick={traceCanal}>
-                {busy === "canal" ? t("Calcolo…") : t("Aggiungi canale")}
+                {busy === "canal" ? t("Calcolo…") : t("Canale automatico")}
               </button>
-              <button className="btn-ghost flex-1 basis-0" disabled={!canals.length && !canalStart && !canalEnd} onClick={clearCanalUI}>{t("Rimuovi tutti")}</button>
+              <button className="btn-ghost flex-1 basis-0" disabled={busy === "canal" || !activeGeom} onClick={traceCanalManual}>
+                {t("Traccia a mano")}
+              </button>
             </div>
+            <button className="btn-ghost w-full mt-2" disabled={!canals.length && !canalStart && !canalEnd} onClick={clearCanalUI}>{t("Rimuovi tutti")}</button>
 
             {canals.length > 0 && (
               <ul className="mt-3 space-y-2">

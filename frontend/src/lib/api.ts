@@ -183,10 +183,11 @@ export type Canal = {
 export const fetchCanal = (
   geom: Polygon, target_permille: number,
   start?: number[] | null, end?: number[] | null, waypoints?: number[][] | null,
+  manual?: number[][] | null,
 ) =>
   req<Canal>("/api/canal", {
     method: "POST",
-    body: JSON.stringify({ geom, target_permille, start: start ?? null, end: end ?? null, waypoints: waypoints ?? null }),
+    body: JSON.stringify({ geom, target_permille, start: start ?? null, end: end ?? null, waypoints: waypoints ?? null, manual: manual ?? null }),
   });
 
 // ---- Leggibilità terreno: rilievo + isoipse, zona a valle della presa ----
