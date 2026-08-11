@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.57";
+const REV = "v0.6.58";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1709,7 +1709,6 @@ export default function Page() {
                 </div>
               </div>
             )}
-            {!activeGeom && <p className="hint mt-1 text-danger">{t("Seleziona o disegna prima un campo.")}</p>}
             {activeGeom && !date && !waterPreview && <p className="hint mt-1 text-danger">{t("Serve una data: clicca 'Cerca date disponibili' qui sopra")}</p>}
             {!waterPreview && !!watercourses.length && (
               <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
