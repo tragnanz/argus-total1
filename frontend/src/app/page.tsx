@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.52";
+const REV = "v0.6.53";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -40,7 +40,7 @@ const PIVOT_WET_W = 40;   // larghezza bagnata del pacchetto irriguo (m), assunz
 // "Analisi" raggruppa satellite + idoneità + macro-aree in un'unica finestra.
 const TABS: { key: string; label: string }[] = [
   { key: "analisi", label: "Analisi" },
-  { key: "canal", label: "Canali" },
+  { key: "rilievo", label: "Rilievo" },
   { key: "impianti", label: "Impianti" },
   { key: "accessori", label: "Accessori" },
   { key: "export", label: "Esporta" },
@@ -925,7 +925,7 @@ export default function Page() {
         mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
         return next;
       });
-      setTab("canal");
+      setTab("rilievo");
     } else if (l.kind === "pivots") {
       const g = l.data as unknown as GuidedResult;
       setGuided(g);
@@ -1854,7 +1854,7 @@ export default function Page() {
             </div>
           </section>
 
-          <section className={secShow("canal")}>
+          <section className={secShow("rilievo")}>
             <SectionHead title={t("Canali")} help={t("Traccia uno o più canali: automatici a gravità (a pendenza costante, con presa/finale opzionali) oppure a mano. Ogni canale è modificabile ed esportabile in KMZ.")} />
             <div className="flex gap-2">
               <label className="text-xs text-sage-dark flex-1">{t("Pendenza target (‰)")}
@@ -1933,7 +1933,7 @@ export default function Page() {
           </section>
 
           <section className={secShow("impianti")}>
-            <SectionHead title={t("Impianti")} help={t("Un unico comando «Inserisci impianti» dispone i pivot a reticolo su tutti i campi. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nelle pagine Accessori e Canali.")} />
+            <SectionHead title={t("Impianti")} help={t("Un unico comando «Inserisci impianti» dispone i pivot a reticolo su tutti i campi. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.")} />
 
             <label className="text-xs text-sage-dark block mb-1">{t("Disposizione")}</label>
             <div className="seg mb-1">
@@ -2033,8 +2033,8 @@ export default function Page() {
 
 
 
-          <section className={secShow("accessori")}>
-            <SectionHead title={t("Accessori")} help={t("Infrastrutture accessorie del progetto. Le strade tracciate qui vengono rispettate dagli impianti secondo il franco «Da strade» impostato nella pagina Impianti.")} />
+          <section className={secShow("rilievo") + " border-t border-black/5 pt-3"}>
+            <SectionHead title={t("Strade")} help={t("Traccia o importa le strade preesistenti (con spessore). Gli impianti evitano il footprint reale secondo il franco «Da strade» impostato nella pagina Impianti.")} />
 
             {/* Livello Strade: linee disegnabili/importabili che i pivot rispettano */}
             <div className="bg-panel rounded-lg p-2">
@@ -2071,7 +2071,11 @@ export default function Page() {
                   </ul>
                 )}
             </div>
-            <p className="hint mt-2">{t("Altri accessori (invasi, stazioni di pompaggio…) verranno aggiunti qui.")}</p>
+          </section>
+
+          <section className={secShow("accessori")}>
+            <SectionHead title={t("Accessori")} help={t("Infrastrutture accessorie del progetto (invasi, stazioni di pompaggio, dati elettrici…). In arrivo.")} />
+            <p className="hint">{t("Nessun accessorio per ora. Questa sezione verrà popolata prossimamente.")}</p>
           </section>
 
           <section className={secShow("export")}>
