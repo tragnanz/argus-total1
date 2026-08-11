@@ -217,8 +217,9 @@ export type GuidedResult = { geojson: GeoJSONFC; meta: Record<string, number> };
 export const fetchGuided = (geom: Polygon, p: {
   target_permille: number; radius_m: number; gap_m: number; safety_m: number; per_side: number;
   conn_max_permille: number; fill: boolean; date?: string | null; exclude_water?: boolean;
+  clear_road_m?: number; clear_water_m?: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  avoid?: any[] | null;
+  avoid?: any[] | null; roads?: any[] | null;
 }) => req<GuidedResult>("/api/guided", { method: "POST", body: JSON.stringify({ geom, ...p }) });
 
 export const fetchSuitability = (geom: Polygon, date: string, p: SuitParams) =>

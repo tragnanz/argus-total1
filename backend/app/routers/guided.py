@@ -16,8 +16,10 @@ def guided(body: GuidedIn, client=Depends(get_client)):
     params = {
         "target_permille": body.target_permille, "radius_m": body.radius_m,
         "gap_m": body.gap_m, "safety_m": body.safety_m, "per_side": body.per_side,
+        "clear_road_m": body.clear_road_m, "clear_water_m": body.clear_water_m,
         "conn_max_permille": body.conn_max_permille, "fill": body.fill,
-        "date": body.date, "exclude_water": body.exclude_water, "avoid": body.avoid,
+        "date": body.date, "exclude_water": body.exclude_water,
+        "avoid": body.avoid, "roads": body.roads,
     }
     try:
         out = design_pivots(client, body.geom.model_dump(), params)

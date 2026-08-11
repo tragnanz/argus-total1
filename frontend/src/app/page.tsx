@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import JSZip from "jszip";
-import type { MapHandle } from "@/components/MapCanvas";
+import type { MapHandle, PivotItem, PivotSel } from "@/components/MapCanvas";
 import { useI18n, LANGS, type Lang } from "@/lib/i18n";
 import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.31";
+const REV = "v0.6.32";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -117,6 +117,62 @@ function ringAreaHa(coords: number[][][]): number {
   return Math.abs((a * R * R) / 2) / 10000;
 }
 const safe = (s: string) => s.replace(/[^a-z0-9]+/gi, "_");
+
+// ---- Gerarchia pivot: conversione FeatureCollection ⇄ modello modificabile ----
+// Anello circolare (lon,lat) per un pivot di raggio r (m) centrato in (lat,lng).
+function circleRing(lat: number, lng: number, r: number, n = 32): number[][] {
+  const dLat = r / 111320;
+  const dLng = r / (111320 * Math.cos((lat * Math.PI) / 180) || 1e-9);
+  const ring: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (2 * Math.PI * i) / n;
+    ring.push([lng + dLng * Math.cos(a), lat + dLat * Math.sin(a)]);
+  }
+  ring.push(ring[0]);
+  return ring;
+}
+// Estrae i pivot (centro + raggio) e le linee (canale/tubi) dal FeatureCollection.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function pivotsFromFC(fc: any, defR: number): { pivots: PivotItem[]; lines: { kind: string; coords: number[][] }[] } {
+  const pivots: PivotItem[] = [];
+  const lines: { kind: string; coords: number[][] }[] = [];
+  for (const f of fc?.features ?? []) {
+    const k = f?.properties?.kind;
+    const g = f?.geometry;
+    if (g?.type === "Polygon" && k === "pivot") {
+      const ring: number[][] = (g.coordinates?.[0] ?? []).slice(0, -1);
+      if (ring.length < 3) continue;
+      let sx = 0, sy = 0;
+      for (const p of ring) { sx += p[0]; sy += p[1]; }
+      const lng = sx / ring.length, lat = sy / ring.length;
+      // raggio: distanza media centro→vertici in metri (robusto anche dopo modifiche)
+      let sr = 0;
+      for (const p of ring) {
+        const dx = (p[0] - lng) * 111320 * Math.cos((lat * Math.PI) / 180);
+        const dy = (p[1] - lat) * 111320;
+        sr += Math.hypot(dx, dy);
+      }
+      const r = ring.length ? sr / ring.length : defR;
+      pivots.push({ lat, lng, r: Math.round(r), conn: f?.properties?.connection });
+    } else if (g?.type === "LineString") {
+      lines.push({ kind: k, coords: g.coordinates });
+    }
+  }
+  return { pivots, lines };
+}
+// Ricostruisce il FeatureCollection dal modello (per salvataggio/esporto/statistiche).
+function fcFromModel(pivots: PivotItem[], lines: { kind: string; coords: number[][] }[]) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const feats: any[] = pivots.map((pv) => ({
+    type: "Feature",
+    properties: { kind: "pivot", connection: pv.conn ?? "canal", phase: pv.conn === "pipe" ? 2 : 1 },
+    geometry: { type: "Polygon", coordinates: [circleRing(pv.lat, pv.lng, pv.r)] },
+  }));
+  for (const ln of lines) {
+    feats.push({ type: "Feature", properties: { kind: ln.kind }, geometry: { type: "LineString", coordinates: ln.coords } });
+  }
+  return { type: "FeatureCollection" as const, features: feats };
+}
 
 // Icone (stile lineare, 16px) per la barra strumenti in alto.
 const svgProps = { width: 16, height: 16, viewBox: "0 0 24 24", fill: "none",
@@ -269,8 +325,14 @@ export default function Page() {
   const [guided, setGuided] = useState<GuidedResult | null>(null);
   const [perSide, setPerSide] = useState(2);
   const [fillEmpty, setFillEmpty] = useState(true);
-  const [safetyM, setSafetyM] = useState(20);   // distanza di sicurezza fra i bordi (m)
+  const [safetyM, setSafetyM] = useState(20);   // distanza di rispetto fra i bordi dei pivot (m)
+  const [pivClearRoad, setPivClearRoad] = useState(0);   // franco pivot da strade/canali segnati (m)
+  const [pivClearWater, setPivClearWater] = useState(0); // franco pivot da acqua/invasi (m)
   const [pivotR, setPivotR] = useState(400);    // raggio pivot (parametro proprio della scheda Pivot)
+  // Gerarchia pivot: modello modificabile (gruppo → singolo) derivato dal risultato.
+  const [pivots, setPivots] = useState<PivotItem[]>([]);
+  const [pivotLines, setPivotLines] = useState<{ kind: string; coords: number[][] }[]>([]);
+  const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
   const [excludeWater, setExcludeWater] = useState(true);  // niente pivot su acqua/paludi (NDWI)
   const [soilKey, setSoilKey] = useState("franco");
   const [infiltration, setInfiltration] = useState(12);   // mm/h
@@ -804,7 +866,7 @@ export default function Page() {
     } else if (l.kind === "pivots") {
       const g = l.data as unknown as GuidedResult;
       setGuided(g);
-      mapApi.current?.showLayouts([{ id: -1, fc: g.geojson }]);
+      setModelFromGuided(g);
       setTab("guided");
     }
     setMsg(t("Livello caricato ✓"));
@@ -827,22 +889,70 @@ export default function Page() {
     }
   }
 
-  // ---- pivot lungo il canale (M6, fase 3) ----
+  // ---- pivot lungo il canale (M6, fase 3) + gerarchia gruppo/singolo ----
+  // Carica il modello modificabile a partire dal risultato del solutore.
+  function setModelFromGuided(g: GuidedResult) {
+    const defR = Number(g.meta?.radius_m) || pivotR;
+    const { pivots: pv, lines } = pivotsFromFC(g.geojson, defR);
+    setPivots(pv); setPivotLines(lines); setPivotSel({ mode: "none", idx: -1 });
+  }
+  // Aggiorna i pivot modificati a mano: ricalcola meta e tiene `guided` in sincronia
+  // (così statistiche, salvataggio ed esporto riflettono le modifiche).
+  function commitPivots(next: PivotItem[]) {
+    setPivots(next);
+    setGuided((prev) => {
+      if (!prev) return prev;
+      const geojson = fcFromModel(next, pivotLines);
+      const nCanal = next.filter((p) => p.conn !== "pipe").length;
+      const nPipe = next.length - nCanal;
+      const netHa = next.reduce((s, p) => s + (Math.PI * p.r * p.r) / 10000, 0);
+      return { ...prev, geojson, meta: { ...prev.meta, n_pivots: next.length, n_canal_conn: nCanal, n_pipe_conn: nPipe, net_ha: Math.round(netHa * 10) / 10 } };
+    });
+  }
+  // Ridisegna i pivot sulla mappa a ogni cambio di modello/selezione.
+  useEffect(() => {
+    const api2 = mapApi.current; if (!api2) return;
+    if (!pivots.length && !pivotLines.length) { api2.clearPivots?.(); return; }
+    api2.showPivots?.({ pivots, lines: pivotLines }, pivotSel, {
+      onClick: (i) => setPivotSel((s) => (s.mode === "none" ? { mode: "group", idx: -1 } : { mode: "single", idx: i })),
+      onMove: (i, lat, lng) => commitPivots(pivots.map((p, k) => (k === i ? { ...p, lat, lng } : p))),
+      onBackground: () => setPivotSel({ mode: "none", idx: -1 }),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pivots, pivotLines, pivotSel]);
+
+  // Operazioni sul singolo pivot selezionato.
+  const selPivot = pivotSel.mode === "single" && pivotSel.idx >= 0 ? pivots[pivotSel.idx] : null;
+  function updateSelPivot(patch: Partial<PivotItem>) {
+    if (pivotSel.mode !== "single") return;
+    commitPivots(pivots.map((p, k) => (k === pivotSel.idx ? { ...p, ...patch } : p)));
+  }
+  function deleteSelPivot() {
+    if (pivotSel.mode !== "single") return;
+    commitPivots(pivots.filter((_, k) => k !== pivotSel.idx));
+    setPivotSel({ mode: "group", idx: -1 });
+  }
+  function applyRadiusToAll() { commitPivots(pivots.map((p) => ({ ...p, r: pivotR }))); }
+
   async function designGuided() {
     if (!activeGeom) return needField();
     setBusy("guided"); setMsg("");
     try {
       const g = await api.fetchGuided(activeGeom, {
         target_permille: canalPermille, radius_m: pivotR, gap_m: 0,
-        safety_m: safetyM, per_side: perSide, conn_max_permille: 5, fill: fillEmpty,
+        safety_m: safetyM, clear_road_m: pivClearRoad, clear_water_m: pivClearWater,
+        per_side: perSide, conn_max_permille: 5, fill: fillEmpty,
         date: date || null, exclude_water: excludeWater,
         avoid: watercourses.length ? watercourses.map((w) => ({ kind: w.kind, geojson: w.geojson })) : null,
       });
       setGuided(g);
-      mapApi.current?.showLayouts([{ id: -1, fc: g.geojson }]);
+      setModelFromGuided(g);
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
-  function clearGuided() { setGuided(null); mapApi.current?.clearLayout(); }
+  function clearGuided() {
+    setGuided(null); setPivots([]); setPivotLines([]); setPivotSel({ mode: "none", idx: -1 });
+    mapApi.current?.clearLayout();
+  }
 
   // ---- layout pivot (tutti i campi) ----
   function paramsFrom(s: Settings): LayoutParams {
@@ -1507,7 +1617,7 @@ export default function Page() {
           </section>
 
           <section className={secShow("guided")}>
-            <SectionHead title={t("Pivot lungo il canale")} help={t("Parametri di disegno dei pivot (raggio, sicurezza) qui sotto. I pivot vanno solo su terreno libero: fuori dal canale e dall'acqua.")} />
+            <SectionHead title={t("Pivot lungo il canale")} help={t("Parametri di disegno qui sotto: raggio e distanze di rispetto (tra pivot, da strade/canali, da acqua/invasi). Dopo il calcolo, sulla mappa il 1° clic seleziona tutto il gruppo, il 2° clic il singolo pivot (modificabile: raggio, posizione, connessione, elimina).")} />
 
             <div className="bg-panel rounded-lg p-2 mb-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Dimensione pivot consigliata")}</div>
@@ -1531,13 +1641,23 @@ export default function Page() {
               </div>
             </div>
 
-            <div className="flex gap-2">
-              <label className="text-xs text-sage-dark flex-1">{t("Raggio pivot (m)")}
-                <input type="number" min={30} max={1000} step={10} value={pivotR}
-                  onChange={(e) => setPivotR(Number(e.target.value))} className="field-input mt-1" /></label>
-              <label className="text-xs text-sage-dark flex-1">{t("Distanza di sicurezza (m)")}
-                <input type="number" min={0} max={500} step={5} value={safetyM}
-                  onChange={(e) => setSafetyM(Number(e.target.value))} className="field-input mt-1" /></label>
+            <label className="text-xs text-sage-dark block">{t("Raggio pivot (m)")}
+              <input type="number" min={30} max={1000} step={10} value={pivotR}
+                onChange={(e) => setPivotR(Number(e.target.value))} className="field-input mt-1" /></label>
+
+            <div className="bg-panel rounded-lg p-2 mt-2">
+              <div className="text-xs font-semibold text-sage-dark mb-1">{t("Distanze di rispetto (m)")}</div>
+              <div className="flex gap-2">
+                <label className="text-[11px] text-sage-dark flex-1">{t("Tra pivot")}
+                  <input type="number" min={0} max={500} step={5} value={safetyM}
+                    onChange={(e) => setSafetyM(Number(e.target.value))} className="field-input mt-1" /></label>
+                <label className="text-[11px] text-sage-dark flex-1">{t("Da strade/canali")}
+                  <input type="number" min={0} max={500} step={5} value={pivClearRoad}
+                    onChange={(e) => setPivClearRoad(Number(e.target.value))} className="field-input mt-1" /></label>
+                <label className="text-[11px] text-sage-dark flex-1">{t("Da acqua/invasi")}
+                  <input type="number" min={0} max={500} step={5} value={pivClearWater}
+                    onChange={(e) => setPivClearWater(Number(e.target.value))} className="field-input mt-1" /></label>
+              </div>
             </div>
 
             <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
@@ -1557,8 +1677,8 @@ export default function Page() {
             </label>
             <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 mt-2 leading-relaxed">
               {t("Raggio")}: <b>{uM(pivotR)}</b> · {t("Area per pivot")}: <b>{uHa(Math.PI * pivotR * pivotR / 10000, 1)}</b><br />
-              {t("Distanza di sicurezza tra i bordi")}: <b>{uM(safetyM)}</b> · {t("Interasse (centro-centro)")}: <b>{uM(2 * pivotR + safetyM)}</b><br />
-              <span className="text-brand-mid">{t("I pivot non si sovrappongono e stanno solo su terreno libero (no canali, no acqua).")}</span>
+              {t("Interasse (centro-centro)")}: <b>{uM(2 * pivotR + safetyM)}</b><br />
+              <span className="text-brand-mid">{t("I pivot non si sovrappongono e rispettano i franchi impostati da strade/canali e acqua/invasi.")}</span>
             </div>
             <div className="flex gap-2 mt-2">
               <button className="btn-primary flex-1 basis-0" disabled={busy === "guided" || !activeGeom} onClick={designGuided}>
@@ -1589,6 +1709,49 @@ export default function Page() {
                   {!!guided.meta.water_excluded && <><br /><span className="text-brand-mid">{t("Esclusi canale e aree con acqua/paludi (NDWI).")}</span></>}
                 </div>
                 <button className="btn-primary w-full" disabled={!projectId} onClick={savePivotsLayer}>{t("Salva pivot nel progetto")}</button>
+              </div>
+            )}
+
+            {/* Gerarchia: 1° clic = gruppo (impostazioni generali), 2° clic = singolo pivot */}
+            {!!pivots.length && (
+              <div className="mt-3 border-t border-brand/15 pt-2">
+                {pivotSel.mode === "single" && selPivot ? (
+                  <div className="bg-panel rounded-lg p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <b className="text-brand-darker text-sm">{t("Pivot")} #{pivotSel.idx + 1}</b>
+                      <button className="text-[11px] text-brand-mid" onClick={() => setPivotSel({ mode: "group", idx: -1 })}>← {t("Torna al gruppo")}</button>
+                    </div>
+                    <p className="text-[11px] text-sage-dark mb-2">{t("Trascina il pallino giallo sulla mappa per spostarlo.")}</p>
+                    <div className="flex gap-2">
+                      <label className="text-[11px] text-sage-dark flex-1">{t("Raggio (m)")}
+                        <input type="number" min={30} max={1000} step={5} value={Math.round(selPivot.r)}
+                          onChange={(e) => updateSelPivot({ r: Number(e.target.value) })} className="field-input mt-1" /></label>
+                      <label className="text-[11px] text-sage-dark flex-1">{t("Connessione")}
+                        <select className="field-input mt-1" value={selPivot.conn ?? "canal"}
+                          onChange={(e) => updateSelPivot({ conn: e.target.value })}>
+                          <option value="canal">{t("Canaletta (gravità)")}</option>
+                          <option value="pipe">{t("Tubazione (pressione)")}</option>
+                        </select></label>
+                    </div>
+                    <div className="text-[11px] text-sage-dark mt-1">{t("Area")}: <b>{uHa(Math.PI * selPivot.r * selPivot.r / 10000, 1)}</b></div>
+                    <div className="flex gap-2 mt-2">
+                      <button className="btn-ghost flex-1 basis-0 text-danger" onClick={deleteSelPivot}>{t("Elimina pivot")}</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-panel rounded-lg p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <b className="text-brand-darker text-sm">{t("Gruppo pivot")} · {pivots.length}</b>
+                      {pivotSel.mode === "group" && <span className="text-[11px] text-brand">{t("selezionato")}</span>}
+                    </div>
+                    <p className="text-[11px] text-sage-dark">
+                      {t("Sulla mappa: 1° clic seleziona tutto il gruppo, 2° clic seleziona il singolo pivot da modificare. Clic sullo sfondo per deselezionare.")}
+                    </p>
+                    <div className="flex gap-2 mt-2">
+                      <button className="btn-ghost flex-1 basis-0" onClick={applyRadiusToAll}>{t("Applica raggio {r} m a tutti", { r: pivotR })}</button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </section>

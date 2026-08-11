@@ -64,8 +64,10 @@ def _decide(drop: float, grad_pm: float, conn_max: float) -> str:
 def design_pivots(client, geom: dict, params: dict) -> dict:
     R = float(params.get("radius_m", 400.0))
     gap = max(0.0, float(params.get("gap_m", 0.0)))
-    safety = max(0.0, float(params.get("safety_m", 20.0)))     # distanza di sicurezza tra i bordi
-    clear = max(gap, safety)                                   # franco effettivo fra i bordi
+    safety = max(0.0, float(params.get("safety_m", 20.0)))     # distanza di rispetto tra i bordi pivot
+    clear = max(gap, safety)                                   # franco effettivo fra i bordi pivot
+    clear_road = max(0.0, float(params.get("clear_road_m", 0.0)))   # franco da strade/canali
+    clear_water = max(0.0, float(params.get("clear_water_m", 0.0)))  # franco da acqua/invasi
     per_side = max(1, min(4, int(params.get("per_side", 2))))
     target_permille = float(params.get("target_permille", 1.0))
     conn_max = float(params.get("conn_max_permille", 5.0))     # canaletta: pendenza max dolce
@@ -80,11 +82,34 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
     # --- TERRENO LIBERO: i pivot non devono passare sopra il canale né su
     # acqua/paludi. Costruisco le distanze (in metri) dal canale e dall'acqua;
     # un pivot è ammesso solo se il suo cerchio (raggio R) non le tocca. ---
+    # Corpi LINEARI da rispettare: il canale principale e le strade segnate.
     canal_mask = np.zeros((hp, wp), bool)
     for (rr, cc) in r["path"]:
         if 0 <= rr < hp and 0 <= cc < wp:
             canal_mask[rr, cc] = True
-    dist_canal = distance_transform_edt(~canal_mask) * res     # m dalla cella di canale
+    roads = params.get("roads")
+    if roads:
+        try:
+            from rasterio.features import rasterize as _rz
+            from rasterio.transform import from_origin as _fo
+            rgeoms = []
+            for f in roads:
+                g = f.get("geojson") or f
+                coords = g.get("coordinates"); typ = g.get("type")
+                if typ == "LineString" and coords:
+                    rgeoms.append({"type": "LineString",
+                                   "coordinates": [to_utm.transform(lo, la) for lo, la, *_ in coords]})
+                elif typ == "Polygon" and coords:
+                    rgeoms.append({"type": "Polygon",
+                                   "coordinates": [[to_utm.transform(lo, la) for lo, la, *_ in coords[0]]]})
+            if rgeoms:
+                rm = _rz([(gg, 1) for gg in rgeoms], out_shape=(hp, wp),
+                         transform=_fo(ctx["minx"], ctx["top"], res, res),
+                         fill=0, all_touched=True).astype(bool)
+                canal_mask |= rm
+        except Exception:  # noqa: BLE001
+            pass
+    dist_canal = distance_transform_edt(~canal_mask) * res     # m dal corpo lineare più vicino
     dist_wet = np.full((hp, wp), np.inf)
     n_wet = 0
     wet = np.zeros((hp, wp), bool)
@@ -125,11 +150,13 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
         dist_wet = distance_transform_edt(~wet) * res
 
     def land_ok(cx, cy):
-        """Terreno libero sotto il pivot: nessun canale né acqua entro il raggio."""
+        """Terreno libero sotto il pivot: rispetta i franchi da corpi lineari
+        (canale/strade: R + clear_road) e da acqua/invasi (R + clear_water)."""
         col = int((cx - ctx["minx"]) / res); row = int((ctx["top"] - cy) / res)
         if not (0 <= row < hp and 0 <= col < wp):
             return False
-        return dist_canal[row, col] >= R - 1.0 and dist_wet[row, col] >= R - 1.0
+        return (dist_canal[row, col] >= R + clear_road - 1.0
+                and dist_wet[row, col] >= R + clear_water - 1.0)
 
     ring_utm = [to_utm.transform(lon, lat) for lon, lat, *_ in geom["coordinates"][0]]
     field = Path(ring_utm)
@@ -246,6 +273,7 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
         "n_along_canal": n_along, "n_fill": n_fill,
         "per_side": per_side, "radius_m": R, "gap_m": gap,
         "safety_m": round(clear, 1), "spacing_m": round(s, 1),
+        "clear_road_m": round(clear_road, 1), "clear_water_m": round(clear_water, 1),
         "pivot_ha": round(pivot_ha, 1),
         "water_excluded": bool(n_wet > 0),
         "net_ha": round(n * pivot_ha, 1),

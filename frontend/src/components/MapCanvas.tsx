@@ -6,6 +6,15 @@ import type { Polygon, GeoJSONFC } from "@/lib/api";
 
 export type OverlayKey = "index" | "dem" | "suitability";
 export type FieldGeom = { id: number; name: string; geom: Polygon };
+// Modello pivot interattivo (gerarchia gruppo → singolo)
+export type PivotItem = { lat: number; lng: number; r: number; conn?: string };
+export type PivotModel = { pivots: PivotItem[]; lines: { kind: string; coords: number[][] }[] };
+export type PivotSel = { mode: "none" | "group" | "single"; idx: number };
+export type PivotCbs = {
+  onClick: (idx: number) => void;
+  onMove: (idx: number, lat: number, lng: number) => void;
+  onBackground: () => void;
+};
 export type MapHandle = {
   draw: () => void;
   setFields: (fields: FieldGeom[], activeId: number | null, hidden?: number[]) => void;
@@ -27,6 +36,8 @@ export type MapHandle = {
   clearOverlay: (key: OverlayKey) => void;
   showLayouts: (items: { id: number; fc: GeoJSONFC }[]) => void;
   clearLayout: () => void;
+  showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs) => void;
+  clearPivots: () => void;
   showMacroareas: (items: { geom: Polygon; label: string }[]) => void;
   clearMacroareas: () => void;
   showCanals: (canals: { coords: number[][]; start: number[]; end: number[] }[], startLabel: string, endLabel: string) => void;
@@ -82,6 +93,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const overlaysRef = useRef<Record<OverlayKey, L.ImageOverlay | null>>(
     { index: null, dem: null, suitability: null });
   const layoutRef = useRef<L.LayerGroup | null>(null);
+  const pivotsRef = useRef<L.LayerGroup | null>(null);
+  const pivotBgRef = useRef<(() => void) | null>(null);
   const macroRef = useRef<L.LayerGroup | null>(null);
   const canalRef = useRef<L.LayerGroup | null>(null);
   const pendingRef = useRef<L.LayerGroup | null>(null);
@@ -120,6 +133,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     canalEditRef.current = L.layerGroup().addTo(map);
     pendingRef.current = L.layerGroup().addTo(map);
     layoutRef.current = L.layerGroup().addTo(map);
+    pivotsRef.current = L.layerGroup().addTo(map);
     measureRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
@@ -127,7 +141,11 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     map.on("click", (e: L.LeafletMouseEvent) => {
       if (measuringRef.current) { mptsRef.current.push(e.latlng); _redrawMeasure(); return; }
       const cb = pickCbRef.current;
-      if (!cb) return;
+      if (!cb) {
+        // Clic sullo sfondo: deseleziona il gruppo/pivot corrente.
+        if (pivotBgRef.current) pivotBgRef.current();
+        return;
+      }
       pickCbRef.current = null;
       try { map.getContainer().style.cursor = ""; } catch { /* */ }
       cb(e.latlng.lng, e.latlng.lat);
@@ -284,7 +302,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           fields: [fieldsGroupRef.current],
           macro: [macroRef.current],
           canal: [canalRef.current, pendingRef.current, canalEditRef.current],
-          layout: [layoutRef.current],
+          layout: [layoutRef.current, pivotsRef.current],
           water: [waterRef.current],
         };
         for (const g of groups[key] || []) {
@@ -293,7 +311,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           else { if (map.hasLayer(g)) map.removeLayer(g); }
         }
       },
-      clearAll() { clearActive(); fieldsGroupRef.current?.clearLayers(); },
+      clearAll() { clearActive(); fieldsGroupRef.current?.clearLayers(); pivotsRef.current?.clearLayers(); pivotBgRef.current = null; },
       fitAll() {
         const b = allBounds();
         if (b) mapRef.current?.fitBounds(b, { padding: [60, 60], maxZoom: 15 });
@@ -339,7 +357,46 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         }
         if (lb && lb.isValid()) map.fitBounds(lb, { padding: [40, 40] });
       },
-      clearLayout() { layoutRef.current?.clearLayers(); },
+      clearLayout() { layoutRef.current?.clearLayers(); pivotsRef.current?.clearLayers(); pivotBgRef.current = null; },
+      showPivots(model, sel, cbs) {
+        const map = mapRef.current; const g = pivotsRef.current;
+        if (!map || !g) return;
+        g.clearLayers();
+        pivotBgRef.current = cbs.onBackground;
+        // Connessioni e canale principale (non interattivi, fanno da sfondo).
+        for (const ln of model.lines) {
+          const latlngs = ln.coords.map((p) => [p[1], p[0]] as [number, number]);
+          const st = ln.kind === "pipe" ? { color: "#20aae2", weight: 2 }
+            : ln.kind === "header" ? { color: "#b23b1e", weight: 3 }
+            : { color: "#0284c7", weight: 3, dashArray: "6,4" };
+          g.addLayer(L.polyline(latlngs, { ...st, interactive: false }));
+        }
+        const groupSel = sel.mode === "group" || sel.mode === "single";
+        model.pivots.forEach((pv, i) => {
+          const isSingle = sel.mode === "single" && sel.idx === i;
+          const base = pv.conn === "pipe" ? "#20aae2" : "#038037";
+          const style = isSingle
+            ? { color: "#b23b1e", weight: 3, fillColor: "#f0b429", fillOpacity: 0.40 }
+            : groupSel
+              ? { color: "#0d3b26", weight: 2.5, fillColor: base, fillOpacity: 0.30 }
+              : { color: "#0d3b26", weight: 1, fillColor: base, fillOpacity: 0.22 };
+          const c = L.circle([pv.lat, pv.lng], { radius: pv.r, ...style });
+          c.on("click", (e) => { L.DomEvent.stop(e); cbs.onClick(i); });
+          c.bindTooltip(`#${i + 1} · r ${Math.round(pv.r)} m`, { direction: "top", sticky: true });
+          g.addLayer(c);
+          if (isSingle) {
+            const handle = L.marker([pv.lat, pv.lng], {
+              draggable: true,
+              icon: L.divIcon({ className: "", iconSize: [16, 16], iconAnchor: [8, 8],
+                html: '<div style="width:16px;height:16px;border-radius:50%;background:#f0b429;border:2px solid #b23b1e;box-shadow:0 0 0 2px #fff"></div>' }),
+            });
+            handle.on("drag", (e) => { const ll = (e.target as L.Marker).getLatLng(); c.setLatLng(ll); });
+            handle.on("dragend", (e) => { const ll = (e.target as L.Marker).getLatLng(); cbs.onMove(i, ll.lat, ll.lng); });
+            g.addLayer(handle);
+          }
+        });
+      },
+      clearPivots() { pivotsRef.current?.clearLayers(); pivotBgRef.current = null; },
       showMacroareas(items) {
         const map = mapRef.current, g = macroRef.current;
         if (!map || !g) return;

@@ -260,13 +260,16 @@ class GuidedIn(BaseModel):
     target_permille: float = Field(default=1.0, ge=0.1, le=100)
     radius_m: float = Field(default=400.0, ge=30, le=1000)
     gap_m: float = Field(default=0.0, ge=0, le=2000)
-    safety_m: float = Field(default=20.0, ge=0, le=500)  # distanza di sicurezza tra i bordi
+    safety_m: float = Field(default=20.0, ge=0, le=500)  # distanza di rispetto tra i bordi dei pivot
+    clear_road_m: float = Field(default=0.0, ge=0, le=500)   # franco da strade/canali (corpi lineari)
+    clear_water_m: float = Field(default=0.0, ge=0, le=500)  # franco da acqua/invasi
     per_side: int = Field(default=2, ge=1, le=4)
     conn_max_permille: float = Field(default=5.0, ge=0.1, le=100)
     fill: bool = True                                  # riempi gli spazi vuoti
     date: str | None = None                            # per esclusione acqua (NDWI)
     exclude_water: bool = True                          # niente pivot su acqua/paludi
     avoid: list[dict[str, Any]] | None = None          # corsi d'acqua confermati da evitare
+    roads: list[dict[str, Any]] | None = None          # strade segnate (linee) da rispettare
 
 
 class GuidedOut(BaseModel):
