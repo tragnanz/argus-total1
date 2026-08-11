@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.63";
+const REV = "v0.6.64";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -140,6 +140,32 @@ function lineLenKm(coords: number[][]): number {
     km += 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
   }
   return km;
+}
+
+// ---- Unione canali: helper geometrici (lon,lat) ----
+function distM(a: number[], b: number[]): number {
+  const R = 6371000, rad = (d: number) => (d * Math.PI) / 180;
+  const dLa = rad(b[1] - a[1]), dLo = rad(b[0] - a[0]);
+  const s = Math.sin(dLa / 2) ** 2 + Math.cos(rad(a[1])) * Math.cos(rad(b[1])) * Math.sin(dLo / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+// Proiezione del punto p sul segmento a-b (approssimazione planare locale).
+function projPointSeg(p: number[], a: number[], b: number[]): number[] {
+  const latm = (a[1] + b[1]) / 2, kx = Math.cos((latm * Math.PI) / 180) || 1e-9;
+  const ax = a[0] * kx, ay = a[1], bx = b[0] * kx, by = b[1], px = p[0] * kx, py = p[1];
+  const dx = bx - ax, dy = by - ay; const len2 = dx * dx + dy * dy || 1e-12;
+  let tt = ((px - ax) * dx + (py - ay) * dy) / len2; tt = Math.max(0, Math.min(1, tt));
+  return [(ax + dx * tt) / kx, ay + dy * tt];
+}
+// Punto più vicino sulla polilinea a p, con distanza in metri.
+function nearestOnPolyline(p: number[], coords: number[][]): { pt: number[]; distM: number } | null {
+  let best: { pt: number[]; distM: number } | null = null;
+  for (let i = 1; i < coords.length; i++) {
+    const pt = projPointSeg(p, coords[i - 1], coords[i]);
+    const d = distM(p, pt);
+    if (!best || d < best.distM) best = { pt, distM: d };
+  }
+  return best;
 }
 
 // ---- Gerarchia pivot: conversione FeatureCollection ⇄ modello modificabile ----
@@ -796,12 +822,54 @@ export default function Page() {
     mapApi.current?.showPending(null, null, t("Presa"), t("Finale"));
     mapApi.current?.clearReachable();
   }
+  // Unisce un canale appena creato a uno esistente se lo tocca/entra:
+  // - estremi vicini (testa-coda) → fonde i due in un unico canale;
+  // - un estremo cade lungo un altro canale (giunzione a T) → aggancia l'estremo.
+  const JOIN_M = 80;                                 // soglia di unione (m)
+  async function joinCanals(nc: Canal, list: Canal[]): Promise<Canal[]> {
+    const N = nc.geojson.coordinates.map((c) => [c[0], c[1]]);
+    // 1) fusione testa-coda con un canale esistente
+    for (let i = 0; i < list.length; i++) {
+      const E = list[i].geojson.coordinates.map((c) => [c[0], c[1]]);
+      const ns = N[0], ne = N[N.length - 1], es = E[0], ee = E[E.length - 1];
+      let merged: number[][] | null = null;
+      if (distM(ns, ee) <= JOIN_M) merged = [...E, ...N.slice(1)];
+      else if (distM(ne, es) <= JOIN_M) merged = [...N, ...E.slice(1)];
+      else if (distM(ns, es) <= JOIN_M) merged = [...[...E].reverse(), ...N.slice(1)];
+      else if (distM(ne, ee) <= JOIN_M) merged = [...N, ...[...E].reverse().slice(1)];
+      if (merged) {
+        try {
+          const mc = await api.fetchCanal(_bboxPoly(merged), canalPermille, null, null, null, merged, false);
+          setMsg(t("Canali uniti: uno entrava nell'altro."));
+          return [...list.filter((_, k) => k !== i), mc];
+        } catch { /* se la fusione fallisce, prosegui senza unire */ }
+      }
+    }
+    // 2) giunzione a T: aggancia gli estremi del nuovo canale su un canale esistente
+    let snapped = false;
+    for (const e of list) {
+      const E = e.geojson.coordinates;
+      const a = nearestOnPolyline(N[0], E);
+      if (a && a.distM <= JOIN_M) { N[0] = a.pt; snapped = true; }
+      const b = nearestOnPolyline(N[N.length - 1], E);
+      if (b && b.distM <= JOIN_M) { N[N.length - 1] = b.pt; snapped = true; }
+    }
+    if (snapped) {
+      try {
+        const sc = await api.fetchCanal(_bboxPoly(N), canalPermille, null, null, null, N, false);
+        setMsg(t("Canale agganciato a quello esistente."));
+        return [...list, sc];
+      } catch { /* se lo snap fallisce, aggiungi il canale così com'è */ }
+    }
+    return [...list, nc];
+  }
+
   async function traceCanal() {
     if (!activeGeom) return needField();
     setBusy("canal"); setMsg("");
     try {
       const cc = await api.fetchCanal(activeGeom, canalPermille, canalStart, canalEnd);
-      const next = [...canals, cc];
+      const next = await joinCanals(cc, canals);
       setCanals(next);
       setCanalStart(null); setCanalEnd(null);
       mapApi.current?.showPending(null, null, t("Presa"), t("Finale"));
@@ -831,7 +899,7 @@ export default function Page() {
           if (ln.coords.length < 2) continue;
           setMsg(t("Importo canali… ({n})", { n: added + 1 }));
           const cc = await api.fetchCanal(_bboxPoly(ln.coords), canalPermille, null, null, null, ln.coords);
-          next = [...next, cc]; added += 1;
+          next = await joinCanals(cc, next); added += 1;
         }
       }
       setCanals(next);
@@ -850,7 +918,7 @@ export default function Page() {
         // usa il riquadro della linea come area: DEM ad alta risoluzione sull'intorno
         const geomForDem = _bboxPoly(coords);
         const cc = await api.fetchCanal(geomForDem, canalPermille, null, null, null, coords, snapCanal);
-        const next = [...canals, cc];
+        const next = await joinCanals(cc, canals);
         setCanals(next);
         mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
         setMsg("");
