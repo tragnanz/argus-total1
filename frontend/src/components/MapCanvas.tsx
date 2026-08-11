@@ -18,7 +18,7 @@ export type PivotCbs = {
 export type MapHandle = {
   draw: () => void;
   setFields: (fields: FieldGeom[], activeId: number | null, hidden?: number[]) => void;
-  setLayerVisible: (key: "fields" | "macro" | "canal" | "layout" | "water", on: boolean) => void;
+  setLayerVisible: (key: "fields" | "macro" | "canal" | "layout" | "water" | "strade", on: boolean) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   showWater: (items: { geom: { type: string; coordinates: any }; kind: string }[]) => void;
   clearWater: () => void;
@@ -38,6 +38,9 @@ export type MapHandle = {
   clearLayout: () => void;
   showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs) => void;
   clearPivots: () => void;
+  showRoads: (roads: { coords: number[][] }[], onRemove?: (i: number) => void) => void;
+  drawRoadManual: (cb: (coords: number[][]) => void) => void;
+  clearRoads: () => void;
   showMacroareas: (items: { geom: Polygon; label: string }[]) => void;
   clearMacroareas: () => void;
   showCanals: (canals: { coords: number[][]; start: number[]; end: number[] }[], startLabel: string, endLabel: string) => void;
@@ -103,7 +106,9 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const canalEditRef = useRef<L.LayerGroup | null>(null);
   const waterRef = useRef<L.LayerGroup | null>(null);
   const waterPreviewRef = useRef<L.FeatureGroup | null>(null);
-  const drawModeRef = useRef<"river" | "basin" | "canal-manual" | null>(null);
+  const drawModeRef = useRef<"river" | "basin" | "canal-manual" | "road-manual" | null>(null);
+  const roadsRef = useRef<L.LayerGroup | null>(null);
+  const roadManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
   const waterRemoveRef = useRef(false);
   const canalManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
   const pickCbRef = useRef<((lon: number, lat: number) => void) | null>(null);
@@ -133,6 +138,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     canalEditRef.current = L.layerGroup().addTo(map);
     pendingRef.current = L.layerGroup().addTo(map);
     layoutRef.current = L.layerGroup().addTo(map);
+    roadsRef.current = L.layerGroup().addTo(map);
     pivotsRef.current = L.layerGroup().addTo(map);
     measureRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
@@ -170,6 +176,16 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         drawModeRef.current = null;
         try { (map as any).pm.disableDraw(); } catch { /* */ }
         const cb = canalManualCbRef.current; canalManualCbRef.current = null;
+        if (coords.length >= 2) cb?.(coords);
+        return;
+      }
+      if (dm === "road-manual") {                       // strada tracciata a mano
+        const lls = (layer.getLatLngs?.() || []) as any[];
+        const coords = lls.map((p: any) => [p.lng, p.lat]);
+        try { map.removeLayer(layer); } catch { /* */ }
+        drawModeRef.current = null;
+        try { (map as any).pm.disableDraw(); } catch { /* */ }
+        const cb = roadManualCbRef.current; roadManualCbRef.current = null;
         if (coords.length >= 2) cb?.(coords);
         return;
       }
@@ -304,6 +320,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           canal: [canalRef.current, pendingRef.current, canalEditRef.current],
           layout: [layoutRef.current, pivotsRef.current],
           water: [waterRef.current],
+          strade: [roadsRef.current],
         };
         for (const g of groups[key] || []) {
           if (!g) continue;
@@ -397,6 +414,26 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         });
       },
       clearPivots() { pivotsRef.current?.clearLayers(); pivotBgRef.current = null; },
+      showRoads(roads, onRemove) {
+        const g = roadsRef.current; if (!g) return;
+        g.clearLayers();
+        roads.forEach((rd, i) => {
+          const latlngs = rd.coords.map((p) => [p[1], p[0]] as [number, number]);
+          // Casing bianco + tratto grigio scuro: leggibile sul satellitare.
+          g.addLayer(L.polyline(latlngs, { color: "#ffffff", weight: 5, opacity: 0.9, interactive: false }));
+          const ly = L.polyline(latlngs, { color: "#374151", weight: 3, opacity: 0.95 });
+          ly.bindTooltip(`Strada ${i + 1}`, { direction: "top", sticky: true });
+          if (onRemove) ly.on("click", (e) => { L.DomEvent.stop(e); onRemove(i); });
+          g.addLayer(ly);
+        });
+      },
+      drawRoadManual(cb) {
+        const map = mapRef.current; if (!map) return;
+        roadManualCbRef.current = cb;
+        drawModeRef.current = "road-manual";
+        try { (map as any).pm.enableDraw("Line", { allowSelfIntersection: true }); } catch { /* */ }
+      },
+      clearRoads() { roadsRef.current?.clearLayers(); },
       showMacroareas(items) {
         const map = mapRef.current, g = macroRef.current;
         if (!map || !g) return;

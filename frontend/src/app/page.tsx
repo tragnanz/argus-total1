@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.32";
+const REV = "v0.6.33";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -117,6 +117,20 @@ function ringAreaHa(coords: number[][][]): number {
   return Math.abs((a * R * R) / 2) / 10000;
 }
 const safe = (s: string) => s.replace(/[^a-z0-9]+/gi, "_");
+
+// Lunghezza di una polilinea (lon,lat) in km (haversine).
+function lineLenKm(coords: number[][]): number {
+  const R = 6371;
+  const rad = (d: number) => (d * Math.PI) / 180;
+  let km = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const [lo1, la1] = coords[i - 1], [lo2, la2] = coords[i];
+    const dLa = rad(la2 - la1), dLo = rad(lo2 - lo1);
+    const a = Math.sin(dLa / 2) ** 2 + Math.cos(rad(la1)) * Math.cos(rad(la2)) * Math.sin(dLo / 2) ** 2;
+    km += 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+  }
+  return km;
+}
 
 // ---- Gerarchia pivot: conversione FeatureCollection ⇄ modello modificabile ----
 // Anello circolare (lon,lat) per un pivot di raggio r (m) centrato in (lat,lng).
@@ -233,7 +247,7 @@ export default function Page() {
   const [gset, setGset] = useState<Settings>(DEFAULTS);
   const nextId = useRef(1);
   // visibilità dei livelli sulla mappa (accendi/spegni dal widget sinistro)
-  const [layerVis, setLayerVis] = useState({ fields: true, macro: true, canal: true, layout: true, water: true });
+  const [layerVis, setLayerVis] = useState({ fields: true, macro: true, canal: true, layout: true, water: true, strade: true });
   const [watercourses, setWatercourses] = useState<Watercourse[]>([]);
   const [waterSens, setWaterSens] = useState(3);       // sensibilità rilevamento (1..5)
   const [waterPreview, setWaterPreview] = useState(false);
@@ -333,6 +347,8 @@ export default function Page() {
   const [pivots, setPivots] = useState<PivotItem[]>([]);
   const [pivotLines, setPivotLines] = useState<{ kind: string; coords: number[][] }[]>([]);
   const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
+  // Livello Strade (linee) disegnabile/importabile: i pivot le rispettano.
+  const [roads, setRoads] = useState<{ id: string; coords: number[][] }[]>([]);
   const [excludeWater, setExcludeWater] = useState(true);  // niente pivot su acqua/paludi (NDWI)
   const [soilKey, setSoilKey] = useState("franco");
   const [infiltration, setInfiltration] = useState(12);   // mm/h
@@ -353,6 +369,7 @@ export default function Page() {
   const [busy, setBusy] = useState<string>("");
   const [msg, setMsg] = useState<string>("");
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const roadFileRef = useRef<HTMLInputElement | null>(null);
 
   // ---- caricamenti iniziali ----
   useEffect(() => { mapApi.current?.setUnits(imperial); }, [imperial]);
@@ -410,7 +427,7 @@ export default function Page() {
       return arr;
     });
   }
-  function toggleLayer(key: "fields" | "macro" | "canal" | "layout" | "water") {
+  function toggleLayer(key: "fields" | "macro" | "canal" | "layout" | "water" | "strade") {
     setLayerVis((v) => {
       const nv = { ...v, [key]: !v[key] };
       mapApi.current?.setLayerVisible(key, nv[key]);
@@ -934,6 +951,33 @@ export default function Page() {
   }
   function applyRadiusToAll() { commitPivots(pivots.map((p) => ({ ...p, r: pivotR }))); }
 
+  // ---- livello Strade (linee) ----
+  const rid = () => `r${roads.length}_${roads.reduce((s, r) => s + r.coords.length, 0)}`;
+  useEffect(() => {
+    mapApi.current?.showRoads?.(roads.map((r) => ({ coords: r.coords })), (i) => setRoads((rs) => rs.filter((_, k) => k !== i)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roads]);
+  function drawRoad() {
+    mapApi.current?.drawRoadManual((coords) => {
+      if (coords.length >= 2) setRoads((rs) => [...rs, { id: rid(), coords }]);
+    });
+    setMsg(t("Traccia la strada sulla mappa: clic per i vertici, doppio clic per finire."));
+  }
+  async function importRoads(files?: FileList | null) {
+    if (!files || !files.length) return;
+    try {
+      const add: { id: string; coords: number[][] }[] = [];
+      for (const f of Array.from(files)) {
+        const lines = await parseLinesFromFile(f);
+        for (const ln of lines) if (ln.coords.length >= 2) add.push({ id: `imp${add.length}`, coords: ln.coords });
+      }
+      if (add.length) setRoads((rs) => [...rs, ...add]);
+      setMsg(add.length ? t("Importate {n} strade da file.", { n: add.length }) : t("Nessuna linea trovata nei file (KMZ/KML/GeoJSON)."));
+    } catch (e) { showErr(e); }
+  }
+  function removeRoad(i: number) { setRoads((rs) => rs.filter((_, k) => k !== i)); }
+  function clearRoads() { setRoads([]); }
+
   async function designGuided() {
     if (!activeGeom) return needField();
     setBusy("guided"); setMsg("");
@@ -944,6 +988,7 @@ export default function Page() {
         per_side: perSide, conn_max_permille: 5, fill: fillEmpty,
         date: date || null, exclude_water: excludeWater,
         avoid: watercourses.length ? watercourses.map((w) => ({ kind: w.kind, geojson: w.geojson })) : null,
+        roads: roads.length ? roads.map((r) => ({ geojson: { type: "LineString", coordinates: r.coords } })) : null,
       });
       setGuided(g);
       setModelFromGuided(g);
@@ -1104,7 +1149,8 @@ export default function Page() {
                 <div className="text-xs font-semibold text-sage-dark mb-1 px-1">{t("Livelli sulla mappa")}</div>
                 {([
                   ["fields", t("Campi")], ["macro", t("Macro-aree")],
-                  ["canal", t("Canali")], ["water", t("Invasi")], ["layout", t("Layout pivot")],
+                  ["canal", t("Canali")], ["water", t("Invasi")],
+                  ["strade", t("Strade")], ["layout", t("Layout pivot")],
                 ] as const).map(([k, lbl]) => (
                   <button key={k} onClick={() => toggleLayer(k)}
                     className="w-full flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg hover:bg-black/5">
@@ -1237,6 +1283,7 @@ export default function Page() {
                     ["macro", t("Macro-aree")],
                     ["canal", t("Canali")],
                     ["water", t("Invasi")],
+                    ["strade", t("Strade")],
                     ["layout", t("Layout pivot")],
                   ] as const).map(([k, lbl]) => (
                     <button key={k} onClick={() => toggleLayer(k)}
@@ -1669,6 +1716,35 @@ export default function Page() {
               {t("Solo terreno libero (no canali, no acqua/paludi NDWI)")}
             </label>
             {excludeWater && !date && <p className="hint mt-1 text-danger">{t("Per escludere l'acqua serve una data satellitare: cercala nella scheda Analisi.")}</p>}
+
+            {/* Livello Strade: linee disegnabili/importabili che i pivot rispettano */}
+            <div className="bg-panel rounded-lg p-2 mt-2">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs font-semibold text-sage-dark">{t("Strade")} · {roads.length}</div>
+                <span className="flex gap-2 text-[11px]">
+                  <button className="text-brand-mid" onClick={drawRoad}>{t("Traccia")}</button>
+                  <button className="text-brand-mid" onClick={() => roadFileRef.current?.click()}>{t("Importa")}</button>
+                  {!!roads.length && <button className="text-danger" onClick={clearRoads}>{t("Svuota")}</button>}
+                </span>
+              </div>
+              <input ref={roadFileRef} type="file" accept=".geojson,.json,.kml,.kmz" multiple className="hidden"
+                onChange={(e) => { importRoads(e.target.files); if (e.target) e.target.value = ""; }} />
+              {!roads.length
+                ? <p className="text-[11px] text-sage-dark">{t("Nessuna strada. Tracciala sulla mappa o importa un file; i pivot la rispetteranno secondo il franco «Da strade/canali».")}</p>
+                : (
+                  <ul className="space-y-0.5">
+                    {roads.map((r, i) => (
+                      <li key={r.id} className="flex items-center justify-between text-[11px] text-sage-dark">
+                        <span className="truncate flex-1">{t("Strada")} {i + 1} · {uKm(lineLenKm(r.coords))}</span>
+                        <span className="flex gap-1 shrink-0">
+                          <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(`strada_${i + 1}`), [{ name: `Strada ${i + 1}`, geom: { type: "LineString", coordinates: r.coords } }])}>⤓</button>
+                          <button className="text-danger" title={t("Rimuovi")} onClick={() => removeRoad(i)}>✕</button>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+            </div>
 
             <label className="text-xs text-sage-dark block mt-2">{t("Pivot per lato")}
               <select className="field-input mt-1" value={perSide} onChange={(e) => setPerSide(Number(e.target.value))}>
