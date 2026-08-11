@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.46";
+const REV = "v0.6.47";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1951,16 +1951,22 @@ export default function Page() {
 
             <div className="bg-panel rounded-lg p-2 mt-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Distanze di rispetto (m)")}</div>
-              <div className="flex gap-2 items-end">
-                <label className="text-[10px] leading-tight text-sage-dark flex-1 min-w-0 whitespace-nowrap">{t("Tra i pivot")}
+              <div className="flex gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Tra i pivot")}</div>
                   <input type="number" min={0} max={500} step={5} value={safetyM}
-                    onChange={(e) => setSafetyM(Number(e.target.value))} className="field-input mt-1 w-full" /></label>
-                <label className="text-[10px] leading-tight text-sage-dark flex-1 min-w-0 whitespace-nowrap">{t("Da strade")}
+                    onChange={(e) => setSafetyM(Number(e.target.value))} className="field-input px-2 py-1.5 text-sm" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Da strade")}</div>
                   <input type="number" min={0} max={500} step={5} value={pivClearRoad}
-                    onChange={(e) => setPivClearRoad(Number(e.target.value))} className="field-input mt-1 w-full" /></label>
-                <label className="text-[10px] leading-tight text-sage-dark flex-1 min-w-0 whitespace-nowrap">{t("Da canali/invasi")}
+                    onChange={(e) => setPivClearRoad(Number(e.target.value))} className="field-input px-2 py-1.5 text-sm" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Da canali/invasi")}</div>
                   <input type="number" min={0} max={500} step={5} value={pivClearWater}
-                    onChange={(e) => setPivClearWater(Number(e.target.value))} className="field-input mt-1 w-full" /></label>
+                    onChange={(e) => setPivClearWater(Number(e.target.value))} className="field-input px-2 py-1.5 text-sm" />
+                </div>
               </div>
             </div>
 
