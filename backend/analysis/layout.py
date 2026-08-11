@@ -132,7 +132,6 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     # Ostacoli lineari preesistenti (strade/canali) con SPESSORE: footprint da
     # evitare. Costruisco la distanza (m) dall'ostacolo più vicino sulla griglia DEM.
     obs_roads = params.get("roads")
-    clear_road = max(0.0, float(params.get("clear_road_m", 0.0)))
     dist_obs = None
     if obs_roads:
         try:
@@ -145,7 +144,11 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
             for f in obs_roads:
                 gg = f.get("geojson") or f
                 coords = gg.get("coordinates"); typ = gg.get("type")
-                w = float(f.get("width_m", 0.0)) if isinstance(f, dict) else 0.0
+                try:
+                    w = float(f.get("width_m", 0.0)) if isinstance(f, dict) else 0.0
+                    cl = float(f.get("clear_m", 0.0)) if isinstance(f, dict) else 0.0
+                except Exception:  # noqa: BLE001
+                    w = cl = 0.0
                 if typ == "LineString" and coords:
                     gu = {"type": "LineString", "coordinates": [to_utm.transform(lo, la) for lo, la, *_ in coords]}
                 elif typ == "Polygon" and coords:
@@ -153,9 +156,9 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
                 else:
                     continue
                 rm = _rz([(gu, 1)], out_shape=(hp0, wp0), transform=tr, fill=0, all_touched=True).astype(bool)
-                hc = int(round((w / 2.0) / res0))
-                if hc >= 1:
-                    rm = _bd(rm, iterations=hc)
+                pad = int(round((w / 2.0 + cl) / res0))     # semi-spessore + franco proprio
+                if pad >= 1:
+                    rm = _bd(rm, iterations=pad)
                 om |= rm
             if om.any():
                 dist_obs = _edt(~om) * res0
@@ -167,7 +170,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
             return True
         col = int((x - g["minx"]) / g["res"]); row = int((g["top"] - y) / g["res"])
         if 0 <= row < g["hp"] and 0 <= col < g["wp"]:
-            return dist_obs[row, col] >= R + clear_road - 1.0
+            return dist_obs[row, col] >= R - 1.0        # franco già incluso nel footprint
         return True
 
     # griglia di idoneità (M2): serve se posiamo solo su aree idonee OPPURE se le

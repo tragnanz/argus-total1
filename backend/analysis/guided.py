@@ -87,9 +87,14 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
     for (rr, cc) in r["path"]:
         if 0 <= rr < hp and 0 <= cc < wp:
             canal_mask[rr, cc] = True
-    # Ostacoli lineari (strade e canali/fiumi preesistenti): ognuno ha uno
-    # SPESSORE (width_m); rasterizzo la linea e la dilato del semi-spessore, così
-    # l'ingombro reale sul terreno viene rispettato dai pivot (R + franco oltre il bordo).
+    dist_canal = distance_transform_edt(~canal_mask) * res     # m dal canale (conveyance)
+
+    # Ostacoli lineari preesistenti (strade e canali/fiumi disegnati): ognuno ha
+    # uno SPESSORE (width_m) e un FRANCO proprio (clear_m). Rasterizzo la linea e la
+    # dilato di (semi-spessore + franco), così basta chiedere che il pivot (raggio R)
+    # non tocchi il footprint: distanza ≥ R. Strade e canali possono avere franchi
+    # diversi («Da strade» vs «Da canali/invasi»).
+    dist_obs = None
     roads = params.get("roads")
     if roads:
         try:
@@ -97,14 +102,15 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
             from rasterio.transform import from_origin as _fo
             from scipy.ndimage import binary_dilation as _bd
             transform = _fo(ctx["minx"], ctx["top"], res, res)
+            obs_mask = np.zeros((hp, wp), bool)
             for f in roads:
                 g = f.get("geojson") or f
                 coords = g.get("coordinates"); typ = g.get("type")
-                w = 0.0
                 try:
                     w = float(f.get("width_m", 0.0)) if isinstance(f, dict) else 0.0
+                    cl = float(f.get("clear_m", 0.0)) if isinstance(f, dict) else 0.0
                 except Exception:  # noqa: BLE001
-                    w = 0.0
+                    w = cl = 0.0
                 if typ == "LineString" and coords:
                     gu = {"type": "LineString",
                           "coordinates": [to_utm.transform(lo, la) for lo, la, *_ in coords]}
@@ -115,13 +121,14 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
                     continue
                 rm = _rz([(gu, 1)], out_shape=(hp, wp), transform=transform,
                          fill=0, all_touched=True).astype(bool)
-                half_cells = int(round((w / 2.0) / res))
-                if half_cells >= 1:
-                    rm = _bd(rm, iterations=half_cells)
-                canal_mask |= rm
+                pad_cells = int(round((w / 2.0 + cl) / res))    # semi-spessore + franco
+                if pad_cells >= 1:
+                    rm = _bd(rm, iterations=pad_cells)
+                obs_mask |= rm
+            if obs_mask.any():
+                dist_obs = distance_transform_edt(~obs_mask) * res
         except Exception:  # noqa: BLE001
-            pass
-    dist_canal = distance_transform_edt(~canal_mask) * res     # m dal corpo lineare più vicino
+            dist_obs = None
     dist_wet = np.full((hp, wp), np.inf)
     n_wet = 0
     wet = np.zeros((hp, wp), bool)
@@ -168,7 +175,8 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
         if not (0 <= row < hp and 0 <= col < wp):
             return False
         return (dist_canal[row, col] >= R + clear_road - 1.0
-                and dist_wet[row, col] >= R + clear_water - 1.0)
+                and dist_wet[row, col] >= R + clear_water - 1.0
+                and (dist_obs is None or dist_obs[row, col] >= R - 1.0))
 
     ring_utm = [to_utm.transform(lon, lat) for lon, lat, *_ in geom["coordinates"][0]]
     field = Path(ring_utm)

@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.43";
+const REV = "v0.6.44";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1031,12 +1031,13 @@ export default function Page() {
   function removeRoad(i: number) { setRoads((rs) => rs.filter((_, k) => k !== i)); }
   function setRoadWidthAt(i: number, w: number) { setRoads((rs) => rs.map((r, k) => (k === i ? { ...r, width_m: w } : r))); }
   function clearRoads() { setRoads([]); }
-  // Ostacoli lineari preesistenti (strade + canali/fiumi disegnati) con spessore,
-  // passati ai solutori: i pivot ne evitano il footprint reale.
+  // Ostacoli lineari preesistenti passati ai solutori: ognuno porta il PROPRIO
+  // franco (clear_m), così le strade usano «Da strade» e i canali «Da canali/invasi».
+  // I pivot ne evitano il footprint reale (spessore) più il franco.
   function obstacleLines() {
     const items = [
-      ...roads.map((r) => ({ geojson: { type: "LineString", coordinates: r.coords }, width_m: r.width_m })),
-      ...canals.map((c) => ({ geojson: { type: "LineString", coordinates: c.geojson.coordinates }, width_m: canalWidth })),
+      ...roads.map((r) => ({ geojson: { type: "LineString", coordinates: r.coords }, width_m: r.width_m, clear_m: pivClearRoad })),
+      ...canals.map((c) => ({ geojson: { type: "LineString", coordinates: c.geojson.coordinates }, width_m: canalWidth, clear_m: pivClearWater })),
     ];
     return items.length ? items : null;
   }
@@ -1948,15 +1949,15 @@ export default function Page() {
             <div className="bg-panel rounded-lg p-2 mt-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Distanze di rispetto (m)")}</div>
               <div className="flex gap-2">
-                <label className="text-[11px] text-sage-dark flex-1">{t("Tra pivot")}
+                <label className="text-[11px] text-sage-dark flex-1 min-w-0">{t("Tra i pivot")}
                   <input type="number" min={0} max={500} step={5} value={safetyM}
-                    onChange={(e) => setSafetyM(Number(e.target.value))} className="field-input mt-1" /></label>
-                <label className="text-[11px] text-sage-dark flex-1">{t("Da strade/canali")}
+                    onChange={(e) => setSafetyM(Number(e.target.value))} className="field-input mt-1 w-full" /></label>
+                <label className="text-[11px] text-sage-dark flex-1 min-w-0">{t("Da strade")}
                   <input type="number" min={0} max={500} step={5} value={pivClearRoad}
-                    onChange={(e) => setPivClearRoad(Number(e.target.value))} className="field-input mt-1" /></label>
-                <label className="text-[11px] text-sage-dark flex-1">{t("Da acqua/invasi")}
+                    onChange={(e) => setPivClearRoad(Number(e.target.value))} className="field-input mt-1 w-full" /></label>
+                <label className="text-[11px] text-sage-dark flex-1 min-w-0">{t("Da canali/invasi")}
                   <input type="number" min={0} max={500} step={5} value={pivClearWater}
-                    onChange={(e) => setPivClearWater(Number(e.target.value))} className="field-input mt-1" /></label>
+                    onChange={(e) => setPivClearWater(Number(e.target.value))} className="field-input mt-1 w-full" /></label>
               </div>
             </div>
 
@@ -1984,7 +1985,7 @@ export default function Page() {
               {t("Raggio")}: <b>{uM(pivotR)}</b> · {t("Area per pivot")}: <b>{uHa(Math.PI * pivotR * pivotR / 10000, 1)}</b><br />
               {t("Interasse (centro-centro)")}: <b>{uM(2 * pivotR + safetyM)}</b><br />
               <span className="text-brand-mid">{dispMode === "canal"
-                ? t("I pivot non si sovrappongono e rispettano i franchi impostati da strade/canali e acqua/invasi.")
+                ? t("I pivot non si sovrappongono e rispettano i franchi: tra i pivot, da strade e da canali/invasi.")
                 : t("Reticolo su tutti i campi con orientamento e trasporto acqua; raggio e distanza tra pivot presi da qui sopra.")}</span>
             </div>
             <div className="flex gap-2 mt-2">
@@ -2069,7 +2070,7 @@ export default function Page() {
 
 
           <section className={secShow("accessori")}>
-            <SectionHead title={t("Accessori")} help={t("Infrastrutture accessorie del progetto. Le strade tracciate qui vengono rispettate dagli impianti secondo il franco «Da strade/canali» impostato nella pagina Impianti.")} />
+            <SectionHead title={t("Accessori")} help={t("Infrastrutture accessorie del progetto. Le strade tracciate qui vengono rispettate dagli impianti secondo il franco «Da strade» impostato nella pagina Impianti.")} />
 
             {/* Livello Strade: linee disegnabili/importabili che i pivot rispettano */}
             <div className="bg-panel rounded-lg p-2">
@@ -2089,7 +2090,7 @@ export default function Page() {
                   onChange={(e) => setRoadWidth(Number(e.target.value))} className="field-input w-20 py-0.5" />
               </label>
               {!roads.length
-                ? <p className="text-[11px] text-sage-dark mt-1">{t("Nessuna strada. Tracciala sulla mappa o importa un file; gli impianti evitano il footprint reale (spessore) secondo il franco «Da strade/canali».")}</p>
+                ? <p className="text-[11px] text-sage-dark mt-1">{t("Nessuna strada. Tracciala sulla mappa o importa un file; gli impianti evitano il footprint reale (spessore) secondo il franco «Da strade».")}</p>
                 : (
                   <ul className="space-y-1 mt-1">
                     {roads.map((r, i) => (
