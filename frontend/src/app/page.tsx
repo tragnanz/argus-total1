@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.34";
+const REV = "v0.6.35";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -41,8 +41,8 @@ const PIVOT_WET_W = 40;   // larghezza bagnata del pacchetto irriguo (m), assunz
 const TABS: { key: string; label: string }[] = [
   { key: "analisi", label: "Analisi" },
   { key: "canal", label: "Canali" },
-  { key: "guided", label: "Pivot" },
-  { key: "layout", label: "Layout" },
+  { key: "impianti", label: "Impianti" },
+  { key: "accessori", label: "Accessori" },
   { key: "export", label: "Esporta" },
 ];
 
@@ -902,7 +902,7 @@ export default function Page() {
       const g = l.data as unknown as GuidedResult;
       setGuided(g);
       setModelFromGuided(g);
-      setTab("guided");
+      setTab("impianti");
     }
     setMsg(t("Livello caricato ✓"));
   }
@@ -1681,8 +1681,8 @@ export default function Page() {
             )}
           </section>
 
-          <section className={secShow("guided")}>
-            <SectionHead title={t("Pivot lungo il canale")} help={t("Parametri di disegno qui sotto: raggio e distanze di rispetto (tra pivot, da strade/canali, da acqua/invasi). Dopo il calcolo, sulla mappa il 1° clic seleziona tutto il gruppo, il 2° clic il singolo pivot (modificabile: raggio, posizione, connessione, elimina).")} />
+          <section className={secShow("impianti")}>
+            <SectionHead title={t("Impianti — pivot lungo il canale")} help={t("Tutti gli strumenti degli impianti in un'unica pagina: pivot lungo il canale (qui sotto) e layout a maglia (in fondo). Le strade sono nella pagina Accessori. Dopo il calcolo, sulla mappa il 1° clic seleziona tutto il gruppo, il 2° clic il singolo pivot (modificabile: raggio, posizione, connessione, elimina).")} />
 
             <div className="bg-panel rounded-lg p-2 mb-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Dimensione pivot consigliata")}</div>
@@ -1735,35 +1735,6 @@ export default function Page() {
             </label>
             {excludeWater && !date && <p className="hint mt-1 text-danger">{t("Per escludere l'acqua serve una data satellitare: cercala nella scheda Analisi.")}</p>}
 
-            {/* Livello Strade: linee disegnabili/importabili che i pivot rispettano */}
-            <div className="bg-panel rounded-lg p-2 mt-2">
-              <div className="flex items-center justify-between mb-1">
-                <div className="text-xs font-semibold text-sage-dark">{t("Strade")} · {roads.length}</div>
-                <span className="flex gap-2 text-[11px]">
-                  <button className="text-brand-mid" onClick={drawRoad}>{t("Traccia")}</button>
-                  <button className="text-brand-mid" onClick={() => roadFileRef.current?.click()}>{t("Importa")}</button>
-                  {!!roads.length && <button className="text-danger" onClick={clearRoads}>{t("Svuota")}</button>}
-                </span>
-              </div>
-              <input ref={roadFileRef} type="file" accept=".geojson,.json,.kml,.kmz" multiple className="hidden"
-                onChange={(e) => { importRoads(e.target.files); if (e.target) e.target.value = ""; }} />
-              {!roads.length
-                ? <p className="text-[11px] text-sage-dark">{t("Nessuna strada. Tracciala sulla mappa o importa un file; i pivot la rispetteranno secondo il franco «Da strade/canali».")}</p>
-                : (
-                  <ul className="space-y-0.5">
-                    {roads.map((r, i) => (
-                      <li key={r.id} className="flex items-center justify-between text-[11px] text-sage-dark">
-                        <span className="truncate flex-1">{t("Strada")} {i + 1} · {uKm(lineLenKm(r.coords))}</span>
-                        <span className="flex gap-1 shrink-0">
-                          <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(`strada_${i + 1}`), [{ name: `Strada ${i + 1}`, geom: { type: "LineString", coordinates: r.coords } }])}>⤓</button>
-                          <button className="text-danger" title={t("Rimuovi")} onClick={() => removeRoad(i)}>✕</button>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-            </div>
-
             <label className="text-xs text-sage-dark block mt-2">{t("Pivot per lato")}
               <select className="field-input mt-1" value={perSide} onChange={(e) => setPerSide(Number(e.target.value))}>
                 {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
@@ -1776,7 +1747,7 @@ export default function Page() {
             </div>
             <div className="flex gap-2 mt-2">
               <button className="btn-primary flex-1 basis-0" disabled={busy === "guided" || !activeGeom} onClick={designGuided}>
-                {busy === "guided" ? t("Calcolo…") : t("Disponi pivot sul canale")}
+                {busy === "guided" ? t("Calcolo…") : t("Inserisci impianti")}
               </button>
               <button className="btn-ghost flex-1 basis-0" onClick={clearGuided}>{t("Rimuovi")}</button>
             </div>
@@ -1850,8 +1821,8 @@ export default function Page() {
             )}
           </section>
 
-          <section className={secShow("layout")}>
-            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Layout pivot")}</h3>
+          <section className={secShow("impianti") + " border-t border-black/10 mt-4 pt-3"}>
+            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Layout pivot (maglia sui campi)")}</h3>
 
             <label className="text-xs text-sage-dark">{t("Configurazione")}</label>
             <div className="seg mt-1">
@@ -1983,6 +1954,40 @@ export default function Page() {
                 </div>
               </div>
             )}
+          </section>
+
+          <section className={secShow("accessori")}>
+            <SectionHead title={t("Accessori")} help={t("Infrastrutture accessorie del progetto. Le strade tracciate qui vengono rispettate dagli impianti secondo il franco «Da strade/canali» impostato nella pagina Impianti.")} />
+
+            {/* Livello Strade: linee disegnabili/importabili che i pivot rispettano */}
+            <div className="bg-panel rounded-lg p-2">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs font-semibold text-sage-dark">{t("Strade")} · {roads.length}</div>
+                <span className="flex gap-2 text-[11px]">
+                  <button className="text-brand-mid" onClick={drawRoad}>{t("Traccia")}</button>
+                  <button className="text-brand-mid" onClick={() => roadFileRef.current?.click()}>{t("Importa")}</button>
+                  {!!roads.length && <button className="text-danger" onClick={clearRoads}>{t("Svuota")}</button>}
+                </span>
+              </div>
+              <input ref={roadFileRef} type="file" accept=".geojson,.json,.kml,.kmz" multiple className="hidden"
+                onChange={(e) => { importRoads(e.target.files); if (e.target) e.target.value = ""; }} />
+              {!roads.length
+                ? <p className="text-[11px] text-sage-dark">{t("Nessuna strada. Tracciala sulla mappa o importa un file; gli impianti la rispetteranno secondo il franco «Da strade/canali».")}</p>
+                : (
+                  <ul className="space-y-0.5">
+                    {roads.map((r, i) => (
+                      <li key={r.id} className="flex items-center justify-between text-[11px] text-sage-dark">
+                        <span className="truncate flex-1">{t("Strada")} {i + 1} · {uKm(lineLenKm(r.coords))}</span>
+                        <span className="flex gap-1 shrink-0">
+                          <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(`strada_${i + 1}`), [{ name: `Strada ${i + 1}`, geom: { type: "LineString", coordinates: r.coords } }])}>⤓</button>
+                          <button className="text-danger" title={t("Rimuovi")} onClick={() => removeRoad(i)}>✕</button>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+            </div>
+            <p className="hint mt-2">{t("Altri accessori (invasi, stazioni di pompaggio…) verranno aggiunti qui.")}</p>
           </section>
 
           <section className={secShow("export")}>
