@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.47";
+const REV = "v0.6.48";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1945,13 +1945,14 @@ export default function Page() {
               <div className="seg-item" data-active={dispMode === "mesh"} onClick={() => setDispMode("mesh")}>{t("A maglia sui campi")}</div>
             </div>
 
-            <label className="text-xs text-sage-dark block">{t("Raggio pivot (m)")}
-              <input type="number" min={30} max={1000} step={10} value={pivotR}
-                onChange={(e) => setPivotR(Number(e.target.value))} className="field-input mt-1" /></label>
-
             <div className="bg-panel rounded-lg p-2 mt-2">
-              <div className="text-xs font-semibold text-sage-dark mb-1">{t("Distanze di rispetto (m)")}</div>
+              <div className="text-xs font-semibold text-sage-dark mb-1">{t("Raggio e distanze di rispetto (m)")}</div>
               <div className="flex gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Raggio pivot")}</div>
+                  <input type="number" min={30} max={1000} step={10} value={pivotR}
+                    onChange={(e) => setPivotR(Number(e.target.value))} className="field-input px-2 py-1.5 text-sm" />
+                </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Tra i pivot")}</div>
                   <input type="number" min={0} max={500} step={5} value={safetyM}
