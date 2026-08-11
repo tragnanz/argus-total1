@@ -87,25 +87,37 @@ def design_pivots(client, geom: dict, params: dict) -> dict:
     for (rr, cc) in r["path"]:
         if 0 <= rr < hp and 0 <= cc < wp:
             canal_mask[rr, cc] = True
+    # Ostacoli lineari (strade e canali/fiumi preesistenti): ognuno ha uno
+    # SPESSORE (width_m); rasterizzo la linea e la dilato del semi-spessore, così
+    # l'ingombro reale sul terreno viene rispettato dai pivot (R + franco oltre il bordo).
     roads = params.get("roads")
     if roads:
         try:
             from rasterio.features import rasterize as _rz
             from rasterio.transform import from_origin as _fo
-            rgeoms = []
+            from scipy.ndimage import binary_dilation as _bd
+            transform = _fo(ctx["minx"], ctx["top"], res, res)
             for f in roads:
                 g = f.get("geojson") or f
                 coords = g.get("coordinates"); typ = g.get("type")
+                w = 0.0
+                try:
+                    w = float(f.get("width_m", 0.0)) if isinstance(f, dict) else 0.0
+                except Exception:  # noqa: BLE001
+                    w = 0.0
                 if typ == "LineString" and coords:
-                    rgeoms.append({"type": "LineString",
-                                   "coordinates": [to_utm.transform(lo, la) for lo, la, *_ in coords]})
+                    gu = {"type": "LineString",
+                          "coordinates": [to_utm.transform(lo, la) for lo, la, *_ in coords]}
                 elif typ == "Polygon" and coords:
-                    rgeoms.append({"type": "Polygon",
-                                   "coordinates": [[to_utm.transform(lo, la) for lo, la, *_ in coords[0]]]})
-            if rgeoms:
-                rm = _rz([(gg, 1) for gg in rgeoms], out_shape=(hp, wp),
-                         transform=_fo(ctx["minx"], ctx["top"], res, res),
+                    gu = {"type": "Polygon",
+                          "coordinates": [[to_utm.transform(lo, la) for lo, la, *_ in coords[0]]]}
+                else:
+                    continue
+                rm = _rz([(gu, 1)], out_shape=(hp, wp), transform=transform,
                          fill=0, all_touched=True).astype(bool)
+                half_cells = int(round((w / 2.0) / res))
+                if half_cells >= 1:
+                    rm = _bd(rm, iterations=half_cells)
                 canal_mask |= rm
         except Exception:  # noqa: BLE001
             pass

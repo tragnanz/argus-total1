@@ -129,6 +129,47 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     from matplotlib.path import Path
     ring_utm = [to_utm.transform(lon, lat) for lon, lat, *_ in geom["coordinates"][0]]
 
+    # Ostacoli lineari preesistenti (strade/canali) con SPESSORE: footprint da
+    # evitare. Costruisco la distanza (m) dall'ostacolo più vicino sulla griglia DEM.
+    obs_roads = params.get("roads")
+    clear_road = max(0.0, float(params.get("clear_road_m", 0.0)))
+    dist_obs = None
+    if obs_roads:
+        try:
+            from rasterio.features import rasterize as _rz
+            from rasterio.transform import from_origin as _fo
+            from scipy.ndimage import binary_dilation as _bd, distance_transform_edt as _edt
+            wp0, hp0, res0 = g["wp"], g["hp"], g["res"]
+            tr = _fo(g["minx"], g["top"], res0, res0)
+            om = np.zeros((hp0, wp0), bool)
+            for f in obs_roads:
+                gg = f.get("geojson") or f
+                coords = gg.get("coordinates"); typ = gg.get("type")
+                w = float(f.get("width_m", 0.0)) if isinstance(f, dict) else 0.0
+                if typ == "LineString" and coords:
+                    gu = {"type": "LineString", "coordinates": [to_utm.transform(lo, la) for lo, la, *_ in coords]}
+                elif typ == "Polygon" and coords:
+                    gu = {"type": "Polygon", "coordinates": [[to_utm.transform(lo, la) for lo, la, *_ in coords[0]]]}
+                else:
+                    continue
+                rm = _rz([(gu, 1)], out_shape=(hp0, wp0), transform=tr, fill=0, all_touched=True).astype(bool)
+                hc = int(round((w / 2.0) / res0))
+                if hc >= 1:
+                    rm = _bd(rm, iterations=hc)
+                om |= rm
+            if om.any():
+                dist_obs = _edt(~om) * res0
+        except Exception:  # noqa: BLE001
+            dist_obs = None
+
+    def _obs_ok(x, y):
+        if dist_obs is None:
+            return True
+        col = int((x - g["minx"]) / g["res"]); row = int((g["top"] - y) / g["res"])
+        if 0 <= row < g["hp"] and 0 <= col < g["wp"]:
+            return dist_obs[row, col] >= R + clear_road - 1.0
+        return True
+
     # griglia di idoneità (M2): serve se posiamo solo su aree idonee OPPURE se le
     # fasi sono ordinate per idoneità
     suit = None
@@ -249,6 +290,8 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
                 if ok and only_suitable and suit is not None:
                     sc = sample_grid(suit[0], suit[1], x, y)
                     ok = (sc == sc) and sc >= min_suit          # sc==sc → non NaN
+                if ok:
+                    ok = _obs_ok(x, y)                          # niente pivot sul footprint di strade/canali
                 if ok:
                     centers.append((rx, ry, x, y))
             rx += dx

@@ -313,6 +313,9 @@ class LayoutIn(BaseModel):
     kc_peak: float = Field(default=1.15, ge=0.3, le=1.6)
     efficiency: float = Field(default=0.85, ge=0.4, le=1.0)
     hours_per_day: float = Field(default=20.0, ge=1, le=24)
+    # ostacoli lineari preesistenti (strade/canali con spessore) da evitare
+    roads: list[dict[str, Any]] | None = None
+    clear_road_m: float = Field(default=0.0, ge=0, le=500)
 
 
 class LayoutOut(BaseModel):

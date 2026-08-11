@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.40";
+const REV = "v0.6.41";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -88,7 +88,7 @@ type Snapshot = {
   a: number | null;
   pv: PivotItem[];
   pl: { kind: string; coords: number[][] }[];
-  rd: { id: string; coords: number[][] }[];
+  rd: { id: string; coords: number[][]; width_m: number }[];
   g: GuidedResult | null;
 };
 
@@ -350,8 +350,10 @@ export default function Page() {
   const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
   // Disposizione impianti: lungo il canale oppure a maglia su tutti i campi.
   const [dispMode, setDispMode] = useState<"canal" | "mesh">("canal");
-  // Livello Strade (linee) disegnabile/importabile: i pivot le rispettano.
-  const [roads, setRoads] = useState<{ id: string; coords: number[][] }[]>([]);
+  // Livello Strade (linee, con spessore) disegnabile/importabile: i pivot le rispettano.
+  const [roads, setRoads] = useState<{ id: string; coords: number[][]; width_m: number }[]>([]);
+  const [roadWidth, setRoadWidth] = useState(8);      // spessore strada di default (m)
+  const [canalWidth, setCanalWidth] = useState(6);    // spessore canale/fiume di default (m)
 
   // ---- Cronologia Annulla/Ripristina UNIFICATA ----
   // Uno snapshot copre TUTTE le mosse (campi, pivot spostati/ridimensionati/
@@ -802,7 +804,7 @@ export default function Page() {
       mapApi.current?.showPending(null, null, t("Presa"), t("Finale"));
       mapApi.current?.clearReachable();
       mapApi.current?.showCanals(
-        next.map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end })),
+        next.map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end, width_m: canalWidth })),
         t("Presa"), t("Sbocco"));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
@@ -830,7 +832,7 @@ export default function Page() {
         }
       }
       setCanals(next);
-      mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end })), t("Presa"), t("Sbocco"));
+      mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
       setMsg(added ? t("Importati {n} canali da file.", { n: added }) : t("Nessuna linea trovata nei file (KMZ/KML/GeoJSON)."));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
@@ -847,7 +849,7 @@ export default function Page() {
         const cc = await api.fetchCanal(geomForDem, canalPermille, null, null, null, coords, snapCanal);
         const next = [...canals, cc];
         setCanals(next);
-        mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end })), t("Presa"), t("Sbocco"));
+        mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
         setMsg("");
       } catch (e) { showErr(e); } finally { setBusy(""); }
     });
@@ -874,7 +876,7 @@ export default function Page() {
           const cc = await api.fetchCanal(activeGeom, c.target_permille, start, end, waypoints);
           setCanals((prev) => {
             const arr = [...prev]; arr[i] = cc;
-            mapApi.current?.showCanals(arr.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end })), t("Presa"), t("Sbocco"));
+            mapApi.current?.showCanals(arr.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
             return arr;
           });
           installCanalEditor(i, cc);   // reinstalla le maniglie sul percorso ricalcolato
@@ -917,7 +919,7 @@ export default function Page() {
       const c = l.data as unknown as Canal;
       setCanals((prev) => {
         const next = [...prev, c];
-        mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end })), t("Presa"), t("Sbocco"));
+        mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
         return next;
       });
       setTab("canal");
@@ -995,29 +997,44 @@ export default function Page() {
   // ---- livello Strade (linee) ----
   const rid = () => `r${roads.length}_${roads.reduce((s, r) => s + r.coords.length, 0)}`;
   useEffect(() => {
-    mapApi.current?.showRoads?.(roads.map((r) => ({ coords: r.coords })), (i) => setRoads((rs) => rs.filter((_, k) => k !== i)));
+    mapApi.current?.showRoads?.(roads.map((r) => ({ coords: r.coords, width_m: r.width_m })), (i) => setRoads((rs) => rs.filter((_, k) => k !== i)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roads]);
+  // Aggiorna la banda-spessore dei canali quando cambia lo spessore di default.
+  useEffect(() => {
+    if (canals.length) mapApi.current?.showCanals(canals.map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canalWidth]);
   function drawRoad() {
     mapApi.current?.drawRoadManual((coords) => {
-      if (coords.length >= 2) setRoads((rs) => [...rs, { id: rid(), coords }]);
+      if (coords.length >= 2) setRoads((rs) => [...rs, { id: rid(), coords, width_m: roadWidth }]);
     });
     setMsg(t("Traccia la strada sulla mappa: clic per i vertici, doppio clic per finire."));
   }
   async function importRoads(files?: FileList | null) {
     if (!files || !files.length) return;
     try {
-      const add: { id: string; coords: number[][] }[] = [];
+      const add: { id: string; coords: number[][]; width_m: number }[] = [];
       for (const f of Array.from(files)) {
         const lines = await parseLinesFromFile(f);
-        for (const ln of lines) if (ln.coords.length >= 2) add.push({ id: `imp${add.length}`, coords: ln.coords });
+        for (const ln of lines) if (ln.coords.length >= 2) add.push({ id: `imp${add.length}`, coords: ln.coords, width_m: roadWidth });
       }
       if (add.length) setRoads((rs) => [...rs, ...add]);
       setMsg(add.length ? t("Importate {n} strade da file.", { n: add.length }) : t("Nessuna linea trovata nei file (KMZ/KML/GeoJSON)."));
     } catch (e) { showErr(e); }
   }
   function removeRoad(i: number) { setRoads((rs) => rs.filter((_, k) => k !== i)); }
+  function setRoadWidthAt(i: number, w: number) { setRoads((rs) => rs.map((r, k) => (k === i ? { ...r, width_m: w } : r))); }
   function clearRoads() { setRoads([]); }
+  // Ostacoli lineari preesistenti (strade + canali/fiumi disegnati) con spessore,
+  // passati ai solutori: i pivot ne evitano il footprint reale.
+  function obstacleLines() {
+    const items = [
+      ...roads.map((r) => ({ geojson: { type: "LineString", coordinates: r.coords }, width_m: r.width_m })),
+      ...canals.map((c) => ({ geojson: { type: "LineString", coordinates: c.geojson.coordinates }, width_m: canalWidth })),
+    ];
+    return items.length ? items : null;
+  }
 
   async function designGuided() {
     if (!activeGeom) return needField();
@@ -1029,7 +1046,7 @@ export default function Page() {
         per_side: perSide, conn_max_permille: 5, fill: fillEmpty,
         date: date || null, exclude_water: excludeWater,
         avoid: watercourses.length ? watercourses.map((w) => ({ kind: w.kind, geojson: w.geojson })) : null,
-        roads: roads.length ? roads.map((r) => ({ geojson: { type: "LineString", coordinates: r.coords } })) : null,
+        roads: obstacleLines(),
       });
       setGuided(g);
       setModelFromGuided(g);
@@ -1085,7 +1102,7 @@ export default function Page() {
       const feats: any[] = [];
       for (let i = 0; i < arr.length; i++) {
         setMsg(t("Genero campo {i}/{n}…", { i: i + 1, n: arr.length }));
-        const p: LayoutParams = { ...paramsFrom(effSettings(arr[i])), radius_m: pivotR, gap_m: safetyM };
+        const p: LayoutParams = { ...paramsFrom(effSettings(arr[i])), radius_m: pivotR, gap_m: safetyM, roads: obstacleLines(), clear_road_m: pivClearRoad };
         const r = await api.fetchLayout(arr[i].geom, p);
         arr[i] = { ...arr[i], lay: r.meta, layGeo: r.geojson };
         for (const ft of (r.geojson.features || [])) feats.push(ft);
@@ -1808,10 +1825,17 @@ export default function Page() {
 
           <section className={secShow("canal")}>
             <SectionHead title={t("Canali")} help={t("Traccia uno o più canali: automatici a gravità (a pendenza costante, con presa/finale opzionali) oppure a mano. Ogni canale è modificabile ed esportabile in KMZ.")} />
-            <label className="text-xs text-sage-dark block">{t("Pendenza target (‰)")}
-              <input type="number" min={0.1} max={100} step={0.5} value={canalPermille}
-                onChange={(e) => setCanalPermille(Number(e.target.value))} className="field-input mt-1" />
-            </label>
+            <div className="flex gap-2">
+              <label className="text-xs text-sage-dark flex-1">{t("Pendenza target (‰)")}
+                <input type="number" min={0.1} max={100} step={0.5} value={canalPermille}
+                  onChange={(e) => setCanalPermille(Number(e.target.value))} className="field-input mt-1" />
+              </label>
+              <label className="text-xs text-sage-dark flex-1">{t("Spessore canale (m)")}
+                <input type="number" min={1} max={200} step={1} value={canalWidth}
+                  onChange={(e) => setCanalWidth(Number(e.target.value))} className="field-input mt-1" />
+              </label>
+            </div>
+            <p className="hint mt-1">{t("Lo spessore è mostrato come banda sulla mappa e viene evitato dai pivot come preesistenza.")}</p>
 
             <div className="bg-panel rounded-lg p-2 mt-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Presa e finale (opzionali)")}</div>
@@ -2064,13 +2088,20 @@ export default function Page() {
               </div>
               <input ref={roadFileRef} type="file" accept=".geojson,.json,.kml,.kmz" multiple className="hidden"
                 onChange={(e) => { importRoads(e.target.files); if (e.target) e.target.value = ""; }} />
+              <label className="flex items-center gap-2 text-[11px] text-sage-dark mt-1">
+                {t("Spessore predefinito (m)")}
+                <input type="number" min={1} max={200} step={1} value={roadWidth}
+                  onChange={(e) => setRoadWidth(Number(e.target.value))} className="field-input w-20 py-0.5" />
+              </label>
               {!roads.length
-                ? <p className="text-[11px] text-sage-dark">{t("Nessuna strada. Tracciala sulla mappa o importa un file; gli impianti la rispetteranno secondo il franco «Da strade/canali».")}</p>
+                ? <p className="text-[11px] text-sage-dark mt-1">{t("Nessuna strada. Tracciala sulla mappa o importa un file; gli impianti evitano il footprint reale (spessore) secondo il franco «Da strade/canali».")}</p>
                 : (
-                  <ul className="space-y-0.5">
+                  <ul className="space-y-1 mt-1">
                     {roads.map((r, i) => (
-                      <li key={r.id} className="flex items-center justify-between text-[11px] text-sage-dark">
+                      <li key={r.id} className="flex items-center justify-between gap-2 text-[11px] text-sage-dark">
                         <span className="truncate flex-1">{t("Strada")} {i + 1} · {uKm(lineLenKm(r.coords))}</span>
+                        <input type="number" min={1} max={200} step={1} value={Math.round(r.width_m)} title={t("Spessore (m)")}
+                          onChange={(e) => setRoadWidthAt(i, Number(e.target.value))} className="field-input w-16 py-0.5 shrink-0" />
                         <span className="flex gap-1 shrink-0">
                           <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(`strada_${i + 1}`), [{ name: `Strada ${i + 1}`, geom: { type: "LineString", coordinates: r.coords } }])}>⤓</button>
                           <button className="text-danger" title={t("Rimuovi")} onClick={() => removeRoad(i)}>✕</button>

@@ -23,6 +23,7 @@ def layout(body: LayoutIn, client=Depends(get_client)):
         "n_phases": body.n_phases, "phase_order": body.phase_order,
         "kc_peak": body.kc_peak, "efficiency": body.efficiency,
         "hours_per_day": body.hours_per_day,
+        "roads": body.roads, "clear_road_m": body.clear_road_m,
     }
     if body.slope_max_pct is not None:
         params["slope_max_pct"] = body.slope_max_pct

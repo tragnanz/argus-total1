@@ -38,12 +38,12 @@ export type MapHandle = {
   clearLayout: () => void;
   showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs) => void;
   clearPivots: () => void;
-  showRoads: (roads: { coords: number[][] }[], onRemove?: (i: number) => void) => void;
+  showRoads: (roads: { coords: number[][]; width_m?: number }[], onRemove?: (i: number) => void) => void;
   drawRoadManual: (cb: (coords: number[][]) => void) => void;
   clearRoads: () => void;
   showMacroareas: (items: { geom: Polygon; label: string }[]) => void;
   clearMacroareas: () => void;
-  showCanals: (canals: { coords: number[][]; start: number[]; end: number[] }[], startLabel: string, endLabel: string) => void;
+  showCanals: (canals: { coords: number[][]; start: number[]; end: number[]; width_m?: number }[], startLabel: string, endLabel: string) => void;
   showPending: (start: number[] | null, end: number[] | null, startLabel: string, endLabel: string) => void;
   clearCanal: () => void;
   showContours: (fc: GeoJSONFC) => void;
@@ -73,6 +73,27 @@ const IDLE_STYLE = { color: "#03a047", weight: 3, fillColor: "#038037", fillOpac
 const PHASE = ["#038037", "#20aae2", "#87bf59", "#f0b429", "#b23b1e", "#6b21a8"];
 
 const toLatLng = (ring: number[][]) => ring.map((p) => [p[1], p[0]] as [number, number]);
+// Rettangoli (per-segmento) che rappresentano lo SPESSORE reale di una polilinea
+// [lon,lat] larga width_m: la banda scala con lo zoom come ogni poligono.
+function _bandRects(coords: number[][], widthM: number): [number, number][][] {
+  const rects: [number, number][][] = [];
+  if (!(widthM > 0) || coords.length < 2) return rects;
+  const hw = widthM / 2;
+  for (let i = 1; i < coords.length; i++) {
+    const [lo0, la0] = coords[i - 1], [lo1, la1] = coords[i];
+    const latm = (la0 + la1) / 2;
+    const mLat = 111320, mLng = 111320 * Math.cos((latm * Math.PI) / 180) || 1e-9;
+    const vx = (lo1 - lo0) * mLng, vy = (la1 - la0) * mLat;
+    const L2 = Math.hypot(vx, vy) || 1e-9;
+    const px = -vy / L2, py = vx / L2;                 // perpendicolare (metri)
+    const oLng = (px * hw) / mLng, oLat = (py * hw) / mLat;
+    rects.push([
+      [la0 + oLat, lo0 + oLng], [la1 + oLat, lo1 + oLng],
+      [la1 - oLat, lo1 - oLng], [la0 - oLat, lo0 - oLng],
+    ]);
+  }
+  return rects;
+}
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function layerToPolygon(layer: any): Polygon | null {
   const gj = layer.toGeoJSON();
@@ -449,10 +470,14 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         g.clearLayers();
         roads.forEach((rd, i) => {
           const latlngs = rd.coords.map((p) => [p[1], p[0]] as [number, number]);
-          // Casing bianco + tratto grigio scuro: leggibile sul satellitare.
-          g.addLayer(L.polyline(latlngs, { color: "#ffffff", weight: 5, opacity: 0.9, interactive: false }));
-          const ly = L.polyline(latlngs, { color: "#374151", weight: 3, opacity: 0.95 });
-          ly.bindTooltip(`Strada ${i + 1}`, { direction: "top", sticky: true });
+          // Banda di spessore reale (footprint), scala con lo zoom.
+          for (const rect of _bandRects(rd.coords, rd.width_m ?? 0)) {
+            g.addLayer(L.polygon(rect, { color: "#374151", weight: 0, fillColor: "#374151", fillOpacity: 0.35, interactive: false }));
+          }
+          // Casing bianco + asse grigio scuro: leggibile sul satellitare.
+          g.addLayer(L.polyline(latlngs, { color: "#ffffff", weight: 4, opacity: 0.9, interactive: false }));
+          const ly = L.polyline(latlngs, { color: "#374151", weight: 2, opacity: 0.95 });
+          ly.bindTooltip(`Strada ${i + 1}${rd.width_m ? ` · ${Math.round(rd.width_m)} m` : ""}`, { direction: "top", sticky: true });
           if (onRemove) ly.on("click", (e) => { L.DomEvent.stop(e); onRemove(i); });
           g.addLayer(ly);
         });
@@ -578,6 +603,9 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         for (let i = 0; i < canals.length; i++) {
           const cc = canals[i];
           const latlngs = cc.coords.map((p) => [p[1], p[0]] as [number, number]);
+          for (const rect of _bandRects(cc.coords, cc.width_m ?? 0)) {
+            g.addLayer(L.polygon(rect, { color: "#0284c7", weight: 0, fillColor: "#0284c7", fillOpacity: 0.30, interactive: false }));
+          }
           const line = L.polyline(latlngs, { color: "#0284c7", weight: 4, opacity: 0.9 });
           line.bindTooltip(`${startLabel.charAt(0)}${i + 1}`, { permanent: false, direction: "center" });
           // clic sul canale → finestrella con il tasto per il profilo altimetrico
