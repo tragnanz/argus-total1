@@ -7,6 +7,11 @@ import { I18nProvider } from "@/lib/i18n";
 export const metadata: Metadata = {
   title: "Argus Total — Nabu",
   description: "Progettazione di grandi progetti agroindustriali con analisi satellitare.",
+  icons: {
+    icon: [{ url: "/favicon.png", type: "image/png" }],
+    shortcut: "/favicon.png",
+    apple: "/favicon.png",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
