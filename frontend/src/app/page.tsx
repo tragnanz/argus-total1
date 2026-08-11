@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.35";
+const REV = "v0.6.36";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -327,6 +327,8 @@ export default function Page() {
   const [pivots, setPivots] = useState<PivotItem[]>([]);
   const [pivotLines, setPivotLines] = useState<{ kind: string; coords: number[][] }[]>([]);
   const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
+  // Disposizione impianti: lungo il canale oppure a maglia su tutti i campi.
+  const [dispMode, setDispMode] = useState<"canal" | "mesh">("canal");
   // Livello Strade (linee) disegnabile/importabile: i pivot le rispettano.
   const [roads, setRoads] = useState<{ id: string; coords: number[][] }[]>([]);
 
@@ -1051,6 +1053,124 @@ export default function Page() {
     mapApi.current?.clearLayout();
     setFields((fs) => fs.map((f) => ({ ...f, lay: null, layGeo: null })));
   }
+  // Layout a maglia UNIFICATO: usa i parametri condivisi (raggio, distanza tra
+  // pivot) e alimenta la stessa gerarchia pivot modificabile del «lungo il canale».
+  async function genLayoutUnified() {
+    if (!fields.length) return needField();
+    setBusy("layout"); setMsg("");
+    try {
+      const arr = [...fields];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const feats: any[] = [];
+      for (let i = 0; i < arr.length; i++) {
+        setMsg(t("Genero campo {i}/{n}…", { i: i + 1, n: arr.length }));
+        const p: LayoutParams = { ...paramsFrom(effSettings(arr[i])), radius_m: pivotR, gap_m: safetyM };
+        const r = await api.fetchLayout(arr[i].geom, p);
+        arr[i] = { ...arr[i], lay: r.meta, layGeo: r.geojson };
+        for (const ft of (r.geojson.features || [])) feats.push(ft);
+      }
+      const fc = { type: "FeatureCollection" as const, features: feats };
+      const nPiv = arr.reduce((s, f) => s + (f.lay?.n_pivots || 0), 0);
+      const netHa = arr.reduce((s, f) => s + (f.lay?.net_ha || 0), 0);
+      const g: GuidedResult = { geojson: fc, meta: { n_pivots: nPiv, radius_m: pivotR, net_ha: Math.round(netHa * 10) / 10, safety_m: safetyM } };
+      setFields(arr);
+      setGuided(g); setModelFromGuided(g);
+      setMsg("");
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  // Comando unico: instrada al motore giusto secondo la disposizione scelta.
+  function insertImpianti() { return dispMode === "mesh" ? genLayoutUnified() : designGuided(); }
+  function clearImpianti() {
+    clearGuided();
+    setFields((fs) => fs.map((f) => ({ ...f, lay: null, layGeo: null })));
+  }
+  // Parametri specifici della disposizione «a maglia» (raggio e distanza tra pivot
+  // restano quelli condivisi in alto).
+  function renderMeshParams() {
+    return (
+      <div className="mt-1">
+        <label className="text-xs text-sage-dark">{t("Configurazione")}</label>
+        <div className="seg mt-1">
+          <div className="seg-item" data-active={cur.layoutCfg === "square"} onClick={() => patch({ layoutCfg: "square" })}>{t("Maglia quadrata")}</div>
+          <div className="seg-item" data-active={cur.layoutCfg === "staggered"} onClick={() => patch({ layoutCfg: "staggered" })}>{t("Maglia triangolare")}</div>
+        </div>
+
+        <label className="text-xs text-sage-dark mt-2 block">{t("Trasporto acqua")}</label>
+        <select className="field-input mt-1" value={cur.transport}
+          onChange={(e) => { const tp = e.target.value as Transport; patch({ transport: tp, slopeIdeal: SLOPE_PM[tp].ideal, slopeMax: SLOPE_PM[tp].max }); }}>
+          <option value="buried">{t("Tubazioni interrate (pressione)")}</option>
+          <option value="canal">{t("Canali (gravità)")}</option>
+        </select>
+        <p className="text-[11px] text-sage-dark mt-1">
+          {cur.transport === "canal"
+            ? t("Con i canali il vincolo di pendenza è severo (max {p}‰): serve terreno pianeggiante.", { p: 5 })
+            : t("Con tubazioni in pressione la pendenza tollerata è maggiore (max {p}‰).", { p: 70 })}
+        </p>
+
+        <label className="text-xs text-sage-dark mt-2 block">{t("Orientamento reticolo")}</label>
+        <div className="seg mt-1">
+          <div className="seg-item" data-active={cur.orientMode === "auto"} onClick={() => patch({ orientMode: "auto" })}>{t("Auto (bordo più lungo)")}</div>
+          <div className="seg-item" data-active={cur.orientMode === "manual"} onClick={() => patch({ orientMode: "manual" })}>{t("Manuale (azimut)")}</div>
+        </div>
+        {cur.orientMode === "manual" && (
+          <label className="text-xs text-sage-dark mt-1 block">{t("Azimut canale (°)")}
+            <input type="number" min={-360} max={360} step={1} value={cur.azimuth}
+              onChange={(e) => patch({ azimuth: Number(e.target.value) })} className="field-input mt-1" /></label>
+        )}
+        <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
+          <input type="checkbox" checked={cur.canalFlip} onChange={(e) => patch({ canalFlip: e.target.checked })} />
+          {t("Canale sul bordo opposto")}
+        </label>
+        <label className="flex items-center gap-2 text-xs text-sage-dark mt-1">
+          <input type="checkbox" checked={cur.onlySuitable} onChange={(e) => patch({ onlySuitable: e.target.checked })} />
+          {t("Solo su aree idonee (M2)")}
+        </label>
+        {cur.onlySuitable && (
+          <div className="text-[11px] text-sage-dark mt-1">
+            {t("Soglia idoneità")}: {cur.minSuit}/100
+            <input type="range" min={40} max={90} step={5} value={cur.minSuit}
+              onChange={(e) => patch({ minSuit: Number(e.target.value) })} className="w-full accent-brand" />
+            {!date && <span className="text-danger">{t("Cerca e scegli prima una data.")}</span>}
+          </div>
+        )}
+
+        <div className="flex gap-2 mt-2">
+          <label className="text-xs text-sage-dark flex-1">{t("Kc di punta")}
+            <input type="number" min={0.3} max={1.6} step={0.05} value={cur.kc}
+              onChange={(e) => patch({ kc: Number(e.target.value) })} className="field-input mt-1" /></label>
+          <label className="text-xs text-sage-dark flex-1">{t("Efficienza impianto")}
+            <input type="number" min={0.4} max={1} step={0.05} value={cur.eff}
+              onChange={(e) => patch({ eff: Number(e.target.value) })} className="field-input mt-1" /></label>
+          <label className="text-xs text-sage-dark flex-1">{t("Ore/giorno")}
+            <input type="number" min={1} max={24} step={1} value={cur.hours}
+              onChange={(e) => patch({ hours: Number(e.target.value) })} className="field-input mt-1" /></label>
+        </div>
+
+        <div className="mt-2">
+          <label className="text-xs text-sage-dark">{t("Sbordo consentito")}: {cur.overhang}%</label>
+          <input type="range" min={0} max={30} step={5} value={cur.overhang}
+            onChange={(e) => patch({ overhang: Number(e.target.value) })} className="w-full accent-brand" />
+        </div>
+
+        <div className="flex gap-2 mt-1">
+          <label className="text-xs text-sage-dark flex-1">{t("Fasi di sviluppo")}
+            <select className="field-input mt-1" value={cur.nPhases} onChange={(e) => patch({ nPhases: Number(e.target.value) })}>
+              {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+          {cur.nPhases > 1 && (
+            <label className="text-xs text-sage-dark flex-1">{t("Ordine fasi")}
+              <select className="field-input mt-1" value={cur.phaseOrder} onChange={(e) => patch({ phaseOrder: e.target.value as PhaseOrder })}>
+                <option value="canal_distance">{t("Vicinanza al canale")}</option>
+                <option value="suitability">{t("Idoneità")}</option>
+                <option value="rows">{t("Per file")}</option>
+              </select>
+            </label>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // Aggregato del layout su tutti i campi.
   const laid = fields.filter((f) => f.lay);
@@ -1682,7 +1802,13 @@ export default function Page() {
           </section>
 
           <section className={secShow("impianti")}>
-            <SectionHead title={t("Impianti — pivot lungo il canale")} help={t("Tutti gli strumenti degli impianti in un'unica pagina: pivot lungo il canale (qui sotto) e layout a maglia (in fondo). Le strade sono nella pagina Accessori. Dopo il calcolo, sulla mappa il 1° clic seleziona tutto il gruppo, il 2° clic il singolo pivot (modificabile: raggio, posizione, connessione, elimina).")} />
+            <SectionHead title={t("Impianti")} help={t("Un unico comando «Inserisci impianti». Scegli la disposizione: «Lungo il canale» (pivot ai lati del canale, connessione gravità/pressione decisa dal terreno) oppure «A maglia sui campi» (reticolo su tutti i campi con orientamento, trasporto acqua e dimensionamento idraulico). In entrambi i casi i pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo pivot (raggio, posizione, connessione, elimina). Le strade sono nella pagina Accessori.")} />
+
+            <label className="text-xs text-sage-dark block mb-1">{t("Disposizione")}</label>
+            <div className="seg mb-2">
+              <div className="seg-item" data-active={dispMode === "canal"} onClick={() => setDispMode("canal")}>{t("Lungo il canale")}</div>
+              <div className="seg-item" data-active={dispMode === "mesh"} onClick={() => setDispMode("mesh")}>{t("A maglia sui campi")}</div>
+            </div>
 
             <div className="bg-panel rounded-lg p-2 mb-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Dimensione pivot consigliata")}</div>
@@ -1725,33 +1851,42 @@ export default function Page() {
               </div>
             </div>
 
-            <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
-              <input type="checkbox" checked={fillEmpty} onChange={(e) => setFillEmpty(e.target.checked)} />
-              {t("Riempi spazi vuoti")}
-            </label>
-            <label className="flex items-center gap-2 text-xs text-sage-dark mt-1">
-              <input type="checkbox" checked={excludeWater} onChange={(e) => setExcludeWater(e.target.checked)} />
-              {t("Solo terreno libero (no canali, no acqua/paludi NDWI)")}
-            </label>
-            {excludeWater && !date && <p className="hint mt-1 text-danger">{t("Per escludere l'acqua serve una data satellitare: cercala nella scheda Analisi.")}</p>}
+            {dispMode === "canal" && (<>
+              <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
+                <input type="checkbox" checked={fillEmpty} onChange={(e) => setFillEmpty(e.target.checked)} />
+                {t("Riempi spazi vuoti")}
+              </label>
+              <label className="flex items-center gap-2 text-xs text-sage-dark mt-1">
+                <input type="checkbox" checked={excludeWater} onChange={(e) => setExcludeWater(e.target.checked)} />
+                {t("Solo terreno libero (no canali, no acqua/paludi NDWI)")}
+              </label>
+              {excludeWater && !date && <p className="hint mt-1 text-danger">{t("Per escludere l'acqua serve una data satellitare: cercala nella scheda Analisi.")}</p>}
 
-            <label className="text-xs text-sage-dark block mt-2">{t("Pivot per lato")}
-              <select className="field-input mt-1" value={perSide} onChange={(e) => setPerSide(Number(e.target.value))}>
-                {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </label>
+              <label className="text-xs text-sage-dark block mt-2">{t("Pivot per lato")}
+                <select className="field-input mt-1" value={perSide} onChange={(e) => setPerSide(Number(e.target.value))}>
+                  {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
+            </>)}
+
+            {dispMode === "mesh" && renderMeshParams()}
+
             <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 mt-2 leading-relaxed">
               {t("Raggio")}: <b>{uM(pivotR)}</b> · {t("Area per pivot")}: <b>{uHa(Math.PI * pivotR * pivotR / 10000, 1)}</b><br />
               {t("Interasse (centro-centro)")}: <b>{uM(2 * pivotR + safetyM)}</b><br />
-              <span className="text-brand-mid">{t("I pivot non si sovrappongono e rispettano i franchi impostati da strade/canali e acqua/invasi.")}</span>
+              <span className="text-brand-mid">{dispMode === "canal"
+                ? t("I pivot non si sovrappongono e rispettano i franchi impostati da strade/canali e acqua/invasi.")
+                : t("Reticolo su tutti i campi con orientamento e trasporto acqua; raggio e distanza tra pivot presi da qui sopra.")}</span>
             </div>
             <div className="flex gap-2 mt-2">
-              <button className="btn-primary flex-1 basis-0" disabled={busy === "guided" || !activeGeom} onClick={designGuided}>
-                {busy === "guided" ? t("Calcolo…") : t("Inserisci impianti")}
+              <button className="btn-primary flex-1 basis-0"
+                disabled={busy === "guided" || busy === "layout" || (dispMode === "canal" ? !activeGeom : !hasFields)}
+                onClick={insertImpianti}>
+                {busy === "guided" || busy === "layout" ? t("Calcolo…") : t("Inserisci impianti")}
               </button>
-              <button className="btn-ghost flex-1 basis-0" onClick={clearGuided}>{t("Rimuovi")}</button>
+              <button className="btn-ghost flex-1 basis-0" onClick={clearImpianti}>{t("Rimuovi")}</button>
             </div>
-            {guided && (
+            {dispMode === "canal" && guided && (
               <div className="mt-3 space-y-2">
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="bg-panel rounded-lg p-2">
@@ -1819,108 +1954,9 @@ export default function Page() {
                 )}
               </div>
             )}
-          </section>
 
-          <section className={secShow("impianti") + " border-t border-black/10 mt-4 pt-3"}>
-            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Layout pivot (maglia sui campi)")}</h3>
-
-            <label className="text-xs text-sage-dark">{t("Configurazione")}</label>
-            <div className="seg mt-1">
-              <div className="seg-item" data-active={cur.layoutCfg === "square"} onClick={() => patch({ layoutCfg: "square" })}>{t("Maglia quadrata")}</div>
-              <div className="seg-item" data-active={cur.layoutCfg === "staggered"} onClick={() => patch({ layoutCfg: "staggered" })}>{t("Maglia triangolare")}</div>
-            </div>
-
-            <label className="text-xs text-sage-dark mt-2 block">{t("Trasporto acqua")}</label>
-            <select className="field-input mt-1" value={cur.transport}
-              onChange={(e) => { const tp = e.target.value as Transport; patch({ transport: tp, slopeIdeal: SLOPE_PM[tp].ideal, slopeMax: SLOPE_PM[tp].max }); }}>
-              <option value="buried">{t("Tubazioni interrate (pressione)")}</option>
-              <option value="canal">{t("Canali (gravità)")}</option>
-            </select>
-            <p className="text-[11px] text-sage-dark mt-1">
-              {cur.transport === "canal"
-                ? t("Con i canali il vincolo di pendenza è severo (max {p}‰): serve terreno pianeggiante.", { p: 5 })
-                : t("Con tubazioni in pressione la pendenza tollerata è maggiore (max {p}‰).", { p: 70 })}
-            </p>
-
-            <div className="flex gap-2 mt-2">
-              <label className="text-xs text-sage-dark flex-1">{t("Raggio pivot (m)")}
-                <input type="number" min={30} max={1000} step={10} value={cur.radius}
-                  onChange={(e) => patch({ radius: Number(e.target.value) })} className="field-input mt-1" /></label>
-              <label className="text-xs text-sage-dark flex-1">{t("Spaziatura tra pivot (m)")}
-                <input type="number" min={0} max={2000} step={10} value={cur.gap}
-                  onChange={(e) => patch({ gap: Number(e.target.value) })} className="field-input mt-1" /></label>
-            </div>
-
-            <label className="text-xs text-sage-dark mt-2 block">{t("Orientamento reticolo")}</label>
-            <div className="seg mt-1">
-              <div className="seg-item" data-active={cur.orientMode === "auto"} onClick={() => patch({ orientMode: "auto" })}>{t("Auto (bordo più lungo)")}</div>
-              <div className="seg-item" data-active={cur.orientMode === "manual"} onClick={() => patch({ orientMode: "manual" })}>{t("Manuale (azimut)")}</div>
-            </div>
-            {cur.orientMode === "manual" && (
-              <label className="text-xs text-sage-dark mt-1 block">{t("Azimut canale (°)")}
-                <input type="number" min={-360} max={360} step={1} value={cur.azimuth}
-                  onChange={(e) => patch({ azimuth: Number(e.target.value) })} className="field-input mt-1" /></label>
-            )}
-            <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
-              <input type="checkbox" checked={cur.canalFlip} onChange={(e) => patch({ canalFlip: e.target.checked })} />
-              {t("Canale sul bordo opposto")}
-            </label>
-            <label className="flex items-center gap-2 text-xs text-sage-dark mt-1">
-              <input type="checkbox" checked={cur.onlySuitable} onChange={(e) => patch({ onlySuitable: e.target.checked })} />
-              {t("Solo su aree idonee (M2)")}
-            </label>
-            {cur.onlySuitable && (
-              <div className="text-[11px] text-sage-dark mt-1">
-                {t("Soglia idoneità")}: {cur.minSuit}/100
-                <input type="range" min={40} max={90} step={5} value={cur.minSuit}
-                  onChange={(e) => patch({ minSuit: Number(e.target.value) })} className="w-full accent-brand" />
-                {!date && <span className="text-danger">{t("Cerca e scegli prima una data.")}</span>}
-              </div>
-            )}
-
-            <div className="flex gap-2 mt-2">
-              <label className="text-xs text-sage-dark flex-1">{t("Kc di punta")}
-                <input type="number" min={0.3} max={1.6} step={0.05} value={cur.kc}
-                  onChange={(e) => patch({ kc: Number(e.target.value) })} className="field-input mt-1" /></label>
-              <label className="text-xs text-sage-dark flex-1">{t("Efficienza impianto")}
-                <input type="number" min={0.4} max={1} step={0.05} value={cur.eff}
-                  onChange={(e) => patch({ eff: Number(e.target.value) })} className="field-input mt-1" /></label>
-              <label className="text-xs text-sage-dark flex-1">{t("Ore/giorno")}
-                <input type="number" min={1} max={24} step={1} value={cur.hours}
-                  onChange={(e) => patch({ hours: Number(e.target.value) })} className="field-input mt-1" /></label>
-            </div>
-
-            <div className="mt-2">
-              <label className="text-xs text-sage-dark">{t("Sbordo consentito")}: {cur.overhang}%</label>
-              <input type="range" min={0} max={30} step={5} value={cur.overhang}
-                onChange={(e) => patch({ overhang: Number(e.target.value) })} className="w-full accent-brand" />
-            </div>
-
-            <div className="flex gap-2 mt-1">
-              <label className="text-xs text-sage-dark flex-1">{t("Fasi di sviluppo")}
-                <select className="field-input mt-1" value={cur.nPhases} onChange={(e) => patch({ nPhases: Number(e.target.value) })}>
-                  {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </label>
-              {cur.nPhases > 1 && (
-                <label className="text-xs text-sage-dark flex-1">{t("Ordine fasi")}
-                  <select className="field-input mt-1" value={cur.phaseOrder} onChange={(e) => patch({ phaseOrder: e.target.value as PhaseOrder })}>
-                    <option value="canal_distance">{t("Vicinanza al canale")}</option>
-                    <option value="suitability">{t("Idoneità")}</option>
-                    <option value="rows">{t("Per file")}</option>
-                  </select>
-                </label>
-              )}
-            </div>
-
-            <div className="flex gap-2 mt-2">
-              <button className="btn-primary flex-1 basis-0" disabled={busy === "layout" || !hasFields} onClick={genLayout}>
-                {busy === "layout" ? t("Genero…") : t("Genera layout")}
-              </button>
-              <button className="btn-ghost flex-1 basis-0" onClick={clearLayout}>{t("Rimuovi layout")}</button>
-            </div>
-
-            {agg.count > 0 && (
+            {/* Riepilogo disposizione a maglia + dimensionamento idraulico */}
+            {dispMode === "mesh" && agg.count > 0 && (
               <div className="mt-3 space-y-2">
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="bg-panel rounded-lg p-2">
@@ -1952,9 +1988,12 @@ export default function Page() {
                 <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
                   {t("Rete totale")}: <b>{uKm(agg.pipe / 1000, 1)}</b>
                 </div>
+                <button className="btn-primary w-full" disabled={!projectId} onClick={savePivotsLayer}>{t("Salva pivot nel progetto")}</button>
               </div>
             )}
           </section>
+
+
 
           <section className={secShow("accessori")}>
             <SectionHead title={t("Accessori")} help={t("Infrastrutture accessorie del progetto. Le strade tracciate qui vengono rispettate dagli impianti secondo il franco «Da strade/canali» impostato nella pagina Impianti.")} />
