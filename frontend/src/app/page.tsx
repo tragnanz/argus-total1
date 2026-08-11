@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.33";
+const REV = "v0.6.34";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -80,6 +80,16 @@ type Field = {
   macros?: FieldMacro[];               // sotto-livelli (macro-aree) del campo
   hidden?: boolean;                    // campo spento sulla mappa
   savedId?: number;                    // id dell'area salvata nel progetto
+};
+
+// Snapshot completo per la cronologia Annulla/Ripristina (tutte le mosse).
+type Snapshot = {
+  f: Field[];
+  a: number | null;
+  pv: PivotItem[];
+  pl: { kind: string; coords: number[][] }[];
+  rd: { id: string; coords: number[][] }[];
+  g: GuidedResult | null;
 };
 
 // ---- KMZ (KML zippato) lato client per l'export delle geometrie ----
@@ -258,40 +268,10 @@ export default function Page() {
   const [measureTxt, setMeasureTxt] = useState("");
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
-  const hist = useRef<{ past: { f: Field[]; a: number | null }[]; fut: { f: Field[]; a: number | null }[] }>({ past: [], fut: [] });
-  const prevFields = useRef<Field[]>([]);
   const activeIdRef = useRef<number | null>(null);
-  const applyingHist = useRef(false);
-  const histMounted = useRef(false);
   activeIdRef.current = activeId;
-  // Cronologia dei campi (disegno/import/modifica/rimozione/sotto-aree/visibilità)
-  // per Annulla/Ripristina.
-  useEffect(() => {
-    if (!histMounted.current) { histMounted.current = true; prevFields.current = fields; return; }
-    if (applyingHist.current) { applyingHist.current = false; prevFields.current = fields; return; }
-    hist.current.past.push({ f: prevFields.current, a: activeIdRef.current });
-    if (hist.current.past.length > 60) hist.current.past.shift();
-    hist.current.fut = [];
-    prevFields.current = fields;
-    setCanUndo(true); setCanRedo(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fields]);
-  function undo() {
-    const h = hist.current; if (!h.past.length) return;
-    h.fut.push({ f: prevFields.current, a: activeIdRef.current });
-    const s = h.past.pop()!;
-    applyingHist.current = true; prevFields.current = s.f;
-    setActiveId(s.a); setFields(s.f); renderFields(s.f, s.a);
-    setCanUndo(h.past.length > 0); setCanRedo(true);
-  }
-  function redo() {
-    const h = hist.current; if (!h.fut.length) return;
-    h.past.push({ f: prevFields.current, a: activeIdRef.current });
-    const s = h.fut.pop()!;
-    applyingHist.current = true; prevFields.current = s.f;
-    setActiveId(s.a); setFields(s.f); renderFields(s.f, s.a);
-    setCanUndo(true); setCanRedo(h.fut.length > 0);
-  }
+  // NB: la cronologia Annulla/Ripristina è definita più sotto, dopo gli stati
+  // pivot/strade che ora fanno parte dello snapshot.
   function toggleMeasure() {
     if (measuring) { setMeasuring(false); setMeasureTxt(""); mapApi.current?.stopMeasure(); setMsg(""); return; }
     setMeasuring(true); setMsg(t("Misura: clicca i punti sulla mappa. 2 punti = distanza, 3+ = area."));
@@ -349,6 +329,44 @@ export default function Page() {
   const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
   // Livello Strade (linee) disegnabile/importabile: i pivot le rispettano.
   const [roads, setRoads] = useState<{ id: string; coords: number[][] }[]>([]);
+
+  // ---- Cronologia Annulla/Ripristina UNIFICATA ----
+  // Uno snapshot copre TUTTE le mosse (campi, pivot spostati/ridimensionati/
+  // eliminati, strade) così «Annulla» torna indietro su ognuna, una alla volta.
+  const hist = useRef<{ past: Snapshot[]; fut: Snapshot[] }>({ past: [], fut: [] });
+  const prevSnap = useRef<Snapshot | null>(null);
+  const applyingHist = useRef(false);
+  const histMounted = useRef(false);
+  useEffect(() => {
+    const curr: Snapshot = { f: fields, a: activeIdRef.current, pv: pivots, pl: pivotLines, rd: roads, g: guided };
+    if (!histMounted.current) { histMounted.current = true; prevSnap.current = curr; return; }
+    if (applyingHist.current) { applyingHist.current = false; prevSnap.current = curr; return; }
+    if (prevSnap.current) hist.current.past.push(prevSnap.current);
+    if (hist.current.past.length > 80) hist.current.past.shift();
+    hist.current.fut = [];
+    prevSnap.current = curr;
+    setCanUndo(true); setCanRedo(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fields, pivots, pivotLines, roads, guided]);
+  function applySnap(s: Snapshot) {
+    applyingHist.current = true; prevSnap.current = s;
+    setActiveId(s.a); setFields(s.f); renderFields(s.f, s.a);
+    setPivots(s.pv); setPivotLines(s.pl); setGuided(s.g); setRoads(s.rd);
+    setPivotSel({ mode: "none", idx: -1 });
+  }
+  function undo() {
+    const h = hist.current; if (!h.past.length || !prevSnap.current) return;
+    h.fut.push(prevSnap.current);
+    applySnap(h.past.pop()!);
+    setCanUndo(h.past.length > 0); setCanRedo(true);
+  }
+  function redo() {
+    const h = hist.current; if (!h.fut.length || !prevSnap.current) return;
+    h.past.push(prevSnap.current);
+    applySnap(h.fut.pop()!);
+    setCanUndo(true); setCanRedo(h.fut.length > 0);
+  }
+
   const [excludeWater, setExcludeWater] = useState(true);  // niente pivot su acqua/paludi (NDWI)
   const [soilKey, setSoilKey] = useState("franco");
   const [infiltration, setInfiltration] = useState(12);   // mm/h
