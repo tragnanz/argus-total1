@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.67";
+const REV = "v0.6.68";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1380,8 +1380,6 @@ export default function Page() {
               <button title={t("Ripristina")} disabled={!canRedo} onClick={redo}
                 className="p-1.5 rounded-[9px] text-brand-darker disabled:opacity-30 hover:bg-black/5"><IcoRedo /></button>
               <span className="w-px h-5 bg-black/10" />
-              <button title={t("Livelli sulla mappa")} onClick={() => setLayersOpen((o) => !o)}
-                className={"p-1.5 rounded-[9px] " + (layersOpen ? "bg-brand/10 text-brand" : "text-brand-darker hover:bg-black/5")}><IcoLayers /></button>
               <button title={t("Misura distanze/aree")} onClick={toggleMeasure}
                 className={"p-1.5 rounded-[9px] " + (measuring ? "text-white" : "text-brand-darker hover:bg-black/5")}
                 style={measuring ? { background: "#3f8e4e" } : undefined}><IcoRuler /></button>
@@ -1392,22 +1390,6 @@ export default function Page() {
               <button title={t("Proprietà (livello / oggetto selezionato)")} onClick={() => setPropsOpen((o) => !o)}
                 className={"p-1.5 rounded-[9px] font-semibold italic w-7 " + (propsOpen ? "bg-brand/10 text-brand" : "text-brand-darker hover:bg-black/5")}>i</button>
             </div>
-            {layersOpen && (
-              <div className="absolute top-full mt-2 left-0 z-40 widget p-2 w-56">
-                <div className="text-xs font-semibold text-sage-dark mb-1 px-1">{t("Livelli sulla mappa")}</div>
-                {([
-                  ["fields", t("Campi")], ["macro", t("Macro-aree")],
-                  ["canal", t("Canali")], ["water", t("Invasi")],
-                  ["strade", t("Strade")], ["layout", t("Layout pivot")],
-                ] as const).map(([k, lbl]) => (
-                  <button key={k} onClick={() => toggleLayer(k)}
-                    className="w-full flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg hover:bg-black/5">
-                    <span className={layerVis[k] ? "text-brand" : "text-sage-dark opacity-50"}>{layerVis[k] ? "◉" : "○"}</span>
-                    <span className={layerVis[k] ? "" : "line-through opacity-60"}>{lbl}</span>
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
           {measuring && measureTxt && (
             <div className="px-3 rounded-xl text-sm text-white flex items-center shadow" style={{ background: "#123524", height: 44 }}>{measureTxt}</div>
@@ -1557,28 +1539,7 @@ export default function Page() {
                 </ul>
               )}
 
-            {/* Livelli: accendi/spegni ciò che è disegnato sulla mappa */}
-            {hasFields && (
-              <div className="mt-3">
-                <label className="text-xs text-sage-dark block mb-1">{t("Livelli sulla mappa")}</label>
-                <div className="flex gap-1 overflow-x-auto scroll-soft">
-                  {([
-                    ["fields", t("Campi")],
-                    ["macro", t("Macro-aree")],
-                    ["canal", t("Canali")],
-                    ["water", t("Invasi")],
-                    ["strade", t("Strade")],
-                    ["layout", t("Layout pivot")],
-                  ] as const).map(([k, lbl]) => (
-                    <button key={k} onClick={() => toggleLayer(k)}
-                      className={"text-[10px] px-1.5 py-1 rounded-lg transition flex items-center gap-0.5 shrink-0 whitespace-nowrap " +
-                        (layerVis[k] ? "bg-brand text-white" : "bg-panel text-sage-dark line-through opacity-70")}>
-                      <span>{layerVis[k] ? "◉" : "○"}</span>{lbl}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* I livelli (con visibilità, download, elimina) sono nel widget «Proprietà» a sinistra. */}
 
             {/* Stesse regole per tutti vs impostazioni per campo */}
             <label className="text-xs text-sage-dark mt-3 block">{t("Regole di progetto")}</label>
@@ -1691,22 +1652,34 @@ export default function Page() {
                 </div>
               ) : (
                 <div>
-                  <p className="text-[11px] text-sage-dark mb-2">{t("Clicca un oggetto sulla mappa (pivot, ecc.) per vederne e modificarne le proprietà qui. Livelli del progetto:")}</p>
+                  <p className="text-[11px] text-sage-dark mb-2">{t("Clicca un oggetto sulla mappa per modificarlo. Livelli del progetto — nascondi, scarica ed elimina:")}</p>
                   <ul className="space-y-1">
                     {([
-                      ["fields", t("Campi"), fields.length],
-                      ["macro", t("Macro-aree"), fields.reduce((s, f) => s + (f.macros?.length ?? 0), 0)],
-                      ["canal", t("Canali"), canals.length],
-                      ["water", t("Invasi/corsi d'acqua"), watercourses.length],
-                      ["strade", t("Strade"), roads.length],
-                      ["layout", t("Pivot"), pivots.length],
-                    ] as const).map(([k, lbl, n]) => (
-                      <li key={k} className="flex items-center justify-between text-[11px] bg-panel rounded-lg px-2 py-1">
-                        <button className="flex items-center gap-2 flex-1 text-left" onClick={() => toggleLayer(k)}>
-                          <span className={layerVis[k] ? "text-brand" : "text-sage-dark opacity-50"}>{layerVis[k] ? "◉" : "○"}</span>
-                          <span className={layerVis[k] ? "text-sage-dark" : "text-sage-dark line-through opacity-60"}>{lbl}</span>
+                      { k: "fields", lbl: t("Campi"), n: fields.length,
+                        dl: () => exportKmz("campi", fields.flatMap((f) => [{ name: f.name, geom: f.geom }, ...(f.macros ?? []).map((m) => ({ name: m.name, geom: m.geom }))])),
+                        clr: clearAllFields },
+                      { k: "macro", lbl: t("Macro-aree"), n: fields.reduce((s, f) => s + (f.macros?.length ?? 0), 0),
+                        dl: () => exportKmz("macro-aree", fields.flatMap((f) => (f.macros ?? []).map((m) => ({ name: m.name, geom: m.geom })))),
+                        clr: undefined },
+                      { k: "canal", lbl: t("Canali"), n: canals.length,
+                        dl: () => exportKmz("canali", canals.map((c, i) => ({ name: `Canale ${i + 1}`, geom: { type: "LineString" as const, coordinates: c.geojson.coordinates } }))),
+                        clr: clearCanalUI },
+                      { k: "water", lbl: t("Invasi/corsi d'acqua"), n: watercourses.length, dl: undefined, clr: clearWater },
+                      { k: "strade", lbl: t("Strade"), n: roads.length,
+                        dl: () => exportKmz("strade", roads.map((r, i) => ({ name: `Strada ${i + 1}`, geom: { type: "LineString" as const, coordinates: r.coords } }))),
+                        clr: clearRoads },
+                      { k: "layout", lbl: t("Pivot"), n: pivots.length,
+                        dl: () => exportKmz("pivot", pivots.map((p, i) => ({ name: `Pivot ${i + 1}`, geom: { type: "Polygon" as const, coordinates: [circleRing(p.lat, p.lng, p.r)] } }))),
+                        clr: clearGuided },
+                    ] as const).map((L) => (
+                      <li key={L.k} className="flex items-center gap-2 text-[11px] bg-panel rounded-lg px-2 py-1">
+                        <button className="flex items-center gap-2 flex-1 min-w-0 text-left" title={t("Mostra/Nascondi")} onClick={() => toggleLayer(L.k)}>
+                          <span className={layerVis[L.k] ? "text-brand" : "text-sage-dark opacity-50"}>{layerVis[L.k] ? "◉" : "○"}</span>
+                          <span className={"truncate " + (layerVis[L.k] ? "text-sage-dark" : "text-sage-dark line-through opacity-60")}>{L.lbl}</span>
                         </button>
-                        <span className="text-sage-dark tabular-nums">{n}</span>
+                        <span className="text-sage-dark tabular-nums shrink-0">{L.n}</span>
+                        {L.dl && L.n > 0 && <button className="text-brand-mid shrink-0" title={t("Scarica KMZ")} onClick={L.dl}>⤓</button>}
+                        {L.clr && L.n > 0 && <button className="text-danger shrink-0" title={t("Elimina livello")} onClick={L.clr}>✕</button>}
                       </li>
                     ))}
                   </ul>
