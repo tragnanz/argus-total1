@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.53";
+const REV = "v0.6.54";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1855,7 +1855,7 @@ export default function Page() {
           </section>
 
           <section className={secShow("rilievo")}>
-            <SectionHead title={t("Canali")} help={t("Traccia uno o più canali: automatici a gravità (a pendenza costante, con presa/finale opzionali) oppure a mano. Ogni canale è modificabile ed esportabile in KMZ.")} />
+            <SectionHead title={t("Canali")} help={t("Traccia uno o più canali: automatici a gravità (a pendenza costante, con presa/finale opzionali) oppure a mano. Ogni canale è modificabile ed esportabile in KMZ. Lo spessore è mostrato come banda sulla mappa e viene evitato dai pivot come preesistenza. Se presa e finale non sono impostati: presa nel punto più alto, finale sul bordo più basso.")} />
             <div className="flex gap-2">
               <label className="text-xs text-sage-dark flex-1">{t("Pendenza target (‰)")}
                 <input type="number" min={0.1} max={100} step={0.5} value={canalPermille}
@@ -1866,7 +1866,6 @@ export default function Page() {
                   onChange={(e) => setCanalWidth(Number(e.target.value))} className="field-input mt-1" />
               </label>
             </div>
-            <p className="hint mt-1">{t("Lo spessore è mostrato come banda sulla mappa e viene evitato dai pivot come preesistenza.")}</p>
 
             <div className="bg-panel rounded-lg p-2 mt-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Presa e finale (opzionali)")}</div>
@@ -1883,7 +1882,6 @@ export default function Page() {
               {(canalStart || canalEnd) && (
                 <button className="text-xs text-brand-mid mt-1" onClick={resetPicks}>{t("Azzera presa/finale")}</button>
               )}
-              <p className="hint mt-1">{t("Se non impostati: presa nel punto più alto, finale sul bordo più basso.")}</p>
             </div>
 
             <div className="flex gap-2 mt-2">
