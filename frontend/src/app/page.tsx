@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.28";
+const REV = "v0.6.29";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -994,7 +994,7 @@ export default function Page() {
                 <div className="text-xs font-semibold text-sage-dark mb-1 px-1">{t("Livelli sulla mappa")}</div>
                 {([
                   ["fields", t("Campi")], ["macro", t("Macro-aree")],
-                  ["canal", t("Canali")], ["water", t("Corsi d'acqua")], ["layout", t("Layout pivot")],
+                  ["canal", t("Canali")], ["water", t("Invasi")], ["layout", t("Layout pivot")],
                 ] as const).map(([k, lbl]) => (
                   <button key={k} onClick={() => toggleLayer(k)}
                     className="w-full flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg hover:bg-black/5">
@@ -1121,16 +1121,16 @@ export default function Page() {
             {hasFields && (
               <div className="mt-3">
                 <label className="text-xs text-sage-dark block mb-1">{t("Livelli sulla mappa")}</label>
-                <div className="flex flex-wrap gap-1">
+                <div className="flex gap-1 overflow-x-auto scroll-soft">
                   {([
                     ["fields", t("Campi")],
                     ["macro", t("Macro-aree")],
                     ["canal", t("Canali")],
-                    ["water", t("Corsi d'acqua")],
+                    ["water", t("Invasi")],
                     ["layout", t("Layout pivot")],
                   ] as const).map(([k, lbl]) => (
                     <button key={k} onClick={() => toggleLayer(k)}
-                      className={"text-[11px] px-2 py-1 rounded-lg transition flex items-center gap-1 " +
+                      className={"text-[10px] px-1.5 py-1 rounded-lg transition flex items-center gap-0.5 shrink-0 whitespace-nowrap " +
                         (layerVis[k] ? "bg-brand text-white" : "bg-panel text-sage-dark line-through opacity-70")}>
                       <span>{layerVis[k] ? "◉" : "○"}</span>{lbl}
                     </button>
