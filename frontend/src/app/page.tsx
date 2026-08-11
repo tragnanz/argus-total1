@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.49";
+const REV = "v0.6.50";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1611,14 +1611,16 @@ export default function Page() {
 
           <section className={secShow("analisi")}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Anteprima satellitare")}</h3>
-            <label className="text-xs text-sage-dark">{t("Indice")}</label>
-            <select className="field-input mt-1" value={index} onChange={(e) => setIndex(e.target.value)}>
-              {INDICES.map((i) => <option key={i.id} value={i.id}>{i.id.toUpperCase()} — {t(i.label)}</option>)}
-            </select>
-
-            <button className="btn-ghost w-full mt-2" disabled={busy === "scenes" || !activeGeom} onClick={searchScenes}>
-              {busy === "scenes" ? t("Cerco…") : t("Cerca date disponibili")}
-            </button>
+            <div className="flex gap-2 items-end">
+              <label className="text-xs text-sage-dark flex-1 min-w-0">{t("Indice")}
+                <select className="field-input mt-1 w-full" value={index} onChange={(e) => setIndex(e.target.value)}>
+                  {INDICES.map((i) => <option key={i.id} value={i.id}>{i.id.toUpperCase()} — {t(i.label)}</option>)}
+                </select>
+              </label>
+              <button className="btn-ghost shrink-0 whitespace-nowrap" disabled={busy === "scenes" || !activeGeom} onClick={searchScenes}>
+                {busy === "scenes" ? t("Cerco…") : t("Cerca date")}
+              </button>
+            </div>
 
             {!!scenes.length && (
               <>
