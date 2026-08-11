@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.50";
+const REV = "v0.6.51";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1612,12 +1612,12 @@ export default function Page() {
           <section className={secShow("analisi")}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Anteprima satellitare")}</h3>
             <div className="flex gap-2 items-end">
-              <label className="text-xs text-sage-dark flex-1 min-w-0">{t("Indice")}
+              <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Indice")}
                 <select className="field-input mt-1 w-full" value={index} onChange={(e) => setIndex(e.target.value)}>
                   {INDICES.map((i) => <option key={i.id} value={i.id}>{i.id.toUpperCase()} — {t(i.label)}</option>)}
                 </select>
               </label>
-              <button className="btn-ghost shrink-0 whitespace-nowrap" disabled={busy === "scenes" || !activeGeom} onClick={searchScenes}>
+              <button className="btn-ghost flex-1 basis-0 whitespace-nowrap" disabled={busy === "scenes" || !activeGeom} onClick={searchScenes}>
                 {busy === "scenes" ? t("Cerco…") : t("Cerca date")}
               </button>
             </div>
@@ -1655,15 +1655,17 @@ export default function Page() {
               </button>
               <button className="btn-ghost flex-1 basis-0" onClick={clearDem}>{t("Rimuovi DEM")}</button>
             </div>
-            <label className="text-xs text-sage-dark block mt-2">{t("Isoipse ogni")}
-              <select className="field-input mt-1" value={isoInterval} onChange={(e) => setIsoInterval(Number(e.target.value))}>
-                <option value={0}>{t("Automatico")}</option>
-                {[0.5, 1, 2, 2.5, 5, 10, 20, 25, 50].map((v) => <option key={v} value={v}>{v} m</option>)}
-              </select>
-            </label>
-            <button className="btn-primary w-full mt-2" disabled={busy === "terrain" || !activeGeom} onClick={showTerrain}>
-              {busy === "terrain" ? t("Ricompongo…") : t("Rilievo + isoipse (dislivelli)")}
-            </button>
+            <div className="flex gap-2 items-end mt-2">
+              <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Isoipse ogni")}
+                <select className="field-input mt-1 w-full" value={isoInterval} onChange={(e) => setIsoInterval(Number(e.target.value))}>
+                  <option value={0}>{t("Automatico")}</option>
+                  {[0.5, 1, 2, 2.5, 5, 10, 20, 25, 50].map((v) => <option key={v} value={v}>{v} m</option>)}
+                </select>
+              </label>
+              <button className="btn-primary flex-1 basis-0 whitespace-nowrap" disabled={busy === "terrain" || !activeGeom} onClick={showTerrain}>
+                {busy === "terrain" ? t("Ricompongo…") : t("Rilievo + isoipse")}
+              </button>
+            </div>
             {demInfo && (
               <div className="mt-2">
                 <ScaleBar scale={demInfo.scale} unit=" m" />
