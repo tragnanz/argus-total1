@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.42";
+const REV = "v0.6.43";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -273,6 +273,7 @@ export default function Page() {
   const [elevData, setElevData] = useState<ElevationResult | null>(null);
   const [leftMin, setLeftMin] = useState(false);    // pannello Progetto ridotto a icona
   const [rightMin, setRightMin] = useState(false);  // pannello schede ridotto a icona
+  const [propsOpen, setPropsOpen] = useState(false);  // pannello Proprietà: aperto solo su richiesta (icona i)
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const activeIdRef = useRef<number | null>(null);
@@ -2023,7 +2024,7 @@ export default function Page() {
             {/* La modifica di gruppo/singolo pivot è nel pannello «Proprietà» a sinistra. */}
             {!!pivots.length && (
               <p className="hint mt-3 border-t border-brand/15 pt-2">
-                {t("Seleziona i pivot sulla mappa (1° clic = gruppo, 2° clic = singolo): le proprietà si modificano nel pannello «Proprietà» in basso a sinistra.")}
+                {t("Seleziona i pivot sulla mappa (1° clic = gruppo, 2° clic = singolo): apri il pannello «Proprietà» con l'icona «i» in basso a sinistra per modificarli.")}
               </p>
             )}
 
@@ -2130,12 +2131,21 @@ export default function Page() {
         </div>
         )}
 
-        {/* Pannello sinistro INFERIORE: parametri del livello / oggetto selezionato */}
-        {!leftMin && (
+        {/* Pannello sinistro INFERIORE: parametri del livello / oggetto selezionato.
+            Visibile solo su richiesta, tramite l'icona «i». */}
+        {!leftMin && !propsOpen && (
+          <button onClick={() => setPropsOpen(true)} title={t("Proprietà (livello / oggetto selezionato)")}
+            className="absolute left-4 bottom-4 z-30 widget w-9 h-9 flex items-center justify-center text-brand-darker hover:bg-black/5 font-semibold italic">
+            i
+          </button>
+        )}
+        {!leftMin && propsOpen && (
           <div className="absolute left-4 bottom-4 w-[440px] max-w-[calc(100vw_-_2rem)] widget flex flex-col overflow-hidden"
             style={{ maxHeight: "34vh" }}>
             <div className="flex items-center justify-between px-3 pt-2 shrink-0">
               <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Proprietà")}</span>
+              <button onClick={() => setPropsOpen(false)} title={t("Chiudi")}
+                className="text-sage-dark hover:text-danger p-1 rounded hover:bg-black/5">✕</button>
             </div>
             <div className="overflow-auto scroll-soft p-3 pt-1 space-y-2">
               {selPivot ? (
