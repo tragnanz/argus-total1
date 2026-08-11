@@ -1410,6 +1410,30 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       if (saved && LANGS.some((l) => l.code === saved)) setLang(saved);
     } catch { /* SSR/no-storage */ }
   }, []);
+  // Recupero automatico dopo un nuovo deploy: se una scheda vecchia prova a
+  // caricare un chunk non più presente sul server (ChunkLoadError), ricarico la
+  // pagina UNA volta per prendere i file aggiornati (niente loop grazie al flag).
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const onErr = (e: any) => {
+      const name = String(e?.reason?.name || e?.error?.name || "");
+      const msg = String(e?.reason?.message || e?.message || "");
+      if (name === "ChunkLoadError" || /Loading chunk [\w-]+ failed|ChunkLoadError|Loading CSS chunk/i.test(msg)) {
+        try {
+          if (!sessionStorage.getItem("argus-chunk-reload")) {
+            sessionStorage.setItem("argus-chunk-reload", "1");
+            window.location.reload();
+          }
+        } catch { window.location.reload(); }
+      }
+    };
+    window.addEventListener("error", onErr);
+    window.addEventListener("unhandledrejection", onErr);
+    // se la pagina resta stabile qualche secondo, azzera il flag così un futuro
+    // deploy potrà di nuovo attivare il ricaricamento
+    const tmo = setTimeout(() => { try { sessionStorage.removeItem("argus-chunk-reload"); } catch { /* */ } }, 6000);
+    return () => { window.removeEventListener("error", onErr); window.removeEventListener("unhandledrejection", onErr); clearTimeout(tmo); };
+  }, []);
   // aggiorna lingua e direzione del documento (RTL per l'arabo)
   useEffect(() => {
     if (typeof document !== "undefined") {
