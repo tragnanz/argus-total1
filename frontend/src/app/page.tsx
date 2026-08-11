@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.60";
+const REV = "v0.6.61";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1395,14 +1395,15 @@ export default function Page() {
           </select>
         </div>
 
-        {/* Pannello sinistro: flusso di progetto (riducibile a icona) */}
+        {/* Colonna sinistra: pannello Progetto + widget Proprietà (impilati) */}
+        <div className="absolute top-[4.5rem] left-4 bottom-[6.5rem] w-[440px] max-w-[calc(100vw_-_2rem)] flex flex-col gap-3 z-30 pointer-events-none">
         {leftMin ? (
           <button onClick={() => setLeftMin(false)} title={t("Espandi il pannello Progetto")}
-            className="absolute top-[4.5rem] left-4 z-30 widget px-3 py-2 flex items-center gap-2 text-sm text-brand-darker hover:bg-black/5">
+            className="pointer-events-auto self-start widget px-3 py-2 flex items-center gap-2 text-sm text-brand-darker hover:bg-black/5">
             <IcoExpand /> {t("Progetto")}
           </button>
         ) : (
-        <div className="absolute top-[4.5rem] left-4 w-[440px] max-w-[calc(100vw_-_2rem)] max-h-[52vh] widget flex flex-col overflow-hidden">
+        <div className="pointer-events-auto w-full max-h-[52vh] shrink-0 widget flex flex-col overflow-hidden">
           <div className="flex items-center justify-between px-3 pt-2 shrink-0">
             <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Progetto")}</span>
             <button onClick={() => setLeftMin(true)} title={t("Riduci a icona")}
@@ -1577,6 +1578,70 @@ export default function Page() {
           </div>
         </div>
         )}
+
+        {/* Widget Proprietà: livelli + oggetto selezionato, subito sotto il pannello Progetto */}
+        {propsOpen && (
+          <div className="pointer-events-auto w-full flex-1 min-h-0 widget flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-3 pt-2 shrink-0">
+              <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Proprietà")}</span>
+              <button onClick={() => setPropsOpen(false)} title={t("Chiudi")}
+                className="text-sage-dark hover:text-danger p-1 rounded hover:bg-black/5">✕</button>
+            </div>
+            <div className="overflow-auto scroll-soft p-3 pt-1 space-y-2">
+              {selPivot ? (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <b className="text-brand-darker text-sm">{t("Pivot")} #{pivotSel.idx + 1}</b>
+                    <button className="text-[11px] text-brand-mid" onClick={() => setPivotSel({ mode: "group", idx: -1 })}>← {t("Gruppo")}</button>
+                  </div>
+                  <p className="text-[11px] text-sage-dark mb-2">{t("Trascina il pallino giallo sulla mappa per spostarlo.")}</p>
+                  <div className="flex gap-2">
+                    <label className="text-[11px] text-sage-dark flex-1">{t("Raggio (m)")}
+                      <input type="number" min={30} max={1000} step={5} value={Math.round(selPivot.r)}
+                        onChange={(e) => updateSelPivot({ r: Number(e.target.value) })} className="field-input mt-1" /></label>
+                    <label className="text-[11px] text-sage-dark flex-1">{t("Connessione")}
+                      <select className="field-input mt-1" value={selPivot.conn ?? "canal"}
+                        onChange={(e) => updateSelPivot({ conn: e.target.value })}>
+                        <option value="canal">{t("Canaletta (gravità)")}</option>
+                        <option value="pipe">{t("Tubazione (pressione)")}</option>
+                      </select></label>
+                  </div>
+                  <div className="text-[11px] text-sage-dark mt-1">{t("Area")}: <b>{uHa(Math.PI * selPivot.r * selPivot.r / 10000, 1)}</b></div>
+                  <button className="btn-ghost w-full text-danger mt-2" onClick={deleteSelPivot}>{t("Elimina pivot")}</button>
+                </div>
+              ) : pivots.length && pivotSel.mode === "group" ? (
+                <div>
+                  <b className="text-brand-darker text-sm">{t("Gruppo pivot")} · {pivots.length}</b>
+                  <p className="text-[11px] text-sage-dark mt-1">{t("Sulla mappa: 2° clic su un pivot per modificarlo singolarmente.")}</p>
+                  <button className="btn-ghost w-full mt-2" onClick={applyRadiusToAll}>{t("Applica raggio {r} m a tutti", { r: pivotR })}</button>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-[11px] text-sage-dark mb-2">{t("Clicca un oggetto sulla mappa (pivot, ecc.) per vederne e modificarne le proprietà qui. Livelli del progetto:")}</p>
+                  <ul className="space-y-1">
+                    {([
+                      ["fields", t("Campi"), fields.length],
+                      ["macro", t("Macro-aree"), fields.reduce((s, f) => s + (f.macros?.length ?? 0), 0)],
+                      ["canal", t("Canali"), canals.length],
+                      ["water", t("Invasi/corsi d'acqua"), watercourses.length],
+                      ["strade", t("Strade"), roads.length],
+                      ["layout", t("Pivot"), pivots.length],
+                    ] as const).map(([k, lbl, n]) => (
+                      <li key={k} className="flex items-center justify-between text-[11px] bg-panel rounded-lg px-2 py-1">
+                        <button className="flex items-center gap-2 flex-1 text-left" onClick={() => toggleLayer(k)}>
+                          <span className={layerVis[k] ? "text-brand" : "text-sage-dark opacity-50"}>{layerVis[k] ? "◉" : "○"}</span>
+                          <span className={layerVis[k] ? "text-sage-dark" : "text-sage-dark line-through opacity-60"}>{lbl}</span>
+                        </button>
+                        <span className="text-sage-dark tabular-nums">{n}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        </div>
 
         {/* Pannello destro: schede (riducibile a icona) */}
         {rightMin ? (
@@ -2099,72 +2164,6 @@ export default function Page() {
           </p>
           </div>
         </div>
-        )}
-
-        {/* Widget Proprietà: informazioni dei livelli e dell'oggetto selezionato,
-            con impostazioni modificabili. Docked in basso a sinistra, sotto il
-            pannello Progetto e sopra lo zoom/versione. Si chiude con «i» o «×». */}
-        {propsOpen && (
-          <div className="absolute left-4 w-[440px] max-w-[calc(100vw_-_2rem)] widget flex flex-col overflow-hidden z-30"
-            style={{ top: leftMin ? "calc(4.5rem + 3.25rem)" : "calc(4.5rem + 52vh + 0.75rem)", bottom: "6.5rem" }}>
-            <div className="flex items-center justify-between px-3 pt-2 shrink-0">
-              <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Proprietà")}</span>
-              <button onClick={() => setPropsOpen(false)} title={t("Chiudi")}
-                className="text-sage-dark hover:text-danger p-1 rounded hover:bg-black/5">✕</button>
-            </div>
-            <div className="overflow-auto scroll-soft p-3 pt-1 space-y-2">
-              {selPivot ? (
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <b className="text-brand-darker text-sm">{t("Pivot")} #{pivotSel.idx + 1}</b>
-                    <button className="text-[11px] text-brand-mid" onClick={() => setPivotSel({ mode: "group", idx: -1 })}>← {t("Gruppo")}</button>
-                  </div>
-                  <p className="text-[11px] text-sage-dark mb-2">{t("Trascina il pallino giallo sulla mappa per spostarlo.")}</p>
-                  <div className="flex gap-2">
-                    <label className="text-[11px] text-sage-dark flex-1">{t("Raggio (m)")}
-                      <input type="number" min={30} max={1000} step={5} value={Math.round(selPivot.r)}
-                        onChange={(e) => updateSelPivot({ r: Number(e.target.value) })} className="field-input mt-1" /></label>
-                    <label className="text-[11px] text-sage-dark flex-1">{t("Connessione")}
-                      <select className="field-input mt-1" value={selPivot.conn ?? "canal"}
-                        onChange={(e) => updateSelPivot({ conn: e.target.value })}>
-                        <option value="canal">{t("Canaletta (gravità)")}</option>
-                        <option value="pipe">{t("Tubazione (pressione)")}</option>
-                      </select></label>
-                  </div>
-                  <div className="text-[11px] text-sage-dark mt-1">{t("Area")}: <b>{uHa(Math.PI * selPivot.r * selPivot.r / 10000, 1)}</b></div>
-                  <button className="btn-ghost w-full text-danger mt-2" onClick={deleteSelPivot}>{t("Elimina pivot")}</button>
-                </div>
-              ) : pivots.length && pivotSel.mode === "group" ? (
-                <div>
-                  <b className="text-brand-darker text-sm">{t("Gruppo pivot")} · {pivots.length}</b>
-                  <p className="text-[11px] text-sage-dark mt-1">{t("Sulla mappa: 2° clic su un pivot per modificarlo singolarmente.")}</p>
-                  <button className="btn-ghost w-full mt-2" onClick={applyRadiusToAll}>{t("Applica raggio {r} m a tutti", { r: pivotR })}</button>
-                </div>
-              ) : (
-                <div>
-                  <p className="text-[11px] text-sage-dark mb-2">{t("Clicca un oggetto sulla mappa (pivot, ecc.) per vederne e modificarne le proprietà qui. Livelli del progetto:")}</p>
-                  <ul className="space-y-1">
-                    {([
-                      ["fields", t("Campi"), fields.length],
-                      ["macro", t("Macro-aree"), fields.reduce((s, f) => s + (f.macros?.length ?? 0), 0)],
-                      ["canal", t("Canali"), canals.length],
-                      ["water", t("Invasi/corsi d'acqua"), watercourses.length],
-                      ["strade", t("Strade"), roads.length],
-                      ["layout", t("Pivot"), pivots.length],
-                    ] as const).map(([k, lbl, n]) => (
-                      <li key={k} className="flex items-center justify-between text-[11px] bg-panel rounded-lg px-2 py-1">
-                        <button className="flex items-center gap-2 flex-1 text-left" onClick={() => toggleLayer(k)}>
-                          <span className={layerVis[k] ? "text-brand" : "text-sage-dark opacity-50"}>{layerVis[k] ? "◉" : "○"}</span>
-                          <span className={layerVis[k] ? "text-sage-dark" : "text-sage-dark line-through opacity-60"}>{lbl}</span>
-                        </button>
-                        <span className="text-sage-dark tabular-nums">{n}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          </div>
         )}
 
         {/* Messaggi */}
