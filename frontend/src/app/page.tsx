@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.56";
+const REV = "v0.6.57";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1722,7 +1722,7 @@ export default function Page() {
 
           <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Idoneità del terreno")}</h3>
-            <div className="flex gap-3 items-end">
+            <div className="flex gap-3 items-start">
               <div className="flex-1 min-w-0">
                 <div className="text-xs text-sage-dark mb-1">{t("Pesi dei fattori")}</div>
                 <WeightRow label={t("Pendenza")} v={cur.weights.slope} onChange={(v) => setW("slope", v)} />
@@ -1730,17 +1730,17 @@ export default function Page() {
                 <WeightRow label={t("Umidità")} v={cur.weights.moisture} onChange={(v) => setW("moisture", v)} />
                 <WeightRow label={t("Clima")} v={cur.weights.climate} onChange={(v) => setW("climate", v)} />
               </div>
-              <div className="w-24 shrink-0 space-y-2">
-                <label className="text-[11px] leading-tight text-sage-dark block whitespace-nowrap">
-                  {t("Pend. ideale (‰)")}
+              <div className="w-32 shrink-0 space-y-2">
+                <div>
+                  <div className="text-[11px] leading-tight text-sage-dark mb-1">{t("Pend. ideale (‰)")}</div>
                   <input type="number" min={0} max={100} step={0.5} value={cur.slopeIdeal}
-                    onChange={(e) => patch({ slopeIdeal: Number(e.target.value) })} className="field-input mt-1 px-2 py-1.5 text-sm w-full" />
-                </label>
-                <label className="text-[11px] leading-tight text-sage-dark block whitespace-nowrap">
-                  {t("Pend. max (‰)")}
+                    onChange={(e) => patch({ slopeIdeal: Number(e.target.value) })} className="field-input px-2 py-1.5 text-sm w-full" />
+                </div>
+                <div>
+                  <div className="text-[11px] leading-tight text-sage-dark mb-1">{t("Pend. max (‰)")}</div>
                   <input type="number" min={0} max={200} step={0.5} value={cur.slopeMax}
-                    onChange={(e) => patch({ slopeMax: Number(e.target.value) })} className="field-input mt-1 px-2 py-1.5 text-sm w-full" />
-                </label>
+                    onChange={(e) => patch({ slopeMax: Number(e.target.value) })} className="field-input px-2 py-1.5 text-sm w-full" />
+                </div>
               </div>
             </div>
             <div className="flex gap-2 mt-2">
