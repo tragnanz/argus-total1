@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.48";
+const REV = "v0.6.49";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -353,8 +353,6 @@ export default function Page() {
   const [pivots, setPivots] = useState<PivotItem[]>([]);
   const [pivotLines, setPivotLines] = useState<{ kind: string; coords: number[][] }[]>([]);
   const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
-  // Disposizione impianti: lungo il canale oppure a maglia su tutti i campi.
-  const [dispMode, setDispMode] = useState<"canal" | "mesh">("canal");
   // Livello Strade (linee, con spessore) disegnabile/importabile: i pivot le rispettano.
   const [roads, setRoads] = useState<{ id: string; coords: number[][]; width_m: number }[]>([]);
   const [roadWidth, setRoadWidth] = useState(8);      // spessore strada di default (m)
@@ -1123,7 +1121,7 @@ export default function Page() {
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   // Comando unico: instrada al motore giusto secondo la disposizione scelta.
-  function insertImpianti() { return dispMode === "mesh" ? genLayoutUnified() : designGuided(); }
+  function insertImpianti() { return genLayoutUnified(); }
   function clearImpianti() {
     clearGuided();
     setFields((fs) => fs.map((f) => ({ ...f, lay: null, layGeo: null })));
@@ -1133,13 +1131,7 @@ export default function Page() {
   function renderMeshParams() {
     return (
       <div className="mt-1">
-        <label className="text-xs text-sage-dark">{t("Configurazione")}</label>
-        <div className="seg mt-1">
-          <div className="seg-item" data-active={cur.layoutCfg === "square"} onClick={() => patch({ layoutCfg: "square" })}>{t("Maglia quadrata")}</div>
-          <div className="seg-item" data-active={cur.layoutCfg === "staggered"} onClick={() => patch({ layoutCfg: "staggered" })}>{t("Maglia triangolare")}</div>
-        </div>
-
-        <label className="text-xs text-sage-dark mt-2 block">{t("Trasporto acqua")}</label>
+        <label className="text-xs text-sage-dark mt-1 block">{t("Trasporto acqua")}</label>
         <select className="field-input mt-1" value={cur.transport}
           onChange={(e) => { const tp = e.target.value as Transport; patch({ transport: tp, slopeIdeal: SLOPE_PM[tp].ideal, slopeMax: SLOPE_PM[tp].max }); }}>
           <option value="buried">{t("Tubazioni interrate (pressione)")}</option>
@@ -1937,13 +1929,16 @@ export default function Page() {
           </section>
 
           <section className={secShow("impianti")}>
-            <SectionHead title={t("Impianti")} help={t("Un unico comando «Inserisci impianti». Scegli la disposizione: «Lungo il canale» (pivot ai lati del canale, connessione gravità/pressione decisa dal terreno) oppure «A maglia sui campi» (reticolo su tutti i campi con orientamento, trasporto acqua e dimensionamento idraulico). In entrambi i casi i pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo pivot (raggio, posizione, connessione, elimina). Le strade sono nella pagina Accessori.")} />
+            <SectionHead title={t("Impianti")} help={t("Un unico comando «Inserisci impianti» dispone i pivot a reticolo su tutti i campi. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nelle pagine Accessori e Canali.")} />
 
             <label className="text-xs text-sage-dark block mb-1">{t("Disposizione")}</label>
-            <div className="seg mb-2">
-              <div className="seg-item" data-active={dispMode === "canal"} onClick={() => setDispMode("canal")}>{t("Lungo il canale")}</div>
-              <div className="seg-item" data-active={dispMode === "mesh"} onClick={() => setDispMode("mesh")}>{t("A maglia sui campi")}</div>
+            <div className="seg mb-1">
+              <div className="seg-item" data-active={cur.layoutCfg === "square"} onClick={() => patch({ layoutCfg: "square" })}>{t("A quadrato")}</div>
+              <div className="seg-item" data-active={cur.layoutCfg === "staggered"} onClick={() => patch({ layoutCfg: "staggered" })}>{t("A triangolo")}</div>
             </div>
+            <p className="hint mb-2">{cur.layoutCfg === "staggered"
+              ? t("A triangolo: file sfalsate di mezzo passo — i pivot si incastrano e recuperi più spazio.")
+              : t("A quadrato: pivot allineati su una griglia regolare.")}</p>
 
             <div className="bg-panel rounded-lg p-2 mt-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Raggio e distanze di rispetto (m)")}</div>
@@ -1971,66 +1966,21 @@ export default function Page() {
               </div>
             </div>
 
-            {dispMode === "canal" && (<>
-              <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
-                <input type="checkbox" checked={fillEmpty} onChange={(e) => setFillEmpty(e.target.checked)} />
-                {t("Riempi spazi vuoti")}
-              </label>
-              <label className="flex items-center gap-2 text-xs text-sage-dark mt-1">
-                <input type="checkbox" checked={excludeWater} onChange={(e) => setExcludeWater(e.target.checked)} />
-                {t("Solo terreno libero (no canali, no acqua/paludi NDWI)")}
-              </label>
-              {excludeWater && !date && <p className="hint mt-1 text-danger">{t("Per escludere l'acqua serve una data satellitare: cercala nella scheda Analisi.")}</p>}
-
-              <label className="text-xs text-sage-dark block mt-2">{t("Pivot per lato")}
-                <select className="field-input mt-1" value={perSide} onChange={(e) => setPerSide(Number(e.target.value))}>
-                  {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </label>
-            </>)}
-
-            {dispMode === "mesh" && renderMeshParams()}
+            {renderMeshParams()}
 
             <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 mt-2 leading-relaxed">
               {t("Raggio")}: <b>{uM(pivotR)}</b> · {t("Area per pivot")}: <b>{uHa(Math.PI * pivotR * pivotR / 10000, 1)}</b><br />
               {t("Interasse (centro-centro)")}: <b>{uM(2 * pivotR + safetyM)}</b><br />
-              <span className="text-brand-mid">{dispMode === "canal"
-                ? t("I pivot non si sovrappongono e rispettano i franchi: tra i pivot, da strade e da canali/invasi.")
-                : t("Reticolo su tutti i campi con orientamento e trasporto acqua; raggio e distanza tra pivot presi da qui sopra.")}</span>
+              <span className="text-brand-mid">{t("Reticolo su tutti i campi; i pivot non si sovrappongono e rispettano i franchi: tra i pivot, da strade e da canali/invasi.")}</span>
             </div>
             <div className="flex gap-2 mt-2">
               <button className="btn-primary flex-1 basis-0"
-                disabled={busy === "guided" || busy === "layout" || (dispMode === "canal" ? !activeGeom : !hasFields)}
+                disabled={busy === "layout" || !hasFields}
                 onClick={insertImpianti}>
-                {busy === "guided" || busy === "layout" ? t("Calcolo…") : t("Inserisci impianti")}
+                {busy === "layout" ? t("Calcolo…") : t("Inserisci impianti")}
               </button>
               <button className="btn-ghost flex-1 basis-0" onClick={clearImpianti}>{t("Rimuovi")}</button>
             </div>
-            {dispMode === "canal" && guided && (
-              <div className="mt-3 space-y-2">
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="bg-panel rounded-lg p-2">
-                    <div className="text-lg font-semibold text-brand">{guided.meta.n_pivots}</div>
-                    <div className="text-[11px] text-sage-dark">pivot</div>
-                  </div>
-                  <div className="bg-panel rounded-lg p-2">
-                    <div className="text-lg font-semibold text-brand">{guided.meta.n_canal_conn}</div>
-                    <div className="text-[11px] text-sage-dark">{t("a gravità (canaletta)")}</div>
-                  </div>
-                  <div className="bg-panel rounded-lg p-2">
-                    <div className="text-lg font-semibold text-brand">{guided.meta.n_pipe_conn}</div>
-                    <div className="text-[11px] text-sage-dark">{t("in tubazione")}</div>
-                  </div>
-                </div>
-                <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
-                  {t("Raggio")}: <b>{uM(guided.meta.radius_m)}</b> · {t("Area per pivot")}: <b>{uHa(guided.meta.pivot_ha, 1)}</b><br />
-                  {t("Distanza di sicurezza")}: <b>{uM(guided.meta.safety_m)}</b> · {t("Interasse")}: <b>{uM(guided.meta.spacing_m)}</b><br />
-                  {t("Superficie netta")}: <b>{uHa(guided.meta.net_ha)}</b> · {guided.meta.n_along_canal} {t("lungo il canale")} · {guided.meta.n_fill} {t("riempimento")}
-                  {!!guided.meta.water_excluded && <><br /><span className="text-brand-mid">{t("Esclusi canale e aree con acqua/paludi (NDWI).")}</span></>}
-                </div>
-                <button className="btn-primary w-full" disabled={!projectId} onClick={savePivotsLayer}>{t("Salva pivot nel progetto")}</button>
-              </div>
-            )}
 
             {/* La modifica di gruppo/singolo pivot è nel pannello «Proprietà» a sinistra. */}
             {!!pivots.length && (
@@ -2039,8 +1989,8 @@ export default function Page() {
               </p>
             )}
 
-            {/* Riepilogo disposizione a maglia + dimensionamento idraulico */}
-            {dispMode === "mesh" && agg.count > 0 && (
+            {/* Riepilogo disposizione + dimensionamento idraulico */}
+            {agg.count > 0 && (
               <div className="mt-3 space-y-2">
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="bg-panel rounded-lg p-2">
