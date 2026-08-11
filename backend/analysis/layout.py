@@ -335,11 +335,40 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     for (plon, plat) in pumps:
         features.append({"type": "Feature", "properties": {"kind": "pump"},
                          "geometry": {"type": "Point", "coordinates": [plon, plat]}})
-    # linea del canale (bordo scelto), nel frame ruotato
-    cy = rmaxy if top else rminy
-    canal = [list(to_wgs.transform(*unrot(rminx, cy))), list(to_wgs.transform(*unrot(rmaxx, cy)))]
-    features.append({"type": "Feature", "properties": {"kind": "canal"},
-                     "geometry": {"type": "LineString", "coordinates": canal}})
+    # linea del canale (bordo scelto), nel frame ruotato.
+    # VINCOLO: il canale deve restare SEMPRE dentro il campo. Il bordo del bbox è
+    # spesso tangente/esterno a un poligono irregolare; quindi rientro dal bordo
+    # verso il centro finché la linea orizzontale ha un tratto interno abbastanza
+    # lungo, poi tengo SOLO i tratti dentro il poligono (un campo concavo può darne
+    # più d'uno).
+    def _inside_runs(cry):
+        runs = []; cur = []
+        nseg = max(8, int((rmaxx - rminx) / max(res, 1.0)))
+        for k in range(nseg + 1):
+            rx = rminx + (rmaxx - rminx) * k / nseg
+            if path_rot.contains_point((rx, cry)):
+                cur.append(rx)
+            else:
+                if len(cur) >= 2:
+                    runs.append((cur[0], cur[-1]))
+                cur = []
+        if len(cur) >= 2:
+            runs.append((cur[0], cur[-1]))
+        return runs
+
+    step_in = -1.0 if top else 1.0            # rientro verso il centro dell'area
+    cy = canal_ry
+    runs = _inside_runs(cy)
+    max_steps = int(abs(rmaxy - rminy) / max(res, 1.0) / 2)
+    steps = 0
+    while (not runs or max((b - a) for a, b in runs) < 2 * R) and steps < max_steps:
+        cy += step_in * res
+        runs = _inside_runs(cy)
+        steps += 1
+    for (rx0, rx1) in runs:                   # solo i tratti interni al poligono
+        seg = [list(to_wgs.transform(*unrot(rx0, cy))), list(to_wgs.transform(*unrot(rx1, cy)))]
+        features.append({"type": "Feature", "properties": {"kind": "canal"},
+                         "geometry": {"type": "LineString", "coordinates": seg}})
 
     minx, miny, maxx, maxy = g["minx"], g["miny"], g["maxx"], g["maxy"]
     corners = [(minx, miny), (maxx, miny), (maxx, maxy), (minx, maxy)]

@@ -8,11 +8,11 @@ import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
 import type {
   Area, Client, Polygon, Project, Scene, ColorScale, SuitMeta, SuitWeights,
-  LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea, Canal, GuidedResult, ProjectLayer, Watercourse,
+  LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea, Canal, GuidedResult, ProjectLayer, Watercourse, ElevationResult,
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.36";
+const REV = "v0.6.37";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -205,6 +205,7 @@ const IcoUndo = () => (<svg {...svgProps}><path d="M9 14 4 9l5-5" /><path d="M4 
 const IcoRedo = () => (<svg {...svgProps}><path d="m15 14 5-5-5-5" /><path d="M20 9H9a5 5 0 0 0 0 10h1" /></svg>);
 const IcoLayers = () => (<svg {...svgProps}><path d="m12 2 9 5-9 5-9-5 9-5Z" /><path d="m3 12 9 5 9-5" /><path d="m3 17 9 5 9-5" /></svg>);
 const IcoRuler = () => (<svg {...svgProps}><path d="M3 15 15 3l6 6L9 21z" /><path d="M7.5 10.5 9 12M10.5 7.5 12 9M13.5 4.5 15 6" /></svg>);
+const IcoElevation = () => (<svg {...svgProps}><path d="M3 20h18" /><path d="m3 17 5-7 3 3.5L16 5l5 12" /></svg>);
 const IcoCross = () => (<svg {...svgProps}><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></svg>);
 
 // Intestazione di sezione con testo-guida apribile/chiudibile da "?"
@@ -266,6 +267,8 @@ export default function Page() {
   const [layersOpen, setLayersOpen] = useState(false);
   const [measuring, setMeasuring] = useState(false);
   const [measureTxt, setMeasureTxt] = useState("");
+  const [elevOn, setElevOn] = useState(false);
+  const [elevData, setElevData] = useState<ElevationResult | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const activeIdRef = useRef<number | null>(null);
@@ -274,8 +277,26 @@ export default function Page() {
   // pivot/strade che ora fanno parte dello snapshot.
   function toggleMeasure() {
     if (measuring) { setMeasuring(false); setMeasureTxt(""); mapApi.current?.stopMeasure(); setMsg(""); return; }
+    if (elevOn) { setElevOn(false); setElevData(null); mapApi.current?.stopElevation(); }
     setMeasuring(true); setMsg(t("Misura: clicca i punti sulla mappa. 2 punti = distanza, 3+ = area."));
     mapApi.current?.startMeasure((txt) => setMeasureTxt(txt));
+  }
+  // Strumento profilo/dislivelli: polilinea le cui quote (DEM) vengono lette punto per punto.
+  async function onElevPoints(coords: number[][]) {
+    if (!coords.length) { setElevData(null); return; }
+    try {
+      const r = await api.fetchElevation(coords);
+      setElevData(r);
+      const labels = r.points.map((p, i) => `${i + 1}: ${p.elev_m != null ? uM(p.elev_m, 0) : "—"}`);
+      mapApi.current?.setElevationLabels(labels);
+    } catch (e) { showErr(e); }
+  }
+  function toggleElevation() {
+    if (elevOn) { setElevOn(false); setElevData(null); mapApi.current?.stopElevation(); setMsg(""); return; }
+    if (measuring) { setMeasuring(false); setMeasureTxt(""); mapApi.current?.stopMeasure(); }
+    setElevOn(true); setElevData(null);
+    setMsg(t("Profilo: clicca i punti sulla mappa per leggere quote e dislivelli. Ripremi l'icona per chiudere."));
+    mapApi.current?.startElevation(onElevPoints);
   }
 
   const active = useMemo(() => fields.find((f) => f.id === activeId) ?? null, [fields, activeId]);
@@ -1281,6 +1302,9 @@ export default function Page() {
               <button title={t("Misura distanze/aree")} onClick={toggleMeasure}
                 className={"p-1.5 rounded-[9px] " + (measuring ? "text-white" : "text-brand-darker hover:bg-black/5")}
                 style={measuring ? { background: "#3f8e4e" } : undefined}><IcoRuler /></button>
+              <button title={t("Profilo altimetrico / dislivelli (polilinea)")} onClick={toggleElevation}
+                className={"p-1.5 rounded-[9px] " + (elevOn ? "text-white" : "text-brand-darker hover:bg-black/5")}
+                style={elevOn ? { background: "#b23b1e" } : undefined}><IcoElevation /></button>
             </div>
             {layersOpen && (
               <div className="absolute top-full mt-2 left-0 z-40 widget p-2 w-56">
@@ -1301,6 +1325,29 @@ export default function Page() {
           </div>
           {measuring && measureTxt && (
             <div className="px-3 rounded-xl text-sm text-white flex items-center shadow" style={{ background: "#123524", height: 44 }}>{measureTxt}</div>
+          )}
+          {elevOn && (
+            <div className="px-3 py-1.5 rounded-xl text-xs text-white shadow max-w-[300px]" style={{ background: "#123524" }}>
+              {!elevData || !elevData.points.length ? (
+                <span>{t("Profilo: clicca i punti sulla mappa")}</span>
+              ) : (<>
+                <div className="font-semibold">
+                  {t("Dislivello totale")}: {elevData.total_drop_m != null ? uM(elevData.total_drop_m, 1) : "—"}
+                  {" · "}{t("Lungh.")}: {uKm((elevData.length_m || 0) / 1000)}
+                </div>
+                <div className="mt-0.5 max-h-28 overflow-y-auto scroll-soft leading-tight">
+                  {elevData.points.map((p, i) => (
+                    <div key={i} className="flex justify-between gap-3">
+                      <span className="opacity-90">{i + 1}</span>
+                      <span>{p.elev_m != null ? uM(p.elev_m, 0) : "—"}</span>
+                      <span className="opacity-80 w-16 text-right">
+                        {p.drop_prev_m != null ? (p.drop_prev_m >= 0 ? `▼ ${uM(p.drop_prev_m, 1)}` : `▲ ${uM(-p.drop_prev_m, 1)}`) : ""}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>)}
+            </div>
           )}
 
           <div className="flex-1" />

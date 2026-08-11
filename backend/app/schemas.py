@@ -277,6 +277,19 @@ class GuidedOut(BaseModel):
     meta: dict[str, Any]
 
 
+# ---------- Profilo altimetrico su polilinea (strumento di misura) ----------
+class ElevationIn(BaseModel):
+    coords: list[list[float]]                          # [[lon,lat], ...]
+
+
+class ElevationOut(BaseModel):
+    points: list[dict[str, Any]]
+    total_drop_m: float | None = None
+    length_m: float = 0.0
+    min_m: float | None = None
+    max_m: float | None = None
+
+
 # ---------- Layout pivot + dimensionamento idrico (M3) ----------
 class LayoutIn(BaseModel):
     geom: GeoPolygon

@@ -222,6 +222,11 @@ export const fetchGuided = (geom: Polygon, p: {
   avoid?: any[] | null; roads?: any[] | null;
 }) => req<GuidedResult>("/api/guided", { method: "POST", body: JSON.stringify({ geom, ...p }) });
 
+export type ElevPoint = { lon: number; lat: number; elev_m: number | null; dist_m: number; drop_prev_m: number | null };
+export type ElevationResult = { points: ElevPoint[]; total_drop_m: number | null; length_m: number; min_m: number | null; max_m: number | null };
+export const fetchElevation = (coords: number[][]) =>
+  req<ElevationResult>("/api/elevation", { method: "POST", body: JSON.stringify({ coords }) });
+
 export const fetchSuitability = (geom: Polygon, date: string, p: SuitParams) =>
   req<Suitability>("/api/suitability", {
     method: "POST",

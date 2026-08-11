@@ -53,6 +53,9 @@ export type MapHandle = {
   locate: () => void;
   startMeasure: (cb: (text: string) => void) => void;
   stopMeasure: () => void;
+  startElevation: (cb: (coords: number[][]) => void) => void;
+  stopElevation: () => void;
+  setElevationLabels: (labels: string[]) => void;
   setUnits: (imperial: boolean) => void;
   editCanal: (coords: number[][], start: number[], end: number[], waypoints: number[][],
     cb: (start: number[], end: number[], waypoints: number[][]) => void) => void;
@@ -116,6 +119,11 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const measuringRef = useRef(false);
   const mptsRef = useRef<L.LatLng[]>([]);
   const mcbRef = useRef<((text: string) => void) | null>(null);
+  const elevRef = useRef<L.LayerGroup | null>(null);
+  const elevingRef = useRef(false);
+  const eptsRef = useRef<L.LatLng[]>([]);
+  const ecbRef = useRef<((coords: number[][]) => void) | null>(null);
+  const elabelsRef = useRef<string[]>([]);
   const imperialRef = useRef(false);
 
   // Callback sempre aggiornate (la mappa viene creata una sola volta).
@@ -141,11 +149,19 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     roadsRef.current = L.layerGroup().addTo(map);
     pivotsRef.current = L.layerGroup().addTo(map);
     measureRef.current = L.layerGroup().addTo(map);
+    elevRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
     // Clic sulla mappa: misura (se attiva) oppure selezione punto (presa/finale).
     map.on("click", (e: L.LeafletMouseEvent) => {
       if (measuringRef.current) { mptsRef.current.push(e.latlng); _redrawMeasure(); return; }
+      if (elevingRef.current) {
+        eptsRef.current.push(e.latlng);
+        elabelsRef.current = [];
+        _redrawElev();
+        ecbRef.current?.(eptsRef.current.map((p) => [p.lng, p.lat]));
+        return;
+      }
       const cb = pickCbRef.current;
       if (!cb) {
         // Clic sullo sfondo: deseleziona il gruppo/pivot corrente.
@@ -276,6 +292,20 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         .addTo(g).openTooltip();
     }
     mcbRef.current?.(text);
+  }
+
+  function _redrawElev() {
+    const g = elevRef.current; if (!g) return;
+    g.clearLayers();
+    const pts = eptsRef.current;
+    if (pts.length >= 2) L.polyline(pts, { color: "#b23b1e", weight: 3 }).addTo(g);
+    pts.forEach((p, i) => {
+      L.circleMarker(p, { radius: 5, color: "#ffffff", weight: 2, fillColor: "#b23b1e", fillOpacity: 1 }).addTo(g);
+      const lbl = elabelsRef.current[i];
+      L.marker(p, { opacity: 0, interactive: false })
+        .bindTooltip(lbl || `${i + 1}`, { permanent: true, direction: "top", className: "field-label" })
+        .addTo(g).openTooltip();
+    });
   }
 
   function allBounds(): L.LatLngBounds | null {
@@ -641,6 +671,25 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         measureRef.current?.clearLayers();
         try { if (map) map.getContainer().style.cursor = ""; } catch { /* */ }
       },
+      startElevation(cb) {
+        const map = mapRef.current; if (!map) return;
+        ecbRef.current = cb;
+        elevingRef.current = true;
+        eptsRef.current = [];
+        elabelsRef.current = [];
+        elevRef.current?.clearLayers();
+        try { map.getContainer().style.cursor = "crosshair"; } catch { /* */ }
+      },
+      stopElevation() {
+        const map = mapRef.current;
+        elevingRef.current = false;
+        eptsRef.current = [];
+        ecbRef.current = null;
+        elabelsRef.current = [];
+        elevRef.current?.clearLayers();
+        try { if (map) map.getContainer().style.cursor = ""; } catch { /* */ }
+      },
+      setElevationLabels(labels) { elabelsRef.current = labels; _redrawElev(); },
       editCanal(coords, start, end, waypoints, cb) {
         const map = mapRef.current, g = canalEditRef.current;
         if (!map || !g) return;
