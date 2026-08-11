@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.64";
+const REV = "v0.6.65";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -825,7 +825,7 @@ export default function Page() {
   // Unisce un canale appena creato a uno esistente se lo tocca/entra:
   // - estremi vicini (testa-coda) → fonde i due in un unico canale;
   // - un estremo cade lungo un altro canale (giunzione a T) → aggancia l'estremo.
-  const JOIN_M = 80;                                 // soglia di unione (m)
+  const JOIN_M = 30;                                 // soglia di unione (m)
   async function joinCanals(nc: Canal, list: Canal[]): Promise<Canal[]> {
     const N = nc.geojson.coordinates.map((c) => [c[0], c[1]]);
     // 1) fusione testa-coda con un canale esistente
@@ -2077,9 +2077,7 @@ export default function Page() {
               <div className="seg-item" data-active={cur.layoutCfg === "square"} onClick={() => patch({ layoutCfg: "square" })}>{t("A quadrato")}</div>
               <div className="seg-item" data-active={cur.layoutCfg === "staggered"} onClick={() => patch({ layoutCfg: "staggered" })}>{t("A triangolo")}</div>
             </div>
-            <p className="hint mb-2">{cur.layoutCfg === "staggered"
-              ? t("A triangolo: file sfalsate di mezzo passo — i pivot si incastrano e recuperi più spazio.")
-              : t("A quadrato: pivot allineati su una griglia regolare.")}</p>
+            <div className="mb-2" />
 
             <div className="bg-panel rounded-lg p-2 mt-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Raggio e distanze di rispetto (m)")}</div>
