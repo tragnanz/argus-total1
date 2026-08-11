@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.65";
+const REV = "v0.6.66";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2109,8 +2109,7 @@ export default function Page() {
 
             <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 mt-2 leading-relaxed">
               {t("Raggio")}: <b>{uM(pivotR)}</b> · {t("Area per pivot")}: <b>{uHa(Math.PI * pivotR * pivotR / 10000, 1)}</b><br />
-              {t("Interasse (centro-centro)")}: <b>{uM(2 * pivotR + safetyM)}</b><br />
-              <span className="text-brand-mid">{t("Reticolo su tutti i campi; i pivot non si sovrappongono e rispettano i franchi: tra i pivot, da strade e da canali/invasi.")}</span>
+              {t("Interasse (centro-centro)")}: <b>{uM(2 * pivotR + safetyM)}</b>
             </div>
             <div className="flex gap-2 mt-2">
               <button className="btn-primary flex-1 basis-0"
