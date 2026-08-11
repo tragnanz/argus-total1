@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.29";
+const REV = "v0.6.30";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1320,7 +1320,7 @@ export default function Page() {
               </div>
             )}
             {!activeGeom && <p className="hint mt-1 text-danger">{t("Seleziona o disegna prima un campo.")}</p>}
-            {activeGeom && !date && !waterPreview && <p className="hint mt-1 text-danger">{t("Serve una data: clicca 'Cerca date disponibili' qui sopra e scegline una.")}</p>}
+            {activeGeom && !date && !waterPreview && <p className="hint mt-1 text-danger">{t("Serve una data: clicca 'Cerca date disponibili' qui sopra")}</p>}
             {!waterPreview && !!watercourses.length && (
               <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
                 {watercourses.filter((w) => w.geojson.type === "LineString").length} {t("fiumi/canali (asse)")} · {watercourses.filter((w) => w.kind === "basin").length} {t("bacini")} · {watercourses.filter((w) => w.kind === "wetland").length} {t("paludi")}<br />
@@ -1355,7 +1355,7 @@ export default function Page() {
               </button>
               <button className="btn-ghost flex-1 basis-0" onClick={clearSuit}>{t("Rimuovi idoneità")}</button>
             </div>
-            {activeGeom && !date && <p className="hint mt-1 text-danger">{t("Serve una data: clicca 'Cerca date disponibili' qui sopra e scegline una.")}</p>}
+            {activeGeom && !date && <p className="hint mt-1 text-danger">{t("Serve una data: clicca 'Cerca date disponibili' qui sopra")}</p>}
 
             {suit && (
               <div className="mt-3 space-y-2">
@@ -1415,7 +1415,7 @@ export default function Page() {
               </button>
               <button className="btn-ghost flex-1 basis-0" onClick={clearMacro}>{t("Rimuovi")}</button>
             </div>
-            {activeGeom && !date && <p className="hint mt-1 text-danger">{t("Serve una data: clicca 'Cerca date disponibili' qui sopra e scegline una.")}</p>}
+            {activeGeom && !date && <p className="hint mt-1 text-danger">{t("Serve una data: clicca 'Cerca date disponibili' qui sopra")}</p>}
             {!!macroAreas.length && (
               <div className="mt-3">
                 <div className="flex items-center justify-between mb-1">
