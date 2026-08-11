@@ -1429,7 +1429,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const dir: "ltr" | "rtl" = RTL_LANGS.includes(lang) ? "rtl" : "ltr";
   const locale = LOCALES[lang] || "en-US";
   const fmt = (n: number, opts?: Intl.NumberFormatOptions) => {
-    try { return new Intl.NumberFormat(locale, opts).format(n); }
+    // useGrouping:"always" forza il separatore delle migliaia anche sui numeri
+    // a 4 cifre: alcune lingue (es. it-IT) altrimenti raggruppano solo da 5.
+    try { return new Intl.NumberFormat(locale, { useGrouping: "always", ...opts }).format(n); }
     catch { return String(n); }
   };
   const fmtDate = (iso: string) => {
