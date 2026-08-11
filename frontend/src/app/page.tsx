@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.61";
+const REV = "v0.6.62";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1580,12 +1580,18 @@ export default function Page() {
         )}
 
         {/* Widget Proprietà: livelli + oggetto selezionato, subito sotto il pannello Progetto */}
+        {!propsOpen && (
+          <button onClick={() => setPropsOpen(true)} title={t("Espandi il pannello Proprietà")}
+            className="pointer-events-auto self-start widget px-3 py-2 flex items-center gap-2 text-sm text-brand-darker hover:bg-black/5">
+            <IcoExpand /> {t("Proprietà")}
+          </button>
+        )}
         {propsOpen && (
           <div className="pointer-events-auto w-full flex-1 min-h-0 widget flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-3 pt-2 shrink-0">
               <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Proprietà")}</span>
-              <button onClick={() => setPropsOpen(false)} title={t("Chiudi")}
-                className="text-sage-dark hover:text-danger p-1 rounded hover:bg-black/5">✕</button>
+              <button onClick={() => setPropsOpen(false)} title={t("Riduci a icona")}
+                className="text-sage-dark hover:text-brand p-1 rounded hover:bg-black/5"><IcoMinimize /></button>
             </div>
             <div className="overflow-auto scroll-soft p-3 pt-1 space-y-2">
               {selPivot ? (
