@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.68";
+const REV = "v0.6.69";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -514,9 +514,9 @@ export default function Page() {
     saveBlob(blob, filename.toLowerCase().endsWith(".kmz") ? filename : `${filename}.kmz`);
   }
   function draw() { setMsg(""); mapApi.current?.draw(); }
-  function addField(geom: Polygon, name?: string, focus = true) {
+  function addField(geom: Polygon, name?: string, focus = true, savedId?: number) {
     const id = nextId.current++;
-    const f: Field = { id, name: name || `${t("Campo")} ${id}`, geom };
+    const f: Field = { id, name: name || `${t("Campo")} ${id}`, geom, savedId };
     setFields((prev) => {
       const arr = [...prev, f];
       const aId = focus ? id : activeId;
@@ -573,7 +573,7 @@ export default function Page() {
   }
 
   // ---- aree salvate (campo + sotto-aree, sul progetto) ----
-  function loadArea(a: Area) { addField(a.geojson, a.name); setMsg(""); setTimeout(() => mapApi.current?.fitAll(), 30); }
+  function loadArea(a: Area) { addField(a.geojson, a.name, true, a.id); setMsg(""); setTimeout(() => mapApi.current?.fitAll(), 30); }
   async function renameArea(a: Area) {
     const name = prompt(t("Nome area"), a.name); if (!name || name === a.name) return;
     try { await api.updateArea(a.id, { name }); if (projectId) refreshAreas(projectId); } catch (e) { showErr(e); }
@@ -1554,11 +1554,18 @@ export default function Page() {
             <button className="btn-primary w-full mt-3" disabled={busy === "save" || !active || !projectId} onClick={() => active && saveFieldTree(active)}>
               {busy === "save" ? t("Salvo…") : t("Salva campo e sotto-aree nel progetto")}
             </button>
-            {!!areas.length && (
+            {(() => {
+              // Non ripetere in «Aree salvate» ciò che è già caricato tra i Campi:
+              // un'area salvata compare qui solo finché non è sulla mappa.
+              const loaded = new Set(fields.map((f) => f.savedId).filter((x): x is number => x != null));
+              const roots = areas.filter((a) => a.parent_area_id == null && !loaded.has(a.id));
+              if (!roots.length) return null;
+              return (
               <div className="mt-3">
                 <div className="text-xs font-semibold text-sage-dark mb-1">{t("Aree salvate")}</div>
+                <p className="text-[11px] text-sage-dark mb-1">{t("Non ancora sulla mappa · clicca per caricarle")}</p>
                 <ul className="space-y-1">
-                  {areas.filter((a) => a.parent_area_id == null).map((a) => (
+                  {roots.map((a) => (
                     <li key={a.id} className="text-sm bg-panel rounded-lg px-2 py-1">
                       <div className="flex items-center justify-between">
                         <button className="truncate text-left flex-1" title={t("Carica")} onClick={() => loadArea(a)}>
@@ -1582,7 +1589,8 @@ export default function Page() {
                   ))}
                 </ul>
               </div>
-            )}
+              );
+            })()}
 
             {!!layers.length && (
               <div className="mt-3">
