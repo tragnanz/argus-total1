@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.45";
+const REV = "v0.6.46";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1951,14 +1951,14 @@ export default function Page() {
 
             <div className="bg-panel rounded-lg p-2 mt-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Distanze di rispetto (m)")}</div>
-              <div className="flex gap-2">
-                <label className="text-[11px] text-sage-dark flex-1 min-w-0">{t("Tra i pivot")}
+              <div className="flex gap-2 items-end">
+                <label className="text-[10px] leading-tight text-sage-dark flex-1 min-w-0 whitespace-nowrap">{t("Tra i pivot")}
                   <input type="number" min={0} max={500} step={5} value={safetyM}
                     onChange={(e) => setSafetyM(Number(e.target.value))} className="field-input mt-1 w-full" /></label>
-                <label className="text-[11px] text-sage-dark flex-1 min-w-0">{t("Da strade")}
+                <label className="text-[10px] leading-tight text-sage-dark flex-1 min-w-0 whitespace-nowrap">{t("Da strade")}
                   <input type="number" min={0} max={500} step={5} value={pivClearRoad}
                     onChange={(e) => setPivClearRoad(Number(e.target.value))} className="field-input mt-1 w-full" /></label>
-                <label className="text-[11px] text-sage-dark flex-1 min-w-0">{t("Da canali/invasi")}
+                <label className="text-[10px] leading-tight text-sage-dark flex-1 min-w-0 whitespace-nowrap">{t("Da canali/invasi")}
                   <input type="number" min={0} max={500} step={5} value={pivClearWater}
                     onChange={(e) => setPivClearWater(Number(e.target.value))} className="field-input mt-1 w-full" /></label>
               </div>
