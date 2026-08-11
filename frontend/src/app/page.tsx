@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.51";
+const REV = "v0.6.52";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1834,19 +1834,19 @@ export default function Page() {
 
           <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
             <SectionHead title={t("Dimensione pivot consigliata")} help={t("Dal tipo di suolo (infiltrazione) e dall'ET₀ di punta stima il raggio massimo del pivot perché l'intensità di pioggia al bordo non superi l'infiltrazione del terreno. Il valore è usato come raggio di default nella pagina Impianti.")} />
-            <label className="text-xs text-sage-dark block">{t("Tipo di suolo")}
-              <select className="field-input mt-1" value={soilKey}
-                onChange={(e) => { const so = SOILS.find((x) => x.key === e.target.value); setSoilKey(e.target.value); if (so) setInfiltration(so.inf); }}>
-                {SOILS.map((so) => <option key={so.key} value={so.key}>{t(so.label)}</option>)}
-              </select>
-            </label>
-            <div className="flex gap-2 mt-2">
-              <label className="text-xs text-sage-dark flex-1">{t("Infiltrazione (mm/h)")}
+            <div className="flex gap-2 items-end">
+              <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Tipo di suolo")}
+                <select className="field-input mt-1 w-full px-2" value={soilKey}
+                  onChange={(e) => { const so = SOILS.find((x) => x.key === e.target.value); setSoilKey(e.target.value); if (so) setInfiltration(so.inf); }}>
+                  {SOILS.map((so) => <option key={so.key} value={so.key}>{t(so.label)}</option>)}
+                </select>
+              </label>
+              <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Infiltrazione (mm/h)")}
                 <input type="number" min={0.5} max={200} step={0.5} value={infiltration}
-                  onChange={(e) => setInfiltration(Number(e.target.value))} className="field-input mt-1" /></label>
-              <label className="text-xs text-sage-dark flex-1">{t("ET₀ di punta")} (mm/g)
+                  onChange={(e) => setInfiltration(Number(e.target.value))} className="field-input mt-1 w-full px-2" /></label>
+              <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("ET₀ di punta (mm/g)")}
                 <input type="number" min={1} max={20} step={0.5} value={et0Peak}
-                  onChange={(e) => setEt0Peak(Number(e.target.value))} className="field-input mt-1" /></label>
+                  onChange={(e) => setEt0Peak(Number(e.target.value))} className="field-input mt-1 w-full px-2" /></label>
             </div>
             <div className="flex items-center justify-between mt-2 text-xs">
               <span>{t("Raggio consigliato")}: <b>{recRadius} m</b></span>
