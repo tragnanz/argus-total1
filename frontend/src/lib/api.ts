@@ -40,6 +40,7 @@ export type SuitWeights = { slope: number; vigor: number; moisture: number; clim
 export type SuitMeta = {
   date: string; res_m: number; cached: boolean; calls: number;
   total_ha: number; suitable_ha: number; mean_score: number; wetland_ha?: number;
+  elevation?: { min_m: number | null; max_m: number | null; median_m: number | null };
   classes: SuitClass[];
   slope: { mean_pct: number; max_pct: number; ideal_pct: number; max_allowed_pct: number };
   climate: {

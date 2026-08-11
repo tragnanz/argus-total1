@@ -168,6 +168,7 @@ def score_grid(client, geom: dict, date: str, params: dict) -> dict:
     return {"score100": score100, "slope_pct": slope_pct, "valid": valid, "ctx": ctx,
             "et": et, "clim_score": clim_score, "elev": elev, "n_calls": n_calls,
             "cached": cached, "slope_ideal": slope_ideal, "slope_max": slope_max, "wet": wet,
+            "dem": dem,
             "weights": {"slope": w_slope, "vigor": w_vigor, "moisture": w_moist, "climate": w_clim}}
 
 
@@ -221,6 +222,25 @@ def compute_suitability(client, geom: dict, date: str, params: dict) -> dict:
     wet_mask = sg.get("wet")
     wetland_ha = round(int((wet_mask & mask).sum()) * pixel_ha, 1) if wet_mask is not None else 0.0
 
+    # quota (DEM) del NETTO COLTIVABILE: min/max/mediana sulle celle idonee
+    # (idoneo+ottimale); se non ce ne sono, ripiega sull'intera area valida.
+    dem = sg.get("dem")
+    elevation = {"min_m": None, "max_m": None, "median_m": None}
+    if dem is not None:
+        cult = np.zeros((hp, wp), bool)
+        for cls in CLASSES:
+            if cls["key"] in ("idoneo", "ottimale"):
+                cult |= mask & (score100 >= cls["lo"]) & (score100 < cls["hi"])
+        sel = cult if cult.any() else mask
+        demv = dem[sel]
+        demv = demv[np.isfinite(demv)]
+        if demv.size:
+            elevation = {
+                "min_m": round(float(demv.min()), 1),
+                "max_m": round(float(demv.max()), 1),
+                "median_m": round(float(np.median(demv)), 1),
+            }
+
     corners = [(ctx["minx"], ctx["south"]), (ctx["east"], ctx["south"]),
                (ctx["east"], ctx["top"]), (ctx["minx"], ctx["top"])]
     lls = [ctx["to_wgs"].transform(x, y) for x, y in corners]
@@ -231,6 +251,7 @@ def compute_suitability(client, geom: dict, date: str, params: dict) -> dict:
         "date": date, "res_m": round(res, 1), "cached": cached, "calls": n_calls,
         "total_ha": total_ha, "suitable_ha": suitable_ha, "mean_score": mean_score,
         "wetland_ha": wetland_ha,
+        "elevation": elevation,
         "classes": classes_out,
         "slope": {
             "mean_pct": round(float(np.nanmean(slope_in)), 1) if slope_in.size else 0.0,

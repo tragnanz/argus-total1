@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.39";
+const REV = "v0.6.40";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1729,6 +1729,13 @@ export default function Page() {
                     </div>
                   ))}
                 </div>
+                {suit.elevation && suit.elevation.min_m != null && (
+                  <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
+                    <b className="text-brand-darker">{t("Quota del netto coltivabile")}</b><br />
+                    {t("Minima")}: <b>{uM(suit.elevation.min_m)}</b> · {t("Massima")}: <b>{uM(suit.elevation.max_m ?? 0)}</b> · {t("Mediana")}: <b>{uM(suit.elevation.median_m ?? 0)}</b><br />
+                    <span className="text-brand-mid">{t("Dislivello")}: {uM((suit.elevation.max_m ?? 0) - (suit.elevation.min_m ?? 0), 1)}</span>
+                  </div>
+                )}
                 <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
                   {t("Pendenza")}: {fmt(suit.slope.mean_pct * 10)}‰ ({t("max")} {fmt(suit.slope.max_pct * 10)}‰)<br />
                   {t("ET₀ annua")}: {fmt(suit.climate.eto_year_mm)} mm · {t("Pioggia annua")}: {fmt(suit.climate.rain_year_mm)} mm<br />
