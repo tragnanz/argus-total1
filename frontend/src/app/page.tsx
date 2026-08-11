@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.59";
+const REV = "v0.6.60";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -273,7 +273,7 @@ export default function Page() {
   const [elevData, setElevData] = useState<ElevationResult | null>(null);
   const [leftMin, setLeftMin] = useState(false);    // pannello Progetto ridotto a icona
   const [rightMin, setRightMin] = useState(false);  // pannello schede ridotto a icona
-  const [propsOpen, setPropsOpen] = useState(false);  // pannello Proprietà: aperto solo su richiesta (icona i)
+  const [propsOpen, setPropsOpen] = useState(true);   // widget Proprietà docked in basso a sinistra (toggle con «i»)
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const activeIdRef = useRef<number | null>(null);
@@ -2101,12 +2101,12 @@ export default function Page() {
         </div>
         )}
 
-        {/* Pannello Proprietà: parametri del livello / oggetto selezionato.
-            Si apre/chiude con l'icona «i» nella barra strumenti in alto. Posato
-            in basso a sinistra SOPRA lo zoom e la versione (niente sovrapposizioni). */}
+        {/* Widget Proprietà: informazioni dei livelli e dell'oggetto selezionato,
+            con impostazioni modificabili. Docked in basso a sinistra, sotto il
+            pannello Progetto e sopra lo zoom/versione. Si chiude con «i» o «×». */}
         {propsOpen && (
           <div className="absolute left-4 w-[440px] max-w-[calc(100vw_-_2rem)] widget flex flex-col overflow-hidden z-30"
-            style={{ bottom: "6.5rem", maxHeight: "32vh" }}>
+            style={{ top: leftMin ? "calc(4.5rem + 3.25rem)" : "calc(4.5rem + 52vh + 0.75rem)", bottom: "6.5rem" }}>
             <div className="flex items-center justify-between px-3 pt-2 shrink-0">
               <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Proprietà")}</span>
               <button onClick={() => setPropsOpen(false)} title={t("Chiudi")}
@@ -2141,7 +2141,27 @@ export default function Page() {
                   <button className="btn-ghost w-full mt-2" onClick={applyRadiusToAll}>{t("Applica raggio {r} m a tutti", { r: pivotR })}</button>
                 </div>
               ) : (
-                <p className="text-[11px] text-sage-dark">{t("Nessun oggetto selezionato. Clicca un pivot sulla mappa, oppure regola i livelli qui sopra. Le proprietà dell'elemento scelto compariranno qui.")}</p>
+                <div>
+                  <p className="text-[11px] text-sage-dark mb-2">{t("Clicca un oggetto sulla mappa (pivot, ecc.) per vederne e modificarne le proprietà qui. Livelli del progetto:")}</p>
+                  <ul className="space-y-1">
+                    {([
+                      ["fields", t("Campi"), fields.length],
+                      ["macro", t("Macro-aree"), fields.reduce((s, f) => s + (f.macros?.length ?? 0), 0)],
+                      ["canal", t("Canali"), canals.length],
+                      ["water", t("Invasi/corsi d'acqua"), watercourses.length],
+                      ["strade", t("Strade"), roads.length],
+                      ["layout", t("Pivot"), pivots.length],
+                    ] as const).map(([k, lbl, n]) => (
+                      <li key={k} className="flex items-center justify-between text-[11px] bg-panel rounded-lg px-2 py-1">
+                        <button className="flex items-center gap-2 flex-1 text-left" onClick={() => toggleLayer(k)}>
+                          <span className={layerVis[k] ? "text-brand" : "text-sage-dark opacity-50"}>{layerVis[k] ? "◉" : "○"}</span>
+                          <span className={layerVis[k] ? "text-sage-dark" : "text-sage-dark line-through opacity-60"}>{lbl}</span>
+                        </button>
+                        <span className="text-sage-dark tabular-nums">{n}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </div>
           </div>
