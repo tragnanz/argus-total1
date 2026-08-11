@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.37";
+const REV = "v0.6.38";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1327,7 +1327,7 @@ export default function Page() {
             <div className="px-3 rounded-xl text-sm text-white flex items-center shadow" style={{ background: "#123524", height: 44 }}>{measureTxt}</div>
           )}
           {elevOn && (
-            <div className="px-3 py-1.5 rounded-xl text-xs text-white shadow max-w-[300px]" style={{ background: "#123524" }}>
+            <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 z-40 px-3 py-1.5 rounded-xl text-xs text-white shadow w-[280px]" style={{ background: "#123524" }}>
               {!elevData || !elevData.points.length ? (
                 <span>{t("Profilo: clicca i punti sulla mappa")}</span>
               ) : (<>

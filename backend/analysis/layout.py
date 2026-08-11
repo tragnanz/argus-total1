@@ -188,7 +188,36 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
             top = e_top >= e_bot
     if canal_flip:
         top = not top
-    canal_ry = rmaxy if top else rminy      # riga del canale nel frame ruotato
+    canal_ry = rmaxy if top else rminy      # riga del canale nel frame ruotato (bordo bbox)
+
+    # Riga del COLLETTORE (canale/header/pompe): il bordo del bbox è spesso
+    # esterno a un poligono irregolare; rientro verso il centro finché la linea
+    # orizzontale ha un tratto interno lungo, così tutta l'adduzione resta DENTRO
+    # il campo. `canal_runs` = tratti interni del collettore (campo concavo → più d'uno).
+    def _inside_runs(cry):
+        runs = []; cur = []
+        nseg = max(8, int((rmaxx - rminx) / max(res, 1.0)))
+        for k in range(nseg + 1):
+            rx = rminx + (rmaxx - rminx) * k / nseg
+            if path_rot.contains_point((rx, cry)):
+                cur.append(rx)
+            else:
+                if len(cur) >= 2:
+                    runs.append((cur[0], cur[-1]))
+                cur = []
+        if len(cur) >= 2:
+            runs.append((cur[0], cur[-1]))
+        return runs
+
+    _step_in = -1.0 if top else 1.0
+    canal_disp_ry = canal_ry
+    canal_runs = _inside_runs(canal_disp_ry)
+    _max_steps = int(abs(rmaxy - rminy) / max(res, 1.0) / 2)
+    _steps = 0
+    while (not canal_runs or max((b - a) for a, b in canal_runs) < 2 * R) and _steps < _max_steps:
+        canal_disp_ry += _step_in * res
+        canal_runs = _inside_runs(canal_disp_ry)
+        _steps += 1
 
     # --- reticolo dei centri (parte dal canale) ---
     s = 2 * R + gap                                             # interasse minimo tra pivot
@@ -267,7 +296,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     pump_along = []     # posizione along-canale delle pompe (frame ruotato)
     pumps = []          # (lon,lat)
     spine_lines = []    # [(lon,lat)_pump, (lon,lat)_far]
-    ry0 = rmaxy if top else rminy
+    ry0 = canal_disp_ry                                 # collettore sulla riga interna
     for key, group in spines.items():
         far = max(group, key=lambda t: t[4])            # pivot più lontano dal canale
         rx0 = far[0] - slope_along * far[4]             # along al canale (depth 0)
@@ -335,40 +364,58 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     for (plon, plat) in pumps:
         features.append({"type": "Feature", "properties": {"kind": "pump"},
                          "geometry": {"type": "Point", "coordinates": [plon, plat]}})
-    # linea del canale (bordo scelto), nel frame ruotato.
-    # VINCOLO: il canale deve restare SEMPRE dentro il campo. Il bordo del bbox è
-    # spesso tangente/esterno a un poligono irregolare; quindi rientro dal bordo
-    # verso il centro finché la linea orizzontale ha un tratto interno abbastanza
-    # lungo, poi tengo SOLO i tratti dentro il poligono (un campo concavo può darne
-    # più d'uno).
-    def _inside_runs(cry):
-        runs = []; cur = []
-        nseg = max(8, int((rmaxx - rminx) / max(res, 1.0)))
-        for k in range(nseg + 1):
-            rx = rminx + (rmaxx - rminx) * k / nseg
-            if path_rot.contains_point((rx, cry)):
-                cur.append(rx)
-            else:
-                if len(cur) >= 2:
-                    runs.append((cur[0], cur[-1]))
-                cur = []
-        if len(cur) >= 2:
-            runs.append((cur[0], cur[-1]))
-        return runs
-
-    step_in = -1.0 if top else 1.0            # rientro verso il centro dell'area
-    cy = canal_ry
-    runs = _inside_runs(cy)
-    max_steps = int(abs(rmaxy - rminy) / max(res, 1.0) / 2)
-    steps = 0
-    while (not runs or max((b - a) for a, b in runs) < 2 * R) and steps < max_steps:
-        cy += step_in * res
-        runs = _inside_runs(cy)
-        steps += 1
-    for (rx0, rx1) in runs:                   # solo i tratti interni al poligono
-        seg = [list(to_wgs.transform(*unrot(rx0, cy))), list(to_wgs.transform(*unrot(rx1, cy)))]
+    # linea del canale sul collettore interno (tratti dentro il poligono)
+    for (rx0, rx1) in canal_runs:
+        seg = [list(to_wgs.transform(*unrot(rx0, canal_disp_ry))),
+               list(to_wgs.transform(*unrot(rx1, canal_disp_ry)))]
         features.append({"type": "Feature", "properties": {"kind": "canal"},
                          "geometry": {"type": "LineString", "coordinates": seg}})
+
+    # --- RETE DI SICUREZZA: nulla può uscire dal campo. Ritaglio ogni geometria
+    # sul poligono: linee (tubi/collettore/canale) tenute solo nei tratti interni,
+    # pompe fuori scartate, pivot invariati (già dentro con l'eventuale sbordo). ---
+    field_path = Path(ring_utm)
+
+    def _ll_inside(lon, lat):
+        x, y = to_utm.transform(lon, lat)
+        return field_path.contains_point((x, y))
+
+    def _clip_ll(coords):
+        uv = [to_utm.transform(c[0], c[1]) for c in coords]
+        out = []; cur = []
+        for i in range(len(uv) - 1):
+            x0, y0 = uv[i]; x1, y1 = uv[i + 1]
+            dseg = math.hypot(x1 - x0, y1 - y0)
+            nn = max(1, int(dseg / max(res, 1.0)))
+            for k in range(nn + 1):
+                t = k / nn
+                xx = x0 + (x1 - x0) * t; yy = y0 + (y1 - y0) * t
+                if field_path.contains_point((xx, yy)):
+                    cur.append((xx, yy))
+                else:
+                    if len(cur) >= 2:
+                        out.append(cur)
+                    cur = []
+        if len(cur) >= 2:
+            out.append(cur)
+        return [[list(to_wgs.transform(*r[0])), list(to_wgs.transform(*r[-1]))] for r in out]
+
+    clipped = []
+    for f in features:
+        k = f["properties"].get("kind"); gg = f["geometry"]; typ = gg["type"]
+        if k == "pivot":
+            clipped.append(f)
+        elif typ == "Point":
+            lo, la = gg["coordinates"]
+            if _ll_inside(lo, la):
+                clipped.append(f)
+        elif typ == "LineString":
+            for seg in _clip_ll(gg["coordinates"]):
+                clipped.append({"type": "Feature", "properties": f["properties"],
+                                "geometry": {"type": "LineString", "coordinates": seg}})
+        else:
+            clipped.append(f)
+    features = clipped
 
     minx, miny, maxx, maxy = g["minx"], g["miny"], g["maxx"], g["maxy"]
     corners = [(minx, miny), (maxx, miny), (maxx, maxy), (minx, maxy)]
