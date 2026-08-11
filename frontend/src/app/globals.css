@@ -67,6 +67,8 @@ body {
   width: 32px; height: 32px; line-height: 32px;
 }
 .leaflet-bar a:hover { background: #eef3ef !important; }
+/* Alza lo zoom (in basso a sinistra) così la versione ci sta sotto senza sovrapporsi */
+.leaflet-bottom.leaflet-left { margin-bottom: 22px; }
 .leaflet-control-attribution {
   background: rgba(255,255,255,.82) !important;
   border-radius: 8px 0 0 0; font-size: 10px;

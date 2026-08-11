@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.44";
+const REV = "v0.6.45";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1328,6 +1328,9 @@ export default function Page() {
               <button title={t("Profilo altimetrico / dislivelli (polilinea)")} onClick={toggleElevation}
                 className={"p-1.5 rounded-[9px] " + (elevOn ? "text-white" : "text-brand-darker hover:bg-black/5")}
                 style={elevOn ? { background: "#b23b1e" } : undefined}><IcoElevation /></button>
+              <span className="w-px h-5 bg-black/10" />
+              <button title={t("Proprietà (livello / oggetto selezionato)")} onClick={() => setPropsOpen((o) => !o)}
+                className={"p-1.5 rounded-[9px] font-semibold italic w-7 " + (propsOpen ? "bg-brand/10 text-brand" : "text-brand-darker hover:bg-black/5")}>i</button>
             </div>
             {layersOpen && (
               <div className="absolute top-full mt-2 left-0 z-40 widget p-2 w-56">
@@ -2132,17 +2135,12 @@ export default function Page() {
         </div>
         )}
 
-        {/* Pannello sinistro INFERIORE: parametri del livello / oggetto selezionato.
-            Visibile solo su richiesta, tramite l'icona «i». */}
-        {!leftMin && !propsOpen && (
-          <button onClick={() => setPropsOpen(true)} title={t("Proprietà (livello / oggetto selezionato)")}
-            className="absolute left-4 bottom-4 z-30 widget w-9 h-9 flex items-center justify-center text-brand-darker hover:bg-black/5 font-semibold italic">
-            i
-          </button>
-        )}
-        {!leftMin && propsOpen && (
-          <div className="absolute left-4 bottom-4 w-[440px] max-w-[calc(100vw_-_2rem)] widget flex flex-col overflow-hidden"
-            style={{ maxHeight: "34vh" }}>
+        {/* Pannello Proprietà: parametri del livello / oggetto selezionato.
+            Si apre/chiude con l'icona «i» nella barra strumenti in alto. Posato
+            in basso a sinistra SOPRA lo zoom e la versione (niente sovrapposizioni). */}
+        {propsOpen && (
+          <div className="absolute left-4 w-[440px] max-w-[calc(100vw_-_2rem)] widget flex flex-col overflow-hidden z-30"
+            style={{ bottom: "6.5rem", maxHeight: "32vh" }}>
             <div className="flex items-center justify-between px-3 pt-2 shrink-0">
               <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Proprietà")}</span>
               <button onClick={() => setPropsOpen(false)} title={t("Chiudi")}
@@ -2208,7 +2206,7 @@ export default function Page() {
         )}
 
         {/* Revisione software */}
-        <div className="absolute bottom-2 left-3 text-[11px] text-white/80">Argus Total {REV}</div>
+        <div className="absolute bottom-1 left-3 text-[11px] text-white/80 z-10 pointer-events-none">Argus Total {REV}</div>
       </div>
     </main>
   );
