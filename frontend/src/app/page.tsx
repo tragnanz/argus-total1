@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.41";
+const REV = "v0.6.42";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -206,6 +206,8 @@ const IcoRedo = () => (<svg {...svgProps}><path d="m15 14 5-5-5-5" /><path d="M2
 const IcoLayers = () => (<svg {...svgProps}><path d="m12 2 9 5-9 5-9-5 9-5Z" /><path d="m3 12 9 5 9-5" /><path d="m3 17 9 5 9-5" /></svg>);
 const IcoRuler = () => (<svg {...svgProps}><path d="M3 15 15 3l6 6L9 21z" /><path d="M7.5 10.5 9 12M10.5 7.5 12 9M13.5 4.5 15 6" /></svg>);
 const IcoElevation = () => (<svg {...svgProps}><path d="M3 20h18" /><path d="m3 17 5-7 3 3.5L16 5l5 12" /></svg>);
+const IcoMinimize = () => (<svg {...svgProps}><path d="M5 12h14" /></svg>);
+const IcoExpand = () => (<svg {...svgProps}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 12h6M12 9v6" /></svg>);
 const IcoCross = () => (<svg {...svgProps}><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></svg>);
 
 // Intestazione di sezione con testo-guida apribile/chiudibile da "?"
@@ -269,6 +271,8 @@ export default function Page() {
   const [measureTxt, setMeasureTxt] = useState("");
   const [elevOn, setElevOn] = useState(false);
   const [elevData, setElevData] = useState<ElevationResult | null>(null);
+  const [leftMin, setLeftMin] = useState(false);    // pannello Progetto ridotto a icona
+  const [rightMin, setRightMin] = useState(false);  // pannello schede ridotto a icona
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const activeIdRef = useRef<number | null>(null);
@@ -1394,8 +1398,20 @@ export default function Page() {
           </select>
         </div>
 
-        {/* Pannello sinistro: flusso di progetto */}
-        <div className="absolute top-[4.5rem] left-4 w-[440px] max-w-[calc(100vw_-_2rem)] max-h-[78vh] overflow-auto scroll-soft widget p-4 space-y-4">
+        {/* Pannello sinistro: flusso di progetto (riducibile a icona) */}
+        {leftMin ? (
+          <button onClick={() => setLeftMin(false)} title={t("Espandi il pannello Progetto")}
+            className="absolute top-[4.5rem] left-4 z-30 widget px-3 py-2 flex items-center gap-2 text-sm text-brand-darker hover:bg-black/5">
+            <IcoExpand /> {t("Progetto")}
+          </button>
+        ) : (
+        <div className="absolute top-[4.5rem] left-4 w-[440px] max-w-[calc(100vw_-_2rem)] max-h-[52vh] widget flex flex-col overflow-hidden">
+          <div className="flex items-center justify-between px-3 pt-2 shrink-0">
+            <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Progetto")}</span>
+            <button onClick={() => setLeftMin(true)} title={t("Riduci a icona")}
+              className="text-sage-dark hover:text-brand p-1 rounded hover:bg-black/5"><IcoMinimize /></button>
+          </div>
+          <div className="overflow-auto scroll-soft p-4 pt-2 space-y-4">
           <section>
             <h3 className="text-sm font-semibold text-brand-darker mb-1">{t("Cliente")}</h3>
             <div className="flex gap-2">
@@ -1561,10 +1577,24 @@ export default function Page() {
               </div>
             )}
           </section>
+          </div>
         </div>
+        )}
 
-        {/* Pannello destro: anteprima / idoneità / layout */}
-        <div className="absolute top-[4.5rem] right-4 w-[440px] max-w-[calc(100vw_-_2rem)] max-h-[78vh] overflow-auto scroll-soft widget p-4 space-y-4">
+        {/* Pannello destro: schede (riducibile a icona) */}
+        {rightMin ? (
+          <button onClick={() => setRightMin(false)} title={t("Espandi il pannello schede")}
+            className="absolute top-[4.5rem] right-4 z-30 widget px-3 py-2 flex items-center gap-2 text-sm text-brand-darker hover:bg-black/5">
+            <IcoExpand /> {t("Strumenti")}
+          </button>
+        ) : (
+        <div className="absolute top-[4.5rem] right-4 w-[440px] max-w-[calc(100vw_-_2rem)] max-h-[78vh] widget flex flex-col overflow-hidden">
+          <div className="flex items-center justify-between px-3 pt-2 shrink-0">
+            <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Strumenti")}</span>
+            <button onClick={() => setRightMin(true)} title={t("Riduci a icona")}
+              className="text-sage-dark hover:text-brand p-1 rounded hover:bg-black/5"><IcoMinimize /></button>
+          </div>
+          <div className="overflow-auto scroll-soft p-4 pt-2 space-y-4">
           {!sameRules && active && (
             <div className="text-[11px] text-brand-mid bg-brand/10 rounded-lg px-2 py-1">
               {t("Stai modificando: {name}", { name: active.name })}
@@ -1990,47 +2020,11 @@ export default function Page() {
               </div>
             )}
 
-            {/* Gerarchia: 1° clic = gruppo (impostazioni generali), 2° clic = singolo pivot */}
+            {/* La modifica di gruppo/singolo pivot è nel pannello «Proprietà» a sinistra. */}
             {!!pivots.length && (
-              <div className="mt-3 border-t border-brand/15 pt-2">
-                {pivotSel.mode === "single" && selPivot ? (
-                  <div className="bg-panel rounded-lg p-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <b className="text-brand-darker text-sm">{t("Pivot")} #{pivotSel.idx + 1}</b>
-                      <button className="text-[11px] text-brand-mid" onClick={() => setPivotSel({ mode: "group", idx: -1 })}>← {t("Torna al gruppo")}</button>
-                    </div>
-                    <p className="text-[11px] text-sage-dark mb-2">{t("Trascina il pallino giallo sulla mappa per spostarlo.")}</p>
-                    <div className="flex gap-2">
-                      <label className="text-[11px] text-sage-dark flex-1">{t("Raggio (m)")}
-                        <input type="number" min={30} max={1000} step={5} value={Math.round(selPivot.r)}
-                          onChange={(e) => updateSelPivot({ r: Number(e.target.value) })} className="field-input mt-1" /></label>
-                      <label className="text-[11px] text-sage-dark flex-1">{t("Connessione")}
-                        <select className="field-input mt-1" value={selPivot.conn ?? "canal"}
-                          onChange={(e) => updateSelPivot({ conn: e.target.value })}>
-                          <option value="canal">{t("Canaletta (gravità)")}</option>
-                          <option value="pipe">{t("Tubazione (pressione)")}</option>
-                        </select></label>
-                    </div>
-                    <div className="text-[11px] text-sage-dark mt-1">{t("Area")}: <b>{uHa(Math.PI * selPivot.r * selPivot.r / 10000, 1)}</b></div>
-                    <div className="flex gap-2 mt-2">
-                      <button className="btn-ghost flex-1 basis-0 text-danger" onClick={deleteSelPivot}>{t("Elimina pivot")}</button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="bg-panel rounded-lg p-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <b className="text-brand-darker text-sm">{t("Gruppo pivot")} · {pivots.length}</b>
-                      {pivotSel.mode === "group" && <span className="text-[11px] text-brand">{t("selezionato")}</span>}
-                    </div>
-                    <p className="text-[11px] text-sage-dark">
-                      {t("Sulla mappa: 1° clic seleziona tutto il gruppo, 2° clic seleziona il singolo pivot da modificare. Clic sullo sfondo per deselezionare.")}
-                    </p>
-                    <div className="flex gap-2 mt-2">
-                      <button className="btn-ghost flex-1 basis-0" onClick={applyRadiusToAll}>{t("Applica raggio {r} m a tutti", { r: pivotR })}</button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <p className="hint mt-3 border-t border-brand/15 pt-2">
+                {t("Seleziona i pivot sulla mappa (1° clic = gruppo, 2° clic = singolo): le proprietà si modificano nel pannello «Proprietà» in basso a sinistra.")}
+              </p>
             )}
 
             {/* Riepilogo disposizione a maglia + dimensionamento idraulico */}
@@ -2132,7 +2126,51 @@ export default function Page() {
             {t("Fonte: Sentinel-2 L2A / DEM Copernicus.")}
             {providerMode === "synthetic" && <><br />{t("Dati sintetici (demo) — nessun credito Copernicus consumato.")}</>}
           </p>
+          </div>
         </div>
+        )}
+
+        {/* Pannello sinistro INFERIORE: parametri del livello / oggetto selezionato */}
+        {!leftMin && (
+          <div className="absolute left-4 bottom-4 w-[440px] max-w-[calc(100vw_-_2rem)] widget flex flex-col overflow-hidden"
+            style={{ maxHeight: "34vh" }}>
+            <div className="flex items-center justify-between px-3 pt-2 shrink-0">
+              <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Proprietà")}</span>
+            </div>
+            <div className="overflow-auto scroll-soft p-3 pt-1 space-y-2">
+              {selPivot ? (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <b className="text-brand-darker text-sm">{t("Pivot")} #{pivotSel.idx + 1}</b>
+                    <button className="text-[11px] text-brand-mid" onClick={() => setPivotSel({ mode: "group", idx: -1 })}>← {t("Gruppo")}</button>
+                  </div>
+                  <p className="text-[11px] text-sage-dark mb-2">{t("Trascina il pallino giallo sulla mappa per spostarlo.")}</p>
+                  <div className="flex gap-2">
+                    <label className="text-[11px] text-sage-dark flex-1">{t("Raggio (m)")}
+                      <input type="number" min={30} max={1000} step={5} value={Math.round(selPivot.r)}
+                        onChange={(e) => updateSelPivot({ r: Number(e.target.value) })} className="field-input mt-1" /></label>
+                    <label className="text-[11px] text-sage-dark flex-1">{t("Connessione")}
+                      <select className="field-input mt-1" value={selPivot.conn ?? "canal"}
+                        onChange={(e) => updateSelPivot({ conn: e.target.value })}>
+                        <option value="canal">{t("Canaletta (gravità)")}</option>
+                        <option value="pipe">{t("Tubazione (pressione)")}</option>
+                      </select></label>
+                  </div>
+                  <div className="text-[11px] text-sage-dark mt-1">{t("Area")}: <b>{uHa(Math.PI * selPivot.r * selPivot.r / 10000, 1)}</b></div>
+                  <button className="btn-ghost w-full text-danger mt-2" onClick={deleteSelPivot}>{t("Elimina pivot")}</button>
+                </div>
+              ) : pivots.length && pivotSel.mode === "group" ? (
+                <div>
+                  <b className="text-brand-darker text-sm">{t("Gruppo pivot")} · {pivots.length}</b>
+                  <p className="text-[11px] text-sage-dark mt-1">{t("Sulla mappa: 2° clic su un pivot per modificarlo singolarmente.")}</p>
+                  <button className="btn-ghost w-full mt-2" onClick={applyRadiusToAll}>{t("Applica raggio {r} m a tutti", { r: pivotR })}</button>
+                </div>
+              ) : (
+                <p className="text-[11px] text-sage-dark">{t("Nessun oggetto selezionato. Clicca un pivot sulla mappa, oppure regola i livelli qui sopra. Le proprietà dell'elemento scelto compariranno qui.")}</p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Messaggi */}
         {msg && (
