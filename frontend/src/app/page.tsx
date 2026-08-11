@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.55";
+const REV = "v0.6.56";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1730,16 +1730,16 @@ export default function Page() {
                 <WeightRow label={t("Umidità")} v={cur.weights.moisture} onChange={(v) => setW("moisture", v)} />
                 <WeightRow label={t("Clima")} v={cur.weights.climate} onChange={(v) => setW("climate", v)} />
               </div>
-              <div className="w-28 shrink-0 space-y-2">
-                <label className="text-[11px] leading-tight text-sage-dark block">
-                  {t("Pendenza ideale (‰)")}
+              <div className="w-24 shrink-0 space-y-2">
+                <label className="text-[11px] leading-tight text-sage-dark block whitespace-nowrap">
+                  {t("Pend. ideale (‰)")}
                   <input type="number" min={0} max={100} step={0.5} value={cur.slopeIdeal}
-                    onChange={(e) => patch({ slopeIdeal: Number(e.target.value) })} className="field-input mt-1 px-2 py-1.5 text-sm" />
+                    onChange={(e) => patch({ slopeIdeal: Number(e.target.value) })} className="field-input mt-1 px-2 py-1.5 text-sm w-full" />
                 </label>
-                <label className="text-[11px] leading-tight text-sage-dark block">
-                  {t("Pendenza massima (‰)")}
+                <label className="text-[11px] leading-tight text-sage-dark block whitespace-nowrap">
+                  {t("Pend. max (‰)")}
                   <input type="number" min={0} max={200} step={0.5} value={cur.slopeMax}
-                    onChange={(e) => patch({ slopeMax: Number(e.target.value) })} className="field-input mt-1 px-2 py-1.5 text-sm" />
+                    onChange={(e) => patch({ slopeMax: Number(e.target.value) })} className="field-input mt-1 px-2 py-1.5 text-sm w-full" />
                 </label>
               </div>
             </div>
