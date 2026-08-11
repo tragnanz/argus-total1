@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.69";
+const REV = "v0.6.70";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -449,7 +449,7 @@ export default function Page() {
   useEffect(() => { refreshClients(); }, []);
   useEffect(() => { refreshProjects(clientId); setProjectId(null); }, [clientId]);
   useEffect(() => {
-    if (projectId) { refreshAreas(projectId); refreshLayers(projectId); }
+    if (projectId) openProject(projectId);
     else { setAreas([]); setLayers([]); }
   }, [projectId]);
 
@@ -457,6 +457,31 @@ export default function Page() {
   async function refreshProjects(cid: number | null) { try { setProjects(await api.listProjects(cid)); } catch (e) { showErr(e); } }
   async function refreshAreas(pid: number) { try { setAreas(await api.listAreas(pid)); } catch (e) { showErr(e); } }
   async function refreshLayers(pid: number) { try { setLayers(await api.listLayers(pid)); } catch (e) { showErr(e); } }
+  // Apertura progetto → LISTA UNICA: le aree salvate diventano subito «Campi»
+  // sulla mappa; gli eventuali livelli salvati (canali/pivot) vengono ripristinati.
+  async function openProject(pid: number) {
+    clearAllFields();
+    setCanals([]); setGuided(null);
+    try {
+      const [areasList, layersList] = await Promise.all([api.listAreas(pid), api.listLayers(pid)]);
+      setAreas(areasList); setLayers(layersList);
+      const roots = areasList.filter((a) => a.parent_area_id == null);
+      if (roots.length) {
+        const nf: Field[] = roots.map((a) => ({ id: nextId.current++, name: a.name, geom: a.geojson, savedId: a.id }));
+        setFields(nf);
+        setActiveId(nf[0].id);
+        renderFields(nf, nf[0].id);
+        setTimeout(() => mapApi.current?.fitAll(), 40);
+      }
+      const cs = layersList.filter((l) => l.kind === "canal").map((l) => l.data as unknown as Canal);
+      if (cs.length) {
+        setCanals(cs);
+        mapApi.current?.showCanals(cs.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
+      }
+      const pv = layersList.filter((l) => l.kind === "pivots").map((l) => l.data as unknown as GuidedResult).pop();
+      if (pv) { setGuided(pv); setModelFromGuided(pv); }
+    } catch (e) { showErr(e); }
+  }
   function showErr(e: unknown) { setMsg(e instanceof Error ? e.message : String(e)); }
 
   // ---- clienti / progetti ----
@@ -538,6 +563,12 @@ export default function Page() {
     setFields((fs) => { const arr = fs.map((x) => x.id === f.id ? { ...x, name } : x); renderFields(arr, activeId); return arr; });
   }
   function removeField(f: Field) {
+    // Se il campo proviene da un'area salvata, l'utente sta eliminando dal
+    // progetto (lista unica): chiedi conferma ed elimina anche dal database,
+    // così non ricompare alla riapertura.
+    if (f.savedId != null) {
+      if (!confirm(t("Eliminare \"{name}\" dal progetto?", { name: f.name }))) return;
+    }
     setFields((fs) => {
       const arr = fs.filter((x) => x.id !== f.id);
       const aId = activeId === f.id ? (arr[0]?.id ?? null) : activeId;
@@ -545,6 +576,9 @@ export default function Page() {
       if (activeId === f.id) { setActiveId(aId); clearViewOverlays(); }
       return arr;
     });
+    if (f.savedId != null && projectId) {
+      api.deleteArea(f.savedId).then(() => { if (projectId) refreshAreas(projectId); }).catch(showErr);
+    }
   }
   function clearAllFields() {
     setFields([]); setActiveId(null); clearViewOverlays();
@@ -1554,63 +1588,9 @@ export default function Page() {
             <button className="btn-primary w-full mt-3" disabled={busy === "save" || !active || !projectId} onClick={() => active && saveFieldTree(active)}>
               {busy === "save" ? t("Salvo…") : t("Salva campo e sotto-aree nel progetto")}
             </button>
-            {(() => {
-              // Non ripetere in «Aree salvate» ciò che è già caricato tra i Campi:
-              // un'area salvata compare qui solo finché non è sulla mappa.
-              const loaded = new Set(fields.map((f) => f.savedId).filter((x): x is number => x != null));
-              const roots = areas.filter((a) => a.parent_area_id == null && !loaded.has(a.id));
-              if (!roots.length) return null;
-              return (
-              <div className="mt-3">
-                <div className="text-xs font-semibold text-sage-dark mb-1">{t("Aree salvate")}</div>
-                <p className="text-[11px] text-sage-dark mb-1">{t("Non ancora sulla mappa · clicca per caricarle")}</p>
-                <ul className="space-y-1">
-                  {roots.map((a) => (
-                    <li key={a.id} className="text-sm bg-panel rounded-lg px-2 py-1">
-                      <div className="flex items-center justify-between">
-                        <button className="truncate text-left flex-1" title={t("Carica")} onClick={() => loadArea(a)}>
-                          {a.name} <span className="text-sage">· {a.area_ha != null ? uHa(a.area_ha) : "?"}</span>
-                        </button>
-                        <span className="flex gap-1 shrink-0">
-                          <button className="text-xs text-brand-mid" title={t("Nome area")} onClick={() => renameArea(a)}>✎</button>
-                          <button className="text-xs text-danger" title={t("Rimuovi")} onClick={() => delArea(a)}>✕</button>
-                        </span>
-                      </div>
-                      {areas.filter((c) => c.parent_area_id === a.id).map((c) => (
-                        <div key={c.id} className="flex items-center justify-between text-[11px] text-sage-dark ml-1 mt-0.5 border-l-2 border-brand/20 pl-2">
-                          <button className="truncate text-left flex-1" title={t("Carica")} onClick={() => loadArea(c)}>↳ {c.name} · {c.area_ha != null ? uHa(c.area_ha) : "?"}</button>
-                          <span className="flex gap-1 shrink-0">
-                            <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(c.name), [{ name: c.name, geom: c.geojson }])}>⤓</button>
-                            <button className="text-danger" title={t("Rimuovi")} onClick={() => delArea(c)}>✕</button>
-                          </span>
-                        </div>
-                      ))}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              );
-            })()}
-
-            {!!layers.length && (
-              <div className="mt-3">
-                <div className="text-xs font-semibold text-sage-dark mb-1">{t("Livelli salvati")}</div>
-                <ul className="space-y-1">
-                  {layers.map((l) => (
-                    <li key={l.id} className="flex items-center justify-between text-sm bg-panel rounded-lg px-2 py-1">
-                      <button className="truncate text-left flex-1" title={t("Carica e modifica")} onClick={() => loadLayer(l)}>
-                        <span className="text-[10px] uppercase text-brand-light mr-1">{l.kind === "canal" ? t("canale") : l.kind === "pivots" ? t("pivot") : l.kind}</span>
-                        {l.name}
-                      </button>
-                      <span className="flex gap-1 shrink-0">
-                        <button className="text-xs text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportLayerKmz(l)}>⤓</button>
-                        <button className="text-xs text-danger" title={t("Rimuovi")} onClick={() => delLayer(l)}>✕</button>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            {/* Lista unica: i campi (e i livelli salvati) si caricano automaticamente
+                all'apertura del progetto nell'elenco «Campi» qui sopra. Nessun
+                elenco «Aree salvate»/«Livelli salvati» separato. */}
           </section>
           </div>
         </div>
@@ -1660,37 +1640,7 @@ export default function Page() {
                 </div>
               ) : (
                 <div>
-                  <p className="text-[11px] text-sage-dark mb-2">{t("Clicca un oggetto sulla mappa per modificarlo. Livelli del progetto — nascondi, scarica ed elimina:")}</p>
-                  <ul className="space-y-1">
-                    {([
-                      { k: "fields", lbl: t("Campi"), n: fields.length,
-                        dl: () => exportKmz("campi", fields.flatMap((f) => [{ name: f.name, geom: f.geom }, ...(f.macros ?? []).map((m) => ({ name: m.name, geom: m.geom }))])),
-                        clr: clearAllFields },
-                      { k: "macro", lbl: t("Macro-aree"), n: fields.reduce((s, f) => s + (f.macros?.length ?? 0), 0),
-                        dl: () => exportKmz("macro-aree", fields.flatMap((f) => (f.macros ?? []).map((m) => ({ name: m.name, geom: m.geom })))),
-                        clr: undefined },
-                      { k: "canal", lbl: t("Canali"), n: canals.length,
-                        dl: () => exportKmz("canali", canals.map((c, i) => ({ name: `Canale ${i + 1}`, geom: { type: "LineString" as const, coordinates: c.geojson.coordinates } }))),
-                        clr: clearCanalUI },
-                      { k: "water", lbl: t("Invasi/corsi d'acqua"), n: watercourses.length, dl: undefined, clr: clearWater },
-                      { k: "strade", lbl: t("Strade"), n: roads.length,
-                        dl: () => exportKmz("strade", roads.map((r, i) => ({ name: `Strada ${i + 1}`, geom: { type: "LineString" as const, coordinates: r.coords } }))),
-                        clr: clearRoads },
-                      { k: "layout", lbl: t("Pivot"), n: pivots.length,
-                        dl: () => exportKmz("pivot", pivots.map((p, i) => ({ name: `Pivot ${i + 1}`, geom: { type: "Polygon" as const, coordinates: [circleRing(p.lat, p.lng, p.r)] } }))),
-                        clr: clearGuided },
-                    ] as const).map((L) => (
-                      <li key={L.k} className="flex items-center gap-2 text-[11px] bg-panel rounded-lg px-2 py-1">
-                        <button className="flex items-center gap-2 flex-1 min-w-0 text-left" title={t("Mostra/Nascondi")} onClick={() => toggleLayer(L.k)}>
-                          <span className={layerVis[L.k] ? "text-brand" : "text-sage-dark opacity-50"}>{layerVis[L.k] ? "◉" : "○"}</span>
-                          <span className={"truncate " + (layerVis[L.k] ? "text-sage-dark" : "text-sage-dark line-through opacity-60")}>{L.lbl}</span>
-                        </button>
-                        <span className="text-sage-dark tabular-nums shrink-0">{L.n}</span>
-                        {L.dl && L.n > 0 && <button className="text-brand-mid shrink-0" title={t("Scarica KMZ")} onClick={L.dl}>⤓</button>}
-                        {L.clr && L.n > 0 && <button className="text-danger shrink-0" title={t("Elimina livello")} onClick={L.clr}>✕</button>}
-                      </li>
-                    ))}
-                  </ul>
+                  <p className="text-[11px] text-sage-dark">{t("Clicca un oggetto sulla mappa per modificarlo. I campi del progetto sono nell'elenco «Campi» del pannello Progetto.")}</p>
                 </div>
               )}
             </div>
