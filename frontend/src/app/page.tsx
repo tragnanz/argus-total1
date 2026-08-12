@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.77";
+const REV = "v0.6.78";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1898,39 +1898,27 @@ export default function Page() {
             )}
             <p className="text-[11px] text-sage-dark mt-1">{t("Trascina un oggetto su un campo per assegnarglielo; «＋» disegna un poligono figlio.")}</p>
 
-            {/* --- Pannello Livelli: oggetti NON assegnati, come cartelle (stile Photoshop) --- */}
-            <div className="mt-3 border-t border-brand/15 pt-2">
-              <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide mb-1">{t("Livelli (non assegnati)")}</div>
-              {(() => {
-                const items = canals.map((c, i) => ({ c, i })).filter((x) => x.c.owner == null);
-                const anyVis = items.some((x) => !x.c.hidden);
-                return renderLayerFolder("canali", t("Canali"), items.length, anyVis,
-                  () => setCanals((cs) => { const arr = cs.map((c) => c.owner == null ? { ...c, hidden: anyVis } : c); renderCanals(arr); return arr; }),
-                  items.map(({ c, i }) => objRow("canal", i, `c${i}`, !!c.hidden, () => toggleCanalHidden(i), <>{t("Canale")} {i + 1} · {uM(c.length_m)}</>, () => zoomToCoords(c.geojson.coordinates), () => removeCanal(i))));
-              })()}
-              {(() => {
-                const items = roads.map((r, i) => ({ r, i })).filter((x) => x.r.owner == null);
-                const anyVis = items.some((x) => !x.r.hidden);
-                return renderLayerFolder("strade", t("Strade"), items.length, anyVis,
-                  () => setRoads((rs) => rs.map((r) => r.owner == null ? { ...r, hidden: anyVis } : r)),
-                  items.map(({ r, i }) => objRow("road", r.id, `r${r.id}`, !!r.hidden, () => toggleRoadHidden(i), <>{t("Strada")} {i + 1} · {uM(r.width_m)}</>, () => zoomToCoords(r.coords), () => removeRoad(i))));
-              })()}
-              {(() => {
-                const items = watercourses.map((w, i) => ({ w, i })).filter((x) => x.w.owner == null);
-                const anyVis = items.some((x) => !x.w.hidden);
-                return renderLayerFolder("invasi", t("Invasi/corsi d'acqua"), items.length, anyVis,
-                  () => setWatercourses((ws) => { const arr = ws.map((w) => w.owner == null ? { ...w, hidden: anyVis } : w); renderWater(arr); return arr; }),
-                  items.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{w.kind} {i + 1}</>, () => zoomToCoords(coords), () => removeWater(i)); }));
-              })()}
-              {(() => {
-                const groups = pivotGroups.filter((g) => g.fid < 0 || !fields.some((f) => f.id === g.fid));
-                const total = groups.reduce((s, g) => s + g.n, 0);
-                const anyVis = groups.some((g) => !hiddenPivotFields.has(g.fid));
-                return renderLayerFolder("pivot", t("Pivot"), total, anyVis,
-                  () => { const ids = new Set(hiddenPivotFields); if (anyVis) groups.forEach((g) => ids.add(g.fid)); else groups.forEach((g) => ids.delete(g.fid)); setHiddenPivotFields(ids); },
-                  groups.map((g) => objRow("pivot", g.fid, `pg${g.fid}`, hiddenPivotFields.has(g.fid), () => togglePivotFieldHidden(g.fid), <>{g.name} · {g.n} pivot</>, () => { const f = fields.find((x) => x.id === g.fid); if (f) zoomToCoords(f.geom.coordinates[0]); }, () => removePivotsOfField(g.fid))));
-              })()}
-            </div>
+            {/* Oggetti NON ancora assegnati a un campo: elenco semplice (niente cartelle),
+                mostrato solo se ce ne sono. Quelli assegnati compaiono sotto al campo. */}
+            {(() => {
+              const cItems = canals.map((c, i) => ({ c, i })).filter((x) => x.c.owner == null);
+              const rItems = roads.map((r, i) => ({ r, i })).filter((x) => x.r.owner == null);
+              const wItems = watercourses.map((w, i) => ({ w, i })).filter((x) => x.w.owner == null);
+              const pGroups = pivotGroups.filter((g) => g.fid < 0 || !fields.some((f) => f.id === g.fid));
+              if (!cItems.length && !rItems.length && !wItems.length && !pGroups.length) return null;
+              return (
+                <div className="mt-3 border-t border-brand/15 pt-2">
+                  <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide mb-1">{t("Oggetti non assegnati")}</div>
+                  <p className="text-[11px] text-sage-dark mb-1">{t("Trascinali su un campo per assegnarli.")}</p>
+                  <ul className="space-y-0.5">
+                    {cItems.map(({ c, i }) => objRow("canal", i, `c${i}`, !!c.hidden, () => toggleCanalHidden(i), <>{t("Canale")} {i + 1} · {uM(c.length_m)}</>, () => zoomToCoords(c.geojson.coordinates), () => removeCanal(i)))}
+                    {rItems.map(({ r, i }) => objRow("road", r.id, `r${r.id}`, !!r.hidden, () => toggleRoadHidden(i), <>{t("Strada")} {i + 1} · {uM(r.width_m)}</>, () => zoomToCoords(r.coords), () => removeRoad(i)))}
+                    {wItems.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{w.kind} {i + 1}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
+                    {pGroups.map((g) => objRow("pivot", g.fid, `pg${g.fid}`, hiddenPivotFields.has(g.fid), () => togglePivotFieldHidden(g.fid), <>{g.name} · {g.n} pivot</>, () => {}, () => removePivotsOfField(g.fid)))}
+                  </ul>
+                </div>
+              );
+            })()}
 
             {/* I livelli (con visibilità, download, elimina) sono nel widget «Proprietà» a sinistra. */}
 
