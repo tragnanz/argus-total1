@@ -373,10 +373,16 @@ def detect_watercourses(client, geom: dict, date: str, min_area_ha: float = 0.2,
                                for i in range(1, len(xy)))
                 if length_m < 4 * res:
                     continue
+                # Larghezza REALE del letto: area del footprint / lunghezza dell'asse.
+                # Così l'alveo ricavato dai dislivelli si evita con la sua ampiezza,
+                # non come una linea sottile.
+                area_m2 = float(comp.sum()) * res * res
+                mean_width = max(float(res), area_m2 / length_m) if length_m > 0 else float(res)
                 xy_s = _rdp([(float(x), float(y)) for x, y in xy], res * 0.8)
                 line_ll = [list(to_wgs.transform(x, y)) for x, y in xy_s]
                 out.append({"geojson": {"type": "LineString", "coordinates": line_ll},
-                            "kind": "drainage", "area_ha": 0.0, "length_m": round(length_m, 1)})
+                            "kind": "drainage", "area_ha": round(area_m2 / 10000.0, 1),
+                            "length_m": round(length_m, 1), "mean_width_m": round(mean_width, 1)})
                 n_dem += 1
         except Exception:  # noqa: BLE001 — se il calcolo idrologico fallisce, salto
             pass

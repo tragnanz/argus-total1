@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.97";
+const REV = "v0.6.98";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1410,9 +1410,18 @@ export default function Page() {
   // franco (clear_m), così le strade usano «Da strade» e i canali «Da canali/invasi».
   // I pivot ne evitano il footprint reale (spessore) più il franco.
   function obstacleLines() {
+    // Corsi d'acqua rilevati (fiumi/alvei da DEM, canali esistenti, invasi/paludi):
+    // l'alveo si evita con la SUA larghezza reale (mean_width_m) più il franco «Da canali/invasi».
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const waterItems = watercourses.filter((w) => !w.hidden).map((w: any) => (
+      w.geojson.type === "LineString"
+        ? { geojson: { type: "LineString", coordinates: w.geojson.coordinates }, width_m: (w.mean_width_m && w.mean_width_m > 0 ? w.mean_width_m : canalWidth), clear_m: pivClearWater }
+        : { geojson: { type: "Polygon", coordinates: w.geojson.coordinates }, width_m: 0, clear_m: pivClearWater }
+    ));
     const items = [
       ...roads.map((r) => ({ geojson: { type: "LineString", coordinates: r.coords }, width_m: r.width_m, clear_m: pivClearRoad })),
       ...canals.map((c) => ({ geojson: { type: "LineString", coordinates: c.geojson.coordinates }, width_m: canalWidth, clear_m: pivClearWater })),
+      ...waterItems,
     ];
     return items.length ? items : null;
   }
