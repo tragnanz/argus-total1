@@ -6,7 +6,7 @@ import type { Polygon, GeoJSONFC } from "@/lib/api";
 
 export type OverlayKey = "index" | "dem" | "suitability";
 export type FieldStyle = { color?: string; fillColor?: string; fillOpacity?: number; weight?: number };
-export type FieldGeom = { id: number; name: string; geom: Polygon; style?: FieldStyle };
+export type FieldGeom = { id: number; name: string; geom: Polygon; style?: FieldStyle; level?: "area" | "campo" };
 // Modello pivot interattivo (gerarchia gruppo → singolo)
 export type PivotItem = { lat: number; lng: number; r: number; conn?: string; field?: number };
 export type PivotModel = { pivots: PivotItem[]; lines: { kind: string; coords: number[][] }[] };
@@ -71,6 +71,15 @@ const ESRI =
 // Campo attivo (in modifica): azzurro pieno. Campi inattivi: verde tratteggiato.
 const ACTIVE_STYLE = { color: "#20aae2", weight: 3, fillColor: "#20aae2", fillOpacity: 0.15 };
 const IDLE_STYLE = { color: "#03a047", weight: 3, fillColor: "#038037", fillOpacity: 0.14, dashArray: "6,4" };
+// Stili predefiniti per LIVELLO della piramide: AREA (utente, ambra tratteggiata,
+// è il contenitore) vs CAMPO (generato dal sistema, verde pieno, è l'operativo).
+const AREA_STYLE = { color: "#e8973d", weight: 3, fillColor: "#e8973d", fillOpacity: 0.08, dashArray: "6,5" };
+const CAMPO_STYLE = { color: "#03a047", weight: 3, fillColor: "#038037", fillOpacity: 0.16 };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function resolveFieldStyle(f: FieldGeom): any {
+  const base = f.level === "campo" ? CAMPO_STYLE : AREA_STYLE;
+  return { ...base, ...(f.style || {}) };
+}
 const PHASE = ["#038037", "#20aae2", "#87bf59", "#f0b429", "#b23b1e", "#6b21a8"];
 
 const toLatLng = (ring: number[][]) => ring.map((p) => [p[1], p[0]] as [number, number]);
@@ -267,7 +276,9 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   }
   function placeActive(f: FieldGeom) {
     const map = mapRef.current; if (!map) return;
-    const layer = L.polygon(toLatLng(f.geom.coordinates[0]), { ...ACTIVE_STYLE, ...(f.style || {}) }).addTo(map);
+    // Selezionato: mantiene il colore del livello/personalizzato, con perimetro più marcato.
+    const st = resolveFieldStyle(f);
+    const layer = L.polygon(toLatLng(f.geom.coordinates[0]), { ...st, weight: (st.weight || 3) + 2, fillOpacity: Math.min(0.4, (st.fillOpacity ?? 0.14) + 0.08) }).addTo(map);
     if (f.name) layer.bindTooltip(f.name, { permanent: true, direction: "center", className: "field-label" });
     editLayerRef.current = layer;
     layer.pm?.enable({ allowSelfIntersection: false });
@@ -358,7 +369,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         for (const f of fields) {
           if (hide.has(f.id)) continue;                 // campo spento: non disegnare
           if (f.id === activeId) { placeActive(f); continue; }
-          const ly = L.polygon(toLatLng(f.geom.coordinates[0]), { ...IDLE_STYLE, ...(f.style || {}) });
+          const ly = L.polygon(toLatLng(f.geom.coordinates[0]), resolveFieldStyle(f));
           ly.on("click", () => cbRef.current.onSelect?.(f.id));
           if (f.name) ly.bindTooltip(f.name, { permanent: true, direction: "center", className: "field-label" });
           grp.addLayer(ly);

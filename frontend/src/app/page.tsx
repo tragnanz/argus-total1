@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.78";
+const REV = "v0.6.79";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -82,6 +82,8 @@ type Field = {
   savedId?: number;                    // id dell'area salvata nel progetto
   parentId?: number;                   // campo genitore (famiglia): poligono figlio sotto un altro
   style?: { color?: string; fillColor?: string; fillOpacity?: number };   // stile perimetro/riempimento
+  level?: "area" | "campo";            // AREA = disegnata/importata dall'utente; CAMPO = generata dal sistema dopo l'analisi
+  score?: number;                      // idoneità media (solo per i CAMPO generati dall'analisi)
 };
 
 // Wrapper front-end con visibilità per-oggetto e proprietario (campo) per il
@@ -495,9 +497,14 @@ export default function Page() {
         for (const c of childrenOfArea(a.id)) if (c.kind !== "macro") build(c, fid);
       };
       areasList.filter((a) => a.parent_area_id == null).forEach((a) => build(a));
-      // Applica gli stili salvati (colore/trasparenza) prima di disegnare.
+      // Applica stili, livello (area/campo) e idoneità salvati prima di disegnare.
+      // I campi senza livello memorizzato valgono «area» (progetti già esistenti).
       const styleLayer = layersList.filter((l) => l.kind === "styles").map((l) => l.data).pop();
-      if (styleLayer?.byArea) for (const f of nf) if (f.savedId != null && styleLayer.byArea[f.savedId]) f.style = styleLayer.byArea[f.savedId];
+      for (const f of nf) {
+        if (f.savedId != null && styleLayer?.byArea?.[f.savedId]) f.style = styleLayer.byArea[f.savedId];
+        f.level = (f.savedId != null && styleLayer?.levels?.[f.savedId]) || "area";
+        if (f.savedId != null && styleLayer?.scores?.[f.savedId] != null) f.score = styleLayer.scores[f.savedId];
+      }
       if (nf.length) {
         const firstRoot = nf.find((f) => f.parentId == null) ?? nf[0];
         setFields(nf);
@@ -556,7 +563,7 @@ export default function Page() {
   }
   function renderFields(fs: Field[], aId: number | null) {
     const hidden = fs.filter((f) => f.hidden).map((f) => f.id);
-    mapApi.current?.setFields(fs.map((f) => ({ id: f.id, name: f.name, geom: f.geom, style: f.style })), aId, hidden);
+    mapApi.current?.setFields(fs.map((f) => ({ id: f.id, name: f.name, geom: f.geom, style: f.style, level: f.level ?? "area" })), aId, hidden);
   }
   // Aggiorna lo stile (colore perimetro/riempimento, trasparenza) del campo attivo.
   function patchFieldStyle(patch: { color?: string; fillColor?: string; fillOpacity?: number }) {
@@ -566,6 +573,10 @@ export default function Page() {
   function resetFieldStyle() {
     if (activeId == null) return;
     setFields((fs) => { const arr = fs.map((f) => f.id === activeId ? { ...f, style: undefined } : f); renderFields(arr, activeId); return arr; });
+  }
+  function setFieldLevel(level: "area" | "campo") {
+    if (activeId == null) return;
+    setFields((fs) => { const arr = fs.map((f) => f.id === activeId ? { ...f, level } : f); renderFields(arr, activeId); return arr; });
   }
   // Ridisegna sulla mappa tutte le macro-aree: candidate (da individuazione) +
   // sotto-aree già assegnate ai campi.
@@ -630,9 +641,10 @@ export default function Page() {
     saveBlob(blob, filename.toLowerCase().endsWith(".kmz") ? filename : `${filename}.kmz`);
   }
   function draw() { setMsg(""); pendingParentRef.current = null; mapApi.current?.draw(); }
-  function addField(geom: Polygon, name?: string, focus = true, savedId?: number, parentId?: number) {
+  function addField(geom: Polygon, name?: string, focus = true, savedId?: number, parentId?: number, level: "area" | "campo" = "area") {
     const id = nextId.current++;
-    const f: Field = { id, name: name || `${t("Campo")} ${id}`, geom, savedId, parentId };
+    const def = level === "campo" ? `${t("Campo")} ${id}` : `${t("Area")} ${id}`;
+    const f: Field = { id, name: name || def, geom, savedId, parentId, level };
     setFields((prev) => {
       const arr = [...prev, f];
       const aId = focus ? id : activeId;
@@ -739,7 +751,7 @@ export default function Page() {
       const start = nextId.current;
       const newOnes: Field[] = imported.map((im) => {
         const id = nextId.current++;
-        return { id, name: im.name || `${t("Campo")} ${id}`, geom: im.geom };
+        return { id, name: im.name || `${t("Area")} ${id}`, geom: im.geom, level: "area" as const };
       });
       setFields((prev) => {
         const arr = [...prev, ...newOnes];
@@ -890,40 +902,24 @@ export default function Page() {
 
   // Aggiunge una macro-area come SOTTO-LIVELLO del campo attivo (il poligono in
   // cui è inscritta), non come nuovo campo di primo livello.
+  // I poligoni individuati dall'analisi diventano CAMPI (livello «campo»): veri
+  // poligoni selezionabili annidati sotto l'AREA attiva.
   function addMacroToField(m: MacroArea) {
     if (activeId == null) { needField(); return; }
-    setFields((fs) => {
-      const arr = fs.map((f) => {
-        if (f.id !== activeId) return f;
-        const n = (f.macros?.length ?? 0) + 1;
-        const mm: FieldMacro = {
-          id: nextId.current++, name: `${f.name} · M${n}`,
-          geom: m.geojson, area_ha: m.area_ha, mean_score: m.mean_score,
-        };
-        return { ...f, macros: [...(f.macros ?? []), mm] };
-      });
-      const rest = macroAreas.filter((x) => x !== m);
-      setMacroAreas(rest);
-      renderMacrosOnMap(arr, rest);
-      return arr;
-    });
+    const pid = activeId;
+    const cnt = fields.filter((f) => f.parentId === pid && f.level === "campo").length + 1;
+    const nf: Field = { id: nextId.current++, name: `${t("Campo")} ${cnt}`, geom: m.geojson, parentId: pid, level: "campo", score: m.mean_score };
+    const rest = macroAreas.filter((x) => x !== m);
+    setMacroAreas(rest);
+    setFields((fs) => { const arr = [...fs, nf]; renderFields(arr, activeId); renderMacrosOnMap(arr, rest); return arr; });
   }
   function addAllMacroToField() {
     if (activeId == null) { needField(); return; }
-    setFields((fs) => {
-      const arr = fs.map((f) => {
-        if (f.id !== activeId) return f;
-        let n = f.macros?.length ?? 0;
-        const add = macroAreas.map((m) => {
-          n += 1;
-          return { id: nextId.current++, name: `${f.name} · M${n}`, geom: m.geojson, area_ha: m.area_ha, mean_score: m.mean_score } as FieldMacro;
-        });
-        return { ...f, macros: [...(f.macros ?? []), ...add] };
-      });
-      setMacroAreas([]);
-      renderMacrosOnMap(arr, []);
-      return arr;
-    });
+    const pid = activeId;
+    let cnt = fields.filter((f) => f.parentId === pid && f.level === "campo").length;
+    const add: Field[] = macroAreas.map((m) => { cnt += 1; return { id: nextId.current++, name: `${t("Campo")} ${cnt}`, geom: m.geojson, parentId: pid, level: "campo" as const, score: m.mean_score }; });
+    setMacroAreas([]);
+    setFields((fs) => { const arr = [...fs, ...add]; renderFields(arr, activeId); renderMacrosOnMap(arr, []); return arr; });
   }
   function removeFieldMacro(fieldId: number, macroId: number) {
     setFields((fs) => {
@@ -1008,10 +1004,19 @@ export default function Page() {
       if (roads.length) await api.createLayer({ project_id: pid, kind: "roads", name: t("Strade"), data: { items: roads.map((r) => ({ ...r, ownerArea: ownerArea(r.owner) })) } });
       if (watercourses.length) await api.createLayer({ project_id: pid, kind: "waters", name: t("Invasi/corsi d'acqua"), data: { items: watercourses.map((w) => ({ ...w, ownerArea: ownerArea(w.owner) })) } });
 
-      // 3b) Salva gli stili dei campi (colore/trasparenza) mappati per id area.
+      // 3b) Salva stili (colore/trasparenza), LIVELLO (area/campo) e idoneità dei
+      // campi, mappati per id area, in un unico layer «styles».
       const styles: Record<number, { color?: string; fillColor?: string; fillOpacity?: number }> = {};
-      for (const f of fields) if (f.style && fieldToArea.has(f.id)) styles[fieldToArea.get(f.id)!] = f.style;
-      if (Object.keys(styles).length) await api.createLayer({ project_id: pid, kind: "styles", name: t("Stili"), data: { byArea: styles } });
+      const levels: Record<number, string> = {};
+      const scores: Record<number, number> = {};
+      for (const f of fields) {
+        const aid = fieldToArea.get(f.id); if (aid == null) continue;
+        if (f.style) styles[aid] = f.style;
+        if (f.level) levels[aid] = f.level;
+        if (f.score != null) scores[aid] = f.score;
+      }
+      if (Object.keys(styles).length || Object.keys(levels).length || Object.keys(scores).length)
+        await api.createLayer({ project_id: pid, kind: "styles", name: t("Stili"), data: { byArea: styles, levels, scores } });
 
       // 4) Salva i pivot (field → id area nelle properties del FeatureCollection).
       if (pivots.length) {
@@ -1693,10 +1698,12 @@ export default function Page() {
         onDragEnd={() => { dragRef.current = null; setDragOverField(null); }}
         className={`text-sm rounded-lg px-2 py-1 cursor-move ${dragOverField === f.id ? "ring-2 ring-brand" : f.id === activeId ? "bg-brand/10 ring-1 ring-brand/40" : "bg-panel"} ${f.hidden ? "opacity-50" : ""}`}>
         <div className="flex items-center justify-between">
-          <button className="truncate text-left flex-1" title={t("Seleziona campo · trascina qui gli oggetti per assegnarli")} onClick={() => selectField(f.id)}>
+          <button className="truncate text-left flex-1" title={t("Seleziona · trascina qui gli oggetti per assegnarli")} onClick={() => selectField(f.id)}>
             {depth > 0 && <span className="text-brand-light">↳ </span>}
+            <span className="text-[9px] uppercase font-semibold mr-1 px-1 py-0.5 rounded" style={{ background: (f.level === "campo" ? "#e4f4ea" : "#fdefe0"), color: (f.level === "campo" ? "#03683a" : "#b5651a") }}>{f.level === "campo" ? t("Campo") : t("Area")}</span>
             <span className={f.id === activeId ? "font-semibold text-brand" : ""}>{f.name}</span>
             <span className="text-sage"> · {uHa(ringAreaHa(f.geom.coordinates))}</span>
+            {f.level === "campo" && f.score != null && <span className="text-brand-light"> · {t("Idoneità")} {fmt(f.score)}</span>}
             {!!kids.length && <span className="text-brand-light"> · {kids.length} {t("figli")}</span>}
             {!!f.macros?.length && <span className="text-brand-light"> · {f.macros.length} {t("sotto-aree")}</span>}
             {ownedPivN > 0 && <span className="text-brand-light"> · {ownedPivN} pivot</span>}
@@ -1992,14 +1999,27 @@ export default function Page() {
                     <b className="text-brand-darker text-sm truncate">{active.name}</b>
                     <button className="text-[11px] text-brand-mid shrink-0" onClick={() => renameField(active)}>{t("Rinomina")}</button>
                   </div>
-                  <div className="flex items-center gap-4">
-                    <label className="flex items-center gap-1.5 text-[11px] text-sage-dark">{t("Perimetro")}
-                      <input type="color" value={active.style?.color ?? "#03a047"} onChange={(e) => patchFieldStyle({ color: e.target.value })} className="w-8 h-6 rounded border border-black/10 bg-white p-0 cursor-pointer" /></label>
-                    <label className="flex items-center gap-1.5 text-[11px] text-sage-dark">{t("Riempimento")}
-                      <input type="color" value={active.style?.fillColor ?? "#038037"} onChange={(e) => patchFieldStyle({ fillColor: e.target.value })} className="w-8 h-6 rounded border border-black/10 bg-white p-0 cursor-pointer" /></label>
+                  <div className="seg">
+                    <div className="seg-item" data-active={(active.level ?? "area") === "area"} onClick={() => setFieldLevel("area")}>{t("Area")}</div>
+                    <div className="seg-item" data-active={active.level === "campo"} onClick={() => setFieldLevel("campo")}>{t("Campo")}</div>
                   </div>
-                  <label className="block text-[11px] text-sage-dark">{t("Trasparenza riempimento")}: <b>{Math.round((active.style?.fillOpacity ?? 0.14) * 100)}%</b>
-                    <input type="range" min={0} max={100} step={5} value={Math.round((active.style?.fillOpacity ?? 0.14) * 100)} onChange={(e) => patchFieldStyle({ fillOpacity: Number(e.target.value) / 100 })} className="w-full mt-1" /></label>
+                  {(() => {
+                    const defC = active.level === "campo" ? "#03a047" : "#e8973d";
+                    const defF = active.level === "campo" ? "#038037" : "#e8973d";
+                    const defO = active.level === "campo" ? 0.16 : 0.08;
+                    return (
+                      <>
+                        <div className="flex items-center gap-4">
+                          <label className="flex items-center gap-1.5 text-[11px] text-sage-dark">{t("Perimetro")}
+                            <input type="color" value={active.style?.color ?? defC} onChange={(e) => patchFieldStyle({ color: e.target.value })} className="w-8 h-6 rounded border border-black/10 bg-white p-0 cursor-pointer" /></label>
+                          <label className="flex items-center gap-1.5 text-[11px] text-sage-dark">{t("Riempimento")}
+                            <input type="color" value={active.style?.fillColor ?? defF} onChange={(e) => patchFieldStyle({ fillColor: e.target.value })} className="w-8 h-6 rounded border border-black/10 bg-white p-0 cursor-pointer" /></label>
+                        </div>
+                        <label className="block text-[11px] text-sage-dark">{t("Trasparenza riempimento")}: <b>{Math.round((active.style?.fillOpacity ?? defO) * 100)}%</b>
+                          <input type="range" min={0} max={100} step={5} value={Math.round((active.style?.fillOpacity ?? defO) * 100)} onChange={(e) => patchFieldStyle({ fillOpacity: Number(e.target.value) / 100 })} className="w-full mt-1" /></label>
+                      </>
+                    );
+                  })()}
                   {(() => {
                     const ring: number[][] = active.geom.coordinates[0] || [];
                     let per = 0; for (let i = 1; i < ring.length; i++) per += distM(ring[i - 1], ring[i]);
@@ -2251,7 +2271,7 @@ export default function Page() {
           </section>
 
           <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
-            <SectionHead title={t("Macro-aree")} help={t("Individua le zone idonee nell'area attiva; usale come campi o rifinisci.")} />
+            <SectionHead title={t("Analisi → Campi")} help={t("Individua le zone idonee nell'AREA attiva: diventano CAMPI (poligoni operativi generati dal sistema), annidati sotto l'area e selezionabili singolarmente.")} />
             <div className="flex gap-2">
               <label className="text-xs text-sage-dark flex-1">{t("Soglia idoneità")}: {macroThr}/100
                 <input type="range" min={40} max={90} step={5} value={macroThr}
@@ -2271,15 +2291,15 @@ export default function Page() {
             {!!macroAreas.length && (
               <div className="mt-3">
                 <div className="flex items-center justify-between mb-1">
-                  <div className="text-xs font-semibold text-sage-dark">{macroAreas.length} {t("Macro-aree")}</div>
-                  <button className="text-xs text-brand-mid disabled:opacity-40" disabled={activeId == null} onClick={addAllMacroToField}>{t("Aggiungi tutte al campo")}</button>
+                  <div className="text-xs font-semibold text-sage-dark">{macroAreas.length} {t("zone idonee")}</div>
+                  <button className="text-xs text-brand-mid disabled:opacity-40" disabled={activeId == null} onClick={addAllMacroToField}>{t("Crea tutti i campi")}</button>
                 </div>
-                <p className="hint mb-1">{active ? t("Verranno aggiunte come sotto-aree di: {name}", { name: active.name }) : t("Seleziona un campo a sinistra per aggiungerle.")}</p>
+                <p className="hint mb-1">{active ? t("Diventeranno CAMPI sotto l'area: {name}", { name: active.name }) : t("Seleziona un'area a sinistra per crearne i campi.")}</p>
                 <ul className="space-y-1">
                   {macroAreas.map((m, i) => (
                     <li key={i} className="flex items-center justify-between text-sm bg-panel rounded-lg px-2 py-1">
-                      <span className="flex-1 truncate">{t("Macro-area")} {i + 1} · {uHa(m.area_ha)} · {t("Idoneità")} {fmt(m.mean_score)}</span>
-                      <button className="text-xs text-brand-mid shrink-0 disabled:opacity-40" disabled={activeId == null} onClick={() => addMacroToField(m)}>+ {t("Sotto-area")}</button>
+                      <span className="flex-1 truncate">{t("Zona")} {i + 1} · {uHa(m.area_ha)} · {t("Idoneità")} {fmt(m.mean_score)}</span>
+                      <button className="text-xs text-brand-mid shrink-0 disabled:opacity-40" disabled={activeId == null} onClick={() => addMacroToField(m)}>+ {t("Campo")}</button>
                     </li>
                   ))}
                 </ul>
