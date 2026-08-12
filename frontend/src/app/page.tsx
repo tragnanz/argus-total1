@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.85";
+const REV = "v0.6.86";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2607,7 +2607,6 @@ export default function Page() {
                 <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
                   {t("Rete totale")}: <b>{uKm(agg.pipe / 1000, 1)}</b>
                 </div>
-                <button className="btn-primary w-full" disabled={!projectId} onClick={savePivotsLayer}>{t("Salva pivot nel progetto")}</button>
               </div>
             )}
           </section>
