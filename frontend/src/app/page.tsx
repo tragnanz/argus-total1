@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.74";
+const REV = "v0.6.75";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -475,7 +475,7 @@ export default function Page() {
   // sulla mappa; gli eventuali livelli salvati (canali/pivot) vengono ripristinati.
   async function openProject(pid: number) {
     clearAllFields();
-    setCanals([]); setGuided(null);
+    setCanals([]); setRoads([]); setWatercourses([]); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set());
     try {
       const [areasList, layersList] = await Promise.all([api.listAreas(pid), api.listLayers(pid)]);
       setAreas(areasList); setLayers(layersList);
@@ -483,8 +483,10 @@ export default function Page() {
       // figli (famiglia, ricorsivo); figlie «macro» → sotto-aree del campo.
       const childrenOfArea = (aid: number) => areasList.filter((a) => a.parent_area_id === aid);
       const nf: Field[] = [];
+      const areaToField = new Map<number, number>();   // id area DB → id campo front-end
       const build = (a: typeof areasList[number], parentFieldId?: number) => {
         const fid = nextId.current++;
+        areaToField.set(a.id, fid);
         const macros = childrenOfArea(a.id).filter((c) => c.kind === "macro")
           .map((c) => ({ id: nextId.current++, name: c.name, geom: c.geojson, area_ha: c.area_ha ?? 0, mean_score: 0, savedId: c.id } as FieldMacro));
         nf.push({ id: fid, name: a.name, geom: a.geojson, savedId: a.id, parentId: parentFieldId, macros: macros.length ? macros : undefined });
@@ -498,13 +500,30 @@ export default function Page() {
         renderFields(nf, firstRoot.id);
         setTimeout(() => mapApi.current?.fitAll(), 40);
       }
-      const cs = layersList.filter((l) => l.kind === "canal").map((l) => l.data as unknown as Canal);
-      if (cs.length) {
-        setCanals(cs);
-        renderCanals(cs);
-      }
+      const mapOwner = (areaId?: number | null) => (areaId != null && areaToField.has(areaId) ? areaToField.get(areaId) : undefined);
+
+      // Canali: bulk «canals» (con owner) + eventuali legacy «canal» singoli.
+      const canalItems: CanalL[] = [];
+      for (const l of layersList.filter((x) => x.kind === "canals")) for (const it of (l.data?.items ?? [])) canalItems.push({ ...it, owner: mapOwner(it.ownerArea) } as CanalL);
+      for (const l of layersList.filter((x) => x.kind === "canal")) canalItems.push(l.data as unknown as CanalL);
+      if (canalItems.length) { setCanals(canalItems); renderCanals(canalItems); }
+
+      const roadItems: RoadL[] = [];
+      for (const l of layersList.filter((x) => x.kind === "roads")) for (const it of (l.data?.items ?? [])) roadItems.push({ ...it, owner: mapOwner(it.ownerArea) } as RoadL);
+      if (roadItems.length) setRoads(roadItems);
+
+      const waterItems: WaterL[] = [];
+      for (const l of layersList.filter((x) => x.kind === "waters")) for (const it of (l.data?.items ?? [])) waterItems.push({ ...it, owner: mapOwner(it.ownerArea) } as WaterL);
+      if (waterItems.length) { setWatercourses(waterItems); renderWater(waterItems); }
+
       const pv = layersList.filter((l) => l.kind === "pivots").map((l) => l.data as unknown as GuidedResult).pop();
-      if (pv) { setGuided(pv); setModelFromGuided(pv); }
+      if (pv) {
+        const { pivots: pp, lines: pl } = pivotsFromFC(pv.geojson, Number(pv.meta?.radius_m) || pivotR);
+        const rp = pp.map((p) => ({ ...p, field: mapOwner(p.field) }));
+        const rl = pl.map((l) => ({ ...l, field: mapOwner(l.field) }));
+        setPivots(rp); setPivotLines(rl); setPivotSel({ mode: "none", idx: -1 });
+        setGuided({ geojson: fcFromModel(rp, rl), meta: pv.meta });
+      }
     } catch (e) { showErr(e); }
   }
   function showErr(e: unknown) { setMsg(e instanceof Error ? e.message : String(e)); }
@@ -936,6 +955,56 @@ export default function Page() {
       setFields((fs) => fs.map((x) => savedMap.has(x.id) ? { ...x, savedId: savedMap.get(x.id) } : x));
       await refreshAreas(pid);
       setMsg(t("Famiglia salvata: {n} elementi ✓", { n: count + 1 }));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+
+  // Salva TUTTO il progetto: campi + famiglie + sotto-aree (come aree, con
+  // gerarchia) e canali/strade/invasi/pivot (come layer). Le assegnazioni
+  // oggetto→campo sono memorizzate con l'ID area del DB (stabile), poi rimappate
+  // alla riapertura. Rifà il salvataggio da zero (cancella il precedente).
+  async function saveAll() {
+    if (!projectId) { setMsg(t("Serve un progetto selezionato per salvare.")); return; }
+    const pid = projectId;
+    setBusy("save"); setMsg(t("Salvo il progetto…"));
+    try {
+      // 1) Pulisci il salvataggio precedente (layer + aree, dai più profondi).
+      const [oldAreas, oldLayers] = await Promise.all([api.listAreas(pid), api.listLayers(pid)]);
+      for (const l of oldLayers) { try { await api.deleteLayer(l.id); } catch { /* ignora */ } }
+      const byId = new Map(oldAreas.map((a) => [a.id, a] as const));
+      const depth = (a: typeof oldAreas[number]) => { let d = 0; let cur: typeof oldAreas[number] | undefined = a; while (cur?.parent_area_id != null && d < 30) { d++; cur = byId.get(cur.parent_area_id); } return d; };
+      for (const a of [...oldAreas].sort((x, y) => depth(y) - depth(x))) { try { await api.deleteArea(a.id); } catch { /* ignora */ } }
+
+      // 2) Salva le famiglie (aree) e mappa idCampoFrontend → idAreaDB.
+      const fieldToArea = new Map<number, number>();
+      const saveNode = async (nd: Field, parentAreaId: number | null) => {
+        const fa = await api.createArea({
+          project_id: pid, name: nd.name, geojson: nd.geom,
+          area_ha: Math.round(ringAreaHa(nd.geom.coordinates)),
+          parent_area_id: parentAreaId, kind: parentAreaId == null ? "field" : "field-child",
+        });
+        fieldToArea.set(nd.id, fa.id);
+        for (const mm of nd.macros ?? []) await api.createArea({ project_id: pid, name: mm.name, geojson: mm.geom, area_ha: Math.round(mm.area_ha), parent_area_id: fa.id, kind: "macro" });
+        for (const kid of fields.filter((x) => x.parentId === nd.id)) await saveNode(kid, fa.id);
+      };
+      for (const root of fields.filter((f) => f.parentId == null)) await saveNode(root, null);
+      const ownerArea = (o?: number) => (o != null && fieldToArea.has(o) ? fieldToArea.get(o)! : null);
+
+      // 3) Salva canali/strade/invasi come layer (owner → id area).
+      if (canals.length) await api.createLayer({ project_id: pid, kind: "canals", name: t("Canali"), data: { items: canals.map((c) => ({ ...c, ownerArea: ownerArea(c.owner) })) } });
+      if (roads.length) await api.createLayer({ project_id: pid, kind: "roads", name: t("Strade"), data: { items: roads.map((r) => ({ ...r, ownerArea: ownerArea(r.owner) })) } });
+      if (watercourses.length) await api.createLayer({ project_id: pid, kind: "waters", name: t("Invasi/corsi d'acqua"), data: { items: watercourses.map((w) => ({ ...w, ownerArea: ownerArea(w.owner) })) } });
+
+      // 4) Salva i pivot (field → id area nelle properties del FeatureCollection).
+      if (pivots.length) {
+        const mp = pivots.map((p) => ({ ...p, field: ownerArea(p.field) ?? undefined }));
+        const ml = pivotLines.map((l) => ({ ...l, field: ownerArea(l.field) ?? undefined }));
+        await api.createLayer({ project_id: pid, kind: "pivots", name: t("Pivot"), data: { geojson: fcFromModel(mp, ml), meta: guided?.meta ?? { n_pivots: pivots.length } } });
+      }
+
+      // 5) Aggiorna i savedId dei campi e ricarica gli elenchi.
+      setFields((fs) => fs.map((x) => fieldToArea.has(x.id) ? { ...x, savedId: fieldToArea.get(x.id) } : x));
+      await Promise.all([refreshAreas(pid), refreshLayers(pid)]);
+      setMsg(t("Progetto salvato ✓ ({n} campi, {c} canali, {s} strade, {w} invasi, {p} pivot)", { n: fields.filter((f) => f.parentId == null).length, c: canals.length, s: roads.length, w: watercourses.length, p: pivots.length }));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
 
@@ -1843,9 +1912,10 @@ export default function Page() {
               <p className="text-[11px] text-brand-mid mt-1">{t("Stai modificando: {name}", { name: active.name })}</p>
             )}
 
-            <button className="btn-primary w-full mt-3" disabled={busy === "save" || !active || !projectId} onClick={() => active && saveFieldTree(active)}>
-              {busy === "save" ? t("Salvo…") : t("Salva campo e sotto-aree nel progetto")}
+            <button className="btn-primary w-full mt-3" disabled={busy === "save" || !projectId || !hasFields} onClick={saveAll}>
+              {busy === "save" ? t("Salvo…") : t("Salva tutto sul progetto")}
             </button>
+            <p className="text-[11px] text-sage-dark mt-1">{t("Salva campi, famiglie, canali, strade, invasi e pivot con le rispettive assegnazioni; si ricarica tutto alla riapertura del progetto.")}</p>
             {/* Lista unica: i campi (e i livelli salvati) si caricano automaticamente
                 all'apertura del progetto nell'elenco «Campi» qui sopra. Nessun
                 elenco «Aree salvate»/«Livelli salvati» separato. */}
