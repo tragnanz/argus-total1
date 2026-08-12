@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.95";
+const REV = "v0.6.96";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1573,40 +1573,28 @@ export default function Page() {
           </div>
         )}
 
-        <div className="flex gap-2 mt-2">
-          <label className="text-xs text-sage-dark flex-1">{t("Kc di punta")}
-            <input type="number" min={0.3} max={1.6} step={0.05} value={cur.kc}
-              onChange={(e) => patch({ kc: Number(e.target.value) })} className="field-input mt-1" /></label>
-          <label className="text-xs text-sage-dark flex-1">{t("Efficienza impianto")}
-            <input type="number" min={0.4} max={1} step={0.05} value={cur.eff}
-              onChange={(e) => patch({ eff: Number(e.target.value) })} className="field-input mt-1" /></label>
-          <label className="text-xs text-sage-dark flex-1">{t("Ore/giorno")}
-            <input type="number" min={1} max={24} step={1} value={cur.hours}
-              onChange={(e) => patch({ hours: Number(e.target.value) })} className="field-input mt-1" /></label>
-        </div>
-
-        <div className="mt-2">
-          <label className="text-xs text-sage-dark">{t("Sbordo consentito")}: {cur.overhang}%</label>
-          <input type="range" min={0} max={30} step={5} value={cur.overhang}
-            onChange={(e) => patch({ overhang: Number(e.target.value) })} className="w-full accent-brand" />
-        </div>
-
-        <div className="flex gap-2 mt-1">
+        {/* Sbordo consentito + Fasi di sviluppo sulla stessa riga (compatto) */}
+        <div className="flex gap-2 mt-2 items-end">
+          <div className="flex-1">
+            <label className="text-xs text-sage-dark">{t("Sbordo consentito")}: {cur.overhang}%</label>
+            <input type="range" min={0} max={30} step={5} value={cur.overhang}
+              onChange={(e) => patch({ overhang: Number(e.target.value) })} className="w-full accent-brand mt-1" />
+          </div>
           <label className="text-xs text-sage-dark flex-1">{t("Fasi di sviluppo")}
             <select className="field-input mt-1" value={cur.nPhases} onChange={(e) => patch({ nPhases: Number(e.target.value) })}>
               {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
           </label>
-          {cur.nPhases > 1 && (
-            <label className="text-xs text-sage-dark flex-1">{t("Ordine fasi")}
-              <select className="field-input mt-1" value={cur.phaseOrder} onChange={(e) => patch({ phaseOrder: e.target.value as PhaseOrder })}>
-                <option value="canal_distance">{t("Vicinanza al canale")}</option>
-                <option value="suitability">{t("Idoneità")}</option>
-                <option value="rows">{t("Per file")}</option>
-              </select>
-            </label>
-          )}
         </div>
+        {cur.nPhases > 1 && (
+          <label className="text-xs text-sage-dark block mt-1">{t("Ordine fasi")}
+            <select className="field-input mt-1 w-full" value={cur.phaseOrder} onChange={(e) => patch({ phaseOrder: e.target.value as PhaseOrder })}>
+              <option value="canal_distance">{t("Vicinanza al canale")}</option>
+              <option value="suitability">{t("Idoneità")}</option>
+              <option value="rows">{t("Per file")}</option>
+            </select>
+          </label>
+        )}
       </div>
     );
   }
@@ -2484,6 +2472,21 @@ export default function Page() {
           </section>
 
           <section className={secShow("rilievo")}>
+            <SectionHead title={t("Dati agronomici")} help={t("Parametri per il dimensionamento idrico dei pivot: Kc di punta della coltura, efficienza dell'impianto e ore di irrigazione al giorno.")} />
+            <div className="flex gap-2">
+              <label className="text-xs text-sage-dark flex-1">{t("Kc di punta")}
+                <input type="number" min={0.3} max={1.6} step={0.05} value={cur.kc}
+                  onChange={(e) => patch({ kc: Number(e.target.value) })} className="field-input mt-1" /></label>
+              <label className="text-xs text-sage-dark flex-1">{t("Efficienza impianto")}
+                <input type="number" min={0.4} max={1} step={0.05} value={cur.eff}
+                  onChange={(e) => patch({ eff: Number(e.target.value) })} className="field-input mt-1" /></label>
+              <label className="text-xs text-sage-dark flex-1">{t("Ore/giorno")}
+                <input type="number" min={1} max={24} step={1} value={cur.hours}
+                  onChange={(e) => patch({ hours: Number(e.target.value) })} className="field-input mt-1" /></label>
+            </div>
+          </section>
+
+          <section className={secShow("rilievo") + " border-t border-black/5 pt-3"}>
             <SectionHead title={t("Canali")} help={t("Traccia uno o più canali: automatici a gravità (a pendenza costante, con presa/finale opzionali) oppure a mano. Ogni canale è modificabile ed esportabile in KMZ. Lo spessore è mostrato come banda sulla mappa e viene evitato dai pivot come preesistenza. Se presa e finale non sono impostati: presa nel punto più alto, finale sul bordo più basso.")} />
             <div className="flex gap-2">
               <label className="text-xs text-sage-dark flex-1">{t("Pendenza target (‰)")}
