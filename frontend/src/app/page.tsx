@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.82";
+const REV = "v0.6.83";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -233,6 +233,24 @@ function fcFromModel(pivots: PivotItem[], lines: { kind: string; coords: number[
   }
   return { type: "FeatureCollection" as const, features: feats };
 }
+
+// Preimpostazioni grafiche di sistema, distinte per livello della piramide:
+// AREE = toni caldi/neutri, riempimento tenue (contenitori); CAMPI = toni vividi,
+// riempimento più marcato (poligoni operativi).
+const AREA_PRESETS = [
+  { name: "Ambra", color: "#e8973d", fillColor: "#e8973d", fillOpacity: 0.08 },
+  { name: "Terracotta", color: "#c1553b", fillColor: "#c1553b", fillOpacity: 0.09 },
+  { name: "Sabbia", color: "#a9863f", fillColor: "#caa661", fillOpacity: 0.10 },
+  { name: "Ardesia", color: "#5b7089", fillColor: "#5b7089", fillOpacity: 0.08 },
+  { name: "Prugna", color: "#7d3c73", fillColor: "#7d3c73", fillOpacity: 0.08 },
+];
+const CAMPO_PRESETS = [
+  { name: "Verde", color: "#03a047", fillColor: "#038037", fillOpacity: 0.16 },
+  { name: "Verde acqua", color: "#0f9d8f", fillColor: "#0f9d8f", fillOpacity: 0.18 },
+  { name: "Lime", color: "#5ea223", fillColor: "#6fae2f", fillOpacity: 0.18 },
+  { name: "Blu", color: "#2f6fd0", fillColor: "#2f6fd0", fillOpacity: 0.16 },
+  { name: "Ciano", color: "#0aa5c2", fillColor: "#0aa5c2", fillOpacity: 0.16 },
+];
 
 // Icone (stile lineare, 16px) per la barra strumenti in alto.
 const svgProps = { width: 16, height: 16, viewBox: "0 0 24 24", fill: "none",
@@ -2068,6 +2086,20 @@ export default function Page() {
                         </div>
                         <label className="block text-[11px] text-sage-dark">{t("Trasparenza riempimento")}: <b>{Math.round((active.style?.fillOpacity ?? defO) * 100)}%</b>
                           <input type="range" min={0} max={100} step={5} value={Math.round((active.style?.fillOpacity ?? defO) * 100)} onChange={(e) => patchFieldStyle({ fillOpacity: Number(e.target.value) / 100 })} className="w-full mt-1" /></label>
+                        <div>
+                          <div className="text-[11px] text-sage-dark mb-1">{t("Preimpostazioni")} {active.level === "campo" ? t("(campo)") : t("(area)")}</div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {(active.level === "campo" ? CAMPO_PRESETS : AREA_PRESETS).map((p) => {
+                              const on = active.style?.color === p.color && active.style?.fillColor === p.fillColor;
+                              return (
+                                <button key={p.name} title={p.name}
+                                  onClick={() => patchFieldStyle({ color: p.color, fillColor: p.fillColor, fillOpacity: p.fillOpacity })}
+                                  className={"w-7 h-7 rounded-lg " + (on ? "ring-2 ring-offset-1 ring-brand" : "")}
+                                  style={{ background: p.fillColor, boxShadow: `inset 0 0 0 3px ${p.color}` }} />
+                              );
+                            })}
+                          </div>
+                        </div>
                       </>
                     );
                   })()}
