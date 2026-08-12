@@ -5,11 +5,9 @@ import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import type { MapHandle } from "@/components/MapCanvas";
 import * as api from "@/lib/api";
+import { useI18n, LANGS, type Lang } from "@/lib/i18n";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
-
-const fmtHa = (n?: number | null) =>
-  n == null ? "?" : `${Math.round(n).toLocaleString("it-IT")} ha`;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Area = any;
@@ -17,9 +15,13 @@ type Area = any;
 type Layer = any;
 
 export default function ViewPage({ params }: { params: { token: string } }) {
+  const { t, lang, setLang, fmt } = useI18n();
   const mapApi = useRef<MapHandle | null>(null);
   const [data, setData] = useState<api.ShareData | null>(null);
   const [err, setErr] = useState("");
+  const [infoOpen, setInfoOpen] = useState(true);   // pannello informazioni richiudibile
+
+  const fmtHa = (n?: number | null) => (n == null ? "?" : `${fmt(Math.round(n))} ha`);
 
   useEffect(() => {
     api.fetchShare(params.token)
@@ -50,25 +52,13 @@ export default function ViewPage({ params }: { params: { token: string } }) {
         const macros = areas.filter((a) => a.kind === "macro");
         if (macros.length) m.showMacroareas(macros.map((a) => ({ geom: a.geojson, label: a.name })));
 
+        // I pivot con le misure (raggio · ha) su ogni cerchio.
         const layers: Layer[] = data.layers || [];
-        const canals: Layer[] = [];
-        for (const l of layers.filter((x) => x.kind === "canals")) for (const it of (l.data?.items ?? [])) if (!it.hidden) canals.push(it);
-        for (const l of layers.filter((x) => x.kind === "canal")) canals.push(l.data);
-        if (canals.length) m.showCanals(canals.map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end, width_m: c.width_m || 6 })), "Presa", "Sbocco");
-
-        const roads: Layer[] = [];
-        for (const l of layers.filter((x) => x.kind === "roads")) for (const it of (l.data?.items ?? [])) if (!it.hidden) roads.push(it);
-        if (roads.length) m.showRoads(roads.map((r) => ({ coords: r.coords, width_m: r.width_m })));
-
-        const waters: Layer[] = [];
-        for (const l of layers.filter((x) => x.kind === "waters")) for (const it of (l.data?.items ?? [])) if (!it.hidden) waters.push(it);
-        if (waters.length) m.showWater(waters.map((w) => ({ geom: w.geojson, kind: w.kind })));
-
         const pv = layers.filter((x) => x.kind === "pivots").map((x) => x.data).pop();
         if (pv?.geojson) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const feats = (pv.geojson.features || []).filter((f: any) => !hiddenPivot(f?.properties?.field));
-          m.showLayouts([{ id: 1, fc: { type: "FeatureCollection", features: feats } }]);
+          const feats = (pv.geojson.features || []).filter((f: any) => f?.properties?.kind === "pivot" && !hiddenPivot(f?.properties?.field));
+          m.showLayouts([{ id: 1, fc: { type: "FeatureCollection", features: feats } }], { measures: true });
         }
 
         setTimeout(() => m.fitAll(), 250);
@@ -86,10 +76,6 @@ export default function ViewPage({ params }: { params: { token: string } }) {
   const roots = areas.filter((a) => a.parent_area_id == null && a.kind !== "macro" && !isHiddenField(a.id));
   const childrenOf = (id: number) => areas.filter((a) => a.parent_area_id === id && a.kind !== "macro" && !isHiddenField(a.id));
   const totalHa = roots.reduce((s, a) => s + (a.area_ha || 0), 0);
-  const countItems = (kind: string) => layers.filter((l) => l.kind === kind).reduce((s, l) => s + ((l.data?.items ?? []).length || 0), 0);
-  const nCanals = countItems("canals") + layers.filter((l) => l.kind === "canal").length;
-  const nRoads = countItems("roads");
-  const nWaters = countItems("waters");
   const pv = layers.filter((l) => l.kind === "pivots").map((l) => l.data).pop();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const nPivots = pv?.geojson?.features?.filter((f: any) => f?.properties?.kind === "pivot").length || 0;
@@ -107,70 +93,71 @@ export default function ViewPage({ params }: { params: { token: string } }) {
       <MapCanvas apiRef={mapApi} />
 
       <div className="overlay-layer">
-        {/* Header */}
+        {/* Header adattivo: marchio compatto + nome progetto troncabile + selettore lingua */}
         <div className="absolute top-3 left-3 right-3 z-30 flex items-center gap-2">
-          <div className="flex items-center gap-2 px-3 rounded-xl shadow" style={{ background: "#123524", height: 44 }}>
-            <span className="text-white font-semibold tracking-tight">Argus Total</span>
-            <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-white/15 text-white">Sola lettura</span>
+          <div className="flex items-center gap-1.5 px-2.5 rounded-xl shadow shrink-0" style={{ background: "#123524", height: 44 }}>
+            <span className="text-white font-semibold tracking-tight whitespace-nowrap">Argus&nbsp;Total</span>
+            <span className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-white/15 text-white whitespace-nowrap">{t("Sola lettura")}</span>
           </div>
           {data && (
-            <div className="pill-light px-3 h-11 flex items-center text-sm font-medium truncate">
-              {data.project.name}{data.project.crop ? ` · ${data.project.crop}` : ""}
+            <div className="pill-light px-3 h-11 flex items-center text-sm font-medium min-w-0 flex-1">
+              <span className="truncate">{data.project.name}{data.project.crop ? ` · ${data.project.crop}` : ""}</span>
+            </div>
+          )}
+          <select className="pill-light h-11 px-2 text-sm shrink-0 max-w-[7.5rem]" value={lang}
+            onChange={(e) => setLang(e.target.value as Lang)} aria-label="Lingua">
+            {LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+          </select>
+        </div>
+
+        {/* Pannello informazioni (richiudibile) */}
+        <div className="absolute top-[4.5rem] left-4 w-[360px] max-w-[calc(100vw_-_2rem)] max-h-[80vh] widget flex flex-col overflow-hidden z-30">
+          <div className="px-4 py-2.5 flex items-center justify-between border-b border-black/5">
+            <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide truncate">{t("Informazioni progetto")}</div>
+            <button onClick={() => setInfoOpen((o) => !o)} title={infoOpen ? "–" : "+"}
+              className="text-sage-dark hover:text-brand px-2 -mr-2 text-xl leading-none shrink-0">{infoOpen ? "–" : "+"}</button>
+          </div>
+          {infoOpen && (
+            <div className="overflow-auto scroll-soft p-4 space-y-3">
+              {err && <p className="text-sm text-danger">{err}</p>}
+              {!data && !err && <p className="text-sm text-sage-dark">…</p>}
+              {data && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    {stat(t("Campi"), roots.length)}
+                    {stat(t("Superficie totale"), fmtHa(totalHa))}
+                    {stat(t("Pivot"), nPivots)}
+                    {stat(t("Area irrigata"), netHa != null ? fmtHa(netHa) : "—")}
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-semibold text-brand-darker mb-1">{t("Campi")}</div>
+                    <ul className="space-y-1">
+                      {roots.map((a) => (
+                        <li key={a.id} className="text-sm bg-panel rounded-lg px-2 py-1">
+                          <button className="text-left w-full truncate"
+                            onClick={() => { const c = a.geojson?.coordinates?.[0]?.[0]; if (c) mapApi.current?.flyTo(c[1], c[0], 13); }}>
+                            <span className="font-medium text-brand-darker">{a.name}</span>
+                            <span className="text-sage"> · {fmtHa(a.area_ha)}</span>
+                          </button>
+                          {childrenOf(a.id).length > 0 && (
+                            <ul className="mt-1 ml-1 border-l-2 border-brand/20 pl-2 space-y-0.5">
+                              {childrenOf(a.id).map((c) => (
+                                <li key={c.id} className="text-[11px] text-sage-dark truncate">↳ {c.name} · {fmtHa(c.area_ha)}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
 
-        {/* Pannello informazioni (sinistra) */}
-        <div className="absolute top-[4.5rem] left-4 w-[360px] max-w-[calc(100vw_-_2rem)] max-h-[80vh] widget flex flex-col overflow-hidden z-30">
-          <div className="px-4 pt-3 pb-2 border-b border-black/5">
-            <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">Informazioni progetto</div>
-          </div>
-          <div className="overflow-auto scroll-soft p-4 space-y-3">
-            {err && <p className="text-sm text-danger">Impossibile caricare il progetto: {err}</p>}
-            {!data && !err && <p className="text-sm text-sage-dark">Carico il progetto…</p>}
-            {data && (
-              <>
-                <div className="grid grid-cols-2 gap-2">
-                  {stat("Campi", roots.length)}
-                  {stat("Superficie totale", fmtHa(totalHa))}
-                  {stat("Pivot", nPivots)}
-                  {stat("Area irrigata", netHa != null ? fmtHa(netHa) : "—")}
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  {stat("Canali", nCanals)}
-                  {stat("Strade", nRoads)}
-                  {stat("Invasi", nWaters)}
-                </div>
-
-                <div>
-                  <div className="text-xs font-semibold text-brand-darker mb-1">Campi</div>
-                  <ul className="space-y-1">
-                    {roots.map((a) => (
-                      <li key={a.id} className="text-sm bg-panel rounded-lg px-2 py-1">
-                        <button className="text-left w-full truncate" title="Zoom"
-                          onClick={() => { const c = a.geojson?.coordinates?.[0]?.[0]; if (c) mapApi.current?.flyTo(c[1], c[0], 13); }}>
-                          <span className="font-medium text-brand-darker">{a.name}</span>
-                          <span className="text-sage"> · {fmtHa(a.area_ha)}</span>
-                        </button>
-                        {childrenOf(a.id).length > 0 && (
-                          <ul className="mt-1 ml-1 border-l-2 border-brand/20 pl-2 space-y-0.5">
-                            {childrenOf(a.id).map((c) => (
-                              <li key={c.id} className="text-[11px] text-sage-dark truncate">↳ {c.name} · {fmtHa(c.area_ha)}</li>
-                            ))}
-                          </ul>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <p className="text-[11px] text-sage-dark">Visualizzazione di sola lettura. Fonte: Sentinel-2 L2A / DEM Copernicus.</p>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="absolute bottom-1 left-3 text-[11px] text-white/80 z-10 pointer-events-none">Argus Total · sola lettura · by Nabu srl — Agrostar Group srl</div>
+        <div className="absolute bottom-1 left-3 text-[11px] text-white/80 z-10 pointer-events-none">Argus Total · by Nabu srl — Agrostar Group srl</div>
       </div>
     </main>
   );

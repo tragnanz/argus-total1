@@ -35,7 +35,7 @@ export type MapHandle = {
   flyTo: (lat: number, lon: number, zoom?: number) => void;
   showOverlay: (key: OverlayKey, url: string, bounds: [[number, number], [number, number]]) => void;
   clearOverlay: (key: OverlayKey) => void;
-  showLayouts: (items: { id: number; fc: GeoJSONFC }[]) => void;
+  showLayouts: (items: { id: number; fc: GeoJSONFC }[], opts?: { measures?: boolean }) => void;
   clearLayout: () => void;
   showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs) => void;
   clearPivots: () => void;
@@ -417,10 +417,11 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         const map = mapRef.current; const ov = overlaysRef.current[key];
         if (map && ov) { map.removeLayer(ov); overlaysRef.current[key] = null; }
       },
-      showLayouts(items) {
+      showLayouts(items, opts) {
         const map = mapRef.current; const g = layoutRef.current;
         if (!map || !g) return;
         g.clearLayers();
+        const measures = !!opts?.measures;
         let lb: L.LatLngBounds | null = null;
         for (const it of items) {
           const gj = L.geoJSON(it.fc as never, {
@@ -438,6 +439,22 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             },
             pointToLayer: (f, latlng) =>
               L.circleMarker(latlng, { radius: 4, color: "#08341c", weight: 1.5, fillColor: "#ffffff", fillOpacity: 1 }),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            onEachFeature: measures ? (feat: any, layer: any) => {
+              if (feat?.properties?.kind !== "pivot") return;
+              try {
+                const ring = feat.geometry?.coordinates?.[0] || [];
+                const pts = ring.slice(0, -1);
+                if (pts.length < 3) return;
+                let sx = 0, sy = 0; for (const p of pts) { sx += p[0]; sy += p[1]; }
+                const lon = sx / pts.length, lat = sy / pts.length;
+                const mLat = 111320, mLng = 111320 * Math.cos((lat * Math.PI) / 180) || 1e-9;
+                let sr = 0; for (const p of pts) { const dx = (p[0] - lon) * mLng, dy = (p[1] - lat) * mLat; sr += Math.hypot(dx, dy); }
+                const r = Math.round(sr / pts.length);
+                const ha = Math.PI * r * r / 10000;
+                layer.bindTooltip(`R ${r} m · ${ha.toFixed(0)} ha`, { permanent: true, direction: "center", className: "pivot-measure" });
+              } catch { /* */ }
+            } : undefined,
           });
           g.addLayer(gj);
           try { const gb = gj.getBounds(); if (gb.isValid()) lb = lb ? lb.extend(gb) : L.latLngBounds(gb.getSouthWest(), gb.getNorthEast()); } catch { /* */ }

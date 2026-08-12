@@ -119,6 +119,8 @@ const EN: Dict = {
   "Località non trovata.": "Location not found.",
   "Eliminare \"{name}\"?": "Delete \"{name}\"?",
   "min": "min", "max": "max",
+  "Sola lettura": "Read-only", "Informazioni progetto": "Project information",
+  "Superficie totale": "Total area", "Area irrigata": "Irrigated area",
 };
 
 const FR: Dict = {
@@ -200,6 +202,8 @@ const FR: Dict = {
   "Località non trovata.": "Lieu introuvable.",
   "Eliminare \"{name}\"?": "Supprimer « {name} » ?",
   "min": "min", "max": "max",
+  "Sola lettura": "Lecture seule", "Informazioni progetto": "Informations du projet",
+  "Superficie totale": "Superficie totale", "Area irrigata": "Surface irriguée",
 };
 
 const ES: Dict = {
@@ -281,6 +285,8 @@ const ES: Dict = {
   "Località non trovata.": "Ubicación no encontrada.",
   "Eliminare \"{name}\"?": "¿Eliminar \"{name}\"?",
   "min": "mín", "max": "máx",
+  "Sola lettura": "Solo lectura", "Informazioni progetto": "Información del proyecto",
+  "Superficie totale": "Superficie total", "Area irrigata": "Superficie regada",
 };
 
 const PT: Dict = {
@@ -362,6 +368,8 @@ const PT: Dict = {
   "Località non trovata.": "Local não encontrado.",
   "Eliminare \"{name}\"?": "Eliminar \"{name}\"?",
   "min": "mín", "max": "máx",
+  "Sola lettura": "Só leitura", "Informazioni progetto": "Informações do projeto",
+  "Superficie totale": "Área total", "Area irrigata": "Área irrigada",
 };
 
 const RO: Dict = {
@@ -605,6 +613,8 @@ const AR: Dict = {
   "Località non trovata.": "الموقع غير موجود.",
   "Eliminare \"{name}\"?": "حذف \"{name}\"؟",
   "min": "الأدنى", "max": "الأقصى",
+  "Sola lettura": "للقراءة فقط", "Informazioni progetto": "معلومات المشروع",
+  "Superficie totale": "المساحة الإجمالية", "Area irrigata": "المساحة المروية",
 };
 
 const ZH: Dict = {
@@ -925,6 +935,8 @@ const DE: Dict = {
   "non idoneo": "ungeeignet", "marginale": "marginal", "idoneo": "geeignet", "ottimale": "optimal",
   "Località non trovata.": "Ort nicht gefunden.", "Eliminare \"{name}\"?": "„{name}“ löschen?",
   "min": "min", "max": "max",
+  "Sola lettura": "Nur Lesen", "Informazioni progetto": "Projektinformationen",
+  "Superficie totale": "Gesamtfläche", "Area irrigata": "Bewässerte Fläche",
 };
 
 const PL: Dict = {

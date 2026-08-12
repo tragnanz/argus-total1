@@ -83,6 +83,14 @@ body {
   display: inline-block; width: 12px; height: 12px; border-radius: 3px;
   margin-right: 7px; vertical-align: -1px;
 }
+/* etichetta misure sui pivot (raggio · ha) nella vista di sola lettura */
+.pivot-measure {
+  background: rgba(8,52,28,.82) !important; color: #fff !important;
+  border: none !important; box-shadow: none !important;
+  font-size: 9px; font-weight: 600; padding: 0 3px; border-radius: 4px; white-space: nowrap;
+}
+.pivot-measure::before { display: none !important; }
+
 /* etichetta permanente del pin "Agrostar" */
 .argus-pin {
   background: #08341c; color: #fff; border: none; border-radius: 6px;
