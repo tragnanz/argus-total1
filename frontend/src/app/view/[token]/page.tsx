@@ -42,27 +42,34 @@ export default function ViewPage({ params }: { params: { token: string } }) {
         const styleLayer = layers0.filter((x) => x.kind === "styles").map((x) => x.data).pop();
         const styleFor = (areaId: number) => styleLayer?.byArea?.[areaId];
         const levelFor = (areaId: number) => styleLayer?.levels?.[areaId] ?? "area";
-        const polys = areas.filter((a) => a.kind !== "macro");
+        const hiddenField = (areaId: number) => !!styleLayer?.hiddenFields?.[areaId];
+        const hiddenPivot = (areaId: number) => !!styleLayer?.hiddenPivots?.[areaId];
+        // Rispetta la visibilità impostata: i livelli nascosti NON compaiono nel link.
+        const polys = areas.filter((a) => a.kind !== "macro" && !hiddenField(a.id));
         m.setFields(polys.map((a) => ({ id: a.id, name: a.name, geom: a.geojson, style: styleFor(a.id), level: levelFor(a.id) })), null, []);
         const macros = areas.filter((a) => a.kind === "macro");
         if (macros.length) m.showMacroareas(macros.map((a) => ({ geom: a.geojson, label: a.name })));
 
         const layers: Layer[] = data.layers || [];
         const canals: Layer[] = [];
-        for (const l of layers.filter((x) => x.kind === "canals")) for (const it of (l.data?.items ?? [])) canals.push(it);
+        for (const l of layers.filter((x) => x.kind === "canals")) for (const it of (l.data?.items ?? [])) if (!it.hidden) canals.push(it);
         for (const l of layers.filter((x) => x.kind === "canal")) canals.push(l.data);
         if (canals.length) m.showCanals(canals.map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end, width_m: c.width_m || 6 })), "Presa", "Sbocco");
 
         const roads: Layer[] = [];
-        for (const l of layers.filter((x) => x.kind === "roads")) for (const it of (l.data?.items ?? [])) roads.push(it);
+        for (const l of layers.filter((x) => x.kind === "roads")) for (const it of (l.data?.items ?? [])) if (!it.hidden) roads.push(it);
         if (roads.length) m.showRoads(roads.map((r) => ({ coords: r.coords, width_m: r.width_m })));
 
         const waters: Layer[] = [];
-        for (const l of layers.filter((x) => x.kind === "waters")) for (const it of (l.data?.items ?? [])) waters.push(it);
+        for (const l of layers.filter((x) => x.kind === "waters")) for (const it of (l.data?.items ?? [])) if (!it.hidden) waters.push(it);
         if (waters.length) m.showWater(waters.map((w) => ({ geom: w.geojson, kind: w.kind })));
 
         const pv = layers.filter((x) => x.kind === "pivots").map((x) => x.data).pop();
-        if (pv?.geojson) m.showLayouts([{ id: 1, fc: pv.geojson }]);
+        if (pv?.geojson) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const feats = (pv.geojson.features || []).filter((f: any) => !hiddenPivot(f?.properties?.field));
+          m.showLayouts([{ id: 1, fc: { type: "FeatureCollection", features: feats } }]);
+        }
 
         setTimeout(() => m.fitAll(), 250);
       } catch { /* ignora errori di disegno */ }
@@ -70,11 +77,14 @@ export default function ViewPage({ params }: { params: { token: string } }) {
     return () => clearInterval(iv);
   }, [data]);
 
-  // Riepilogo per il pannello informazioni.
+  // Riepilogo per il pannello informazioni (esclude i livelli nascosti).
   const areas: Area[] = data?.areas || [];
   const layers: Layer[] = data?.layers || [];
-  const roots = areas.filter((a) => a.parent_area_id == null && a.kind !== "macro");
-  const childrenOf = (id: number) => areas.filter((a) => a.parent_area_id === id && a.kind !== "macro");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const styleData: any = layers.filter((l) => l.kind === "styles").map((l) => l.data).pop();
+  const isHiddenField = (id: number) => !!styleData?.hiddenFields?.[id];
+  const roots = areas.filter((a) => a.parent_area_id == null && a.kind !== "macro" && !isHiddenField(a.id));
+  const childrenOf = (id: number) => areas.filter((a) => a.parent_area_id === id && a.kind !== "macro" && !isHiddenField(a.id));
   const totalHa = roots.reduce((s, a) => s + (a.area_ha || 0), 0);
   const countItems = (kind: string) => layers.filter((l) => l.kind === kind).reduce((s, l) => s + ((l.data?.items ?? []).length || 0), 0);
   const nCanals = countItems("canals") + layers.filter((l) => l.kind === "canal").length;

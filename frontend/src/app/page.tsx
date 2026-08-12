@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.86";
+const REV = "v0.6.87";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -533,6 +533,13 @@ export default function Page() {
         if (f.savedId != null && styleLayer?.byArea?.[f.savedId]) f.style = styleLayer.byArea[f.savedId];
         f.level = (f.savedId != null && styleLayer?.levels?.[f.savedId]) || "area";
         if (f.savedId != null && styleLayer?.scores?.[f.savedId] != null) f.score = styleLayer.scores[f.savedId];
+        if (f.savedId != null && styleLayer?.hiddenFields?.[f.savedId]) f.hidden = true;
+      }
+      // Ripristina i gruppi pivot nascosti (per id area → id campo front-end).
+      if (styleLayer?.hiddenPivots) {
+        const hp = new Set<number>();
+        for (const aidStr of Object.keys(styleLayer.hiddenPivots)) { const fid = areaToField.get(Number(aidStr)); if (fid != null) hp.add(fid); }
+        if (hp.size) setHiddenPivotFields(hp);
       }
       if (nf.length) {
         const firstRoot = nf.find((f) => f.parentId == null) ?? nf[0];
@@ -1045,14 +1052,18 @@ export default function Page() {
       const styles: Record<number, { color?: string; fillColor?: string; fillOpacity?: number }> = {};
       const levels: Record<number, string> = {};
       const scores: Record<number, number> = {};
+      const hiddenFields: Record<number, boolean> = {};   // campi nascosti (occhio spento)
+      const hiddenPivots: Record<number, boolean> = {};   // gruppi pivot nascosti (per id area)
       for (const f of fields) {
         const aid = fieldToArea.get(f.id); if (aid == null) continue;
         if (f.style) styles[aid] = f.style;
         if (f.level) levels[aid] = f.level;
         if (f.score != null) scores[aid] = f.score;
+        if (f.hidden) hiddenFields[aid] = true;
       }
-      if (Object.keys(styles).length || Object.keys(levels).length || Object.keys(scores).length)
-        await api.createLayer({ project_id: pid, kind: "styles", name: t("Stili"), data: { byArea: styles, levels, scores } });
+      for (const fid of hiddenPivotFields) { const aid = fieldToArea.get(fid); if (aid != null) hiddenPivots[aid] = true; }
+      if (Object.keys(styles).length || Object.keys(levels).length || Object.keys(scores).length || Object.keys(hiddenFields).length || Object.keys(hiddenPivots).length)
+        await api.createLayer({ project_id: pid, kind: "styles", name: t("Stili"), data: { byArea: styles, levels, scores, hiddenFields, hiddenPivots } });
 
       // 4) Salva i pivot (field → id area nelle properties del FeatureCollection).
       if (pivots.length) {
