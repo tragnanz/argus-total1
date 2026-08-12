@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.80";
+const REV = "v0.6.81";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -298,6 +298,12 @@ export default function Page() {
   const pendingParentRef = useRef<number | null>(null);   // prossimo poligono disegnato → figlio di questo campo
   // Trascinamento generico nel pannello Livelli: campo O oggetto (canale/strada/invaso/pivot).
   const dragRef = useRef<{ kind: "field" | "canal" | "road" | "water" | "pivot"; id: number | string } | null>(null);
+  // Salvataggio automatico: stato UI + riferimenti di serializzazione/serializzazione salvataggi.
+  const savingRef = useRef(false);
+  const pendingSaveRef = useRef<null | (() => Promise<void>)>(null);
+  const lastSavedSigRef = useRef("");
+  const latestSigRef = useRef("");
+  const suppressAutosaveRef = useRef(false);
   // visibilità dei livelli sulla mappa (accendi/spegni dal widget sinistro)
   const [layerVis, setLayerVis] = useState({ fields: true, macro: true, canal: true, layout: true, water: true, strade: true });
   const [watercourses, setWatercourses] = useState<WaterL[]>([]);
@@ -456,6 +462,7 @@ export default function Page() {
 
   const [notes, setNotes] = useState("");
   const [shareUrl, setShareUrl] = useState("");   // link pubblico di sola lettura
+  const [autosave, setAutosave] = useState<"" | "saving" | "saved" | "error">("");   // stato salvataggio automatico
   const [busy, setBusy] = useState<string>("");
   const [msg, setMsg] = useState<string>("");
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -478,6 +485,7 @@ export default function Page() {
   // Apertura progetto → LISTA UNICA: le aree salvate diventano subito «Campi»
   // sulla mappa; gli eventuali livelli salvati (canali/pivot) vengono ripristinati.
   async function openProject(pid: number) {
+    suppressAutosaveRef.current = true;   // non salvare durante il caricamento (evita di sovrascrivere il progetto)
     clearAllFields();
     setCanals([]); setRoads([]); setWatercourses([]); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set());
     try {
@@ -537,6 +545,10 @@ export default function Page() {
         setGuided({ geojson: fcFromModel(rp, rl), meta: pv.meta });
       }
     } catch (e) { showErr(e); }
+    finally {
+      // Riallinea la firma allo stato caricato e riattiva l'autosave (dopo il flush di render).
+      setTimeout(() => { lastSavedSigRef.current = latestSigRef.current; suppressAutosaveRef.current = false; setAutosave("saved"); }, 600);
+    }
   }
   function showErr(e: unknown) { setMsg(e instanceof Error ? e.message : String(e)); }
 
@@ -972,10 +984,11 @@ export default function Page() {
   // gerarchia) e canali/strade/invasi/pivot (come layer). Le assegnazioni
   // oggetto→campo sono memorizzate con l'ID area del DB (stabile), poi rimappate
   // alla riapertura. Rifà il salvataggio da zero (cancella il precedente).
-  async function saveAll() {
-    if (!projectId) { setMsg(t("Serve un progetto selezionato per salvare.")); return; }
+  async function saveAll(silent = false): Promise<boolean> {
+    if (!projectId) { if (!silent) setMsg(t("Serve un progetto selezionato per salvare.")); return false; }
     const pid = projectId;
-    setBusy("save"); setMsg(t("Salvo il progetto…"));
+    if (!silent) { setBusy("save"); setMsg(t("Salvo il progetto…")); }
+    setAutosave("saving");
     try {
       // 1) Pulisci il salvataggio precedente (layer + aree, dai più profondi).
       const [oldAreas, oldLayers] = await Promise.all([api.listAreas(pid), api.listLayers(pid)]);
@@ -1028,8 +1041,10 @@ export default function Page() {
       // 5) Aggiorna i savedId dei campi e ricarica gli elenchi.
       setFields((fs) => fs.map((x) => fieldToArea.has(x.id) ? { ...x, savedId: fieldToArea.get(x.id) } : x));
       await Promise.all([refreshAreas(pid), refreshLayers(pid)]);
-      setMsg(t("Progetto salvato ✓ ({n} campi, {c} canali, {s} strade, {w} invasi, {p} pivot)", { n: fields.filter((f) => f.parentId == null).length, c: canals.length, s: roads.length, w: watercourses.length, p: pivots.length }));
-    } catch (e) { showErr(e); } finally { setBusy(""); }
+      setAutosave("saved");
+      if (!silent) setMsg(t("Progetto salvato ✓ ({n} campi, {c} canali, {s} strade, {w} invasi, {p} pivot)", { n: fields.filter((f) => f.parentId == null).length, c: canals.length, s: roads.length, w: watercourses.length, p: pivots.length }));
+      return true;
+    } catch (e) { setAutosave("error"); if (!silent) showErr(e); else console.error(e); return false; } finally { if (!silent) setBusy(""); }
   }
 
   // ---- canale principale (M6, fase 2) ----
@@ -1639,6 +1654,45 @@ export default function Page() {
     } catch { setMsg(t("Località non trovata.")); }
   }
 
+  // Firma del contenuto salvabile (esclude savedId, che cambia col salvataggio
+  // stesso: così l'autosave non si ri-innesca da solo dopo aver salvato).
+  const saveSig = useMemo(() => {
+    try {
+      return JSON.stringify([
+        fields.map((f) => [f.name, f.parentId ?? 0, f.level ?? "", f.score ?? 0, f.style ?? 0, f.geom.coordinates[0]]),
+        canals.map((c) => [c.owner ?? 0, c.hidden ? 1 : 0, c.geojson.coordinates]),
+        roads.map((r) => [r.id, r.owner ?? 0, r.hidden ? 1 : 0, r.width_m, r.coords]),
+        watercourses.map((w) => [w.owner ?? 0, w.hidden ? 1 : 0]),
+        pivots.map((p) => [Math.round(p.lat * 1e6), Math.round(p.lng * 1e6), p.r, p.field ?? 0, p.conn ?? ""]),
+      ]);
+    } catch { return ""; }
+  }, [fields, canals, roads, watercourses, pivots]);
+  latestSigRef.current = saveSig;
+
+  // Esegue un salvataggio serializzato: se ne arriva un altro mentre salva, lo
+  // mette in coda e lo lancia al termine (nessun salvataggio concorrente).
+  async function runSave(fn: () => Promise<void>) {
+    savingRef.current = true;
+    try { await fn(); } catch { /* gestito in saveAll */ }
+    finally {
+      savingRef.current = false;
+      const next = pendingSaveRef.current;
+      if (next) { pendingSaveRef.current = null; void runSave(next); }
+    }
+  }
+  // Salvataggio AUTOMATICO: ~1.5s dopo l'ultima modifica, se il contenuto è cambiato.
+  useEffect(() => {
+    if (!projectId || suppressAutosaveRef.current) return;
+    if (saveSig === lastSavedSigRef.current) return;
+    const doSave = async () => { const ok = await saveAll(true); if (ok) lastSavedSigRef.current = saveSig; };
+    const tm = setTimeout(() => {
+      if (savingRef.current) { pendingSaveRef.current = doSave; return; }
+      void runSave(doSave);
+    }, 1500);
+    return () => clearTimeout(tm);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saveSig, projectId]);
+
   const hasFields = fields.length > 0;
   const rootFields = fields.filter((f) => f.parentId == null);
   // Gruppi pivot per campo (un «livello» pivot per campo nel pannello Livelli).
@@ -1939,10 +1993,12 @@ export default function Page() {
               <p className="text-[11px] text-brand-mid mt-1">{t("Stai modificando: {name}", { name: active.name })}</p>
             )}
 
-            <button className="btn-primary w-full mt-3" disabled={busy === "save" || !projectId || !hasFields} onClick={saveAll}>
-              {busy === "save" ? t("Salvo…") : t("Salva tutto sul progetto")}
-            </button>
-            <p className="text-[11px] text-sage-dark mt-1">{t("Salva campi, famiglie, canali, strade, invasi e pivot con le rispettive assegnazioni; si ricarica tutto alla riapertura del progetto.")}</p>
+            {projectId && (
+              <div className="mt-3 flex items-center gap-2 text-[11px] text-sage-dark">
+                <span className={"inline-block w-2 h-2 rounded-full " + (autosave === "saving" ? "bg-amber-400 animate-pulse" : autosave === "error" ? "bg-danger" : "bg-brand")} />
+                {autosave === "saving" ? t("Salvataggio automatico…") : autosave === "error" ? t("Salvataggio non riuscito (riprovo alla prossima modifica)") : t("Salvataggio automatico attivo — le modifiche vengono salvate da sole")}
+              </div>
+            )}
             {/* Lista unica: i campi (e i livelli salvati) si caricano automaticamente
                 all'apertura del progetto nell'elenco «Campi» qui sopra. Nessun
                 elenco «Aree salvate»/«Livelli salvati» separato. */}
@@ -2564,7 +2620,7 @@ export default function Page() {
             {/* Link pubblico di sola lettura per i clienti */}
             <div className="mt-4 border-t border-brand/15 pt-3">
               <div className="text-sm font-semibold text-brand-darker mb-1">{t("Link per il cliente (sola lettura)")}</div>
-              <p className="text-[11px] text-sage-dark mb-2">{t("Crea un link condivisibile: il cliente vede la mappa e tutte le informazioni, senza poter modificare nulla. Il link riflette l'ultimo salvataggio — premi «Salva tutto sul progetto» prima.")}</p>
+              <p className="text-[11px] text-sage-dark mb-2">{t("Crea un link condivisibile: il cliente vede la mappa e tutte le informazioni, senza poter modificare nulla. Il progetto viene salvato automaticamente, quindi il link mostra sempre lo stato aggiornato.")}</p>
               <button className="btn-primary w-full" disabled={busy === "share" || !projectId} onClick={makeShareLink}>
                 {busy === "share" ? t("Creo il link…") : t("Crea link di visualizzazione")}
               </button>
