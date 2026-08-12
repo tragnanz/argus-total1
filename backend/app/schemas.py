@@ -327,6 +327,25 @@ class LayoutOut(BaseModel):
     meta: dict[str, Any]
 
 
+# ---------- Diramazioni pivot da canale (Accessori) ----------
+class BranchIn(BaseModel):
+    geom: GeoPolygon                                             # campo su cui posare
+    canal: list[list[float]]                                     # tracciato canale [[lon,lat],…]
+    radius_m: float = Field(default=360.0, ge=30, le=1000)
+    gap_m: float = Field(default=10.0, ge=0, le=2000)           # distanza tra i bordi dei pivot
+    clear_m: float = Field(default=0.0, ge=0, le=500)           # franco extra dal canale
+    canal_width_m: float = Field(default=0.0, ge=0, le=500)     # semi-larghezza canale considerata
+    max_pivots: int = Field(default=5, ge=1, le=200)            # numero massimo di pivot
+    side: Literal["auto", "both", "left", "right"] = "auto"
+    existing: list[dict[str, Any]] | None = None                # pivot già presenti [{lat,lng,r}]
+
+
+class BranchOut(BaseModel):
+    pivots: list[dict[str, Any]]
+    pipes: list[list[list[float]]]
+    meta: dict[str, Any]
+
+
 # ---------- Scheda progetto / export (M4) ----------
 class ReportIn(LayoutIn):
     project_name: str = "Progetto"

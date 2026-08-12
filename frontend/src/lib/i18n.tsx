@@ -332,6 +332,21 @@ const EN: Dict = {
   "totali": "total",
   "zone idonee": "suitable zones",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«Place systems» arranges the pivots in a grid ONLY on the polygon selected on the left — whether an AREA or a FIELD: you can work directly on the area without necessarily generating the fields. Repeating on another polygon adds pivots without deleting the others. Choose the layout: «Square» (aligned pivots) or «Triangular» (rows offset by half a step to interlock the pivots and recover more space). How to feed them (canals or pipes) is independent and is defined in the supply. The pivots are editable: 1st click = group, 2nd click = individual («Properties» panel, «i» icon). Pre-existing roads and canals are drawn on the Survey page.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "More accessory infrastructure (reservoirs, pumping stations, electrical data…) coming soon.",
+  "Crea diramazione": "Create branch",
+  "Dirama su «{name}»": "Branch on «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Branch created: {n} pivots fed from the canal ✓",
+  "Diramazioni attive": "Active branches",
+  "Diramazioni pivot da canale": "Pivot branches from canal",
+  "Entrambi i lati": "Both sides",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Project accessory infrastructure. «Canal branches» automatically lays out a row of pivots along the canal and traces the shortest pipe to feed them.",
+  "Lato": "Side",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Line up to N pivots branching off the canal, each fed by the shortest pipe. Works on the polygon selected on the left, using the radius from the Systems page.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "No pivots can be placed along the canal with these parameters.",
+  "Numero massimo di pivot": "Maximum number of pivots",
+  "Rimuovi diramazioni": "Remove branches",
+  "Traccia prima un canale nella pagina Rilievo.": "Draw a canal first on the Survey page.",
 };
 
 const FR: Dict = {
@@ -626,6 +641,21 @@ const FR: Dict = {
   "totali": "totaux",
   "zone idonee": "zones aptes",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "« Insérer les installations » dispose les pivots en grille UNIQUEMENT sur le polygone sélectionné à gauche — indifféremment une ZONE ou un CHAMP : vous pouvez travailler directement sur la zone sans forcément générer les champs. En répétant sur un autre polygone, les pivots s'ajoutent sans effacer les autres. Choisissez la disposition : « En carré » (pivots alignés) ou « En triangle » (rangées décalées d'un demi-pas pour imbriquer les pivots et récupérer plus d'espace). La façon de les alimenter (canaux ou conduites) est indépendante et se définit dans l'adduction. Les pivots sont modifiables : 1° clic = groupe, 2° clic = individuel (panneau « Propriétés », icône « i »). Les routes et canaux préexistants se tracent dans la page Relevé.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "Autres infrastructures accessoires (réservoirs, stations de pompage, données électriques…) à venir.",
+  "Crea diramazione": "Créer une ramification",
+  "Dirama su «{name}»": "Ramifier sur «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Ramification créée : {n} pivots alimentés par le canal ✓",
+  "Diramazioni attive": "Ramifications actives",
+  "Diramazioni pivot da canale": "Ramifications de pivots depuis le canal",
+  "Entrambi i lati": "Les deux côtés",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Infrastructures accessoires du projet. «Ramifications depuis le canal» pose automatiquement une rangée de pivots le long du canal et trace la tuyauterie la plus courte pour les alimenter.",
+  "Lato": "Côté",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Aligne jusqu'à N pivots qui se ramifient depuis le canal, chacun alimenté par la tuyauterie la plus courte. Travaille sur le polygone sélectionné à gauche, avec le rayon de la page Installations.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "Aucun pivot ne peut être posé le long du canal avec ces paramètres.",
+  "Numero massimo di pivot": "Nombre maximal de pivots",
+  "Rimuovi diramazioni": "Retirer les ramifications",
+  "Traccia prima un canale nella pagina Rilievo.": "Tracez d'abord un canal dans la page Relevé.",
 };
 
 const ES: Dict = {
@@ -920,6 +950,21 @@ const ES: Dict = {
   "totali": "totales",
   "zone idonee": "zonas aptas",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«Insertar instalaciones» dispone los pivotes en retícula SOLO sobre el polígono seleccionado a la izquierda — sea un ÁREA o un CAMPO: puedes trabajar directamente sobre el área sin necesidad de generar los campos. Al repetir sobre otro polígono, los pivotes se añaden sin borrar los demás. Elige la disposición: «En cuadrado» (pivotes alineados) o «En triángulo» (filas desplazadas medio paso para encajar los pivotes y recuperar más espacio). Cómo alimentarlos (canales o tuberías) es independiente y se define en la aducción. Los pivotes son editables: 1.er clic = grupo, 2.º clic = individual (panel «Propiedades», icono «i»). Las carreteras y canales preexistentes se trazan en la página Levantamiento.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "Otras infraestructuras accesorias (embalses, estaciones de bombeo, datos eléctricos…) en camino.",
+  "Crea diramazione": "Crear ramificación",
+  "Dirama su «{name}»": "Ramificar en «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Ramificación creada: {n} pivotes alimentados desde el canal ✓",
+  "Diramazioni attive": "Ramificaciones activas",
+  "Diramazioni pivot da canale": "Ramificaciones de pivotes desde canal",
+  "Entrambi i lati": "Ambos lados",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Infraestructuras accesorias del proyecto. «Ramificaciones desde canal» coloca automáticamente una fila de pivotes a lo largo del canal y traza la tubería más corta para alimentarlos.",
+  "Lato": "Lado",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Alinea hasta N pivotes que se ramifican desde el canal, cada uno alimentado por la tubería más corta. Trabaja sobre el polígono seleccionado a la izquierda, con el radio de la página Instalaciones.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "No se puede colocar ningún pivote a lo largo del canal con estos parámetros.",
+  "Numero massimo di pivot": "Número máximo de pivotes",
+  "Rimuovi diramazioni": "Quitar ramificaciones",
+  "Traccia prima un canale nella pagina Rilievo.": "Traza primero un canal en la página Levantamiento.",
 };
 
 const PT: Dict = {
@@ -1214,6 +1259,21 @@ const PT: Dict = {
   "totali": "totais",
   "zone idonee": "zonas aptas",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«Inserir instalações» dispõe os pivôs em grelha APENAS no polígono selecionado à esquerda — seja uma ÁREA ou um CAMPO: pode trabalhar diretamente na área sem ter de gerar os campos. Repetindo noutro polígono, os pivôs acrescentam-se sem apagar os outros. Escolha a disposição: «Em quadrado» (pivôs alinhados) ou «Em triângulo» (filas desfasadas de meio passo para encaixar os pivôs e recuperar mais espaço). Como os alimentar (canais ou tubagens) é independente e define-se na adução. Os pivôs são editáveis: 1.º clique = grupo, 2.º clique = individual (painel «Propriedades», ícone «i»). Estradas e canais preexistentes traçam-se na página Levantamento.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "Outras infraestruturas acessórias (reservatórios, estações de bombagem, dados elétricos…) em breve.",
+  "Crea diramazione": "Criar ramificação",
+  "Dirama su «{name}»": "Ramificar em «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Ramificação criada: {n} pivôs alimentados pelo canal ✓",
+  "Diramazioni attive": "Ramificações ativas",
+  "Diramazioni pivot da canale": "Ramificações de pivôs a partir do canal",
+  "Entrambi i lati": "Ambos os lados",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Infraestruturas acessórias do projeto. «Ramificações a partir do canal» coloca automaticamente uma fila de pivôs ao longo do canal e traça a tubagem mais curta para os alimentar.",
+  "Lato": "Lado",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Alinha até N pivôs que se ramificam do canal, cada um alimentado pela tubagem mais curta. Trabalha no polígono selecionado à esquerda, com o raio da página Instalações.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "Nenhum pivô colocável ao longo do canal com estes parâmetros.",
+  "Numero massimo di pivot": "Número máximo de pivôs",
+  "Rimuovi diramazioni": "Remover ramificações",
+  "Traccia prima un canale nella pagina Rilievo.": "Trace primeiro um canal na página Levantamento.",
 };
 
 const RO: Dict = {
@@ -1510,6 +1570,21 @@ const RO: Dict = {
   "totali": "totale",
   "zone idonee": "zone adecvate",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«Introdu instalații» dispune pivoții în rețea NUMAI pe poligonul selectat în stânga — indiferent o ZONĂ sau un CÂMP: poți lucra direct pe zonă fără a genera neapărat câmpurile. Repetând pe un alt poligon, pivoții se adaugă fără a-i șterge pe ceilalți. Alege aranjarea: «În pătrat» (pivoți aliniați) sau «În triunghi» (rânduri decalate cu jumătate de pas pentru a îmbina pivoții și a recupera mai mult spațiu). Modul de alimentare (canale sau conducte) este independent și se definește în aducțiune. Pivoții sunt editabili: 1° clic = grup, 2° clic = individual (panoul «Proprietăți», pictograma «i»). Drumurile și canalele preexistente se trasează în pagina Ridicare topografică.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "Alte infrastructuri accesorii (lacuri de acumulare, stații de pompare, date electrice…) în curând.",
+  "Crea diramazione": "Creează ramificație",
+  "Dirama su «{name}»": "Ramifică pe «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Ramificație creată: {n} pivoți alimentați din canal ✓",
+  "Diramazioni attive": "Ramificații active",
+  "Diramazioni pivot da canale": "Ramificații pivoți din canal",
+  "Entrambi i lati": "Ambele laturi",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Infrastructuri accesorii ale proiectului. «Ramificații din canal» amplasează automat un rând de pivoți de-a lungul canalului și trasează conducta cea mai scurtă pentru a-i alimenta.",
+  "Lato": "Latură",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Aliniază până la N pivoți care se ramifică din canal, fiecare alimentat de conducta cea mai scurtă. Lucrează pe poligonul selectat în stânga, cu raza din pagina Instalații.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "Niciun pivot amplasabil de-a lungul canalului cu acești parametri.",
+  "Numero massimo di pivot": "Număr maxim de pivoți",
+  "Rimuovi diramazioni": "Elimină ramificațiile",
+  "Traccia prima un canale nella pagina Rilievo.": "Trasează mai întâi un canal în pagina Ridicare topografică.",
 };
 
 const KK: Dict = {
@@ -1806,6 +1881,21 @@ const KK: Dict = {
   "totali": "жалпы",
   "zone idonee": "жарамды аймақтар",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«Қондырғыларды қою» пивоттарды тор бойынша ТЕК сол жақта таңдалған полигонда орналастырады — АУМАҚ немесе АЛҚАП болсын, айырмасы жоқ: алқаптарды міндетті түрде жасамай-ақ тікелей аумақпен жұмыс істей аласыз. Басқа полигонда қайталағанда пивоттар басқаларын өшірмей қосылады. Орналасуды таңдаңыз: «Шаршымен» (пивоттар тураланған) немесе «Үшбұрышпен» (пивоттарды кіріктіріп, көбірек орын үнемдеу үшін жарты қадамға ығыстырылған қатарлар). Оларды қалай қоректендіру (каналдар немесе құбырлар) тәуелсіз және су беруде анықталады. Пивоттар өңделеді: 1-басу = топ, 2-басу = жеке («Қасиеттер» тақтасы, «i» белгішесі). Бұрыннан бар жолдар мен каналдар Бедер бетінде сызылады.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "Басқа қосымша инфрақұрылымдар (су қоймалары, сорғы стансалары, электр деректері…) жақында.",
+  "Crea diramazione": "Тармақ жасау",
+  "Dirama su «{name}»": "«{name}» бойынша тарамдау",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Тармақ жасалды: каналдан қоректенетін {n} пивот ✓",
+  "Diramazioni attive": "Белсенді тармақтар",
+  "Diramazioni pivot da canale": "Каналдан пивот тармақтары",
+  "Entrambi i lati": "Екі жақ",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Жобаның қосымша инфрақұрылымы. «Каналдан тармақтар» канал бойымен пивоттар қатарын автоматты түрде орналастырып, оларды қоректендіру үшін ең қысқа құбырды сызады.",
+  "Lato": "Жақ",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Каналдан тармақталатын N-ге дейінгі пивоттарды қатарға тұрғызады, әрқайсысы ең қысқа құбырмен қоректенеді. Сол жақта таңдалған полигонмен, Қондырғылар бетіндегі радиуспен жұмыс істейді.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "Осы параметрлермен канал бойына орналастыруға болатын пивот жоқ.",
+  "Numero massimo di pivot": "Пивоттардың ең көп саны",
+  "Rimuovi diramazioni": "Тармақтарды жою",
+  "Traccia prima un canale nella pagina Rilievo.": "Алдымен Бедер бетінде канал сызыңыз.",
 };
 
 const AR: Dict = {
@@ -2100,6 +2190,21 @@ const AR: Dict = {
   "totali": "الإجمالي",
   "zone idonee": "المناطق الملائمة",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "يوزّع «إدراج المنشآت» المحاور على شبكة على المضلّع المحدد على اليسار فقط — سواء كان منطقة أو حقلاً: يمكنك العمل مباشرة على المنطقة دون الحاجة إلى إنشاء الحقول. بالتكرار على مضلّع آخر تُضاف المحاور دون حذف الأخرى. اختر التوزيع: «مربّع» (محاور متراصفة) أو «مثلّث» (صفوف مزاحة بنصف خطوة لتعشيق المحاور واستعادة مساحة أكبر). طريقة تغذيتها (قنوات أو أنابيب) مستقلة وتُحدد في التوصيل. المحاور قابلة للتعديل: النقر الأول = مجموعة، النقر الثاني = فردي (لوحة «الخصائص»، أيقونة «i»). تُرسم الطرق والقنوات الموجودة مسبقاً في صفحة المسح.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "بنى تحتية ملحقة أخرى (خزانات، محطات ضخّ، بيانات كهربائية…) قريباً.",
+  "Crea diramazione": "إنشاء تفرّع",
+  "Dirama su «{name}»": "تفريع على «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "تم إنشاء التفرّع: {n} محور مغذّى من القناة ✓",
+  "Diramazioni attive": "التفرّعات النشطة",
+  "Diramazioni pivot da canale": "تفرّعات المحاور من القناة",
+  "Entrambi i lati": "كلا الجانبين",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "البنى التحتية الملحقة بالمشروع. «التفرّعات من القناة» تضع تلقائياً صفاً من المحاور على طول القناة وترسم أقصر أنبوب لتغذيتها.",
+  "Lato": "الجانب",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "يصفّ حتى N محور تتفرّع من القناة، كل منها مغذّى بأقصر أنبوب. يعمل على المضلّع المحدّد على اليسار، بنصف قطر صفحة المنشآت.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "لا يمكن وضع أي محور على طول القناة بهذه المعطيات.",
+  "Numero massimo di pivot": "الحد الأقصى لعدد المحاور",
+  "Rimuovi diramazioni": "إزالة التفرّعات",
+  "Traccia prima un canale nella pagina Rilievo.": "ارسم قناة أولاً في صفحة المسح.",
 };
 
 const ZH: Dict = {
@@ -2396,6 +2501,21 @@ const ZH: Dict = {
   "totali": "合计",
   "zone idonee": "适宜区域",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«插入系统»仅在左侧所选的多边形上以网格方式布置喷灌机 — 无论是区域还是地块：你可以直接在区域上操作而不必生成地块。在另一个多边形上重复操作时，喷灌机会添加进来而不会删除其他的。选择排列方式：«方形排列»（喷灌机对齐）或«三角形排列»（各行错开半个步距以嵌套喷灌机、回收更多空间）。如何为它们供水（渠道或管道）是独立的，在输水部分定义。喷灌机可编辑：第 1 次点击 = 组，第 2 次点击 = 单台（«属性»面板，«i»图标）。既有道路和渠道在勘测页面中绘制。",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "更多配套基础设施（蓄水池、泵站、电力数据…）即将推出。",
+  "Crea diramazione": "创建分支",
+  "Dirama su «{name}»": "在«{name}»上分支",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "分支已创建：{n} 台喷灌机由渠道供水 ✓",
+  "Diramazioni attive": "活动分支",
+  "Diramazioni pivot da canale": "渠道喷灌机分支",
+  "Entrambi i lati": "两侧",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "项目的配套基础设施。«渠道分支»自动沿渠道布置一排喷灌机，并绘制最短的管道为其供水。",
+  "Lato": "侧",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "沿渠道分支排列最多 N 台喷灌机，每台由最短的管道供水。在左侧所选的多边形上运行，使用系统页面的半径。",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "使用这些参数无法沿渠道布置喷灌机。",
+  "Numero massimo di pivot": "喷灌机最大数量",
+  "Rimuovi diramazioni": "移除分支",
+  "Traccia prima un canale nella pagina Rilievo.": "请先在勘测页面绘制渠道。",
 };
 
 const HU: Dict = {
@@ -2692,6 +2812,21 @@ const HU: Dict = {
   "totali": "összesen",
   "zone idonee": "alkalmas zónák",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "A «Berendezések elhelyezése» a pivotokat rácsban helyezi el CSAK a bal oldalon kiválasztott poligonra — legyen az TERÜLET vagy TÁBLA: közvetlenül a területen is dolgozhatsz anélkül, hogy feltétlenül táblákat generálnál. Egy másik poligonon megismételve a pivotok hozzáadódnak a többiek törlése nélkül. Válaszd ki az elrendezést: «Négyzetes» (igazított pivotok) vagy «Háromszöges» (fél lépéssel eltolt sorok a pivotok összeillesztéséhez és több hely visszanyeréséhez). Az ellátásuk módja (csatornák vagy csővezetékek) független, és az odavezetésnél határozható meg. A pivotok szerkeszthetők: 1. kattintás = csoport, 2. kattintás = egyedi («Tulajdonságok» panel, «i» ikon). A meglévő utakat és csatornákat a Domborzat oldalon lehet megrajzolni.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "További kiegészítő infrastruktúrák (tározók, szivattyúállomások, elektromos adatok…) hamarosan.",
+  "Crea diramazione": "Elágazás létrehozása",
+  "Dirama su «{name}»": "Elágaztatás ide: «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Elágazás létrehozva: {n} pivot a csatornáról táplálva ✓",
+  "Diramazioni attive": "Aktív elágazások",
+  "Diramazioni pivot da canale": "Pivot-elágazások csatornáról",
+  "Entrambi i lati": "Mindkét oldal",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "A projekt kiegészítő infrastruktúrái. A «Csatorna-elágazások» automatikusan egy sor pivotot helyez el a csatorna mentén, és megrajzolja a legrövidebb csővezetéket a táplálásukhoz.",
+  "Lato": "Oldal",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Sorba rendez akár N pivotot, amelyek a csatornáról ágaznak el, mindegyiket a legrövidebb csővezeték táplálja. A bal oldalon kiválasztott poligonon dolgozik, a Berendezések oldal sugarával.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "Ezekkel a paraméterekkel nem helyezhető el pivot a csatorna mentén.",
+  "Numero massimo di pivot": "Pivotok maximális száma",
+  "Rimuovi diramazioni": "Elágazások eltávolítása",
+  "Traccia prima un canale nella pagina Rilievo.": "Előbb rajzolj egy csatornát a Domborzat oldalon.",
 };
 
 const ID: Dict = {
@@ -2988,6 +3123,21 @@ const ID: Dict = {
   "totali": "total",
   "zone idonee": "zona yang sesuai",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«Tambah instalasi» menyusun pivot dalam kisi HANYA pada poligon yang dipilih di sebelah kiri — baik AREA maupun BIDANG: Anda bisa bekerja langsung pada area tanpa harus membuat bidang. Dengan mengulang pada poligon lain, pivot ditambahkan tanpa menghapus yang lain. Pilih susunan: «Persegi» (pivot sejajar) atau «Segitiga» (baris digeser setengah langkah untuk menyelipkan pivot dan menghemat lebih banyak ruang). Cara memasoknya (kanal atau pipa) bersifat independen dan ditentukan dalam saluran suplai. Pivot dapat diedit: klik ke-1 = grup, klik ke-2 = satuan (panel «Properti», ikon «i»). Jalan dan kanal yang sudah ada digambar di halaman Survei.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "Infrastruktur aksesori lainnya (waduk, stasiun pompa, data listrik…) segera hadir.",
+  "Crea diramazione": "Buat cabang",
+  "Dirama su «{name}»": "Cabangkan pada «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Cabang dibuat: {n} pivot dialiri dari kanal ✓",
+  "Diramazioni attive": "Cabang aktif",
+  "Diramazioni pivot da canale": "Cabang pivot dari kanal",
+  "Entrambi i lati": "Kedua sisi",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Infrastruktur aksesori proyek. «Cabang dari kanal» secara otomatis menempatkan sederet pivot di sepanjang kanal dan menarik pipa terpendek untuk mengalirinya.",
+  "Lato": "Sisi",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Susun berderet hingga N pivot yang bercabang dari kanal, masing-masing dialiri oleh pipa terpendek. Bekerja pada poligon yang dipilih di sebelah kiri, dengan radius dari halaman Instalasi.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "Tidak ada pivot yang dapat ditempatkan di sepanjang kanal dengan parameter ini.",
+  "Numero massimo di pivot": "Jumlah maksimum pivot",
+  "Rimuovi diramazioni": "Hapus cabang",
+  "Traccia prima un canale nella pagina Rilievo.": "Gambar dulu sebuah kanal di halaman Survei.",
 };
 
 const DE: Dict = {
@@ -3278,6 +3428,21 @@ const DE: Dict = {
   "totali": "Gesamt",
   "zone idonee": "geeignete Zonen",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«Anlagen einfügen» ordnet die Pivots NUR auf dem links ausgewählten Polygon im Raster an — egal ob ein GEBIET oder ein FELD: Du kannst direkt am Gebiet arbeiten, ohne zwingend die Felder zu erzeugen. Bei Wiederholung auf einem anderen Polygon werden die Pivots hinzugefügt, ohne die anderen zu löschen. Wähle die Anordnung: «Quadratisch» (ausgerichtete Pivots) oder «Dreieckig» (um einen halben Schritt versetzte Reihen, um die Pivots ineinander zu verschachteln und mehr Platz zu gewinnen). Wie sie versorgt werden (Kanäle oder Rohrleitungen), ist unabhängig und wird in der Zuleitung festgelegt. Die Pivots sind bearbeitbar: 1. Klick = Gruppe, 2. Klick = einzeln (Bereich «Eigenschaften», Symbol «i»). Bestehende Straßen und Kanäle werden auf der Seite Vermessung gezeichnet.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "Weitere Zusatzinfrastruktur (Speicherbecken, Pumpstationen, Elektrodaten…) folgt in Kürze.",
+  "Crea diramazione": "Abzweigung erstellen",
+  "Dirama su «{name}»": "Auf «{name}» abzweigen",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Abzweigung erstellt: {n} Pivots vom Kanal gespeist ✓",
+  "Diramazioni attive": "Aktive Abzweigungen",
+  "Diramazioni pivot da canale": "Pivot-Abzweigungen vom Kanal",
+  "Entrambi i lati": "Beide Seiten",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Zusatzinfrastruktur des Projekts. «Abzweigungen vom Kanal» platziert automatisch eine Reihe von Pivots entlang des Kanals und zeichnet die kürzeste Rohrleitung zu deren Versorgung.",
+  "Lato": "Seite",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Reiht bis zu N Pivots auf, die vom Kanal abzweigen, jeweils über die kürzeste Rohrleitung versorgt. Arbeitet auf dem links ausgewählten Polygon, mit dem Radius der Seite Anlagen.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "Mit diesen Parametern lässt sich kein Pivot entlang des Kanals platzieren.",
+  "Numero massimo di pivot": "Maximale Anzahl Pivots",
+  "Rimuovi diramazioni": "Abzweigungen entfernen",
+  "Traccia prima un canale nella pagina Rilievo.": "Zeichne zuerst einen Kanal auf der Seite Vermessung.",
 };
 
 const PL: Dict = {
@@ -3570,6 +3735,21 @@ const PL: Dict = {
   "totali": "łącznie",
   "zone idonee": "strefy przydatne",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«Wstaw instalacje» rozmieszcza pivoty w siatce TYLKO na poligonie wybranym po lewej — obojętnie czy jest to OBSZAR, czy POLE: możesz pracować bezpośrednio na obszarze bez konieczności generowania pól. Powtarzając na innym poligonie, pivoty są dodawane bez usuwania pozostałych. Wybierz rozmieszczenie: «Kwadratowy» (pivoty wyrównane) albo «Trójkątny» (rzędy przesunięte o pół kroku, aby wpasować pivoty i odzyskać więcej miejsca). Sposób ich zasilania (kanały lub rurociągi) jest niezależny i definiuje się go w doprowadzeniu. Pivoty są edytowalne: 1. kliknięcie = grupa, 2. kliknięcie = pojedynczy (panel «Właściwości», ikona «i»). Istniejące drogi i kanały rysuje się na stronie Pomiar.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "Inne infrastruktury pomocnicze (zbiorniki, stacje pomp, dane elektryczne…) wkrótce.",
+  "Crea diramazione": "Utwórz odgałęzienie",
+  "Dirama su «{name}»": "Odgałęź na «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Odgałęzienie utworzone: {n} pivotów zasilanych z kanału ✓",
+  "Diramazioni attive": "Aktywne odgałęzienia",
+  "Diramazioni pivot da canale": "Odgałęzienia pivotów z kanału",
+  "Entrambi i lati": "Obie strony",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Infrastruktura pomocnicza projektu. «Odgałęzienia z kanału» automatycznie układa rząd pivotów wzdłuż kanału i wyznacza najkrótszy rurociąg do ich zasilania.",
+  "Lato": "Strona",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Ustawia w rzędzie do N pivotów odgałęziających się od kanału, każdy zasilany najkrótszym rurociągiem. Działa na wybranym po lewej poligonie, z promieniem ze strony Instalacje.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "Brak pivotów możliwych do ułożenia wzdłuż kanału z tymi parametrami.",
+  "Numero massimo di pivot": "Maksymalna liczba pivotów",
+  "Rimuovi diramazioni": "Usuń odgałęzienia",
+  "Traccia prima un canale nella pagina Rilievo.": "Najpierw narysuj kanał na stronie Pomiar.",
 };
 
 const BG: Dict = {
@@ -3862,6 +4042,21 @@ const BG: Dict = {
   "totali": "общо",
   "zone idonee": "подходящи зони",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«Постави съоръжения» разполага пивотите в мрежа САМО върху избрания вляво полигон — без значение ОБЛАСТ или ПОЛЕ: можеш да работиш директно върху областта, без задължително да генерираш полетата. При повтаряне върху друг полигон пивотите се добавят, без да изтриват останалите. Избери разположението: «В квадрат» (подравнени пивоти) или «В триъгълник» (редове, отместени с половин стъпка, за да се сглобят пивотите и да се спечели повече място). Как да се захранват (канали или тръбопроводи) е независимо и се определя в захранването. Пивотите са редактируеми: 1-во кликване = група, 2-ро кликване = единичен (панел «Свойства», икона «i»). Съществуващите пътища и канали се чертаят в страница Проучване.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "Други спомагателни инфраструктури (язовири, помпени станции, електрически данни…) предстоят.",
+  "Crea diramazione": "Създай разклонение",
+  "Dirama su «{name}»": "Разклони по «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Разклонението е създадено: {n} пивота, захранени от канала ✓",
+  "Diramazioni attive": "Активни разклонения",
+  "Diramazioni pivot da canale": "Разклонения на пивоти от канал",
+  "Entrambi i lati": "И от двете страни",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Спомагателни инфраструктури на проекта. «Разклонения от канал» автоматично разполага редица пивоти по канала и прокарва най-късия тръбопровод за захранването им.",
+  "Lato": "Страна",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Подрежда до N пивота, разклоняващи се от канала, всеки захранен от най-късия тръбопровод. Работи върху избрания вляво полигон, с радиуса от страница Съоръжения.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "Няма пивот за разполагане по канала с тези параметри.",
+  "Numero massimo di pivot": "Максимален брой пивоти",
+  "Rimuovi diramazioni": "Премахни разклоненията",
+  "Traccia prima un canale nella pagina Rilievo.": "Първо начертайте канал в страница Проучване.",
 };
 
 const RU: Dict = {
@@ -4154,6 +4349,21 @@ const RU: Dict = {
   "totali": "всего",
   "zone idonee": "пригодные зоны",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«Разместить установки» расставляет пивоты сеткой ТОЛЬКО на выбранном слева полигоне — неважно, ОБЛАСТИ или ПОЛЕ: вы можете работать напрямую с областью, не создавая обязательно поля. При повторе на другом полигоне пивоты добавляются, не удаляя остальные. Выберите расстановку: «Квадратная» (пивоты выровнены) либо «Треугольная» (ряды со сдвигом на полшага, чтобы состыковать пивоты и выиграть больше места). Способ подачи воды (каналы или трубопроводы) задаётся отдельно, в разделе водоподачи. Пивоты можно редактировать: 1-й клик = группа, 2-й клик = отдельный (панель «Свойства», значок «i»). Существующие дороги и каналы рисуются на странице «Съёмка».",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "Другие вспомогательные объекты (водоёмы, насосные станции, электрические данные…) скоро появятся.",
+  "Crea diramazione": "Создать ответвление",
+  "Dirama su «{name}»": "Ответвление на «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Ответвление создано: {n} пивотов запитаны от канала ✓",
+  "Diramazioni attive": "Активные ответвления",
+  "Diramazioni pivot da canale": "Ответвления пивотов от канала",
+  "Entrambi i lati": "Обе стороны",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Вспомогательные объекты проекта. «Ответвления от канала» автоматически размещают ряд пивотов вдоль канала и прокладывают кратчайший трубопровод для их питания.",
+  "Lato": "Сторона",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Выстраивает в ряд до N пивотов, ответвляющихся от канала, каждый запитан кратчайшим трубопроводом. Работает с выбранным слева полигоном и радиусом со страницы «Установки».",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "С этими параметрами вдоль канала нельзя разместить ни одного пивота.",
+  "Numero massimo di pivot": "Максимальное число пивотов",
+  "Rimuovi diramazioni": "Убрать ответвления",
+  "Traccia prima un canale nella pagina Rilievo.": "Сначала проведите канал на странице «Съёмка».",
 };
 
 const AF: Dict = {
@@ -4446,6 +4656,21 @@ const AF: Dict = {
   "totali": "totaal",
   "zone idonee": "geskikte sones",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«Voeg stelsels in» rangskik die spilpunte in 'n rooster NET op die poligoon wat aan die linkerkant geselekteer is — of dit nou 'n AREA of 'n VELD is: jy kan direk op die area werk sonder om noodwendig die velde te genereer. Deur dit op 'n ander poligoon te herhaal, word die spilpunte bygevoeg sonder om die ander uit te vee. Kies die rangskikking: «Vierkantig» (spilpunte in lyn) of «Driehoekig» (rye met 'n halwe stap verspring om die spilpunte in te pas en meer ruimte te wen). Hoe om hulle te voed (kanale of pyplyne) is onafhanklik en word in die toevoer gedefinieer. Die spilpunte is wysigbaar: 1ste klik = groep, 2de klik = enkel (paneel «Eienskappe», ikoon «i»). Bestaande paaie en kanale word op die Reliëf-bladsy geteken.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "Ander bykomende infrastruktuur (damme, pompstasies, elektriese data…) kom binnekort.",
+  "Crea diramazione": "Skep vertakking",
+  "Dirama su «{name}»": "Vertak op «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Vertakking geskep: {n} spilpunte deur die kanaal gevoed ✓",
+  "Diramazioni attive": "Aktiewe vertakkings",
+  "Diramazioni pivot da canale": "Spilpunt-vertakkings vanaf kanaal",
+  "Entrambi i lati": "Albei kante",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Bykomende infrastruktuur van die projek. «Vertakkings vanaf kanaal» plaas outomaties 'n ry spilpunte langs die kanaal en trek die kortste pyplyn om hulle te voed.",
+  "Lato": "Kant",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Rangskik tot N spilpunte wat vanaf die kanaal vertak, elkeen deur die kortste pyplyn gevoed. Werk op die poligoon wat aan die linkerkant geselekteer is, met die radius van die Stelsels-bladsy.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "Geen spilpunt kan met hierdie parameters langs die kanaal geplaas word nie.",
+  "Numero massimo di pivot": "Maksimum aantal spilpunte",
+  "Rimuovi diramazioni": "Verwyder vertakkings",
+  "Traccia prima un canale nella pagina Rilievo.": "Teken eers 'n kanaal in die Reliëf-bladsy.",
 };
 
 const MS: Dict = {
@@ -4738,6 +4963,21 @@ const MS: Dict = {
   "totali": "jumlah",
   "zone idonee": "zon sesuai",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«Masukkan sistem» menyusun pivot secara grid HANYA pada poligon yang dipilih di sebelah kiri — sama ada KAWASAN atau LADANG: anda boleh bekerja terus pada kawasan tanpa perlu menjana ladang. Dengan mengulanginya pada poligon lain, pivot ditambah tanpa memadam yang lain. Pilih susun atur: «Segi empat» (pivot sejajar) atau «Segi tiga» (baris diselang setengah langkah untuk menyelitkan pivot dan memperoleh lebih banyak ruang). Cara membekalkannya (terusan atau paip) adalah bebas dan ditakrifkan dalam saluran bekalan. Pivot boleh diedit: klik ke-1 = kumpulan, klik ke-2 = individu (panel «Sifat», ikon «i»). Jalan dan terusan sedia ada dilukis dalam halaman Tinjauan.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "Infrastruktur aksesori lain (takungan, stesen pengepaman, data elektrik…) akan datang.",
+  "Crea diramazione": "Cipta cabang",
+  "Dirama su «{name}»": "Cabang pada «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Cabang dicipta: {n} pivot dibekalkan oleh terusan ✓",
+  "Diramazioni attive": "Cabang aktif",
+  "Diramazioni pivot da canale": "Cabang pivot dari terusan",
+  "Entrambi i lati": "Kedua-dua sisi",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Infrastruktur aksesori projek. «Cabang dari terusan» meletakkan secara automatik satu barisan pivot di sepanjang terusan dan melukis paip terpendek untuk membekalkannya.",
+  "Lato": "Sisi",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Bariskan sehingga N pivot yang bercabang dari terusan, setiap satu dibekalkan oleh paip terpendek. Berfungsi pada poligon yang dipilih di sebelah kiri, dengan jejari halaman Sistem.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "Tiada pivot boleh diletakkan di sepanjang terusan dengan parameter ini.",
+  "Numero massimo di pivot": "Bilangan maksimum pivot",
+  "Rimuovi diramazioni": "Buang cabang",
+  "Traccia prima un canale nella pagina Rilievo.": "Lukis terusan dahulu dalam halaman Tinjauan.",
 };
 
 const VI: Dict = {
@@ -5030,6 +5270,21 @@ const VI: Dict = {
   "totali": "tổng",
   "zone idonee": "vùng phù hợp",
   "«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.": "«Thêm thiết bị» bố trí các pivot theo lưới CHỈ trên đa giác đã chọn bên trái — dù là một KHU VỰC hay một CÁNH ĐỒNG: bạn có thể làm việc trực tiếp trên khu vực mà không nhất thiết phải tạo cánh đồng. Lặp lại trên một đa giác khác thì các pivot được thêm vào mà không xóa các pivot còn lại. Chọn cách bố trí: «Dạng ô vuông» (pivot thẳng hàng) hoặc «Dạng tam giác» (các hàng lệch nửa bước để cài xen các pivot và tận dụng thêm không gian). Cách cấp nước cho chúng (kênh hoặc ống dẫn) là độc lập và được xác định ở phần dẫn nước. Các pivot có thể chỉnh: nhấp lần 1 = nhóm, nhấp lần 2 = riêng lẻ (bảng «Thuộc tính», biểu tượng «i»). Đường và kênh có sẵn được vẽ trong trang Khảo sát.",
+  // --- v0.6.101: Accessori diramazioni ---
+  "Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.": "Các hạ tầng phụ trợ khác (hồ chứa, trạm bơm, dữ liệu điện…) sắp có.",
+  "Crea diramazione": "Tạo nhánh",
+  "Dirama su «{name}»": "Phân nhánh trên «{name}»",
+  "Diramazione creata: {n} pivot alimentati dal canale ✓": "Đã tạo nhánh: {n} pivot được cấp nước từ kênh ✓",
+  "Diramazioni attive": "Nhánh đang hoạt động",
+  "Diramazioni pivot da canale": "Nhánh pivot từ kênh",
+  "Entrambi i lati": "Cả hai bên",
+  "Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.": "Hạ tầng phụ trợ của dự án. «Nhánh từ kênh» tự động đặt một hàng pivot dọc theo kênh và vẽ đường ống ngắn nhất để cấp nước cho chúng.",
+  "Lato": "Bên",
+  "Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.": "Xếp thành hàng đến N pivot phân nhánh từ kênh, mỗi pivot được cấp nước bằng đường ống ngắn nhất. Hoạt động trên đa giác đã chọn ở bên trái, với bán kính từ trang Thiết bị.",
+  "Nessun pivot posabile lungo il canale con questi parametri.": "Không thể đặt pivot nào dọc theo kênh với các tham số này.",
+  "Numero massimo di pivot": "Số pivot tối đa",
+  "Rimuovi diramazioni": "Xóa nhánh",
+  "Traccia prima un canale nella pagina Rilievo.": "Hãy vẽ một kênh trước trong trang Khảo sát.",
 };
 
 const TR: Record<Exclude<Lang, "it">, Dict> = {

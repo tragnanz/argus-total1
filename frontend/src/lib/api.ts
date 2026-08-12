@@ -208,6 +208,19 @@ export const fetchCanal = (
     body: JSON.stringify({ geom, target_permille, start: start ?? null, end: end ?? null, waypoints: waypoints ?? null, manual: manual ?? null, snap }),
   });
 
+// ---- Diramazioni pivot da canale (Accessori) ----
+export type BranchResult = {
+  pivots: { lat: number; lng: number; r: number }[];
+  pipes: number[][][];
+  meta: { n: number; radius_m?: number };
+};
+export const fetchBranch = (body: {
+  geom: Polygon; canal: number[][]; radius_m: number; gap_m: number;
+  clear_m?: number; canal_width_m?: number; max_pivots: number;
+  side?: "auto" | "both" | "left" | "right";
+  existing?: { lat: number; lng: number; r: number }[] | null;
+}) => req<BranchResult>("/api/canal/branch", { method: "POST", body: JSON.stringify(body) });
+
 // ---- Leggibilità terreno: rilievo + isoipse, zona a valle della presa ----
 export type Terrain = {
   image: string; bounds: [[number, number], [number, number]];
