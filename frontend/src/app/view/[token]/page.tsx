@@ -38,8 +38,11 @@ export default function ViewPage({ params }: { params: { token: string } }) {
       clearInterval(iv);
       try {
         const areas: Area[] = data.areas || [];
+        const layers0: Layer[] = data.layers || [];
+        const styleLayer = layers0.filter((x) => x.kind === "styles").map((x) => x.data).pop();
+        const styleFor = (areaId: number) => styleLayer?.byArea?.[areaId];
         const polys = areas.filter((a) => a.kind !== "macro");
-        m.setFields(polys.map((a) => ({ id: a.id, name: a.name, geom: a.geojson })), null, []);
+        m.setFields(polys.map((a) => ({ id: a.id, name: a.name, geom: a.geojson, style: styleFor(a.id) })), null, []);
         const macros = areas.filter((a) => a.kind === "macro");
         if (macros.length) m.showMacroareas(macros.map((a) => ({ geom: a.geojson, label: a.name })));
 

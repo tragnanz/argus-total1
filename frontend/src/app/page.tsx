@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.76";
+const REV = "v0.6.77";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -81,6 +81,7 @@ type Field = {
   hidden?: boolean;                    // campo spento sulla mappa
   savedId?: number;                    // id dell'area salvata nel progetto
   parentId?: number;                   // campo genitore (famiglia): poligono figlio sotto un altro
+  style?: { color?: string; fillColor?: string; fillOpacity?: number };   // stile perimetro/riempimento
 };
 
 // Wrapper front-end con visibilità per-oggetto e proprietario (campo) per il
@@ -494,6 +495,9 @@ export default function Page() {
         for (const c of childrenOfArea(a.id)) if (c.kind !== "macro") build(c, fid);
       };
       areasList.filter((a) => a.parent_area_id == null).forEach((a) => build(a));
+      // Applica gli stili salvati (colore/trasparenza) prima di disegnare.
+      const styleLayer = layersList.filter((l) => l.kind === "styles").map((l) => l.data).pop();
+      if (styleLayer?.byArea) for (const f of nf) if (f.savedId != null && styleLayer.byArea[f.savedId]) f.style = styleLayer.byArea[f.savedId];
       if (nf.length) {
         const firstRoot = nf.find((f) => f.parentId == null) ?? nf[0];
         setFields(nf);
@@ -552,7 +556,16 @@ export default function Page() {
   }
   function renderFields(fs: Field[], aId: number | null) {
     const hidden = fs.filter((f) => f.hidden).map((f) => f.id);
-    mapApi.current?.setFields(fs.map((f) => ({ id: f.id, name: f.name, geom: f.geom })), aId, hidden);
+    mapApi.current?.setFields(fs.map((f) => ({ id: f.id, name: f.name, geom: f.geom, style: f.style })), aId, hidden);
+  }
+  // Aggiorna lo stile (colore perimetro/riempimento, trasparenza) del campo attivo.
+  function patchFieldStyle(patch: { color?: string; fillColor?: string; fillOpacity?: number }) {
+    if (activeId == null) return;
+    setFields((fs) => { const arr = fs.map((f) => f.id === activeId ? { ...f, style: { ...f.style, ...patch } } : f); renderFields(arr, activeId); return arr; });
+  }
+  function resetFieldStyle() {
+    if (activeId == null) return;
+    setFields((fs) => { const arr = fs.map((f) => f.id === activeId ? { ...f, style: undefined } : f); renderFields(arr, activeId); return arr; });
   }
   // Ridisegna sulla mappa tutte le macro-aree: candidate (da individuazione) +
   // sotto-aree già assegnate ai campi.
@@ -994,6 +1007,11 @@ export default function Page() {
       if (canals.length) await api.createLayer({ project_id: pid, kind: "canals", name: t("Canali"), data: { items: canals.map((c) => ({ ...c, ownerArea: ownerArea(c.owner) })) } });
       if (roads.length) await api.createLayer({ project_id: pid, kind: "roads", name: t("Strade"), data: { items: roads.map((r) => ({ ...r, ownerArea: ownerArea(r.owner) })) } });
       if (watercourses.length) await api.createLayer({ project_id: pid, kind: "waters", name: t("Invasi/corsi d'acqua"), data: { items: watercourses.map((w) => ({ ...w, ownerArea: ownerArea(w.owner) })) } });
+
+      // 3b) Salva gli stili dei campi (colore/trasparenza) mappati per id area.
+      const styles: Record<number, { color?: string; fillColor?: string; fillOpacity?: number }> = {};
+      for (const f of fields) if (f.style && fieldToArea.has(f.id)) styles[fieldToArea.get(f.id)!] = f.style;
+      if (Object.keys(styles).length) await api.createLayer({ project_id: pid, kind: "styles", name: t("Stili"), data: { byArea: styles } });
 
       // 4) Salva i pivot (field → id area nelle properties del FeatureCollection).
       if (pivots.length) {
@@ -1980,9 +1998,46 @@ export default function Page() {
                   <p className="text-[11px] text-sage-dark mt-1">{t("Sulla mappa: 2° clic su un pivot per modificarlo singolarmente.")}</p>
                   <button className="btn-ghost w-full mt-2" onClick={applyRadiusToAll}>{t("Applica raggio {r} m a tutti", { r: pivotR })}</button>
                 </div>
+              ) : active ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <b className="text-brand-darker text-sm truncate">{active.name}</b>
+                    <button className="text-[11px] text-brand-mid shrink-0" onClick={() => renameField(active)}>{t("Rinomina")}</button>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-1.5 text-[11px] text-sage-dark">{t("Perimetro")}
+                      <input type="color" value={active.style?.color ?? "#03a047"} onChange={(e) => patchFieldStyle({ color: e.target.value })} className="w-8 h-6 rounded border border-black/10 bg-white p-0 cursor-pointer" /></label>
+                    <label className="flex items-center gap-1.5 text-[11px] text-sage-dark">{t("Riempimento")}
+                      <input type="color" value={active.style?.fillColor ?? "#038037"} onChange={(e) => patchFieldStyle({ fillColor: e.target.value })} className="w-8 h-6 rounded border border-black/10 bg-white p-0 cursor-pointer" /></label>
+                  </div>
+                  <label className="block text-[11px] text-sage-dark">{t("Trasparenza riempimento")}: <b>{Math.round((active.style?.fillOpacity ?? 0.14) * 100)}%</b>
+                    <input type="range" min={0} max={100} step={5} value={Math.round((active.style?.fillOpacity ?? 0.14) * 100)} onChange={(e) => patchFieldStyle({ fillOpacity: Number(e.target.value) / 100 })} className="w-full mt-1" /></label>
+                  {(() => {
+                    const ring: number[][] = active.geom.coordinates[0] || [];
+                    let per = 0; for (let i = 1; i < ring.length; i++) per += distM(ring[i - 1], ring[i]);
+                    const nV = Math.max(1, ring.length - 1);
+                    let sx = 0, sy = 0; for (let i = 0; i < nV; i++) { sx += ring[i][0]; sy += ring[i][1]; }
+                    const clat = sy / nV, clng = sx / nV;
+                    const kids = fields.filter((f) => f.parentId === active.id).length;
+                    const npv = pivots.filter((p) => p.field === active.id).length;
+                    const ncan = canals.filter((c) => c.owner === active.id).length;
+                    const nrd = roads.filter((r) => r.owner === active.id).length;
+                    const nwt = watercourses.filter((w) => w.owner === active.id).length;
+                    return (
+                      <div className="text-[11px] text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
+                        {t("Superficie")}: <b>{uHa(ringAreaHa(active.geom.coordinates))}</b><br />
+                        {t("Perimetro")}: <b>{uM(Math.round(per))}</b> · {t("Vertici")}: <b>{nV}</b><br />
+                        {t("Centro")}: <b>{clat.toFixed(5)}, {clng.toFixed(5)}</b><br />
+                        {kids > 0 && <>{t("Poligoni figli")}: <b>{kids}</b> · </>}
+                        {t("Pivot")}: <b>{npv}</b> · {t("Canali")}: <b>{ncan}</b> · {t("Strade")}: <b>{nrd}</b> · {t("Invasi")}: <b>{nwt}</b>
+                      </div>
+                    );
+                  })()}
+                  <button className="btn-ghost w-full text-[11px]" onClick={resetFieldStyle}>{t("Ripristina colori predefiniti")}</button>
+                </div>
               ) : (
                 <div>
-                  <p className="text-[11px] text-sage-dark">{t("Clicca un oggetto sulla mappa per modificarlo. I campi del progetto sono nell'elenco «Campi» del pannello Progetto.")}</p>
+                  <p className="text-[11px] text-sage-dark">{t("Clicca un campo nell'elenco «Campi» per vederne colori e informazioni, oppure un oggetto sulla mappa.")}</p>
                 </div>
               )}
             </div>

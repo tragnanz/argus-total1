@@ -5,7 +5,8 @@ import "@geoman-io/leaflet-geoman-free";
 import type { Polygon, GeoJSONFC } from "@/lib/api";
 
 export type OverlayKey = "index" | "dem" | "suitability";
-export type FieldGeom = { id: number; name: string; geom: Polygon };
+export type FieldStyle = { color?: string; fillColor?: string; fillOpacity?: number; weight?: number };
+export type FieldGeom = { id: number; name: string; geom: Polygon; style?: FieldStyle };
 // Modello pivot interattivo (gerarchia gruppo → singolo)
 export type PivotItem = { lat: number; lng: number; r: number; conn?: string; field?: number };
 export type PivotModel = { pivots: PivotItem[]; lines: { kind: string; coords: number[][] }[] };
@@ -266,7 +267,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   }
   function placeActive(f: FieldGeom) {
     const map = mapRef.current; if (!map) return;
-    const layer = L.polygon(toLatLng(f.geom.coordinates[0]), ACTIVE_STYLE).addTo(map);
+    const layer = L.polygon(toLatLng(f.geom.coordinates[0]), { ...ACTIVE_STYLE, ...(f.style || {}) }).addTo(map);
     if (f.name) layer.bindTooltip(f.name, { permanent: true, direction: "center", className: "field-label" });
     editLayerRef.current = layer;
     layer.pm?.enable({ allowSelfIntersection: false });
@@ -357,7 +358,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         for (const f of fields) {
           if (hide.has(f.id)) continue;                 // campo spento: non disegnare
           if (f.id === activeId) { placeActive(f); continue; }
-          const ly = L.polygon(toLatLng(f.geom.coordinates[0]), IDLE_STYLE);
+          const ly = L.polygon(toLatLng(f.geom.coordinates[0]), { ...IDLE_STYLE, ...(f.style || {}) });
           ly.on("click", () => cbRef.current.onSelect?.(f.id));
           if (f.name) ly.bindTooltip(f.name, { permanent: true, direction: "center", className: "field-label" });
           grp.addLayer(ly);
