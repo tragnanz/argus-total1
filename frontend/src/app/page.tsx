@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.73";
+const REV = "v0.6.74";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -83,10 +83,11 @@ type Field = {
   parentId?: number;                   // campo genitore (famiglia): poligono figlio sotto un altro
 };
 
-// Wrapper front-end con visibilità per-oggetto (pannello Livelli stile Photoshop).
-type CanalL = Canal & { hidden?: boolean; uid?: number };
-type WaterL = Watercourse & { hidden?: boolean; uid?: number };
-type RoadL = { id: string; coords: number[][]; width_m: number; hidden?: boolean };
+// Wrapper front-end con visibilità per-oggetto e proprietario (campo) per il
+// pannello Livelli stile Photoshop: owner = id del campo a cui l'oggetto appartiene.
+type CanalL = Canal & { hidden?: boolean; uid?: number; owner?: number };
+type WaterL = Watercourse & { hidden?: boolean; uid?: number; owner?: number };
+type RoadL = { id: string; coords: number[][]; width_m: number; hidden?: boolean; owner?: number };
 
 // Snapshot completo per la cronologia Annulla/Ripristina (tutte le mosse).
 type Snapshot = {
@@ -292,7 +293,8 @@ export default function Page() {
   const [gset, setGset] = useState<Settings>(DEFAULTS);
   const nextId = useRef(1);
   const pendingParentRef = useRef<number | null>(null);   // prossimo poligono disegnato → figlio di questo campo
-  const dragFieldRef = useRef<number | null>(null);       // riga trascinata nell'elenco Campi
+  // Trascinamento generico nel pannello Livelli: campo O oggetto (canale/strada/invaso/pivot).
+  const dragRef = useRef<{ kind: "field" | "canal" | "road" | "water" | "pivot"; id: number | string } | null>(null);
   // visibilità dei livelli sulla mappa (accendi/spegni dal widget sinistro)
   const [layerVis, setLayerVis] = useState({ fields: true, macro: true, canal: true, layout: true, water: true, strade: true });
   const [watercourses, setWatercourses] = useState<WaterL[]>([]);
@@ -636,6 +638,21 @@ export default function Page() {
       return arr;
     });
   }
+  // Assegna l'oggetto trascinato a un campo (fid) o lo scollega (fid=null).
+  // Per i pivot «appartenere» = essere etichettati con quel campo.
+  function assignToField(p: { kind: "field" | "canal" | "road" | "water" | "pivot"; id: number | string } | null, fid: number | null) {
+    if (!p) return;
+    if (p.kind === "field") { reparent(Number(p.id), fid); return; }
+    if (p.kind === "canal") setCanals((cs) => cs.map((c, k) => k === Number(p.id) ? { ...c, owner: fid ?? undefined } : c));
+    else if (p.kind === "water") setWatercourses((ws) => ws.map((w, k) => k === Number(p.id) ? { ...w, owner: fid ?? undefined } : w));
+    else if (p.kind === "road") setRoads((rs) => rs.map((r) => r.id === p.id ? { ...r, owner: fid ?? undefined } : r));
+    else if (p.kind === "pivot") {
+      const src = Number(p.id);
+      setPivots((ps) => ps.map((pv) => (pv.field ?? -1) === src ? { ...pv, field: fid ?? undefined } : pv));
+      setPivotLines((ls) => ls.map((l) => (l.field ?? -1) === src ? { ...l, field: fid ?? undefined } : l));
+    }
+    setMsg(fid != null ? t("Oggetto assegnato al campo ✓") : t("Oggetto scollegato dal campo ✓"));
+  }
   function updateActiveGeom(geom: Polygon) {
     setFields((fs) => fs.map((f) => f.id === activeId ? { ...f, geom, lay: null, layGeo: null, suit: null } : f));
   }
@@ -669,6 +686,10 @@ export default function Page() {
     // I pivot dei campi eliminati vanno tolti dal modello.
     setPivots((ps) => ps.filter((p) => p.field == null || !kill.has(p.field)));
     setPivotLines((ls) => ls.filter((l) => l.field == null || !kill.has(l.field)));
+    // Canali/strade/invasi assegnati ai campi eliminati tornano «non assegnati» (non spariscono).
+    setCanals((cs) => cs.map((c) => c.owner != null && kill.has(c.owner) ? { ...c, owner: undefined } : c));
+    setRoads((rs) => rs.map((r) => r.owner != null && kill.has(r.owner) ? { ...r, owner: undefined } : r));
+    setWatercourses((ws) => ws.map((w) => w.owner != null && kill.has(w.owner) ? { ...w, owner: undefined } : w));
     if (projectId && savedToDelete.length) {
       Promise.all(savedToDelete.map((id) => api.deleteArea(id))).then(() => { if (projectId) refreshAreas(projectId); }).catch(showErr);
     }
@@ -1521,6 +1542,20 @@ export default function Page() {
     return Array.from(m.entries()).map(([fid, n]) => ({ fid, n, name: fid < 0 ? t("Senza campo") : (fields.find((f) => f.id === fid)?.name ?? t("Campo")) }));
   })();
 
+  // Riga oggetto (canale/strada/invaso/pivot) trascinabile: occhio, zoom, elimina.
+  // Trascinandola su un campo diventa «sua»; sulla dropzone si scollega.
+  function objRow(kind: "canal" | "road" | "water" | "pivot", dragId: number | string, key: string, hidden: boolean, onToggle: () => void, label: React.ReactNode, onZoom: () => void, onRemove: () => void) {
+    return (
+      <li key={key} draggable
+        onDragStart={(e) => { e.stopPropagation(); dragRef.current = { kind, id: dragId }; e.dataTransfer.effectAllowed = "move"; }}
+        onDragEnd={() => { dragRef.current = null; setDragOverField(null); }}
+        className="flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5 cursor-move">
+        <button className="text-brand-mid w-4" title={t("Mostra/Nascondi")} onClick={onToggle}>{hidden ? "○" : "◉"}</button>
+        <button className="flex-1 truncate text-left" title={t("Zoom · trascina su un campo per assegnarlo")} onClick={onZoom}>{label}</button>
+        <button className="text-danger w-4" title={t("Rimuovi")} onClick={onRemove}>✕</button>
+      </li>
+    );
+  }
   // Cartella del pannello Livelli (intestazione con freccia + occhio + conteggio).
   function renderLayerFolder(key: "canali" | "strade" | "invasi" | "pivot", label: string, count: number, anyVisible: boolean, onToggleAll: () => void, body: React.ReactNode) {
     const open = openFolders[key];
@@ -1542,23 +1577,28 @@ export default function Page() {
   // poligoni figli (famiglia) e le eventuali sotto-aree (macro).
   function renderFieldNode(f: Field, depth: number) {
     const kids = fields.filter((x) => x.parentId === f.id);
+    const ownedCanals = canals.map((c, i) => ({ c, i })).filter((x) => x.c.owner === f.id);
+    const ownedRoads = roads.map((r, i) => ({ r, i })).filter((x) => x.r.owner === f.id);
+    const ownedWater = watercourses.map((w, i) => ({ w, i })).filter((x) => x.w.owner === f.id);
+    const ownedPivN = pivots.filter((p) => p.field === f.id).length;
+    const hasNested = kids.length || (f.macros?.length ?? 0) || ownedCanals.length || ownedRoads.length || ownedWater.length || ownedPivN;
     return (
       <li key={f.id}
         draggable
-        onDragStart={(e) => { e.stopPropagation(); dragFieldRef.current = f.id; e.dataTransfer.effectAllowed = "move"; }}
-        onDragOver={(e) => { if (dragFieldRef.current != null && dragFieldRef.current !== f.id) { e.preventDefault(); e.stopPropagation(); if (dragOverField !== f.id) setDragOverField(f.id); } }}
+        onDragStart={(e) => { e.stopPropagation(); dragRef.current = { kind: "field", id: f.id }; e.dataTransfer.effectAllowed = "move"; }}
+        onDragOver={(e) => { if (dragRef.current && !(dragRef.current.kind === "field" && dragRef.current.id === f.id)) { e.preventDefault(); e.stopPropagation(); if (dragOverField !== f.id) setDragOverField(f.id); } }}
         onDragLeave={(e) => { e.stopPropagation(); setDragOverField((d) => (d === f.id ? null : d)); }}
-        onDrop={(e) => { e.preventDefault(); e.stopPropagation(); reparent(dragFieldRef.current, f.id); dragFieldRef.current = null; setDragOverField(null); }}
-        onDragEnd={() => { dragFieldRef.current = null; setDragOverField(null); }}
+        onDrop={(e) => { e.preventDefault(); e.stopPropagation(); assignToField(dragRef.current, f.id); dragRef.current = null; setDragOverField(null); }}
+        onDragEnd={() => { dragRef.current = null; setDragOverField(null); }}
         className={`text-sm rounded-lg px-2 py-1 cursor-move ${dragOverField === f.id ? "ring-2 ring-brand" : f.id === activeId ? "bg-brand/10 ring-1 ring-brand/40" : "bg-panel"} ${f.hidden ? "opacity-50" : ""}`}>
         <div className="flex items-center justify-between">
-          <button className="truncate text-left flex-1" title={t("Seleziona campo · trascina per annidare")} onClick={() => selectField(f.id)}>
+          <button className="truncate text-left flex-1" title={t("Seleziona campo · trascina qui gli oggetti per assegnarli")} onClick={() => selectField(f.id)}>
             {depth > 0 && <span className="text-brand-light">↳ </span>}
             <span className={f.id === activeId ? "font-semibold text-brand" : ""}>{f.name}</span>
             <span className="text-sage"> · {uHa(ringAreaHa(f.geom.coordinates))}</span>
             {!!kids.length && <span className="text-brand-light"> · {kids.length} {t("figli")}</span>}
             {!!f.macros?.length && <span className="text-brand-light"> · {f.macros.length} {t("sotto-aree")}</span>}
-            {f.lay && <span className="text-brand-light"> · {f.lay.n_pivots} pivot</span>}
+            {ownedPivN > 0 && <span className="text-brand-light"> · {ownedPivN} pivot</span>}
           </button>
           <span className="flex gap-1 shrink-0 items-center">
             <button className="text-sm text-brand w-4 font-semibold" title={t("Aggiungi poligono figlio")} onClick={() => addChild(f.id)}>＋</button>
@@ -1568,7 +1608,7 @@ export default function Page() {
             <button className="text-xs text-danger" title={t("Rimuovi")} onClick={() => removeField(f)}>✕</button>
           </span>
         </div>
-        {(!!kids.length || !!f.macros?.length) && (
+        {hasNested ? (
           <ul className="mt-1 ml-1 space-y-1 border-l-2 border-brand/20 pl-2">
             {kids.map((k) => renderFieldNode(k, depth + 1))}
             {(f.macros ?? []).map((mm) => (
@@ -1581,8 +1621,12 @@ export default function Page() {
                 </span>
               </li>
             ))}
+            {ownedCanals.map(({ c, i }) => objRow("canal", i, `c${i}`, !!c.hidden, () => toggleCanalHidden(i), <>{t("Canale")} {i + 1} · {uM(c.length_m)}</>, () => zoomToCoords(c.geojson.coordinates), () => removeCanal(i)))}
+            {ownedRoads.map(({ r, i }) => objRow("road", r.id, `r${r.id}`, !!r.hidden, () => toggleRoadHidden(i), <>{t("Strada")} {i + 1} · {uM(r.width_m)}</>, () => zoomToCoords(r.coords), () => removeRoad(i)))}
+            {ownedWater.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{w.kind} {i + 1}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
+            {ownedPivN > 0 && objRow("pivot", f.id, `pv${f.id}`, hiddenPivotFields.has(f.id), () => togglePivotFieldHidden(f.id), <>{t("Pivot")} · {ownedPivN}</>, () => zoomToCoords(f.geom.coordinates[0]), () => removePivotsOfField(f.id))}
           </ul>
-        )}
+        ) : null}
       </li>
     );
   }
@@ -1742,55 +1786,49 @@ export default function Page() {
                   {rootFields.map((f) => renderFieldNode(f, 0))}
                 </ul>
               )}
-            {hasFields && fields.some((f) => f.parentId != null) && (
+            {hasFields && (
               <div
-                onDragOver={(e) => { if (dragFieldRef.current != null) { e.preventDefault(); if (dragOverField !== "root") setDragOverField("root"); } }}
+                onDragOver={(e) => { if (dragRef.current) { e.preventDefault(); if (dragOverField !== "root") setDragOverField("root"); } }}
                 onDragLeave={() => setDragOverField((d) => (d === "root" ? null : d))}
-                onDrop={(e) => { e.preventDefault(); reparent(dragFieldRef.current, null); dragFieldRef.current = null; setDragOverField(null); }}
+                onDrop={(e) => { e.preventDefault(); assignToField(dragRef.current, null); dragRef.current = null; setDragOverField(null); }}
                 className={`text-[11px] text-center rounded-lg border border-dashed mt-1 py-1 ${dragOverField === "root" ? "border-brand text-brand bg-brand/5" : "border-black/15 text-sage-dark"}`}>
-                {t("Trascina qui per portare a livello principale")}
+                {t("Trascina qui per scollegare (livello principale)")}
               </div>
             )}
-            <p className="text-[11px] text-sage-dark mt-1">{t("«＋» disegna un poligono figlio; trascina una riga su un'altra per annidarla (famiglia).")}</p>
+            <p className="text-[11px] text-sage-dark mt-1">{t("Trascina un oggetto su un campo per assegnarglielo; «＋» disegna un poligono figlio.")}</p>
 
-            {/* --- Pannello Livelli: altri tipi di oggetto come cartelle (stile Photoshop) --- */}
+            {/* --- Pannello Livelli: oggetti NON assegnati, come cartelle (stile Photoshop) --- */}
             <div className="mt-3 border-t border-brand/15 pt-2">
-              <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide mb-1">{t("Livelli")}</div>
-              {renderLayerFolder("canali", t("Canali"), canals.length, canals.some((c) => !c.hidden), () => setAllCanalsHidden(canals.some((c) => !c.hidden)),
-                canals.map((c, i) => (
-                  <li key={c.uid ?? i} className="flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5">
-                    <button className="text-brand-mid w-4" title={t("Mostra/Nascondi")} onClick={() => toggleCanalHidden(i)}>{c.hidden ? "○" : "◉"}</button>
-                    <button className="flex-1 truncate text-left" title={t("Zoom")} onClick={() => zoomToCoords(c.geojson.coordinates)}>{t("Canale")} {i + 1} · {uM(c.length_m)}</button>
-                    <button className="text-danger w-4" title={t("Rimuovi")} onClick={() => removeCanal(i)}>✕</button>
-                  </li>
-                )))}
-              {renderLayerFolder("strade", t("Strade"), roads.length, roads.some((r) => !r.hidden), () => setAllRoadsHidden(roads.some((r) => !r.hidden)),
-                roads.map((r, i) => (
-                  <li key={r.id} className="flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5">
-                    <button className="text-brand-mid w-4" title={t("Mostra/Nascondi")} onClick={() => toggleRoadHidden(i)}>{r.hidden ? "○" : "◉"}</button>
-                    <button className="flex-1 truncate text-left" title={t("Zoom")} onClick={() => zoomToCoords(r.coords)}>{t("Strada")} {i + 1} · {uM(r.width_m)}</button>
-                    <button className="text-danger w-4" title={t("Rimuovi")} onClick={() => removeRoad(i)}>✕</button>
-                  </li>
-                )))}
-              {renderLayerFolder("invasi", t("Invasi/corsi d'acqua"), watercourses.length, watercourses.some((w) => !w.hidden), () => setAllWaterHidden(watercourses.some((w) => !w.hidden)),
-                watercourses.map((w, i) => {
-                  const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates;
-                  return (
-                    <li key={i} className="flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5">
-                      <button className="text-brand-mid w-4" title={t("Mostra/Nascondi")} onClick={() => toggleWaterHidden(i)}>{w.hidden ? "○" : "◉"}</button>
-                      <button className="flex-1 truncate text-left" title={t("Zoom")} onClick={() => zoomToCoords(coords)}>{w.kind} {i + 1}</button>
-                      <button className="text-danger w-4" title={t("Rimuovi")} onClick={() => removeWater(i)}>✕</button>
-                    </li>
-                  );
-                }))}
-              {renderLayerFolder("pivot", t("Pivot"), pivots.length, pivotGroups.some((g) => !hiddenPivotFields.has(g.fid)), () => setAllPivotsHidden(pivotGroups.some((g) => !hiddenPivotFields.has(g.fid))),
-                pivotGroups.map((g) => (
-                  <li key={g.fid} className="flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5">
-                    <button className="text-brand-mid w-4" title={t("Mostra/Nascondi")} onClick={() => togglePivotFieldHidden(g.fid)}>{hiddenPivotFields.has(g.fid) ? "○" : "◉"}</button>
-                    <button className="flex-1 truncate text-left" title={t("Zoom")} onClick={() => { const f = fields.find((x) => x.id === g.fid); if (f) zoomToCoords(f.geom.coordinates[0]); }}>{g.name} · {g.n} pivot</button>
-                    <button className="text-danger w-4" title={t("Rimuovi")} onClick={() => removePivotsOfField(g.fid)}>✕</button>
-                  </li>
-                )))}
+              <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide mb-1">{t("Livelli (non assegnati)")}</div>
+              {(() => {
+                const items = canals.map((c, i) => ({ c, i })).filter((x) => x.c.owner == null);
+                const anyVis = items.some((x) => !x.c.hidden);
+                return renderLayerFolder("canali", t("Canali"), items.length, anyVis,
+                  () => setCanals((cs) => { const arr = cs.map((c) => c.owner == null ? { ...c, hidden: anyVis } : c); renderCanals(arr); return arr; }),
+                  items.map(({ c, i }) => objRow("canal", i, `c${i}`, !!c.hidden, () => toggleCanalHidden(i), <>{t("Canale")} {i + 1} · {uM(c.length_m)}</>, () => zoomToCoords(c.geojson.coordinates), () => removeCanal(i))));
+              })()}
+              {(() => {
+                const items = roads.map((r, i) => ({ r, i })).filter((x) => x.r.owner == null);
+                const anyVis = items.some((x) => !x.r.hidden);
+                return renderLayerFolder("strade", t("Strade"), items.length, anyVis,
+                  () => setRoads((rs) => rs.map((r) => r.owner == null ? { ...r, hidden: anyVis } : r)),
+                  items.map(({ r, i }) => objRow("road", r.id, `r${r.id}`, !!r.hidden, () => toggleRoadHidden(i), <>{t("Strada")} {i + 1} · {uM(r.width_m)}</>, () => zoomToCoords(r.coords), () => removeRoad(i))));
+              })()}
+              {(() => {
+                const items = watercourses.map((w, i) => ({ w, i })).filter((x) => x.w.owner == null);
+                const anyVis = items.some((x) => !x.w.hidden);
+                return renderLayerFolder("invasi", t("Invasi/corsi d'acqua"), items.length, anyVis,
+                  () => setWatercourses((ws) => { const arr = ws.map((w) => w.owner == null ? { ...w, hidden: anyVis } : w); renderWater(arr); return arr; }),
+                  items.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{w.kind} {i + 1}</>, () => zoomToCoords(coords), () => removeWater(i)); }));
+              })()}
+              {(() => {
+                const groups = pivotGroups.filter((g) => g.fid < 0 || !fields.some((f) => f.id === g.fid));
+                const total = groups.reduce((s, g) => s + g.n, 0);
+                const anyVis = groups.some((g) => !hiddenPivotFields.has(g.fid));
+                return renderLayerFolder("pivot", t("Pivot"), total, anyVis,
+                  () => { const ids = new Set(hiddenPivotFields); if (anyVis) groups.forEach((g) => ids.add(g.fid)); else groups.forEach((g) => ids.delete(g.fid)); setHiddenPivotFields(ids); },
+                  groups.map((g) => objRow("pivot", g.fid, `pg${g.fid}`, hiddenPivotFields.has(g.fid), () => togglePivotFieldHidden(g.fid), <>{g.name} · {g.n} pivot</>, () => { const f = fields.find((x) => x.id === g.fid); if (f) zoomToCoords(f.geom.coordinates[0]); }, () => removePivotsOfField(g.fid))));
+              })()}
             </div>
 
             {/* I livelli (con visibilità, download, elimina) sono nel widget «Proprietà» a sinistra. */}
