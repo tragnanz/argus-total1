@@ -62,6 +62,9 @@ export type MapHandle = {
     cb: (start: number[], end: number[], waypoints: number[][]) => void) => void;
   endCanalEdit: () => void;
   drawCanalManual: (cb: (coords: number[][]) => void) => void;
+  drawUndo: () => void;      // rimuove l'ultimo punto tracciato
+  drawFinish: () => void;    // chiude/conclude il tracciato in corso
+  drawCancel: () => void;    // annulla e chiude la modalità disegno
   armPick: (cb: (lon: number, lat: number) => void) => void;
   disarmPick: () => void;
 };
@@ -118,10 +121,11 @@ type Props = {
   onEditActive?: (geom: Polygon) => void;
   onSelect?: (id: number) => void;
   onCanalProfile?: (index: number) => void;
+  onDrawChange?: (active: boolean) => void;   // disegno geoman avviato/terminato → mostra il pannellino
   apiRef?: MutableRefObject<MapHandle | null>;
 };
 
-export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalProfile, apiRef }: Props) {
+export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalProfile, onDrawChange, apiRef }: Props) {
   const elRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -158,8 +162,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const imperialRef = useRef(false);
 
   // Callback sempre aggiornate (la mappa viene creata una sola volta).
-  const cbRef = useRef({ onCreate, onEditActive, onSelect, onCanalProfile });
-  useEffect(() => { cbRef.current = { onCreate, onEditActive, onSelect, onCanalProfile }; });
+  const cbRef = useRef({ onCreate, onEditActive, onSelect, onCanalProfile, onDrawChange });
+  useEffect(() => { cbRef.current = { onCreate, onEditActive, onSelect, onCanalProfile, onDrawChange }; });
 
   useEffect(() => {
     if (!elRef.current || mapRef.current) return;
@@ -206,10 +210,13 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (map as any).pm?.setGlobalOptions({
-      snappable: true, snapDistance: 20, allowSelfIntersection: false,
+      snappable: true, snapDistance: 22, snapSegment: true, allowSelfIntersection: false,
       templineStyle: ACTIVE_STYLE, hintlineStyle: { color: "#20aae2", dashArray: "5,5" },
       pathOptions: ACTIVE_STYLE,
     });
+    // Segnala alla pagina l'inizio/fine di un disegno geoman (per il pannellino).
+    map.on("pm:drawstart", () => { try { cbRef.current.onDrawChange?.(true); } catch { /* */ } });
+    map.on("pm:drawend", () => { try { cbRef.current.onDrawChange?.(false); } catch { /* */ } });
     // Nuovo poligono disegnato: estraggo la geometria e lascio che la pagina
     // lo aggiunga come nuovo campo (poi ridisegna via setFields).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -781,6 +788,31 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         canalManualCbRef.current = cb;
         drawModeRef.current = "canal-manual";
         try { (map as any).pm.enableDraw("Line", { allowSelfIntersection: true }); } catch { /* */ }
+      },
+      drawUndo() {
+        const map = mapRef.current; if (!map) return;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const d = (map as any).pm?.Draw;
+        for (const name of ["Line", "Polygon", "Rectangle"]) {
+          const inst = d?.[name];
+          if (inst?._enabled) { try { inst._removeLastVertex?.(); } catch { /* */ } return; }
+        }
+      },
+      drawFinish() {
+        const map = mapRef.current; if (!map) return;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const d = (map as any).pm?.Draw;
+        for (const name of ["Line", "Polygon", "Rectangle"]) {
+          const inst = d?.[name];
+          if (inst?._enabled) { try { inst._finishShape?.(); } catch { /* */ } return; }
+        }
+      },
+      drawCancel() {
+        const map = mapRef.current; if (!map) return;
+        drawModeRef.current = null;
+        canalManualCbRef.current = null; roadManualCbRef.current = null;
+        try { (map as any).pm.disableDraw(); } catch { /* */ }
+        try { map.getContainer().style.cursor = ""; } catch { /* */ }
       },
       armPick(cb) {
         pickCbRef.current = cb;

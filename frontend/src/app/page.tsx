@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.87";
+const REV = "v0.6.88";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -481,6 +481,7 @@ export default function Page() {
   const [notes, setNotes] = useState("");
   const [shareUrl, setShareUrl] = useState("");   // link pubblico di sola lettura
   const [autosave, setAutosave] = useState<"" | "saving" | "saved" | "error">("");   // stato salvataggio automatico
+  const [drawing, setDrawing] = useState(false);   // disegno/tracciatura in corso → pannellino di controllo
   const [elevStats, setElevStats] = useState<{ id: number; loading?: boolean; err?: boolean; s?: api.ElevationStats } | null>(null);  // quota del campo attivo
   const [elevNonce, setElevNonce] = useState(0);   // forza il ricalcolo quota quando la geometria del campo cambia
   const elevCache = useRef<Map<number, api.ElevationStats>>(new Map());
@@ -1849,7 +1850,17 @@ export default function Page() {
   return (
     <main>
       <MapCanvas apiRef={mapApi} onCreate={addDrawnField} onEditActive={updateActiveGeom} onSelect={selectField}
-        onCanalProfile={(i) => setProfileCanal(i)} />
+        onCanalProfile={(i) => setProfileCanal(i)} onDrawChange={setDrawing} />
+
+      {/* Pannellino di controllo del disegno/tracciatura (snap ai confini dei poligoni attivo). */}
+      {drawing && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[500] widget px-2 py-1.5 flex items-center gap-2 pointer-events-auto">
+          <span className="text-[11px] text-sage-dark px-1 hidden sm:inline">{t("Disegno in corso — aggancia ai bordi/vertici")}</span>
+          <button className="btn-ghost" title={t("Annulla ultimo punto")} onClick={() => mapApi.current?.drawUndo()}>↶ {t("Ultimo punto")}</button>
+          <button className="btn-primary" title={t("Concludi il tracciato")} onClick={() => mapApi.current?.drawFinish()}>{t("Fine")}</button>
+          <button className="btn-ghost text-danger" title={t("Esci dalla modalità disegno")} onClick={() => mapApi.current?.drawCancel()}>✕ {t("Chiudi")}</button>
+        </div>
+      )}
 
       <div className="overlay-layer">
         {/* Header stile Argus Smart: pillole flottanti (verde scuro / bianco) */}
