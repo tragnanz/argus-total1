@@ -7,7 +7,7 @@ import type { Polygon, GeoJSONFC } from "@/lib/api";
 export type OverlayKey = "index" | "dem" | "suitability";
 export type FieldGeom = { id: number; name: string; geom: Polygon };
 // Modello pivot interattivo (gerarchia gruppo → singolo)
-export type PivotItem = { lat: number; lng: number; r: number; conn?: string };
+export type PivotItem = { lat: number; lng: number; r: number; conn?: string; field?: number };
 export type PivotModel = { pivots: PivotItem[]; lines: { kind: string; coords: number[][] }[] };
 export type PivotSel = { mode: "none" | "group" | "single"; idx: number };
 export type PivotCbs = {

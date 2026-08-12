@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.70";
+const REV = "v0.6.71";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -80,6 +80,7 @@ type Field = {
   macros?: FieldMacro[];               // sotto-livelli (macro-aree) del campo
   hidden?: boolean;                    // campo spento sulla mappa
   savedId?: number;                    // id dell'area salvata nel progetto
+  parentId?: number;                   // campo genitore (famiglia): poligono figlio sotto un altro
 };
 
 // Snapshot completo per la cronologia Annulla/Ripristina (tutte le mosse).
@@ -87,7 +88,7 @@ type Snapshot = {
   f: Field[];
   a: number | null;
   pv: PivotItem[];
-  pl: { kind: string; coords: number[][] }[];
+  pl: { kind: string; coords: number[][]; field?: number }[];
   rd: { id: string; coords: number[][]; width_m: number }[];
   g: GuidedResult | null;
 };
@@ -183,9 +184,9 @@ function circleRing(lat: number, lng: number, r: number, n = 32): number[][] {
 }
 // Estrae i pivot (centro + raggio) e le linee (canale/tubi) dal FeatureCollection.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function pivotsFromFC(fc: any, defR: number): { pivots: PivotItem[]; lines: { kind: string; coords: number[][] }[] } {
+function pivotsFromFC(fc: any, defR: number): { pivots: PivotItem[]; lines: { kind: string; coords: number[][]; field?: number }[] } {
   const pivots: PivotItem[] = [];
-  const lines: { kind: string; coords: number[][] }[] = [];
+  const lines: { kind: string; coords: number[][]; field?: number }[] = [];
   for (const f of fc?.features ?? []) {
     const k = f?.properties?.kind;
     const g = f?.geometry;
@@ -203,23 +204,23 @@ function pivotsFromFC(fc: any, defR: number): { pivots: PivotItem[]; lines: { ki
         sr += Math.hypot(dx, dy);
       }
       const r = ring.length ? sr / ring.length : defR;
-      pivots.push({ lat, lng, r: Math.round(r), conn: f?.properties?.connection });
+      pivots.push({ lat, lng, r: Math.round(r), conn: f?.properties?.connection, field: f?.properties?.field });
     } else if (g?.type === "LineString") {
-      lines.push({ kind: k, coords: g.coordinates });
+      lines.push({ kind: k, coords: g.coordinates, field: f?.properties?.field });
     }
   }
   return { pivots, lines };
 }
 // Ricostruisce il FeatureCollection dal modello (per salvataggio/esporto/statistiche).
-function fcFromModel(pivots: PivotItem[], lines: { kind: string; coords: number[][] }[]) {
+function fcFromModel(pivots: PivotItem[], lines: { kind: string; coords: number[][]; field?: number }[]) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const feats: any[] = pivots.map((pv) => ({
     type: "Feature",
-    properties: { kind: "pivot", connection: pv.conn ?? "canal", phase: pv.conn === "pipe" ? 2 : 1 },
+    properties: { kind: "pivot", connection: pv.conn ?? "canal", phase: pv.conn === "pipe" ? 2 : 1, field: pv.field },
     geometry: { type: "Polygon", coordinates: [circleRing(pv.lat, pv.lng, pv.r)] },
   }));
   for (const ln of lines) {
-    feats.push({ type: "Feature", properties: { kind: ln.kind }, geometry: { type: "LineString", coordinates: ln.coords } });
+    feats.push({ type: "Feature", properties: { kind: ln.kind, field: ln.field }, geometry: { type: "LineString", coordinates: ln.coords } });
   }
   return { type: "FeatureCollection" as const, features: feats };
 }
@@ -285,6 +286,7 @@ export default function Page() {
   const [sameRules, setSameRules] = useState(true);
   const [gset, setGset] = useState<Settings>(DEFAULTS);
   const nextId = useRef(1);
+  const pendingParentRef = useRef<number | null>(null);   // prossimo poligono disegnato → figlio di questo campo
   // visibilità dei livelli sulla mappa (accendi/spegni dal widget sinistro)
   const [layerVis, setLayerVis] = useState({ fields: true, macro: true, canal: true, layout: true, water: true, strade: true });
   const [watercourses, setWatercourses] = useState<Watercourse[]>([]);
@@ -332,7 +334,8 @@ export default function Page() {
 
   const active = useMemo(() => fields.find((f) => f.id === activeId) ?? null, [fields, activeId]);
   const activeGeom = active?.geom ?? null;
-  const totalHa = useMemo(() => fields.reduce((s, f) => s + ringAreaHa(f.geom.coordinates), 0), [fields]);
+  // Somma solo i poligoni radice (i figli sono in genere sottoinsiemi: niente doppi conteggi).
+  const totalHa = useMemo(() => fields.filter((f) => f.parentId == null).reduce((s, f) => s + ringAreaHa(f.geom.coordinates), 0), [fields]);
   // Impostazioni attualmente mostrate nei controlli.
   const cur: Settings = sameRules || !active ? gset : (active.settings ?? gset);
   const effSettings = (f: Field): Settings => (sameRules ? gset : (f.settings ?? gset));
@@ -377,7 +380,7 @@ export default function Page() {
   const [pivotR, setPivotR] = useState(400);    // raggio pivot (parametro proprio della scheda Pivot)
   // Gerarchia pivot: modello modificabile (gruppo → singolo) derivato dal risultato.
   const [pivots, setPivots] = useState<PivotItem[]>([]);
-  const [pivotLines, setPivotLines] = useState<{ kind: string; coords: number[][] }[]>([]);
+  const [pivotLines, setPivotLines] = useState<{ kind: string; coords: number[][]; field?: number }[]>([]);
   const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
   // Livello Strade (linee, con spessore) disegnabile/importabile: i pivot le rispettano.
   const [roads, setRoads] = useState<{ id: string; coords: number[][]; width_m: number }[]>([]);
@@ -465,12 +468,23 @@ export default function Page() {
     try {
       const [areasList, layersList] = await Promise.all([api.listAreas(pid), api.listLayers(pid)]);
       setAreas(areasList); setLayers(layersList);
-      const roots = areasList.filter((a) => a.parent_area_id == null);
-      if (roots.length) {
-        const nf: Field[] = roots.map((a) => ({ id: nextId.current++, name: a.name, geom: a.geojson, savedId: a.id }));
+      // Ricostruisci l'albero: aree radice → campi; figlie «field-child» → poligoni
+      // figli (famiglia, ricorsivo); figlie «macro» → sotto-aree del campo.
+      const childrenOfArea = (aid: number) => areasList.filter((a) => a.parent_area_id === aid);
+      const nf: Field[] = [];
+      const build = (a: typeof areasList[number], parentFieldId?: number) => {
+        const fid = nextId.current++;
+        const macros = childrenOfArea(a.id).filter((c) => c.kind === "macro")
+          .map((c) => ({ id: nextId.current++, name: c.name, geom: c.geojson, area_ha: c.area_ha ?? 0, mean_score: 0, savedId: c.id } as FieldMacro));
+        nf.push({ id: fid, name: a.name, geom: a.geojson, savedId: a.id, parentId: parentFieldId, macros: macros.length ? macros : undefined });
+        for (const c of childrenOfArea(a.id)) if (c.kind !== "macro") build(c, fid);
+      };
+      areasList.filter((a) => a.parent_area_id == null).forEach((a) => build(a));
+      if (nf.length) {
+        const firstRoot = nf.find((f) => f.parentId == null) ?? nf[0];
         setFields(nf);
-        setActiveId(nf[0].id);
-        renderFields(nf, nf[0].id);
+        setActiveId(firstRoot.id);
+        renderFields(nf, firstRoot.id);
         setTimeout(() => mapApi.current?.fitAll(), 40);
       }
       const cs = layersList.filter((l) => l.kind === "canal").map((l) => l.data as unknown as Canal);
@@ -538,10 +552,10 @@ export default function Page() {
     const blob = await zip.generateAsync({ type: "blob", mimeType: "application/vnd.google-earth.kmz" });
     saveBlob(blob, filename.toLowerCase().endsWith(".kmz") ? filename : `${filename}.kmz`);
   }
-  function draw() { setMsg(""); mapApi.current?.draw(); }
-  function addField(geom: Polygon, name?: string, focus = true, savedId?: number) {
+  function draw() { setMsg(""); pendingParentRef.current = null; mapApi.current?.draw(); }
+  function addField(geom: Polygon, name?: string, focus = true, savedId?: number, parentId?: number) {
     const id = nextId.current++;
-    const f: Field = { id, name: name || `${t("Campo")} ${id}`, geom, savedId };
+    const f: Field = { id, name: name || `${t("Campo")} ${id}`, geom, savedId, parentId };
     setFields((prev) => {
       const arr = [...prev, f];
       const aId = focus ? id : activeId;
@@ -550,7 +564,21 @@ export default function Page() {
       return arr;
     });
   }
-  function addDrawnField(geom: Polygon) { setMsg(""); addField(geom); setTimeout(() => mapApi.current?.fitAll(), 30); }
+  function addDrawnField(geom: Polygon) {
+    setMsg("");
+    const pid = pendingParentRef.current; pendingParentRef.current = null;
+    // Un poligono figlio eredita un nome derivato dal genitore.
+    const parent = pid != null ? fields.find((f) => f.id === pid) : null;
+    const childName = parent ? `${parent.name} · ${((fields.filter((f) => f.parentId === pid).length) + 1)}` : undefined;
+    addField(geom, childName, true, undefined, pid ?? undefined);
+    setTimeout(() => mapApi.current?.fitAll(), 30);
+  }
+  // Disegna un poligono figlio sotto il campo indicato (crea una «famiglia»).
+  function addChild(parentId: number) {
+    pendingParentRef.current = parentId;
+    setMsg(t("Disegna il poligono figlio sulla mappa…"));
+    mapApi.current?.draw();
+  }
   function updateActiveGeom(geom: Polygon) {
     setFields((fs) => fs.map((f) => f.id === activeId ? { ...f, geom, lay: null, layGeo: null, suit: null } : f));
   }
@@ -563,21 +591,29 @@ export default function Page() {
     setFields((fs) => { const arr = fs.map((x) => x.id === f.id ? { ...x, name } : x); renderFields(arr, activeId); return arr; });
   }
   function removeField(f: Field) {
-    // Se il campo proviene da un'area salvata, l'utente sta eliminando dal
-    // progetto (lista unica): chiedi conferma ed elimina anche dal database,
-    // così non ricompare alla riapertura.
-    if (f.savedId != null) {
-      if (!confirm(t("Eliminare \"{name}\" dal progetto?", { name: f.name }))) return;
+    // Elimina il campo e tutti i suoi poligoni figli (famiglia). Se provengono
+    // da aree salvate, li rimuove anche dal progetto così non riappaiono.
+    const kill = new Set<number>([f.id]);
+    let grew = true;
+    while (grew) { grew = false; for (const x of fields) { if (x.parentId != null && kill.has(x.parentId) && !kill.has(x.id)) { kill.add(x.id); grew = true; } } }
+    const hasChildren = kill.size > 1;
+    if (f.savedId != null || hasChildren) {
+      const msg = hasChildren ? t("Eliminare \"{name}\" e i suoi poligoni figli?", { name: f.name }) : t("Eliminare \"{name}\" dal progetto?", { name: f.name });
+      if (!confirm(msg)) return;
     }
+    const savedToDelete = fields.filter((x) => kill.has(x.id) && x.savedId != null).map((x) => x.savedId as number);
     setFields((fs) => {
-      const arr = fs.filter((x) => x.id !== f.id);
-      const aId = activeId === f.id ? (arr[0]?.id ?? null) : activeId;
+      const arr = fs.filter((x) => !kill.has(x.id));
+      const aId = kill.has(activeId ?? -1) ? (arr[0]?.id ?? null) : activeId;
       renderFields(arr, aId);
-      if (activeId === f.id) { setActiveId(aId); clearViewOverlays(); }
+      if (kill.has(activeId ?? -1)) { setActiveId(aId); clearViewOverlays(); }
       return arr;
     });
-    if (f.savedId != null && projectId) {
-      api.deleteArea(f.savedId).then(() => { if (projectId) refreshAreas(projectId); }).catch(showErr);
+    // I pivot dei campi eliminati vanno tolti dal modello.
+    setPivots((ps) => ps.filter((p) => p.field == null || !kill.has(p.field)));
+    setPivotLines((ls) => ls.filter((l) => l.field == null || !kill.has(l.field)));
+    if (projectId && savedToDelete.length) {
+      Promise.all(savedToDelete.map((id) => api.deleteArea(id))).then(() => { if (projectId) refreshAreas(projectId); }).catch(showErr);
     }
   }
   function clearAllFields() {
@@ -793,24 +829,35 @@ export default function Page() {
       return arr;
     });
   }
-  // Salva un campo e le sue sotto-aree nel progetto (le macro come figlie).
+  // Salva un campo, la sua FAMIGLIA (poligoni figli, a qualsiasi profondità) e le
+  // sue sotto-aree (macro) nel progetto. Salva sempre partendo dalla radice.
   async function saveFieldTree(f: Field) {
     if (!projectId) { setMsg(t("Serve un progetto selezionato per salvare l'area.")); return; }
+    const pid = projectId;
     setBusy("save");
     try {
-      const fa = await api.createArea({
-        project_id: projectId, name: f.name, geojson: f.geom,
-        area_ha: Math.round(ringAreaHa(f.geom.coordinates)), kind: "field",
-      });
-      for (const mm of f.macros ?? []) {
-        await api.createArea({
-          project_id: projectId, name: mm.name, geojson: mm.geom,
-          area_ha: Math.round(mm.area_ha), parent_area_id: fa.id, kind: "macro",
+      // Risali alla radice della famiglia.
+      let root = f; const guard = new Set<number>();
+      while (root.parentId != null && !guard.has(root.id)) { guard.add(root.id); const p = fields.find((x) => x.id === root.parentId); if (!p) break; root = p; }
+      const savedMap = new Map<number, number>();
+      let count = 0;
+      const saveNode = async (nd: Field, parentAreaId: number | null) => {
+        const fa = await api.createArea({
+          project_id: pid, name: nd.name, geojson: nd.geom,
+          area_ha: Math.round(ringAreaHa(nd.geom.coordinates)),
+          parent_area_id: parentAreaId, kind: parentAreaId == null ? "field" : "field-child",
         });
-      }
-      setFields((fs) => fs.map((x) => x.id === f.id ? { ...x, savedId: fa.id } : x));
-      await refreshAreas(projectId);
-      setMsg(t("Campo e {n} sotto-aree salvati ✓", { n: (f.macros ?? []).length }));
+        savedMap.set(nd.id, fa.id);
+        for (const mm of nd.macros ?? []) {
+          await api.createArea({ project_id: pid, name: mm.name, geojson: mm.geom, area_ha: Math.round(mm.area_ha), parent_area_id: fa.id, kind: "macro" });
+          count++;
+        }
+        for (const kid of fields.filter((x) => x.parentId === nd.id)) { count++; await saveNode(kid, fa.id); }
+      };
+      await saveNode(root, null);
+      setFields((fs) => fs.map((x) => savedMap.has(x.id) ? { ...x, savedId: savedMap.get(x.id) } : x));
+      await refreshAreas(pid);
+      setMsg(t("Famiglia salvata: {n} elementi ✓", { n: count + 1 }));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
 
@@ -1222,8 +1269,30 @@ export default function Page() {
       setMsg("");
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
+  // Inserisci impianti SOLO sul poligono selezionato, accumulando i pivot degli
+  // altri campi (ognuno è etichettato con il proprio field id, così ri-eseguire
+  // su un campo sostituisce solo i suoi pivot e lascia intatti gli altri).
+  async function insertImpiantiActive() {
+    if (!active) return needField();
+    const fid = active.id;
+    setBusy("layout"); setMsg("");
+    try {
+      const p: LayoutParams = { ...paramsFrom(effSettings(active)), radius_m: pivotR, gap_m: safetyM, roads: obstacleLines(), clear_road_m: pivClearRoad };
+      const r = await api.fetchLayout(active.geom, p);
+      const { pivots: np, lines: nl } = pivotsFromFC(r.geojson, pivotR);
+      const taggedP = np.map((x) => ({ ...x, field: fid }));
+      const taggedL = nl.map((x) => ({ ...x, field: fid }));
+      const mergedP = [...pivots.filter((x) => x.field !== fid), ...taggedP];
+      const mergedL = [...pivotLines.filter((x) => x.field !== fid), ...taggedL];
+      setFields((fs) => fs.map((f) => f.id === fid ? { ...f, lay: r.meta, layGeo: r.geojson } : f));
+      setPivots(mergedP); setPivotLines(mergedL); setPivotSel({ mode: "none", idx: -1 });
+      const netHa = mergedP.reduce((s, x) => s + (Math.PI * x.r * x.r) / 10000, 0);
+      setGuided({ geojson: fcFromModel(mergedP, mergedL), meta: { n_pivots: mergedP.length, radius_m: pivotR, net_ha: Math.round(netHa * 10) / 10, safety_m: safetyM } });
+      setMsg(t("Impianti inseriti su «{name}» ✓", { name: active.name }));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
   // Comando unico: instrada al motore giusto secondo la disposizione scelta.
-  function insertImpianti() { return genLayoutUnified(); }
+  function insertImpianti() { return insertImpiantiActive(); }
   function clearImpianti() {
     clearGuided();
     setFields((fs) => fs.map((f) => ({ ...f, lay: null, layGeo: null })));
@@ -1384,6 +1453,50 @@ export default function Page() {
   }
 
   const hasFields = fields.length > 0;
+  const rootFields = fields.filter((f) => f.parentId == null);
+
+  // Riga dell'elenco Campi come albero: un campo con, annidati, i suoi
+  // poligoni figli (famiglia) e le eventuali sotto-aree (macro).
+  function renderFieldNode(f: Field, depth: number) {
+    const kids = fields.filter((x) => x.parentId === f.id);
+    return (
+      <li key={f.id}
+        className={`text-sm rounded-lg px-2 py-1 ${f.id === activeId ? "bg-brand/10 ring-1 ring-brand/40" : "bg-panel"} ${f.hidden ? "opacity-50" : ""}`}>
+        <div className="flex items-center justify-between">
+          <button className="truncate text-left flex-1" title={t("Seleziona campo")} onClick={() => selectField(f.id)}>
+            {depth > 0 && <span className="text-brand-light">↳ </span>}
+            <span className={f.id === activeId ? "font-semibold text-brand" : ""}>{f.name}</span>
+            <span className="text-sage"> · {uHa(ringAreaHa(f.geom.coordinates))}</span>
+            {!!kids.length && <span className="text-brand-light"> · {kids.length} {t("figli")}</span>}
+            {!!f.macros?.length && <span className="text-brand-light"> · {f.macros.length} {t("sotto-aree")}</span>}
+            {f.lay && <span className="text-brand-light"> · {f.lay.n_pivots} pivot</span>}
+          </button>
+          <span className="flex gap-1 shrink-0 items-center">
+            <button className="text-sm text-brand w-4 font-semibold" title={t("Aggiungi poligono figlio")} onClick={() => addChild(f.id)}>＋</button>
+            <button className="text-xs text-brand-mid w-4" title={f.hidden ? t("Mostra sulla mappa") : t("Nascondi dalla mappa")} onClick={() => toggleFieldHidden(f.id)}>{f.hidden ? "○" : "◉"}</button>
+            <button className="text-xs text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(f.name), [{ name: f.name, geom: f.geom }, ...(f.macros ?? []).map((mm) => ({ name: mm.name, geom: mm.geom }))])}>⤓</button>
+            <button className="text-xs text-brand-mid" title={t("Nome campo")} onClick={() => renameField(f)}>✎</button>
+            <button className="text-xs text-danger" title={t("Rimuovi")} onClick={() => removeField(f)}>✕</button>
+          </span>
+        </div>
+        {(!!kids.length || !!f.macros?.length) && (
+          <ul className="mt-1 ml-1 space-y-1 border-l-2 border-brand/20 pl-2">
+            {kids.map((k) => renderFieldNode(k, depth + 1))}
+            {(f.macros ?? []).map((mm) => (
+              <li key={`m${mm.id}`} className="flex items-center justify-between text-[11px] text-sage-dark">
+                <span className="truncate flex-1">↳ {mm.name} · {uHa(mm.area_ha)} · {t("Idoneità")} {fmt(mm.mean_score)}{mm.savedId ? " ✓" : ""}</span>
+                <span className="flex gap-1 shrink-0">
+                  <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(mm.name), [{ name: mm.name, geom: mm.geom }])}>⤓</button>
+                  <button className="text-brand-mid" title={t("Nome sotto-area")} onClick={() => renameFieldMacro(f.id, mm)}>✎</button>
+                  <button className="text-danger" title={t("Rimuovi")} onClick={() => removeFieldMacro(f.id, mm.id)}>✕</button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </li>
+    );
+  }
 
   return (
     <main>
@@ -1523,7 +1636,7 @@ export default function Page() {
           <section>
             <div className="flex items-center justify-between mb-1">
               <h3 className="text-sm font-semibold text-brand-darker">{t("Campi")}</h3>
-              {hasFields && <span className="text-[11px] text-sage-dark">{fields.length} {t("campi")} · {uHa(totalHa)}</span>}
+              {hasFields && <span className="text-[11px] text-sage-dark">{rootFields.length} {t("campi")} · {uHa(totalHa)}</span>}
             </div>
             <div className="flex gap-2">
               <button className="btn-primary flex-1 basis-0" onClick={draw}>{t("Disegna area")}</button>
@@ -1537,41 +1650,10 @@ export default function Page() {
               ? <p className="hint mt-2">{t("Nessun campo. Disegna o importa un'area.")}</p>
               : (
                 <ul className="space-y-1 mt-2">
-                  {fields.map((f) => (
-                    <li key={f.id}
-                      className={`text-sm rounded-lg px-2 py-1 ${f.id === activeId ? "bg-brand/10 ring-1 ring-brand/40" : "bg-panel"} ${f.hidden ? "opacity-50" : ""}`}>
-                      <div className="flex items-center justify-between">
-                        <button className="truncate text-left flex-1" title={t("Seleziona campo")} onClick={() => selectField(f.id)}>
-                          <span className={f.id === activeId ? "font-semibold text-brand" : ""}>{f.name}</span>
-                          <span className="text-sage"> · {uHa(ringAreaHa(f.geom.coordinates))}</span>
-                          {!!f.macros?.length && <span className="text-brand-light"> · {f.macros.length} {t("sotto-aree")}</span>}
-                          {f.lay && <span className="text-brand-light"> · {f.lay.n_pivots} pivot</span>}
-                        </button>
-                        <span className="flex gap-1 shrink-0 items-center">
-                          <button className="text-xs text-brand-mid w-4" title={f.hidden ? t("Mostra sulla mappa") : t("Nascondi dalla mappa")} onClick={() => toggleFieldHidden(f.id)}>{f.hidden ? "○" : "◉"}</button>
-                          <button className="text-xs text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(f.name), [{ name: f.name, geom: f.geom }, ...(f.macros ?? []).map((mm) => ({ name: mm.name, geom: mm.geom }))])}>⤓</button>
-                          <button className="text-xs text-brand-mid" title={t("Nome campo")} onClick={() => renameField(f)}>✎</button>
-                          <button className="text-xs text-danger" title={t("Rimuovi")} onClick={() => removeField(f)}>✕</button>
-                        </span>
-                      </div>
-                      {!!f.macros?.length && (
-                        <ul className="mt-1 ml-1 space-y-0.5 border-l-2 border-brand/20 pl-2">
-                          {f.macros.map((mm) => (
-                            <li key={mm.id} className="flex items-center justify-between text-[11px] text-sage-dark">
-                              <span className="truncate flex-1">↳ {mm.name} · {uHa(mm.area_ha)} · {t("Idoneità")} {fmt(mm.mean_score)}{mm.savedId ? " ✓" : ""}</span>
-                              <span className="flex gap-1 shrink-0">
-                                <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(mm.name), [{ name: mm.name, geom: mm.geom }])}>⤓</button>
-                                <button className="text-brand-mid" title={t("Nome sotto-area")} onClick={() => renameFieldMacro(f.id, mm)}>✎</button>
-                                <button className="text-danger" title={t("Rimuovi")} onClick={() => removeFieldMacro(f.id, mm.id)}>✕</button>
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </li>
-                  ))}
+                  {rootFields.map((f) => renderFieldNode(f, 0))}
                 </ul>
               )}
+            <p className="text-[11px] text-sage-dark mt-1">{t("Usa «＋» su un campo per disegnargli sotto un poligono figlio (famiglia).")}</p>
 
             {/* I livelli (con visibilità, download, elimina) sono nel widget «Proprietà» a sinistra. */}
 
@@ -2001,7 +2083,7 @@ export default function Page() {
           </section>
 
           <section className={secShow("impianti")}>
-            <SectionHead title={t("Impianti")} help={t("Un unico comando «Inserisci impianti» dispone i pivot a reticolo su tutti i campi. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.")} />
+            <SectionHead title={t("Impianti")} help={t("«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato nell'elenco Campi (seleziona un campo o un poligono figlio a sinistra). Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.")} />
 
             <label className="text-xs text-sage-dark block mb-1">{t("Disposizione")}</label>
             <div className="seg mb-1">
@@ -2044,9 +2126,9 @@ export default function Page() {
             </div>
             <div className="flex gap-2 mt-2">
               <button className="btn-primary flex-1 basis-0"
-                disabled={busy === "layout" || !hasFields}
+                disabled={busy === "layout" || !active}
                 onClick={insertImpianti}>
-                {busy === "layout" ? t("Calcolo…") : t("Inserisci impianti")}
+                {busy === "layout" ? t("Calcolo…") : active ? t("Inserisci su «{name}»", { name: active.name }) : t("Inserisci impianti")}
               </button>
               <button className="btn-ghost flex-1 basis-0" onClick={clearImpianti}>{t("Rimuovi")}</button>
             </div>
