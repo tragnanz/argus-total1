@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.88";
+const REV = "v0.6.89";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1698,14 +1698,15 @@ export default function Page() {
   const saveSig = useMemo(() => {
     try {
       return JSON.stringify([
-        fields.map((f) => [f.name, f.parentId ?? 0, f.level ?? "", f.score ?? 0, f.style ?? 0, f.geom.coordinates[0]]),
+        fields.map((f) => [f.name, f.parentId ?? 0, f.level ?? "", f.score ?? 0, f.style ?? 0, f.hidden ? 1 : 0, f.geom.coordinates[0]]),
         canals.map((c) => [c.owner ?? 0, c.hidden ? 1 : 0, c.geojson.coordinates]),
         roads.map((r) => [r.id, r.owner ?? 0, r.hidden ? 1 : 0, r.width_m, r.coords]),
         watercourses.map((w) => [w.owner ?? 0, w.hidden ? 1 : 0]),
         pivots.map((p) => [Math.round(p.lat * 1e6), Math.round(p.lng * 1e6), p.r, p.field ?? 0, p.conn ?? ""]),
+        [...hiddenPivotFields].sort((a, b) => a - b),
       ]);
     } catch { return ""; }
-  }, [fields, canals, roads, watercourses, pivots]);
+  }, [fields, canals, roads, watercourses, pivots, hiddenPivotFields]);
   latestSigRef.current = saveSig;
 
   // Esegue un salvataggio serializzato: se ne arriva un altro mentre salva, lo
