@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.94";
+const REV = "v0.6.95";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2515,7 +2515,7 @@ export default function Page() {
 
             <div className="flex gap-2 mt-2">
               <button className="btn-primary flex-1 basis-0" disabled={busy === "canal" || !activeGeom} onClick={traceCanal}>
-                {busy === "canal" ? t("Calcolo…") : t("Canale automatico")}
+                {busy === "canal" ? t("Calcolo…") : t("Traccia canale")}
               </button>
               <button className="btn-ghost flex-1 basis-0" disabled={busy === "canal" || !activeGeom} onClick={traceCanalManual}>
                 {t("Traccia a mano")}
@@ -2668,13 +2668,11 @@ export default function Page() {
 
             {/* Livello Strade: linee disegnabili/importabili che i pivot rispettano */}
             <div className="bg-panel rounded-lg p-2">
-              <div className="flex items-center justify-between mb-1">
-                <div className="text-xs font-semibold text-sage-dark">{t("Strade")} · {roads.length}</div>
-                <span className="flex gap-2 text-[11px]">
-                  <button className="text-brand-mid" onClick={drawRoad}>{t("Traccia")}</button>
-                  <button className="text-brand-mid" onClick={() => roadFileRef.current?.click()}>{t("Importa")}</button>
-                  {!!roads.length && <button className="text-danger" onClick={clearRoads}>{t("Svuota")}</button>}
-                </span>
+              <div className="text-xs font-semibold text-sage-dark mb-2">{t("Strade")} · {roads.length}</div>
+              <div className="flex gap-2">
+                <button className="btn-primary flex-1 basis-0" onClick={drawRoad}>{t("Traccia strada")}</button>
+                <button className="btn-ghost flex-1 basis-0" onClick={() => roadFileRef.current?.click()}>{t("Importa KMZ")}</button>
+                <button className="btn-ghost flex-1 basis-0" disabled={!roads.length} onClick={clearRoads}>{t("Rimuovi tutte")}</button>
               </div>
               <input ref={roadFileRef} type="file" accept=".geojson,.json,.kml,.kmz" multiple className="hidden"
                 onChange={(e) => { importRoads(e.target.files); if (e.target) e.target.value = ""; }} />
