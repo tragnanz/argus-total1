@@ -88,6 +88,7 @@ export type LayoutParams = {
   only_suitable: boolean; min_suitability: number; date?: string | null;
   overhang_pct: number; n_phases: number; phase_order: PhaseOrder;
   kc_peak: number; efficiency: number; hours_per_day: number;
+  min_pivot_pct?: number;   // dimensione minima dei pivot di riempimento bordi (% del raggio)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   roads?: any[] | null; clear_road_m?: number;
 };

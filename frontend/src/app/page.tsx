@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.89";
+const REV = "v0.6.90";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -413,6 +413,7 @@ export default function Page() {
   const [pivClearRoad, setPivClearRoad] = useState(0);   // franco pivot da strade/canali segnati (m)
   const [pivClearWater, setPivClearWater] = useState(0); // franco pivot da acqua/invasi (m)
   const [pivotR, setPivotR] = useState(400);    // raggio pivot (parametro proprio della scheda Pivot)
+  const [minPivotPct, setMinPivotPct] = useState(100);   // dimensione minima pivot di riempimento bordi (% del raggio); 100 = disattivato
   // Gerarchia pivot: modello modificabile (gruppo → singolo) derivato dal risultato.
   const [pivots, setPivots] = useState<PivotItem[]>([]);
   const [pivotLines, setPivotLines] = useState<{ kind: string; coords: number[][]; field?: number }[]>([]);
@@ -1501,7 +1502,7 @@ export default function Page() {
     const fid = active.id;
     setBusy("layout"); setMsg("");
     try {
-      const p: LayoutParams = { ...paramsFrom(effSettings(active)), radius_m: pivotR, gap_m: safetyM, roads: obstacleLines(), clear_road_m: pivClearRoad };
+      const p: LayoutParams = { ...paramsFrom(effSettings(active)), radius_m: pivotR, gap_m: safetyM, roads: obstacleLines(), clear_road_m: pivClearRoad, min_pivot_pct: minPivotPct };
       const r = await api.fetchLayout(active.geom, p);
       const { pivots: np } = pivotsFromFC(r.geojson, pivotR);
       const taggedP = np.map((x) => ({ ...x, field: fid }));
@@ -2576,6 +2577,19 @@ export default function Page() {
             </div>
 
             {renderMeshParams()}
+
+            <div className="bg-panel rounded-lg p-2 mt-2">
+              <label className="text-xs text-sage-dark block mb-1">
+                {t("Copri di più con pivot più piccoli sui bordi")}: <b>{minPivotPct >= 100 ? t("no") : t("fino a {p}% del raggio", { p: minPivotPct })}</b>
+              </label>
+              <input type="range" min={40} max={100} step={5} value={minPivotPct}
+                onChange={(e) => setMinPivotPct(Number(e.target.value))} className="w-full" />
+              <p className="text-[10px] text-sage-dark mt-1 leading-snug">
+                {minPivotPct >= 100
+                  ? t("Tutti i pivot a piena dimensione. Abbassa la percentuale per riempire i contorni con pivot più piccoli e coprire più superficie.")
+                  : t("Il grosso del campo resta coperto dai pivot a piena dimensione ({r} m); sui contorni si aggiungono pivot ridotti fino a {min} m di raggio.", { r: Math.round(pivotR), min: Math.round(pivotR * minPivotPct / 100) })}
+              </p>
+            </div>
 
             <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 mt-2 leading-relaxed">
               {t("Raggio")}: <b>{uM(pivotR)}</b> · {t("Area per pivot")}: <b>{uHa(Math.PI * pivotR * pivotR / 10000, 1)}</b><br />

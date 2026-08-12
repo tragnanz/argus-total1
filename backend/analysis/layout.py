@@ -301,9 +301,59 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         ry += (-dy if top else dy)
         j += 1
 
+    # --- RIEMPIMENTO DEI BORDI con pivot più piccoli (fino a min_pivot_pct % del
+    # raggio): la maglia principale copre il grosso del campo con pivot pieni,
+    # poi sui contorni si aggiungono pivot ridotti per guadagnare superficie,
+    # senza sovrapposizioni e restando dentro l'area. ---
+    min_pct = min(1.0, max(0.3, float(params.get("min_pivot_pct", 100.0)) / 100.0))
+    fill = []                                    # (x_utm, y_utm, r_m)
+    if min_pct < 0.999 and centers is not None:
+        min_r = min_pct * R
+        unit = np.stack([np.cos(ang), np.sin(ang)], 1)     # 16 direzioni unitarie
+        px = np.array([c[0] for c in centers], float) if centers else np.zeros(0)
+        py = np.array([c[1] for c in centers], float) if centers else np.zeros(0)
+        pr = np.full(px.shape, R, float)
+        # raggi da provare, dal più grande al più piccolo (fino a min_r)
+        r_steps = [r for r in (R * f for f in (0.9, 0.8, 0.7, 0.6, 0.5, 0.4)) if r > min_r] + [min_r]
+        step = max(res * 2.0, min_r * 0.5)
+        cy = rminy + min_r
+        while cy <= rmaxy - min_r + 1e-6:
+            cx = rminx + min_r
+            while cx <= rmaxx - min_r + 1e-6:
+                if path_rot.contains_point((cx, cy)):
+                    best_r = 0.0
+                    for r in r_steps:
+                        edge = r * (1.0 - overhang) * 0.999
+                        if not path_rot.contains_points(unit * edge + np.array([cx, cy])).all():
+                            continue
+                        if px.size:
+                            d2 = (cx - px) ** 2 + (cy - py) ** 2
+                            if np.any(d2 < (r + pr + gap) ** 2 - 1.0):
+                                continue
+                        xu, yu = unrot(cx, cy)
+                        if _slope_at(g, xu, yu) > slope_max:
+                            continue
+                        if dist_obs is not None:
+                            col = int((xu - g["minx"]) / g["res"]); row = int((g["top"] - yu) / g["res"])
+                            if 0 <= row < g["hp"] and 0 <= col < g["wp"] and dist_obs[row, col] < r:
+                                continue
+                        if only_suitable and suit is not None:
+                            sc = sample_grid(suit[0], suit[1], xu, yu)
+                            if not (sc == sc and sc >= min_suit):
+                                continue
+                        best_r = r
+                        break
+                    if best_r > 0.0:
+                        xu, yu = unrot(cx, cy)
+                        fill.append((xu, yu, best_r))
+                        px = np.append(px, cx); py = np.append(py, cy); pr = np.append(pr, best_r)
+                cx += step
+            cy += step
+
     n = len(centers)
     pivot_ha = math.pi * R * R / 10000.0
-    net_ha = round(n * pivot_ha, 1)
+    fill_ha = sum(math.pi * rf * rf / 10000.0 for (_, _, rf) in fill)
+    net_ha = round(n * pivot_ha + fill_ha, 1)
     field_ha = round(abs(_ring_area(ring_utm)) / 10000.0, 1)
     coverage = round(100 * net_ha / field_ha, 1) if field_ha else 0.0
     if centers:
@@ -397,6 +447,15 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         features.append({"type": "Feature",
                          "properties": {"kind": "pivot", "id": i, "phase": phase_idx[i]},
                          "geometry": {"type": "Polygon", "coordinates": [coords]}})
+    # pivot di riempimento dei bordi (raggio ridotto proprio), fase = ultima
+    for j, (xf, yf, rf) in enumerate(fill):
+        circ = np.stack([np.cos(circ_ang), np.sin(circ_ang)], 1) * rf
+        pts = circ + np.array([xf, yf])
+        coords = [list(to_wgs.transform(pxx, pyy)) for pxx, pyy in pts]
+        coords.append(coords[0])
+        features.append({"type": "Feature",
+                         "properties": {"kind": "pivot", "id": n + j, "phase": n_phases, "r_m": round(rf, 1), "fill": True},
+                         "geometry": {"type": "Polygon", "coordinates": [coords]}})
     # collettore lungo il canale (header) tra la prima e l'ultima pompa
     if pump_along and len(pump_along) > 1:
         h0 = unrot(min(pump_along), ry0); h1 = unrot(max(pump_along), ry0)
@@ -477,7 +536,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         "only_suitable": only_suitable, "min_suitability": min_suit if only_suitable else None,
         "overhang_pct": round(overhang * 100, 1),
         "n_phases": n_phases, "phase_order": phase_order, "phases": phases_out,
-        "n_pivots": n, "n_pumps": n_pumps,
+        "n_pivots": n + len(fill), "n_pivots_full": n, "n_pivots_fill": len(fill), "min_pivot_pct": round(min_pct * 100), "n_pumps": n_pumps,
         "net_ha": net_ha, "field_ha": field_ha, "coverage_pct": coverage,
         "gross_block_ha": gross_block_ha, "packing_pct": packing_pct,
         "pivot_ha": round(pivot_ha, 1),
