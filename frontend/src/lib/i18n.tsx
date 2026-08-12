@@ -361,6 +361,8 @@ const EN: Dict = {
   "Tubazioni attive": "Active pipes",
   "Tubazioni di adduzione dal canale": "Feeder pipes from the canal",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Pipes drawn: {n} branches from the canal ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "One pipe per column and per canal side, up to the last pivot on that side.",
 };
 
 const FR: Dict = {
@@ -684,6 +686,8 @@ const FR: Dict = {
   "Tubazioni attive": "Conduites actives",
   "Tubazioni di adduzione dal canale": "Conduites d'adduction depuis le canal",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Conduites tracées : {n} branches depuis le canal ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Une conduite par colonne et par côté canal, jusqu'au dernier pivot de ce côté.",
 };
 
 const ES: Dict = {
@@ -1007,6 +1011,8 @@ const ES: Dict = {
   "Tubazioni attive": "Tuberías activas",
   "Tubazioni di adduzione dal canale": "Tuberías de aducción desde el canal",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Tuberías trazadas: {n} ramales desde el canal ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Una tubería por columna y por lado del canal, hasta el último pivote de ese lado.",
 };
 
 const PT: Dict = {
@@ -1330,6 +1336,8 @@ const PT: Dict = {
   "Tubazioni attive": "Tubagens ativas",
   "Tubazioni di adduzione dal canale": "Tubagens de adução do canal",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Tubagens traçadas: {n} ramos do canal ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Uma tubagem por coluna e por lado do canal, até ao último pivô desse lado.",
 };
 
 const RO: Dict = {
@@ -1655,6 +1663,8 @@ const RO: Dict = {
   "Tubazioni attive": "Conducte active",
   "Tubazioni di adduzione dal canale": "Conducte de alimentare din canal",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Conducte trasate: {n} ramuri din canal ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "O conductă pe coloană și pe latura canalului, până la ultimul pivot de pe acea latură.",
 };
 
 const KK: Dict = {
@@ -1980,6 +1990,8 @@ const KK: Dict = {
   "Tubazioni attive": "Белсенді құбырлар",
   "Tubazioni di adduzione dal canale": "Каналдан жеткізу құбырлары",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Сызылған құбырлар: каналдан {n} тармақ ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Әр бағанға және каналдың әр жағына бір құбыр, сол жақтағы соңғы пивотқа дейін.",
 };
 
 const AR: Dict = {
@@ -2303,6 +2315,8 @@ const AR: Dict = {
   "Tubazioni attive": "الأنابيب النشطة",
   "Tubazioni di adduzione dal canale": "أنابيب التغذية من القناة",
   "Tubazioni tracciate: {n} rami dal canale ✓": "الأنابيب المرسومة: {n} فروع من القناة ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "أنبوب واحد لكل عمود ولكل جهة من القناة، حتى آخر محور في تلك الجهة.",
 };
 
 const ZH: Dict = {
@@ -2628,6 +2642,8 @@ const ZH: Dict = {
   "Tubazioni attive": "启用管道",
   "Tubazioni di adduzione dal canale": "来自渠道的输水管道",
   "Tubazioni tracciate: {n} rami dal canale ✓": "已绘制管道：来自渠道的{n}条分支 ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "每列、渠道每侧一根管道，直到该侧最后一个枢轴。",
 };
 
 const HU: Dict = {
@@ -2953,6 +2969,8 @@ const HU: Dict = {
   "Tubazioni attive": "Aktív csővezetékek",
   "Tubazioni di adduzione dal canale": "Táplálócsővezetékek a csatornáról",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Megrajzolt csővezetékek: {n} ág a csatornáról ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Egy csővezeték oszloponként és csatornaoldalanként, az adott oldal utolsó pivotjáig.",
 };
 
 const ID: Dict = {
@@ -3278,6 +3296,8 @@ const ID: Dict = {
   "Tubazioni attive": "Pipa aktif",
   "Tubazioni di adduzione dal canale": "Pipa suplai dari kanal",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Pipa digambar: {n} cabang dari kanal ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Satu pipa per kolom dan per sisi kanal, hingga pivot terakhir di sisi tersebut.",
 };
 
 const DE: Dict = {
@@ -3597,6 +3617,8 @@ const DE: Dict = {
   "Tubazioni attive": "Aktive Rohrleitungen",
   "Tubazioni di adduzione dal canale": "Zuleitungsrohre vom Kanal",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Gezeichnete Rohrleitungen: {n} Abzweige vom Kanal ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Eine Rohrleitung pro Spalte und pro Kanalseite, bis zum letzten Pivot auf dieser Seite.",
 };
 
 const PL: Dict = {
@@ -3918,6 +3940,8 @@ const PL: Dict = {
   "Tubazioni attive": "Aktywne rurociągi",
   "Tubazioni di adduzione dal canale": "Rurociągi zasilające z kanału",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Wytyczone rurociągi: {n} odgałęzień od kanału ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Jeden rurociąg na kolumnę i na stronę kanału, do ostatniego pivotu po tej stronie.",
 };
 
 const BG: Dict = {
@@ -4239,6 +4263,8 @@ const BG: Dict = {
   "Tubazioni attive": "Активни тръби",
   "Tubazioni di adduzione dal canale": "Захранващи тръби от канала",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Проследени тръби: {n} разклонения от канала ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Една тръба на колона и на страна на канала, до последния пивот от тази страна.",
 };
 
 const RU: Dict = {
@@ -4560,6 +4586,8 @@ const RU: Dict = {
   "Tubazioni attive": "Активные трубопроводы",
   "Tubazioni di adduzione dal canale": "Подводящие трубопроводы от канала",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Трубопроводы проложены: {n} ответвлений от канала ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Один трубопровод на колонку и на сторону канала, до последнего пивота на этой стороне.",
 };
 
 const AF: Dict = {
@@ -4881,6 +4909,8 @@ const AF: Dict = {
   "Tubazioni attive": "Aktiewe pype",
   "Tubazioni di adduzione dal canale": "Toevoerpype vanaf die kanaal",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Pype geteken: {n} takke vanaf die kanaal ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Een pyp per kolom en per kanaalkant, tot by die laaste spilpunt aan daardie kant.",
 };
 
 const MS: Dict = {
@@ -5202,6 +5232,8 @@ const MS: Dict = {
   "Tubazioni attive": "Paip aktif",
   "Tubazioni di adduzione dal canale": "Paip suapan dari terusan",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Paip dilukis: {n} cabang dari terusan ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Satu paip bagi setiap lajur dan setiap sisi terusan, sehingga pivot terakhir di sisi tersebut.",
 };
 
 const VI: Dict = {
@@ -5523,6 +5555,8 @@ const VI: Dict = {
   "Tubazioni attive": "Đường ống đang hoạt động",
   "Tubazioni di adduzione dal canale": "Đường ống dẫn từ Kênh",
   "Tubazioni tracciate: {n} rami dal canale ✓": "Đã vẽ đường ống: {n} nhánh từ Kênh ✓",
+  // --- v0.6.103 ---
+  "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Một đường ống cho mỗi cột và mỗi phía kênh, đến pivot cuối cùng ở phía đó.",
 };
 
 const TR: Record<Exclude<Lang, "it">, Dict> = {
