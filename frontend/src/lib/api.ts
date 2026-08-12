@@ -237,6 +237,9 @@ export type ElevPoint = { lon: number; lat: number; elev_m: number | null; dist_
 export type ElevationResult = { points: ElevPoint[]; total_drop_m: number | null; length_m: number; min_m: number | null; max_m: number | null };
 export const fetchElevation = (coords: number[][]) =>
   req<ElevationResult>("/api/elevation", { method: "POST", body: JSON.stringify({ coords }) });
+export type ElevationStats = { min_m: number | null; max_m: number | null; median_m: number | null; mean_m: number | null };
+export const fetchElevationStats = (geom: Polygon) =>
+  req<ElevationStats>("/api/elevation/stats", { method: "POST", body: JSON.stringify({ geom }) });
 
 export const fetchSuitability = (geom: Polygon, date: string, p: SuitParams) =>
   req<Suitability>("/api/suitability", {

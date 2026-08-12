@@ -12,6 +12,22 @@ import pyproj
 from .canal import _dem_and_grid
 
 
+def elevation_stats(client, geom: dict) -> dict:
+    """Statistiche di quota (m) sul DEM ENTRO il poligono: minimo, massimo,
+    mediana e media. Usato per il riquadro informazioni dell'area/campo."""
+    dem, mask, _ctx = _dem_and_grid(client, geom)
+    vals = dem[mask]
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return {"min_m": None, "max_m": None, "median_m": None, "mean_m": None}
+    return {
+        "min_m": round(float(np.min(vals)), 1),
+        "max_m": round(float(np.max(vals)), 1),
+        "median_m": round(float(np.median(vals)), 1),
+        "mean_m": round(float(np.mean(vals)), 1),
+    }
+
+
 def sample_elevation(client, coords_ll: list) -> dict:
     if not coords_ll or len(coords_ll) < 1:
         raise RuntimeError("Serve almeno un punto.")

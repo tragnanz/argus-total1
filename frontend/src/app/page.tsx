@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.83";
+const REV = "v0.6.84";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -481,6 +481,9 @@ export default function Page() {
   const [notes, setNotes] = useState("");
   const [shareUrl, setShareUrl] = useState("");   // link pubblico di sola lettura
   const [autosave, setAutosave] = useState<"" | "saving" | "saved" | "error">("");   // stato salvataggio automatico
+  const [elevStats, setElevStats] = useState<{ id: number; loading?: boolean; err?: boolean; s?: api.ElevationStats } | null>(null);  // quota del campo attivo
+  const [elevNonce, setElevNonce] = useState(0);   // forza il ricalcolo quota quando la geometria del campo cambia
+  const elevCache = useRef<Map<number, api.ElevationStats>>(new Map());
   const [busy, setBusy] = useState<string>("");
   const [msg, setMsg] = useState<string>("");
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -730,6 +733,8 @@ export default function Page() {
   }
   function updateActiveGeom(geom: Polygon) {
     setFields((fs) => fs.map((f) => f.id === activeId ? { ...f, geom, lay: null, layGeo: null, suit: null } : f));
+    if (activeId != null) elevCache.current.delete(activeId);   // geometria cambiata → ricalcola la quota
+    setElevNonce((n) => n + 1);
   }
   function selectField(id: number) {
     setActiveId(id); clearViewOverlays(); setScenes([]); setDate("");
@@ -1711,6 +1716,21 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saveSig, projectId]);
 
+  // Quota (min/max/mediana) del campo attivo per il riquadro informazioni.
+  useEffect(() => {
+    const a = fields.find((f) => f.id === activeId) ?? null;
+    if (!a) { setElevStats(null); return; }
+    const cached = elevCache.current.get(a.id);
+    if (cached) { setElevStats({ id: a.id, s: cached }); return; }
+    let cancelled = false;
+    setElevStats({ id: a.id, loading: true });
+    api.fetchElevationStats(a.geom)
+      .then((s) => { if (cancelled) return; elevCache.current.set(a.id, s); setElevStats({ id: a.id, s }); })
+      .catch(() => { if (!cancelled) setElevStats({ id: a.id, err: true }); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, elevNonce]);
+
   const hasFields = fields.length > 0;
   const rootFields = fields.filter((f) => f.parentId == null);
   // Gruppi pivot per campo (un «livello» pivot per campo nel pannello Livelli).
@@ -2119,6 +2139,10 @@ export default function Page() {
                         {t("Superficie")}: <b>{uHa(ringAreaHa(active.geom.coordinates))}</b><br />
                         {t("Perimetro")}: <b>{uM(Math.round(per))}</b> · {t("Vertici")}: <b>{nV}</b><br />
                         {t("Centro")}: <b>{clat.toFixed(5)}, {clng.toFixed(5)}</b><br />
+                        {t("Quota")}: {elevStats && elevStats.id === active.id
+                          ? (elevStats.loading ? <span className="opacity-60">…</span> : elevStats.err ? "—"
+                            : <>{t("min")} <b>{elevStats.s?.min_m ?? "—"} m</b> · {t("max")} <b>{elevStats.s?.max_m ?? "—"} m</b> · {t("mediana")} <b>{elevStats.s?.median_m ?? "—"} m</b></>)
+                          : <span className="opacity-60">…</span>}<br />
                         {kids > 0 && <>{t("Poligoni figli")}: <b>{kids}</b> · </>}
                         {t("Pivot")}: <b>{npv}</b> · {t("Canali")}: <b>{ncan}</b> · {t("Strade")}: <b>{nrd}</b> · {t("Invasi")}: <b>{nwt}</b>
                       </div>
