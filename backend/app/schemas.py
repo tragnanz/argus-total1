@@ -316,6 +316,9 @@ class LayoutIn(BaseModel):
     # ostacoli lineari preesistenti (strade/canali con spessore) da evitare
     roads: list[dict[str, Any]] | None = None
     clear_road_m: float = Field(default=0.0, ge=0, le=500)
+    # riempimento dei bordi con pivot più piccoli: raggio minimo come % di quello
+    # pieno (100 = disattivato). Sotto 100 aggiunge pivot ridotti sui contorni.
+    min_pivot_pct: float = Field(default=100.0, ge=30, le=100)
 
 
 class LayoutOut(BaseModel):
