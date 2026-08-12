@@ -158,6 +158,14 @@ export const createLayer = (body: {
 export const deleteLayer = (id: number) =>
   req<void>(`/api/layers/${id}`, { method: "DELETE" });
 
+// ---- Link pubblico di sola lettura ----
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type ShareData = { project: { name: string; crop?: string | null }; areas: any[]; layers: any[] };
+export const createShare = (projectId: number) =>
+  req<{ token: string }>(`/api/projects/${projectId}/share`, { method: "POST" });
+export const fetchShare = (token: string) =>
+  req<ShareData>(`/api/share/${encodeURIComponent(token)}`);
+
 // ---- Satellite ----
 export const fetchScenes = (geom: Polygon, months_back = 12, max_cloud = 95) =>
   req<Scene[]>("/api/satellite/scenes", {

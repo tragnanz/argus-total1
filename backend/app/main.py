@@ -11,11 +11,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import cors_origin_list, settings
 from .db import init_db
 from .routers import (canal, elevation, guided, layers, layout, macroareas, projects,
-                      report, satellite, suitability, terrain)
+                      report, satellite, share, suitability, terrain)
 from .schemas import HealthOut
 
 # Revisione backend: allineala alla REV del frontend a ogni versione.
-REV = "0.6.75"
+REV = "0.6.76"
 
 app = FastAPI(title=settings.app_name, version=REV)
 
@@ -47,4 +47,5 @@ app.include_router(guided.router)
 app.include_router(layers.router)
 app.include_router(terrain.router)
 app.include_router(elevation.router)
+app.include_router(share.router)
 app.include_router(report.router)

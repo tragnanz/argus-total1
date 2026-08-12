@@ -77,3 +77,16 @@ class ProjectLayer(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     data: Mapped[str] = mapped_column(Text, nullable=False)         # JSON serializzato
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Share(Base):
+    """Link pubblico di sola lettura per un progetto: un token opaco mappa a un
+    progetto e permette la visualizzazione (mappa + informazioni) senza modifica.
+    Tabella nuova → create_all la crea senza migrazioni."""
+    __tablename__ = "shares"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())

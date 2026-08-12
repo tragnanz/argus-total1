@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.75";
+const REV = "v0.6.76";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -452,6 +452,7 @@ export default function Page() {
   const secShow = (k: string) => (tab === k ? "" : "hidden");
 
   const [notes, setNotes] = useState("");
+  const [shareUrl, setShareUrl] = useState("");   // link pubblico di sola lettura
   const [busy, setBusy] = useState<string>("");
   const [msg, setMsg] = useState<string>("");
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -1587,6 +1588,19 @@ export default function Page() {
     saveBlob(new Blob([JSON.stringify({ type: "FeatureCollection", features: feats })],
       { type: "application/geo+json" }), "layout_pivot.geojson");
   }
+  // Crea un link pubblico di SOLA LETTURA del progetto (mappa + informazioni,
+  // niente modifica). Riflette l'ultimo salvataggio: conviene «Salva tutto» prima.
+  async function makeShareLink() {
+    if (!projectId) { setMsg(t("Seleziona un progetto prima di creare il link.")); return; }
+    setBusy("share"); setMsg("");
+    try {
+      const { token } = await api.createShare(projectId);
+      const url = `${window.location.origin}/view/${token}`;
+      setShareUrl(url);
+      try { await navigator.clipboard.writeText(url); setMsg(t("Link di sola lettura copiato negli appunti ✓")); }
+      catch { setMsg(t("Link di sola lettura creato ✓")); }
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
 
   // ---- ricerca località (Nominatim) ----
   const [q, setQ] = useState("");
@@ -2482,6 +2496,22 @@ export default function Page() {
                 {busy === "pdf" ? t("Preparo…") : (fields.length > 1 ? t("Scarica schede PDF (ZIP)") : t("Scarica scheda PDF"))}
               </button>
               <button className="btn-ghost flex-1 basis-0" disabled={!laid.length} onClick={downloadGeoJSON}>{t("Layout GeoJSON")}</button>
+            </div>
+
+            {/* Link pubblico di sola lettura per i clienti */}
+            <div className="mt-4 border-t border-brand/15 pt-3">
+              <div className="text-sm font-semibold text-brand-darker mb-1">{t("Link per il cliente (sola lettura)")}</div>
+              <p className="text-[11px] text-sage-dark mb-2">{t("Crea un link condivisibile: il cliente vede la mappa e tutte le informazioni, senza poter modificare nulla. Il link riflette l'ultimo salvataggio — premi «Salva tutto sul progetto» prima.")}</p>
+              <button className="btn-primary w-full" disabled={busy === "share" || !projectId} onClick={makeShareLink}>
+                {busy === "share" ? t("Creo il link…") : t("Crea link di visualizzazione")}
+              </button>
+              {shareUrl && (
+                <div className="mt-2 flex gap-2 items-center">
+                  <input readOnly value={shareUrl} onFocus={(e) => e.target.select()} className="field-input text-[11px] flex-1" />
+                  <button className="btn-ghost shrink-0" onClick={() => { navigator.clipboard?.writeText(shareUrl); setMsg(t("Link copiato ✓")); }}>{t("Copia")}</button>
+                  <a className="btn-ghost shrink-0" href={shareUrl} target="_blank" rel="noreferrer">{t("Apri")}</a>
+                </div>
+              )}
             </div>
           </section>
 
