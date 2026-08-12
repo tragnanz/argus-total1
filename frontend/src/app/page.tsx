@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.96";
+const REV = "v0.6.97";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2414,10 +2414,10 @@ export default function Page() {
 
           <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
             <SectionHead title={t("Analisi → Campi")} help={t("Individua le zone idonee nell'AREA attiva: diventano CAMPI (poligoni operativi generati dal sistema), annidati sotto l'area e selezionabili singolarmente. Passo facoltativo: puoi comunque lavorare direttamente sull'AREA (inserire pivot, analizzarla, ecc.) senza generare campi.")} />
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-end">
               <label className="text-xs text-sage-dark flex-1">{t("Soglia idoneità")}: {macroThr}/100
                 <input type="range" min={40} max={90} step={5} value={macroThr}
-                  onChange={(e) => setMacroThr(Number(e.target.value))} className="w-full accent-brand" />
+                  onChange={(e) => setMacroThr(Number(e.target.value))} className="w-full accent-brand mt-2 mb-1.5" />
               </label>
               <label className="text-xs text-sage-dark w-24">{t("Area minima (ha)")}
                 <input type="number" min={1} max={100000} step={1} value={macroMinHa}
