@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.93";
+const REV = "v0.6.94";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2623,12 +2623,6 @@ export default function Page() {
               <button className="btn-ghost flex-1 basis-0" onClick={clearImpianti}>{t("Rimuovi")}</button>
             </div>
 
-            {/* La modifica di gruppo/singolo pivot è nel pannello «Proprietà» a sinistra. */}
-            {!!pivots.length && (
-              <p className="hint mt-3 border-t border-brand/15 pt-2">
-                {t("Seleziona i pivot sulla mappa (1° clic = gruppo, 2° clic = singolo): apri il pannello «Proprietà» con l'icona «i» in basso a sinistra per modificarli.")}
-              </p>
-            )}
 
             {/* Riepilogo disposizione + dimensionamento idraulico */}
             {agg.count > 0 && (
