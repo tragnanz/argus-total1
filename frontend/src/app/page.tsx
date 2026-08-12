@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.72";
+const REV = "v0.6.73";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -82,6 +82,11 @@ type Field = {
   savedId?: number;                    // id dell'area salvata nel progetto
   parentId?: number;                   // campo genitore (famiglia): poligono figlio sotto un altro
 };
+
+// Wrapper front-end con visibilità per-oggetto (pannello Livelli stile Photoshop).
+type CanalL = Canal & { hidden?: boolean; uid?: number };
+type WaterL = Watercourse & { hidden?: boolean; uid?: number };
+type RoadL = { id: string; coords: number[][]; width_m: number; hidden?: boolean };
 
 // Snapshot completo per la cronologia Annulla/Ripristina (tutte le mosse).
 type Snapshot = {
@@ -290,7 +295,7 @@ export default function Page() {
   const dragFieldRef = useRef<number | null>(null);       // riga trascinata nell'elenco Campi
   // visibilità dei livelli sulla mappa (accendi/spegni dal widget sinistro)
   const [layerVis, setLayerVis] = useState({ fields: true, macro: true, canal: true, layout: true, water: true, strade: true });
-  const [watercourses, setWatercourses] = useState<Watercourse[]>([]);
+  const [watercourses, setWatercourses] = useState<WaterL[]>([]);
   const [waterSens, setWaterSens] = useState(3);       // sensibilità rilevamento (1..5)
   const [waterPreview, setWaterPreview] = useState(false);
   const [waterRemoveOn, setWaterRemoveOn] = useState(false);
@@ -363,7 +368,7 @@ export default function Page() {
   const [macroThr, setMacroThr] = useState(60);
   const [macroMinHa, setMacroMinHa] = useState(10);
   // canale principale (M6, fase 2) — più canali, presa/finale manuali
-  const [canals, setCanals] = useState<Canal[]>([]);
+  const [canals, setCanals] = useState<CanalL[]>([]);
   const [canalPermille, setCanalPermille] = useState(1);
   const [canalStart, setCanalStart] = useState<number[] | null>(null);
   const [canalEnd, setCanalEnd] = useState<number[] | null>(null);
@@ -383,9 +388,11 @@ export default function Page() {
   const [pivots, setPivots] = useState<PivotItem[]>([]);
   const [pivotLines, setPivotLines] = useState<{ kind: string; coords: number[][]; field?: number }[]>([]);
   const [dragOverField, setDragOverField] = useState<number | "root" | null>(null);   // evidenzia il bersaglio del trascinamento
+  const [hiddenPivotFields, setHiddenPivotFields] = useState<Set<number>>(new Set()); // gruppi pivot (per campo) nascosti
+  const [openFolders, setOpenFolders] = useState({ campi: true, canali: true, strade: true, invasi: true, pivot: true }); // cartelle del pannello Livelli
   const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
   // Livello Strade (linee, con spessore) disegnabile/importabile: i pivot le rispettano.
-  const [roads, setRoads] = useState<{ id: string; coords: number[][]; width_m: number }[]>([]);
+  const [roads, setRoads] = useState<RoadL[]>([]);
   const [roadWidth, setRoadWidth] = useState(8);      // spessore strada di default (m)
   const [canalWidth, setCanalWidth] = useState(6);    // spessore canale/fiume di default (m)
 
@@ -492,7 +499,7 @@ export default function Page() {
       const cs = layersList.filter((l) => l.kind === "canal").map((l) => l.data as unknown as Canal);
       if (cs.length) {
         setCanals(cs);
-        mapApi.current?.showCanals(cs.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
+        renderCanals(cs);
       }
       const pv = layersList.filter((l) => l.kind === "pivots").map((l) => l.data as unknown as GuidedResult).pop();
       if (pv) { setGuided(pv); setModelFromGuided(pv); }
@@ -532,6 +539,39 @@ export default function Page() {
     const candItems = cands.map((m) => ({ geom: m.geojson, label: `${fmt(m.area_ha, { maximumFractionDigits: 0 })} ha` }));
     mapApi.current?.showMacroareas([...committed, ...candItems]);
   }
+  // Rendering centralizzato con visibilità per-oggetto (pannello Livelli).
+  function renderCanals(list: CanalL[] = canals) {
+    mapApi.current?.showCanals(list.filter((c) => !c.hidden).map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
+  }
+  function renderWater(list: WaterL[] = watercourses) {
+    mapApi.current?.showWater(list.filter((w) => !w.hidden).map((w) => ({ geom: w.geojson, kind: w.kind })));
+  }
+  // Zoom su un oggetto a partire dai suoi vertici (lon,lat).
+  function zoomToCoords(coords: number[][]) {
+    if (!coords?.length) return;
+    let mnx = 180, mny = 90, mxx = -180, mxy = -90;
+    for (const p of coords) { if (p[0] < mnx) mnx = p[0]; if (p[1] < mny) mny = p[1]; if (p[0] > mxx) mxx = p[0]; if (p[1] > mxy) mxy = p[1]; }
+    mapApi.current?.flyTo((mny + mxy) / 2, (mnx + mxx) / 2, 13);
+  }
+  // ---- Visibilità/eliminazione per-oggetto (pannello Livelli) ----
+  function toggleCanalHidden(i: number) { setCanals((cs) => { const arr = cs.map((c, k) => k === i ? { ...c, hidden: !c.hidden } : c); renderCanals(arr); return arr; }); }
+  function toggleWaterHidden(i: number) { setWatercourses((ws) => { const arr = ws.map((w, k) => k === i ? { ...w, hidden: !w.hidden } : w); renderWater(arr); return arr; }); }
+  function removeWater(i: number) { setWatercourses((ws) => { const arr = ws.filter((_, k) => k !== i); renderWater(arr); return arr; }); }
+  function toggleRoadHidden(i: number) { setRoads((rs) => rs.map((r, k) => k === i ? { ...r, hidden: !r.hidden } : r)); }
+  function togglePivotFieldHidden(fid: number) { setHiddenPivotFields((s) => { const n = new Set(s); if (n.has(fid)) n.delete(fid); else n.add(fid); return n; }); }
+  function removePivotsOfField(fid: number) {
+    const mp = pivots.filter((p) => p.field !== fid);
+    const ml = pivotLines.filter((l) => l.field !== fid);
+    setPivots(mp); setPivotLines(ml); setPivotSel({ mode: "none", idx: -1 });
+    setGuided(mp.length ? { geojson: fcFromModel(mp, ml), meta: { n_pivots: mp.length, radius_m: pivotR, net_ha: Math.round(mp.reduce((s, x) => s + Math.PI * x.r * x.r / 10000, 0) * 10) / 10, safety_m: safetyM } } : null);
+    setFields((fs) => fs.map((f) => f.id === fid ? { ...f, lay: null, layGeo: null } : f));
+  }
+  // Mostra/Nascondi un intero tipo di livello (occhio sulla cartella).
+  function setAllCanalsHidden(h: boolean) { setCanals((cs) => { const arr = cs.map((c) => ({ ...c, hidden: h })); renderCanals(arr); return arr; }); }
+  function setAllWaterHidden(h: boolean) { setWatercourses((ws) => { const arr = ws.map((w) => ({ ...w, hidden: h })); renderWater(arr); return arr; }); }
+  function setAllRoadsHidden(h: boolean) { setRoads((rs) => rs.map((r) => ({ ...r, hidden: h }))); }
+  function setAllFieldsHidden(h: boolean) { setFields((fs) => { const arr = fs.map((f) => ({ ...f, hidden: h })); renderFields(arr, activeId); return arr; }); }
+  function setAllPivotsHidden(h: boolean) { const ids = new Set<number>(); if (h) pivots.forEach((p) => { if (p.field != null) ids.add(p.field); }); setHiddenPivotFields(ids); }
   // Visibilità: campo singolo (occhio) e livelli interi.
   function toggleFieldHidden(id: number) {
     setFields((fs) => {
@@ -786,7 +826,7 @@ export default function Page() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const feats: Watercourse[] = raw.map((c) => ({ geojson: c.geom as any, kind: c.kind, area_ha: 0 }));
     setWatercourses(feats);
-    mapApi.current?.showWater(feats.map((f) => ({ geom: f.geojson, kind: f.kind })));
+    renderWater(feats);
     setWaterPreview(false); setWaterRemoveOn(false);
     setMsg(t("Corsi d'acqua confermati: {n}. I pivot li eviteranno.", { n: feats.length }));
   }
@@ -972,9 +1012,7 @@ export default function Page() {
       setCanalStart(null); setCanalEnd(null);
       mapApi.current?.showPending(null, null, t("Presa"), t("Finale"));
       mapApi.current?.clearReachable();
-      mapApi.current?.showCanals(
-        next.map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end, width_m: canalWidth })),
-        t("Presa"), t("Sbocco"));
+      renderCanals(next);
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   // importa canali da KMZ/KML/GeoJSON: ogni polilinea diventa un canale
@@ -1001,7 +1039,7 @@ export default function Page() {
         }
       }
       setCanals(next);
-      mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
+      renderCanals(next);
       setMsg(added ? t("Importati {n} canali da file.", { n: added }) : t("Nessuna linea trovata nei file (KMZ/KML/GeoJSON)."));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
@@ -1018,7 +1056,7 @@ export default function Page() {
         const cc = await api.fetchCanal(geomForDem, canalPermille, null, null, null, coords, snapCanal);
         const next = await joinCanals(cc, canals);
         setCanals(next);
-        mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
+        renderCanals(next);
         setMsg("");
       } catch (e) { showErr(e); } finally { setBusy(""); }
     });
@@ -1027,9 +1065,7 @@ export default function Page() {
     if (editingCanal === i) endEditCanal();
     const next = canals.filter((_, k) => k !== i);
     setCanals(next);
-    mapApi.current?.showCanals(
-      next.map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end })),
-      t("Presa"), t("Sbocco"));
+    renderCanals(next);
   }
   function clearCanalUI() {
     setCanals([]); setCanalStart(null); setCanalEnd(null); setPickMode(null); setEditingCanal(null);
@@ -1045,7 +1081,7 @@ export default function Page() {
           const cc = await api.fetchCanal(activeGeom, c.target_permille, start, end, waypoints);
           setCanals((prev) => {
             const arr = [...prev]; arr[i] = cc;
-            mapApi.current?.showCanals(arr.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
+            renderCanals(arr);
             return arr;
           });
           installCanalEditor(i, cc);   // reinstalla le maniglie sul percorso ricalcolato
@@ -1088,7 +1124,7 @@ export default function Page() {
       const c = l.data as unknown as Canal;
       setCanals((prev) => {
         const next = [...prev, c];
-        mapApi.current?.showCanals(next.map((x) => ({ coords: x.geojson.coordinates, start: x.start, end: x.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
+        renderCanals(next);
         return next;
       });
       setTab("rilievo");
@@ -1141,14 +1177,20 @@ export default function Page() {
   // Ridisegna i pivot sulla mappa a ogni cambio di modello/selezione.
   useEffect(() => {
     const api2 = mapApi.current; if (!api2) return;
-    if (!pivots.length && !pivotLines.length) { api2.clearPivots?.(); return; }
-    api2.showPivots?.({ pivots, lines: pivotLines }, pivotSel, {
-      onClick: (i) => setPivotSel((s) => (s.mode === "none" ? { mode: "group", idx: -1 } : { mode: "single", idx: i })),
-      onMove: (i, lat, lng) => commitPivots(pivots.map((p, k) => (k === i ? { ...p, lat, lng } : p))),
+    // Filtra i gruppi pivot nascosti (per campo) e rimappa gli indici visibili → reali.
+    const visIdx = pivots.map((_, k) => k).filter((k) => !hiddenPivotFields.has(pivots[k].field ?? -1));
+    const visP = visIdx.map((k) => pivots[k]);
+    const visL = pivotLines.filter((l) => !hiddenPivotFields.has(l.field ?? -1));
+    if (!visP.length && !visL.length) { api2.clearPivots?.(); return; }
+    let selForShow = pivotSel;
+    if (pivotSel.mode === "single") { const vpos = visIdx.indexOf(pivotSel.idx); selForShow = vpos >= 0 ? { mode: "single", idx: vpos } : { mode: "none", idx: -1 }; }
+    api2.showPivots?.({ pivots: visP, lines: visL }, selForShow, {
+      onClick: (i) => { const real = visIdx[i]; setPivotSel((s) => (s.mode === "none" ? { mode: "group", idx: -1 } : { mode: "single", idx: real })); },
+      onMove: (i, lat, lng) => { const real = visIdx[i]; commitPivots(pivots.map((p, k) => (k === real ? { ...p, lat, lng } : p))); },
       onBackground: () => setPivotSel({ mode: "none", idx: -1 }),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pivots, pivotLines, pivotSel]);
+  }, [pivots, pivotLines, pivotSel, hiddenPivotFields]);
 
   // Operazioni sul singolo pivot selezionato.
   const selPivot = pivotSel.mode === "single" && pivotSel.idx >= 0 ? pivots[pivotSel.idx] : null;
@@ -1166,12 +1208,13 @@ export default function Page() {
   // ---- livello Strade (linee) ----
   const rid = () => `r${roads.length}_${roads.reduce((s, r) => s + r.coords.length, 0)}`;
   useEffect(() => {
-    mapApi.current?.showRoads?.(roads.map((r) => ({ coords: r.coords, width_m: r.width_m })), (i) => setRoads((rs) => rs.filter((_, k) => k !== i)));
+    const vis = roads.filter((r) => !r.hidden);
+    mapApi.current?.showRoads?.(vis.map((r) => ({ coords: r.coords, width_m: r.width_m })), (i) => { const id = vis[i]?.id; if (id != null) setRoads((rs) => rs.filter((r) => r.id !== id)); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roads]);
   // Aggiorna la banda-spessore dei canali quando cambia lo spessore di default.
   useEffect(() => {
-    if (canals.length) mapApi.current?.showCanals(canals.map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
+    if (canals.length) renderCanals();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canalWidth]);
   function drawRoad() {
@@ -1471,6 +1514,29 @@ export default function Page() {
 
   const hasFields = fields.length > 0;
   const rootFields = fields.filter((f) => f.parentId == null);
+  // Gruppi pivot per campo (un «livello» pivot per campo nel pannello Livelli).
+  const pivotGroups = (() => {
+    const m = new Map<number, number>();
+    for (const p of pivots) { const k = p.field ?? -1; m.set(k, (m.get(k) ?? 0) + 1); }
+    return Array.from(m.entries()).map(([fid, n]) => ({ fid, n, name: fid < 0 ? t("Senza campo") : (fields.find((f) => f.id === fid)?.name ?? t("Campo")) }));
+  })();
+
+  // Cartella del pannello Livelli (intestazione con freccia + occhio + conteggio).
+  function renderLayerFolder(key: "canali" | "strade" | "invasi" | "pivot", label: string, count: number, anyVisible: boolean, onToggleAll: () => void, body: React.ReactNode) {
+    const open = openFolders[key];
+    return (
+      <div className="mt-1">
+        <div className="flex items-center gap-1 px-1 py-1 rounded-md hover:bg-black/5">
+          <button className="text-sage-dark w-3 text-[10px]" onClick={() => setOpenFolders((o) => ({ ...o, [key]: !o[key] }))}>{open ? "▾" : "▸"}</button>
+          <button className="text-brand-mid w-4" title={t("Mostra/Nascondi tutto")} onClick={onToggleAll} disabled={!count}>{count && anyVisible ? "◉" : "○"}</button>
+          <button className="flex-1 text-left text-xs font-semibold text-brand-darker" onClick={() => setOpenFolders((o) => ({ ...o, [key]: !o[key] }))}>{label}</button>
+          <span className="text-[11px] text-sage-dark tabular-nums">{count}</span>
+        </div>
+        {open && count > 0 && <ul className="space-y-0.5 ml-4 mt-0.5">{body}</ul>}
+        {open && count === 0 && <p className="text-[11px] text-sage-dark ml-5 mb-1">{t("Vuoto")}</p>}
+      </div>
+    );
+  }
 
   // Riga dell'elenco Campi come albero: un campo con, annidati, i suoi
   // poligoni figli (famiglia) e le eventuali sotto-aree (macro).
@@ -1686,6 +1752,46 @@ export default function Page() {
               </div>
             )}
             <p className="text-[11px] text-sage-dark mt-1">{t("«＋» disegna un poligono figlio; trascina una riga su un'altra per annidarla (famiglia).")}</p>
+
+            {/* --- Pannello Livelli: altri tipi di oggetto come cartelle (stile Photoshop) --- */}
+            <div className="mt-3 border-t border-brand/15 pt-2">
+              <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide mb-1">{t("Livelli")}</div>
+              {renderLayerFolder("canali", t("Canali"), canals.length, canals.some((c) => !c.hidden), () => setAllCanalsHidden(canals.some((c) => !c.hidden)),
+                canals.map((c, i) => (
+                  <li key={c.uid ?? i} className="flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5">
+                    <button className="text-brand-mid w-4" title={t("Mostra/Nascondi")} onClick={() => toggleCanalHidden(i)}>{c.hidden ? "○" : "◉"}</button>
+                    <button className="flex-1 truncate text-left" title={t("Zoom")} onClick={() => zoomToCoords(c.geojson.coordinates)}>{t("Canale")} {i + 1} · {uM(c.length_m)}</button>
+                    <button className="text-danger w-4" title={t("Rimuovi")} onClick={() => removeCanal(i)}>✕</button>
+                  </li>
+                )))}
+              {renderLayerFolder("strade", t("Strade"), roads.length, roads.some((r) => !r.hidden), () => setAllRoadsHidden(roads.some((r) => !r.hidden)),
+                roads.map((r, i) => (
+                  <li key={r.id} className="flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5">
+                    <button className="text-brand-mid w-4" title={t("Mostra/Nascondi")} onClick={() => toggleRoadHidden(i)}>{r.hidden ? "○" : "◉"}</button>
+                    <button className="flex-1 truncate text-left" title={t("Zoom")} onClick={() => zoomToCoords(r.coords)}>{t("Strada")} {i + 1} · {uM(r.width_m)}</button>
+                    <button className="text-danger w-4" title={t("Rimuovi")} onClick={() => removeRoad(i)}>✕</button>
+                  </li>
+                )))}
+              {renderLayerFolder("invasi", t("Invasi/corsi d'acqua"), watercourses.length, watercourses.some((w) => !w.hidden), () => setAllWaterHidden(watercourses.some((w) => !w.hidden)),
+                watercourses.map((w, i) => {
+                  const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates;
+                  return (
+                    <li key={i} className="flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5">
+                      <button className="text-brand-mid w-4" title={t("Mostra/Nascondi")} onClick={() => toggleWaterHidden(i)}>{w.hidden ? "○" : "◉"}</button>
+                      <button className="flex-1 truncate text-left" title={t("Zoom")} onClick={() => zoomToCoords(coords)}>{w.kind} {i + 1}</button>
+                      <button className="text-danger w-4" title={t("Rimuovi")} onClick={() => removeWater(i)}>✕</button>
+                    </li>
+                  );
+                }))}
+              {renderLayerFolder("pivot", t("Pivot"), pivots.length, pivotGroups.some((g) => !hiddenPivotFields.has(g.fid)), () => setAllPivotsHidden(pivotGroups.some((g) => !hiddenPivotFields.has(g.fid))),
+                pivotGroups.map((g) => (
+                  <li key={g.fid} className="flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5">
+                    <button className="text-brand-mid w-4" title={t("Mostra/Nascondi")} onClick={() => togglePivotFieldHidden(g.fid)}>{hiddenPivotFields.has(g.fid) ? "○" : "◉"}</button>
+                    <button className="flex-1 truncate text-left" title={t("Zoom")} onClick={() => { const f = fields.find((x) => x.id === g.fid); if (f) zoomToCoords(f.geom.coordinates[0]); }}>{g.name} · {g.n} pivot</button>
+                    <button className="text-danger w-4" title={t("Rimuovi")} onClick={() => removePivotsOfField(g.fid)}>✕</button>
+                  </li>
+                )))}
+            </div>
 
             {/* I livelli (con visibilità, download, elimina) sono nel widget «Proprietà» a sinistra. */}
 
