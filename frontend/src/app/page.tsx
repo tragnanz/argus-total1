@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.81";
+const REV = "v0.6.82";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1912,7 +1912,6 @@ export default function Page() {
               </select>
               <button className="btn-primary shrink-0" onClick={newClient}>+</button>
             </div>
-            {!clients.length && <p className="hint mt-2">{t("Nessun cliente. Creane uno.")}</p>}
           </section>
 
           <section>
@@ -1925,7 +1924,6 @@ export default function Page() {
               </select>
               <button className="btn-primary shrink-0" onClick={newProject}>+</button>
             </div>
-            {!projects.length && <p className="hint mt-2">{t("Nessun progetto. Creane uno.")}</p>}
           </section>
 
           <section>
@@ -1941,9 +1939,7 @@ export default function Page() {
             <input ref={fileRef} type="file" accept=".geojson,.json,.kml,.kmz" className="hidden"
               onChange={(e) => { importFile(e.target.files?.[0] ?? undefined); if (e.target) e.target.value = ""; }} />
 
-            {!hasFields
-              ? <p className="hint mt-2">{t("Nessun campo. Disegna o importa un'area.")}</p>
-              : (
+            {hasFields && (
                 <ul className="space-y-1 mt-2">
                   {rootFields.map((f) => renderFieldNode(f, 0))}
                 </ul>
@@ -1957,7 +1953,6 @@ export default function Page() {
                 {t("Trascina qui per scollegare (livello principale)")}
               </div>
             )}
-            <p className="text-[11px] text-sage-dark mt-1">{t("Trascina un oggetto su un campo per assegnarglielo; «＋» disegna un poligono figlio.")}</p>
 
             {/* Oggetti NON ancora assegnati a un campo: elenco semplice (niente cartelle),
                 mostrato solo se ce ne sono. Quelli assegnati compaiono sotto al campo. */}
