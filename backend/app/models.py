@@ -90,3 +90,18 @@ class Share(Base):
     project_id: Mapped[int] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ShareView(Base):
+    """Link di sola lettura CON una propria configurazione di visibilità: più link
+    per lo stesso progetto, ognuno con nome e livelli mostrati/nascosti diversi.
+    Tabella nuova → create_all la crea senza migrazioni."""
+    __tablename__ = "share_views"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, default="Vista")
+    config: Mapped[str] = mapped_column(Text, nullable=False, default="{}")   # JSON: visibilità del link
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())

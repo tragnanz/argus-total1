@@ -159,11 +159,17 @@ export const createLayer = (body: {
 export const deleteLayer = (id: number) =>
   req<void>(`/api/layers/${id}`, { method: "DELETE" });
 
-// ---- Link pubblico di sola lettura ----
+// ---- Link pubblici di sola lettura (multipli per progetto) ----
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type ShareData = { project: { name: string; crop?: string | null }; areas: any[]; layers: any[] };
-export const createShare = (projectId: number) =>
-  req<{ token: string }>(`/api/projects/${projectId}/share`, { method: "POST" });
+export type ShareData = { project: { name: string; crop?: string | null }; areas: any[]; layers: any[]; config?: any };
+export type ShareView = { token: string; name: string; created_at?: string | null };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const createShareView = (projectId: number, name: string, config: any) =>
+  req<ShareView>(`/api/projects/${projectId}/shares`, { method: "POST", body: JSON.stringify({ name, config }) });
+export const listShares = (projectId: number) =>
+  req<ShareView[]>(`/api/projects/${projectId}/shares`);
+export const deleteShare = (token: string) =>
+  req<void>(`/api/shares/${encodeURIComponent(token)}`, { method: "DELETE" });
 export const fetchShare = (token: string) =>
   req<ShareData>(`/api/share/${encodeURIComponent(token)}`);
 

@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.92";
+const REV = "v0.6.93";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -322,6 +322,7 @@ export default function Page() {
   const lastSavedSigRef = useRef("");
   const latestSigRef = useRef("");
   const suppressAutosaveRef = useRef(false);
+  const fieldToAreaRef = useRef<Map<number, number>>(new Map());   // ultimo salvataggio: id campo front-end → id area DB
   // visibilità dei livelli sulla mappa (accendi/spegni dal widget sinistro)
   const [layerVis, setLayerVis] = useState({ fields: true, macro: true, canal: true, layout: true, water: true, strade: true });
   const [watercourses, setWatercourses] = useState<WaterL[]>([]);
@@ -480,7 +481,8 @@ export default function Page() {
   const secShow = (k: string) => (tab === k ? "" : "hidden");
 
   const [notes, setNotes] = useState("");
-  const [shareUrl, setShareUrl] = useState("");   // link pubblico di sola lettura
+  const [shares, setShares] = useState<api.ShareView[]>([]);   // link di sola lettura del progetto
+  const [shareName, setShareName] = useState("");              // nome del prossimo link da creare
   const [autosave, setAutosave] = useState<"" | "saving" | "saved" | "error">("");   // stato salvataggio automatico
   const [drawing, setDrawing] = useState(false);   // disegno/tracciatura in corso → pannellino di controllo
   const [elevStats, setElevStats] = useState<{ id: number; loading?: boolean; err?: boolean; s?: api.ElevationStats } | null>(null);  // quota del campo attivo
@@ -497,8 +499,8 @@ export default function Page() {
   useEffect(() => { refreshClients(); }, []);
   useEffect(() => { refreshProjects(clientId); setProjectId(null); }, [clientId]);
   useEffect(() => {
-    if (projectId) openProject(projectId);
-    else { setAreas([]); setLayers([]); }
+    if (projectId) { openProject(projectId); refreshShares(projectId); }
+    else { setAreas([]); setLayers([]); setShares([]); }
   }, [projectId]);
 
   async function refreshClients() { try { setClients(await api.listClients()); } catch (e) { showErr(e); } }
@@ -1042,6 +1044,7 @@ export default function Page() {
         for (const kid of fields.filter((x) => x.parentId === nd.id)) await saveNode(kid, fa.id);
       };
       for (const root of fields.filter((f) => f.parentId == null)) await saveNode(root, null);
+      fieldToAreaRef.current = fieldToArea;   // per costruire la config dei link di condivisione
       const ownerArea = (o?: number) => (o != null && fieldToArea.has(o) ? fieldToArea.get(o)! : null);
 
       // 3) Salva canali/strade/invasi come layer (owner → id area).
@@ -1666,18 +1669,34 @@ export default function Page() {
     saveBlob(new Blob([JSON.stringify({ type: "FeatureCollection", features: feats })],
       { type: "application/geo+json" }), "layout_pivot.geojson");
   }
-  // Crea un link pubblico di SOLA LETTURA del progetto (mappa + informazioni,
-  // niente modifica). Riflette l'ultimo salvataggio: conviene «Salva tutto» prima.
-  async function makeShareLink() {
+  // ---- Link di sola lettura MULTIPLI (uno per vista/cliente) ----
+  async function refreshShares(pid: number) { try { setShares(await api.listShares(pid)); } catch { /* silenzioso */ } }
+  // Crea un NUOVO link che «fotografa» la visibilità attuale (quali aree/campi e
+  // gruppi di pivot sono mostrati): link diversi possono mostrare livelli diversi.
+  async function createNamedShare() {
     if (!projectId) { setMsg(t("Seleziona un progetto prima di creare il link.")); return; }
+    const pid = projectId;
     setBusy("share"); setMsg("");
     try {
-      const { token } = await api.createShare(projectId);
-      const url = `${window.location.origin}/view/${token}`;
-      setShareUrl(url);
-      try { await navigator.clipboard.writeText(url); setMsg(t("Link di sola lettura copiato negli appunti ✓")); }
-      catch { setMsg(t("Link di sola lettura creato ✓")); }
+      await saveAll(true);   // salva stato e allinea gli id area
+      const map = fieldToAreaRef.current;
+      const hiddenFields: Record<number, boolean> = {};
+      const hiddenPivots: Record<number, boolean> = {};
+      for (const f of fields) if (f.hidden) { const aid = map.get(f.id); if (aid != null) hiddenFields[aid] = true; }
+      for (const fid of hiddenPivotFields) { const aid = map.get(fid); if (aid != null) hiddenPivots[aid] = true; }
+      const name = (shareName.trim() || t("Vista {n}", { n: shares.length + 1 }));
+      const sv = await api.createShareView(pid, name, { hiddenFields, hiddenPivots });
+      setShareName("");
+      const url = `${window.location.origin}/view/${sv.token}`;
+      try { await navigator.clipboard.writeText(url); setMsg(t("Link «{name}» creato e copiato ✓", { name: sv.name })); }
+      catch { setMsg(t("Link «{name}» creato ✓", { name: sv.name })); }
+      await refreshShares(pid);
     } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  async function removeShare(token: string) {
+    if (!projectId) return;
+    if (!confirm(t("Eliminare questo link? Chi ce l'ha non potrà più aprirlo."))) return;
+    try { await api.deleteShare(token); await refreshShares(projectId); } catch (e) { showErr(e); }
   }
 
   // ---- ricerca località (Nominatim) ----
@@ -2708,19 +2727,30 @@ export default function Page() {
               <button className="btn-ghost flex-1 basis-0" disabled={!laid.length} onClick={downloadGeoJSON}>{t("Layout GeoJSON")}</button>
             </div>
 
-            {/* Link pubblico di sola lettura per i clienti */}
+            {/* Link pubblici di sola lettura: uno per vista/cliente */}
             <div className="mt-4 border-t border-brand/15 pt-3">
-              <div className="text-sm font-semibold text-brand-darker mb-1">{t("Link per il cliente (sola lettura)")}</div>
-              <p className="text-[11px] text-sage-dark mb-2">{t("Crea un link condivisibile: il cliente vede la mappa e tutte le informazioni, senza poter modificare nulla. Il progetto viene salvato automaticamente, quindi il link mostra sempre lo stato aggiornato.")}</p>
-              <button className="btn-primary w-full" disabled={busy === "share" || !projectId} onClick={makeShareLink}>
-                {busy === "share" ? t("Creo il link…") : t("Crea link di visualizzazione")}
-              </button>
-              {shareUrl && (
-                <div className="mt-2 flex gap-2 items-center">
-                  <input readOnly value={shareUrl} onFocus={(e) => e.target.select()} className="field-input text-[11px] flex-1" />
-                  <button className="btn-ghost shrink-0" onClick={() => { navigator.clipboard?.writeText(shareUrl); setMsg(t("Link copiato ✓")); }}>{t("Copia")}</button>
-                  <a className="btn-ghost shrink-0" href={shareUrl} target="_blank" rel="noreferrer">{t("Apri")}</a>
-                </div>
+              <div className="text-sm font-semibold text-brand-darker mb-1">{t("Link per i clienti (sola lettura)")}</div>
+              <p className="text-[11px] text-sage-dark mb-2">{t("Ogni link «fotografa» ciò che è visibile ORA (aree/campi e gruppi di pivot con l'occhio acceso). Nascondi/mostra i livelli come vuoi, poi crea il link: puoi farne più d'uno per mostrare a clienti diversi cose diverse.")}</p>
+              <div className="flex gap-2">
+                <input value={shareName} onChange={(e) => setShareName(e.target.value)} placeholder={t("Nome del link (es. Cliente A)")} className="field-input text-sm flex-1" />
+                <button className="btn-primary shrink-0" disabled={busy === "share" || !projectId} onClick={createNamedShare}>
+                  {busy === "share" ? t("Creo…") : t("Crea link")}
+                </button>
+              </div>
+              {shares.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {shares.map((s) => {
+                    const url = `${window.location.origin}/view/${s.token}`;
+                    return (
+                      <li key={s.token} className="flex items-center gap-1 text-[12px] bg-panel rounded-lg px-2 py-1">
+                        <span className="flex-1 truncate font-medium text-brand-darker">{s.name}</span>
+                        <button className="text-brand-mid shrink-0 px-1" title={t("Copia link")} onClick={() => { navigator.clipboard?.writeText(url); setMsg(t("Link copiato ✓")); }}>⧉</button>
+                        <a className="text-brand-mid shrink-0 px-1" title={t("Apri")} href={url} target="_blank" rel="noreferrer">↗</a>
+                        <button className="text-danger shrink-0 px-1" title={t("Elimina link")} onClick={() => removeShare(s.token)}>✕</button>
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
             </div>
           </section>

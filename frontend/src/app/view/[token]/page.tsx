@@ -42,10 +42,13 @@ export default function ViewPage({ params }: { params: { token: string } }) {
         const areas: Area[] = data.areas || [];
         const layers0: Layer[] = data.layers || [];
         const styleLayer = layers0.filter((x) => x.kind === "styles").map((x) => x.data).pop();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const cfg: any = data.config || {};
         const styleFor = (areaId: number) => styleLayer?.byArea?.[areaId];
         const levelFor = (areaId: number) => styleLayer?.levels?.[areaId] ?? "area";
-        const hiddenField = (areaId: number) => !!styleLayer?.hiddenFields?.[areaId];
-        const hiddenPivot = (areaId: number) => !!styleLayer?.hiddenPivots?.[areaId];
+        // La visibilità del LINK (config) ha la precedenza; senza config, quella salvata del progetto.
+        const hiddenField = (areaId: number) => cfg.hiddenFields ? !!cfg.hiddenFields[areaId] : !!styleLayer?.hiddenFields?.[areaId];
+        const hiddenPivot = (areaId: number) => cfg.hiddenPivots ? !!cfg.hiddenPivots[areaId] : !!styleLayer?.hiddenPivots?.[areaId];
         // Rispetta la visibilità impostata: i livelli nascosti NON compaiono nel link.
         const polys = areas.filter((a) => a.kind !== "macro" && !hiddenField(a.id));
         m.setFields(polys.map((a) => ({ id: a.id, name: a.name, geom: a.geojson, style: styleFor(a.id), level: levelFor(a.id) })), null, []);
@@ -72,7 +75,9 @@ export default function ViewPage({ params }: { params: { token: string } }) {
   const layers: Layer[] = data?.layers || [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const styleData: any = layers.filter((l) => l.kind === "styles").map((l) => l.data).pop();
-  const isHiddenField = (id: number) => !!styleData?.hiddenFields?.[id];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cfg: any = data?.config || {};
+  const isHiddenField = (id: number) => (cfg.hiddenFields ? !!cfg.hiddenFields[id] : !!styleData?.hiddenFields?.[id]);
   const roots = areas.filter((a) => a.parent_area_id == null && a.kind !== "macro" && !isHiddenField(a.id));
   const childrenOf = (id: number) => areas.filter((a) => a.parent_area_id === id && a.kind !== "macro" && !isHiddenField(a.id));
   const totalHa = roots.reduce((s, a) => s + (a.area_ha || 0), 0);
