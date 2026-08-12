@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.101";
+const REV = "v0.6.102";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -234,6 +234,85 @@ function fcFromModel(pivots: PivotItem[], lines: { kind: string; coords: number[
   return { type: "FeatureCollection" as const, features: feats };
 }
 
+// ---- Tubazioni di adduzione: collega i CENTRI dei pivot esistenti con tubi che
+// si diramano dal canale, uno per fila, tutti nella stessa direzione. Calcolo
+// geometrico locale in metri (nessuna chiamata al backend). ----
+function median(a: number[]): number {
+  if (!a.length) return 0;
+  const s = [...a].sort((x, y) => x - y); const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], flip: boolean): number[][][] {
+  if (pivs.length < 1 || canal.length < 2) return [];
+  const lat0 = pivs.reduce((s, p) => s + p.lat, 0) / pivs.length;
+  const mLat = 111320, mLng = 111320 * Math.cos((lat0 * Math.PI) / 180) || 1e-9;
+  const P: [number, number][] = pivs.map((p) => [p.lng * mLng, p.lat * mLat]);
+  const C: [number, number][] = canal.map((c) => [c[0] * mLng, c[1] * mLat]);
+  const toLL = (x: number, y: number): number[] => [x / mLng, y / mLat];
+  const dot = (a: [number, number], b: [number, number]) => a[0] * b[0] + a[1] * b[1];
+
+  // Direzione del reticolo dai pivot: angolo del vicino più prossimo, medio su 4×
+  // (le due assi ortogonali del reticolo collassano sullo stesso valore).
+  const angs: number[] = []; const nnd: number[] = [];
+  for (let i = 0; i < P.length; i++) {
+    let best = Infinity, bj = -1;
+    for (let j = 0; j < P.length; j++) {
+      if (i === j) continue;
+      const dx = P[j][0] - P[i][0], dy = P[j][1] - P[i][1]; const d = dx * dx + dy * dy;
+      if (d < best) { best = d; bj = j; }
+    }
+    if (bj >= 0) { angs.push(Math.atan2(P[bj][1] - P[i][1], P[bj][0] - P[i][0])); nnd.push(Math.sqrt(best)); }
+  }
+  let theta = 0;
+  if (angs.length) { let sx = 0, sy = 0; for (const a of angs) { sx += Math.cos(4 * a); sy += Math.sin(4 * a); } theta = Math.atan2(sy, sx) / 4; }
+  const d1: [number, number] = [Math.cos(theta), Math.sin(theta)];
+  const d2: [number, number] = [-Math.sin(theta), Math.cos(theta)];
+  // direzione generale del canale
+  const cdx = C[C.length - 1][0] - C[0][0], cdy = C[C.length - 1][1] - C[0][1];
+  const clen = Math.hypot(cdx, cdy) || 1; const cdir: [number, number] = [cdx / clen, cdy / clen];
+  // asse del reticolo più PERPENDICOLARE al canale (così i tubi si diramano da esso)
+  let d = Math.abs(dot(d1, cdir)) <= Math.abs(dot(d2, cdir)) ? d1 : d2;
+  if (flip) d = d === d1 ? d2 : d1;
+  const nrm: [number, number] = [-d[1], d[0]];
+  const pitch = median(nnd) || 800;
+
+  // raggruppa i pivot in file (stessa proiezione sulla normale, entro ~pitch)
+  const order = P.map((_, i) => i).sort((a, b) => dot(P[a], nrm) - dot(P[b], nrm));
+  const rows: number[][] = []; let cur: number[] = []; let prev = NaN;
+  for (const i of order) {
+    const proj = dot(P[i], nrm);
+    if (cur.length && proj - prev > 0.6 * pitch) { rows.push(cur); cur = []; }
+    cur.push(i); prev = proj;
+  }
+  if (cur.length) rows.push(cur);
+
+  const nearestOnCanal = (pt: [number, number]): [number, number] => {
+    let best: [number, number] = C[0], bd = Infinity;
+    for (let k = 0; k < C.length - 1; k++) {
+      const a = C[k], b = C[k + 1]; const abx = b[0] - a[0], aby = b[1] - a[1];
+      const l2 = abx * abx + aby * aby || 1e-9;
+      const t = Math.max(0, Math.min(1, ((pt[0] - a[0]) * abx + (pt[1] - a[1]) * aby) / l2));
+      const qx = a[0] + abx * t, qy = a[1] + aby * t; const dd = (pt[0] - qx) ** 2 + (pt[1] - qy) ** 2;
+      if (dd < bd) { bd = dd; best = [qx, qy]; }
+    }
+    return best;
+  };
+
+  const pipes: number[][][] = [];
+  for (const row of rows) {
+    const sorted = row.slice().sort((a, b) => dot(P[a], d) - dot(P[b], d));
+    const first = P[sorted[0]], last = P[sorted[sorted.length - 1]];
+    const qf = nearestOnCanal(first), ql = nearestOnCanal(last);
+    const df = (first[0] - qf[0]) ** 2 + (first[1] - qf[1]) ** 2;
+    const dl = (last[0] - ql[0]) ** 2 + (last[1] - ql[1]) ** 2;
+    const seq = dl < df ? sorted.slice().reverse() : sorted;   // parti dall'estremo vicino al canale
+    const tap = dl < df ? ql : qf;
+    const pts: [number, number][] = [tap, ...seq.map((i) => P[i])];
+    pipes.push(pts.map(([x, y]) => toLL(x, y)));
+  }
+  return pipes;
+}
+
 // Preimpostazioni grafiche di sistema, distinte per livello della piramide:
 // AREE = toni caldi/neutri, riempimento tenue (contenitori); CAMPI = toni vividi,
 // riempimento più marcato (poligoni operativi).
@@ -415,9 +494,8 @@ export default function Page() {
   const [pivClearWater, setPivClearWater] = useState(0); // franco pivot da acqua/invasi (m)
   const [pivotR, setPivotR] = useState(400);    // raggio pivot (parametro proprio della scheda Pivot)
   const [minPivotPct, setMinPivotPct] = useState(100);   // dimensione minima pivot di riempimento bordi (% del raggio); 100 = disattivato
-  const [branchMax, setBranchMax] = useState(5);         // Accessori: numero max di pivot per diramazione da canale
-  const [branchSide, setBranchSide] = useState<"auto" | "both">("auto"); // lato di posa rispetto al canale
-  const [branchCanalIdx, setBranchCanalIdx] = useState(0);               // canale scelto per la diramazione
+  const [pipeCanalIdx, setPipeCanalIdx] = useState(0);   // Accessori: canale da cui si diramano le tubazioni
+  const [pipeFlip, setPipeFlip] = useState(false);       // ruota di 90° la direzione delle tubazioni
   // Gerarchia pivot: modello modificabile (gruppo → singolo) derivato dal risultato.
   const [pivots, setPivots] = useState<PivotItem[]>([]);
   const [pivotLines, setPivotLines] = useState<{ kind: string; coords: number[][]; field?: number }[]>([]);
@@ -1542,43 +1620,32 @@ export default function Page() {
     setFields((fs) => fs.map((f) => ({ ...f, lay: null, layGeo: null })));
   }
 
-  // ---- Accessori: diramazioni pivot da canale ---------------------------------
-  // Posa in automatico fino a N pivot lungo il canale scelto, dentro il poligono
-  // selezionato, e per ognuno traccia la tubazione più corta che lo alimenta.
-  async function generateBranch() {
+  // ---- Accessori: tubazioni di adduzione dal canale ---------------------------
+  // Traccia le tubazioni che si diramano dal canale e passano per i centri dei
+  // pivot ESISTENTI del poligono, una per fila, tutte nella stessa direzione.
+  function generatePipes() {
     if (!active) return needField();
     if (!canals.length) { setMsg(t("Traccia prima un canale nella pagina Rilievo.")); return; }
-    const canal = canals[Math.min(branchCanalIdx, canals.length - 1)];
     const fid = active.id;
-    setBusy("branch"); setMsg("");
-    try {
-      const res = await api.fetchBranch({
-        geom: active.geom, canal: canal.geojson.coordinates,
-        radius_m: pivotR, gap_m: safetyM, clear_m: pivClearWater,
-        canal_width_m: canalWidth, max_pivots: branchMax, side: branchSide,
-        existing: pivots.map((p) => ({ lat: p.lat, lng: p.lng, r: p.r })),
-      });
-      if (!res.pivots.length) { setMsg(t("Nessun pivot posabile lungo il canale con questi parametri.")); return; }
-      const newP: PivotItem[] = res.pivots.map((p) => ({ lat: p.lat, lng: p.lng, r: p.r, conn: "pipe", field: fid }));
-      const newL = res.pipes.map((pipe) => ({ kind: "pipe", coords: pipe, field: fid }));
-      const mergedP = [...pivots, ...newP];
-      const mergedL = [...pivotLines, ...newL];
-      setPivots(mergedP); setPivotLines(mergedL); setPivotSel({ mode: "none", idx: -1 });
-      const netHa = mergedP.reduce((s, x) => s + (Math.PI * x.r * x.r) / 10000, 0);
-      setGuided({ geojson: fcFromModel(mergedP, mergedL), meta: { n_pivots: mergedP.length, radius_m: pivotR, net_ha: Math.round(netHa * 10) / 10, safety_m: safetyM } });
-      setMsg(t("Diramazione creata: {n} pivot alimentati dal canale ✓", { n: res.pivots.length }));
-    } catch (e) { showErr(e); } finally { setBusy(""); }
+    const fieldPivs = pivots.filter((p) => p.field === fid);
+    if (!fieldPivs.length) { setMsg(t("Nessun pivot su questo poligono: inserisci prima gli impianti.")); return; }
+    const canal = canals[Math.min(pipeCanalIdx, canals.length - 1)];
+    const pipesLL = feederPipes(canal.geojson.coordinates, fieldPivs.map((p) => ({ lat: p.lat, lng: p.lng })), pipeFlip);
+    if (!pipesLL.length) { setMsg(t("Nessuna tubazione tracciabile con questi pivot.")); return; }
+    const newL = pipesLL.map((coords) => ({ kind: "pipe", coords, field: fid }));
+    const mergedL = [...pivotLines.filter((l) => !(l.kind === "pipe" && l.field === fid)), ...newL];
+    setPivotLines(mergedL);
+    if (guided) setGuided({ ...guided, geojson: fcFromModel(pivots, mergedL) });
+    setMsg(t("Tubazioni tracciate: {n} rami dal canale ✓", { n: pipesLL.length }));
   }
-  // Rimuove tutte le diramazioni (pivot alimentati da tubazione + le tubazioni),
-  // lasciando intatti i pivot a maglia.
-  function removeBranches() {
-    const keepP = pivots.filter((p) => p.conn !== "pipe");
-    const keepL = pivotLines.filter((l) => l.kind !== "pipe");
-    setPivots(keepP); setPivotLines(keepL); setPivotSel({ mode: "none", idx: -1 });
-    const netHa = keepP.reduce((s, x) => s + (Math.PI * x.r * x.r) / 10000, 0);
-    setGuided(keepP.length ? { geojson: fcFromModel(keepP, keepL), meta: { n_pivots: keepP.length, radius_m: pivotR, net_ha: Math.round(netHa * 10) / 10, safety_m: safetyM } } : null);
+  // Rimuove le tubazioni di adduzione del poligono attivo (i pivot restano).
+  function removePipes() {
+    const fid = active?.id;
+    const keepL = pivotLines.filter((l) => !(l.kind === "pipe" && (fid == null || l.field === fid)));
+    setPivotLines(keepL);
+    if (guided) setGuided({ ...guided, geojson: fcFromModel(pivots, keepL) });
   }
-  const nBranch = pivots.filter((p) => p.conn === "pipe").length;
+  const nPipes = pivotLines.filter((l) => l.kind === "pipe" && (!active || l.field === active.id)).length;
   // Parametri specifici della disposizione «a maglia» (raggio e distanza tra pivot
   // restano quelli condivisi in alto).
   function renderMeshParams() {
@@ -1761,10 +1828,11 @@ export default function Page() {
         roads.map((r) => [r.id, r.owner ?? 0, r.hidden ? 1 : 0, r.width_m, r.coords]),
         watercourses.map((w) => [w.owner ?? 0, w.hidden ? 1 : 0]),
         pivots.map((p) => [Math.round(p.lat * 1e6), Math.round(p.lng * 1e6), p.r, p.field ?? 0, p.conn ?? ""]),
+        pivotLines.map((l) => [l.kind, l.field ?? 0, l.coords.length]),
         [...hiddenPivotFields].sort((a, b) => a - b),
       ]);
     } catch { return ""; }
-  }, [fields, canals, roads, watercourses, pivots, hiddenPivotFields]);
+  }, [fields, canals, roads, watercourses, pivots, pivotLines, hiddenPivotFields]);
   latestSigRef.current = saveSig;
 
   // Esegue un salvataggio serializzato: se ne arriva un altro mentre salva, lo
@@ -2758,47 +2826,40 @@ export default function Page() {
             <SectionHead title={t("Accessori")} help={t("Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.")} />
 
             <div className="bg-panel rounded-lg p-2">
-              <div className="text-xs font-semibold text-sage-dark mb-1">{t("Diramazioni pivot da canale")}</div>
+              <div className="text-xs font-semibold text-sage-dark mb-1">{t("Tubazioni di adduzione dal canale")}</div>
               <p className="text-[10px] text-sage-dark leading-snug mb-2">
-                {t("Metti in fila fino a N pivot che si diramano dal canale, ciascuno alimentato dalla tubazione più corta. Lavora sul poligono selezionato a sinistra, con il raggio della pagina Impianti.")}
+                {t("Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.")}
               </p>
 
               {canals.length > 1 && (
                 <label className="block mb-2">
                   <span className="text-[10px] text-sage-dark block mb-1">{t("Canale")}</span>
-                  <select className="field-input px-2 py-1.5 text-sm" value={branchCanalIdx}
-                    onChange={(e) => setBranchCanalIdx(Number(e.target.value))}>
+                  <select className="field-input px-2 py-1.5 text-sm" value={pipeCanalIdx}
+                    onChange={(e) => setPipeCanalIdx(Number(e.target.value))}>
                     {canals.map((c, i) => <option key={i} value={i}>{`${t("Canale")} ${i + 1}`}</option>)}
                   </select>
                 </label>
               )}
 
-              <div className="flex gap-2 items-end">
-                <div className="flex-1 min-w-0">
-                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Numero massimo di pivot")}</div>
-                  <input type="number" min={1} max={200} step={1} value={branchMax}
-                    onChange={(e) => setBranchMax(Math.max(1, Number(e.target.value)))} className="field-input px-2 py-1.5 text-sm" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Lato")}</div>
-                  <div className="seg">
-                    <div className="seg-item" data-active={branchSide === "auto"} onClick={() => setBranchSide("auto")}>{t("Automatico")}</div>
-                    <div className="seg-item" data-active={branchSide === "both"} onClick={() => setBranchSide("both")}>{t("Entrambi i lati")}</div>
-                  </div>
+              <div className="mb-1">
+                <div className="text-[10px] leading-tight text-sage-dark mb-1">{t("Direzione delle tubazioni")}</div>
+                <div className="seg">
+                  <div className="seg-item" data-active={!pipeFlip} onClick={() => setPipeFlip(false)}>{t("Automatica")}</div>
+                  <div className="seg-item" data-active={pipeFlip} onClick={() => setPipeFlip(true)}>{t("Ruota di 90°")}</div>
                 </div>
               </div>
 
               <div className="text-[10px] text-sage-dark bg-white/40 rounded-md p-1.5 mt-2 leading-relaxed">
-                {t("Raggio")}: <b>{uM(pivotR)}</b> · {t("Tra i pivot")}: <b>{uM(safetyM)}</b>
-                {nBranch > 0 && <> · {t("Diramazioni attive")}: <b>{nBranch}</b></>}
+                {t("Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.")}
+                {nPipes > 0 && <> · {t("Tubazioni attive")}: <b>{nPipes}</b></>}
               </div>
 
               <div className="flex gap-2 mt-2">
-                <button className="btn-primary flex-1 basis-0" disabled={busy === "branch" || !active || !canals.length}
-                  onClick={generateBranch}>
-                  {busy === "branch" ? t("Creo…") : active ? t("Dirama su «{name}»", { name: active.name }) : t("Crea diramazione")}
+                <button className="btn-primary flex-1 basis-0" disabled={!active || !canals.length}
+                  onClick={generatePipes}>
+                  {active ? t("Traccia tubazioni su «{name}»", { name: active.name }) : t("Traccia tubazioni")}
                 </button>
-                <button className="btn-ghost flex-1 basis-0" disabled={!nBranch} onClick={removeBranches}>{t("Rimuovi diramazioni")}</button>
+                <button className="btn-ghost flex-1 basis-0" disabled={!nPipes} onClick={removePipes}>{t("Rimuovi tubazioni")}</button>
               </div>
               {!canals.length && <p className="text-[10px] text-danger mt-1">{t("Traccia prima un canale nella pagina Rilievo.")}</p>}
             </div>

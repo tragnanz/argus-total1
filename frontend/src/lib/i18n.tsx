@@ -347,6 +347,20 @@ const EN: Dict = {
   "Numero massimo di pivot": "Maximum number of pivots",
   "Rimuovi diramazioni": "Remove branches",
   "Traccia prima un canale nella pagina Rilievo.": "Draw a canal first on the Survey page.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Automatic",
+  "Direzione delle tubazioni": "Pipe direction",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "No pivot on this polygon: add the machines first.",
+  "Nessuna tubazione tracciabile con questi pivot.": "No pipe can be drawn with these pivots.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "They pass through the pivot centers and branch off the canal with the shortest run.",
+  "Rimuovi tubazioni": "Remove pipes",
+  "Ruota di 90°": "Rotate 90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Draws the pipes that branch off the canal and pass through the centers of the pivots already on the selected polygon, one per row, all in the same direction.",
+  "Traccia tubazioni": "Draw pipes",
+  "Traccia tubazioni su «{name}»": "Draw pipes on «{name}»",
+  "Tubazioni attive": "Active pipes",
+  "Tubazioni di adduzione dal canale": "Feeder pipes from the canal",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Pipes drawn: {n} branches from the canal ✓",
 };
 
 const FR: Dict = {
@@ -656,6 +670,20 @@ const FR: Dict = {
   "Numero massimo di pivot": "Nombre maximal de pivots",
   "Rimuovi diramazioni": "Retirer les ramifications",
   "Traccia prima un canale nella pagina Rilievo.": "Tracez d'abord un canal dans la page Relevé.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Automatique",
+  "Direzione delle tubazioni": "Direction des conduites",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "Aucun pivot sur ce polygone : ajoutez d'abord les installations.",
+  "Nessuna tubazione tracciabile con questi pivot.": "Aucune conduite traçable avec ces pivots.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "Elles passent par les centres des pivots et se ramifient du canal par le tronçon le plus court.",
+  "Rimuovi tubazioni": "Retirer les conduites",
+  "Ruota di 90°": "Pivoter de 90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Tracez les conduites qui se ramifient du canal et passent par les centres des pivots déjà présents sur le polygone sélectionné, une par rangée, toutes dans la même direction.",
+  "Traccia tubazioni": "Tracer les conduites",
+  "Traccia tubazioni su «{name}»": "Tracer les conduites sur «{name}»",
+  "Tubazioni attive": "Conduites actives",
+  "Tubazioni di adduzione dal canale": "Conduites d'adduction depuis le canal",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Conduites tracées : {n} branches depuis le canal ✓",
 };
 
 const ES: Dict = {
@@ -965,6 +993,20 @@ const ES: Dict = {
   "Numero massimo di pivot": "Número máximo de pivotes",
   "Rimuovi diramazioni": "Quitar ramificaciones",
   "Traccia prima un canale nella pagina Rilievo.": "Traza primero un canal en la página Levantamiento.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Automática",
+  "Direzione delle tubazioni": "Dirección de las tuberías",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "Ningún pivote en este polígono: inserta primero los equipos.",
+  "Nessuna tubazione tracciabile con questi pivot.": "No se puede trazar ninguna tubería con estos pivotes.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "Pasan por los centros de los pivotes y se ramifican desde el canal por el tramo más corto.",
+  "Rimuovi tubazioni": "Quitar tuberías",
+  "Ruota di 90°": "Girar 90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Traza las tuberías que se ramifican desde el canal y pasan por los centros de los pivotes ya presentes en el polígono seleccionado, una por fila, todas en la misma dirección.",
+  "Traccia tubazioni": "Trazar tuberías",
+  "Traccia tubazioni su «{name}»": "Trazar tuberías en «{name}»",
+  "Tubazioni attive": "Tuberías activas",
+  "Tubazioni di adduzione dal canale": "Tuberías de aducción desde el canal",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Tuberías trazadas: {n} ramales desde el canal ✓",
 };
 
 const PT: Dict = {
@@ -1274,6 +1316,20 @@ const PT: Dict = {
   "Numero massimo di pivot": "Número máximo de pivôs",
   "Rimuovi diramazioni": "Remover ramificações",
   "Traccia prima un canale nella pagina Rilievo.": "Trace primeiro um canal na página Levantamento.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Automática",
+  "Direzione delle tubazioni": "Direção das tubagens",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "Nenhum pivô neste polígono: insira primeiro os equipamentos.",
+  "Nessuna tubazione tracciabile con questi pivot.": "Nenhuma tubagem traçável com estes pivôs.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "Passam pelos centros dos pivôs e ramificam-se do canal pelo troço mais curto.",
+  "Rimuovi tubazioni": "Remover tubagens",
+  "Ruota di 90°": "Rodar 90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Traça as tubagens que se ramificam do canal e passam pelos centros dos pivôs já presentes no polígono selecionado, uma por fila, todas na mesma direção.",
+  "Traccia tubazioni": "Traçar tubagens",
+  "Traccia tubazioni su «{name}»": "Traçar tubagens em «{name}»",
+  "Tubazioni attive": "Tubagens ativas",
+  "Tubazioni di adduzione dal canale": "Tubagens de adução do canal",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Tubagens traçadas: {n} ramos do canal ✓",
 };
 
 const RO: Dict = {
@@ -1585,6 +1641,20 @@ const RO: Dict = {
   "Numero massimo di pivot": "Număr maxim de pivoți",
   "Rimuovi diramazioni": "Elimină ramificațiile",
   "Traccia prima un canale nella pagina Rilievo.": "Trasează mai întâi un canal în pagina Ridicare topografică.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Automată",
+  "Direzione delle tubazioni": "Direcția conductelor",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "Niciun pivot pe acest poligon: adaugă mai întâi instalațiile.",
+  "Nessuna tubazione tracciabile con questi pivot.": "Nicio conductă trasabilă cu acești pivoți.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "Trec prin centrele pivoților și se ramifică din canal pe traseul cel mai scurt.",
+  "Rimuovi tubazioni": "Elimină conductele",
+  "Ruota di 90°": "Rotește cu 90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Trasează conductele care se ramifică din canal și trec prin centrele pivoților deja prezenți pe poligonul selectat, câte una pe rând, toate în aceeași direcție.",
+  "Traccia tubazioni": "Trasează conducte",
+  "Traccia tubazioni su «{name}»": "Trasează conducte pe «{name}»",
+  "Tubazioni attive": "Conducte active",
+  "Tubazioni di adduzione dal canale": "Conducte de alimentare din canal",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Conducte trasate: {n} ramuri din canal ✓",
 };
 
 const KK: Dict = {
@@ -1896,6 +1966,20 @@ const KK: Dict = {
   "Numero massimo di pivot": "Пивоттардың ең көп саны",
   "Rimuovi diramazioni": "Тармақтарды жою",
   "Traccia prima un canale nella pagina Rilievo.": "Алдымен Бедер бетінде канал сызыңыз.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Автоматты",
+  "Direzione delle tubazioni": "Құбырлардың бағыты",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "Бұл полигонда пивот жоқ: алдымен қондырғыларды қосыңыз.",
+  "Nessuna tubazione tracciabile con questi pivot.": "Бұл пивоттармен құбыр сызу мүмкін емес.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "Пивоттардың орталықтары арқылы өтіп, каналдан ең қысқа қашықтықпен тарайды.",
+  "Rimuovi tubazioni": "Құбырларды жою",
+  "Ruota di 90°": "90° бұру",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Таңдалған полигонда бар пивоттардың орталықтары арқылы өтіп, каналдан тарайтын құбырларды сызыңыз — әр қатарға біреуден, барлығы бір бағытта.",
+  "Traccia tubazioni": "Құбырларды сызу",
+  "Traccia tubazioni su «{name}»": "«{name}» үшін құбырларды сызу",
+  "Tubazioni attive": "Белсенді құбырлар",
+  "Tubazioni di adduzione dal canale": "Каналдан жеткізу құбырлары",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Сызылған құбырлар: каналдан {n} тармақ ✓",
 };
 
 const AR: Dict = {
@@ -2205,6 +2289,20 @@ const AR: Dict = {
   "Numero massimo di pivot": "الحد الأقصى لعدد المحاور",
   "Rimuovi diramazioni": "إزالة التفرّعات",
   "Traccia prima un canale nella pagina Rilievo.": "ارسم قناة أولاً في صفحة المسح.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "تلقائي",
+  "Direzione delle tubazioni": "اتجاه الأنابيب",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "لا يوجد محور على هذا المضلع: أدخل المحاور أولاً.",
+  "Nessuna tubazione tracciabile con questi pivot.": "لا يمكن رسم أي أنبوب بهذه المحاور.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "تمر عبر مراكز المحاور وتتفرع من القناة بأقصر مسار.",
+  "Rimuovi tubazioni": "إزالة الأنابيب",
+  "Ruota di 90°": "تدوير 90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "ارسم الأنابيب التي تتفرع من القناة وتمر عبر مراكز المحاور الموجودة على المضلع المحدد، أنبوب واحد لكل صف، جميعها في نفس الاتجاه.",
+  "Traccia tubazioni": "رسم الأنابيب",
+  "Traccia tubazioni su «{name}»": "رسم الأنابيب على «{name}»",
+  "Tubazioni attive": "الأنابيب النشطة",
+  "Tubazioni di adduzione dal canale": "أنابيب التغذية من القناة",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "الأنابيب المرسومة: {n} فروع من القناة ✓",
 };
 
 const ZH: Dict = {
@@ -2516,6 +2614,20 @@ const ZH: Dict = {
   "Numero massimo di pivot": "喷灌机最大数量",
   "Rimuovi diramazioni": "移除分支",
   "Traccia prima un canale nella pagina Rilievo.": "请先在勘测页面绘制渠道。",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "自动",
+  "Direzione delle tubazioni": "管道方向",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "此多边形上没有枢轴：请先添加设备。",
+  "Nessuna tubazione tracciabile con questi pivot.": "无法用这些枢轴绘制管道。",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "穿过枢轴中心，并以最短路径从渠道分出。",
+  "Rimuovi tubazioni": "移除管道",
+  "Ruota di 90°": "旋转90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "绘制从渠道分出并穿过所选多边形上已有枢轴中心的管道，每行一条，方向一致。",
+  "Traccia tubazioni": "绘制管道",
+  "Traccia tubazioni su «{name}»": "在«{name}»上绘制管道",
+  "Tubazioni attive": "启用管道",
+  "Tubazioni di adduzione dal canale": "来自渠道的输水管道",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "已绘制管道：来自渠道的{n}条分支 ✓",
 };
 
 const HU: Dict = {
@@ -2827,6 +2939,20 @@ const HU: Dict = {
   "Numero massimo di pivot": "Pivotok maximális száma",
   "Rimuovi diramazioni": "Elágazások eltávolítása",
   "Traccia prima un canale nella pagina Rilievo.": "Előbb rajzolj egy csatornát a Domborzat oldalon.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Automatikus",
+  "Direzione delle tubazioni": "Csővezetékek iránya",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "Nincs pivot ezen a poligonon: előbb helyezd el a berendezéseket.",
+  "Nessuna tubazione tracciabile con questi pivot.": "Ezekkel a pivotokkal nem rajzolható csővezeték.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "A pivotok középpontján haladnak át, és a legrövidebb szakaszon ágaznak le a csatornáról.",
+  "Rimuovi tubazioni": "Csővezetékek eltávolítása",
+  "Ruota di 90°": "Forgatás 90°-kal",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Megrajzolja a csatornáról leágazó csővezetékeket, amelyek a kiválasztott poligonon már meglévő pivotok középpontján haladnak át, soronként egyet, mind azonos irányban.",
+  "Traccia tubazioni": "Csővezetékek rajzolása",
+  "Traccia tubazioni su «{name}»": "Csővezetékek rajzolása ezen: «{name}»",
+  "Tubazioni attive": "Aktív csővezetékek",
+  "Tubazioni di adduzione dal canale": "Táplálócsővezetékek a csatornáról",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Megrajzolt csővezetékek: {n} ág a csatornáról ✓",
 };
 
 const ID: Dict = {
@@ -3138,6 +3264,20 @@ const ID: Dict = {
   "Numero massimo di pivot": "Jumlah maksimum pivot",
   "Rimuovi diramazioni": "Hapus cabang",
   "Traccia prima un canale nella pagina Rilievo.": "Gambar dulu sebuah kanal di halaman Survei.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Otomatis",
+  "Direzione delle tubazioni": "Arah pipa",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "Tidak ada pivot pada poligon ini: tambahkan sistem terlebih dahulu.",
+  "Nessuna tubazione tracciabile con questi pivot.": "Tidak ada pipa yang dapat digambar dengan pivot ini.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "Melewati pusat pivot dan bercabang dari kanal melalui jalur terpendek.",
+  "Rimuovi tubazioni": "Hapus pipa",
+  "Ruota di 90°": "Putar 90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Gambar pipa yang bercabang dari kanal dan melewati pusat pivot yang sudah ada pada poligon terpilih, satu per baris, semuanya searah.",
+  "Traccia tubazioni": "Gambar pipa",
+  "Traccia tubazioni su «{name}»": "Gambar pipa pada «{name}»",
+  "Tubazioni attive": "Pipa aktif",
+  "Tubazioni di adduzione dal canale": "Pipa suplai dari kanal",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Pipa digambar: {n} cabang dari kanal ✓",
 };
 
 const DE: Dict = {
@@ -3443,6 +3583,20 @@ const DE: Dict = {
   "Numero massimo di pivot": "Maximale Anzahl Pivots",
   "Rimuovi diramazioni": "Abzweigungen entfernen",
   "Traccia prima un canale nella pagina Rilievo.": "Zeichne zuerst einen Kanal auf der Seite Vermessung.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Automatisch",
+  "Direzione delle tubazioni": "Richtung der Rohrleitungen",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "Kein Pivot auf diesem Polygon: Bitte zuerst die Anlagen einfügen.",
+  "Nessuna tubazione tracciabile con questi pivot.": "Mit diesen Pivots lassen sich keine Rohrleitungen zeichnen.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "Sie verlaufen durch die Mittelpunkte der Pivots und zweigen mit dem kürzesten Abschnitt vom Kanal ab.",
+  "Rimuovi tubazioni": "Rohrleitungen entfernen",
+  "Ruota di 90°": "Um 90° drehen",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Zeichnet die Rohrleitungen, die vom Kanal abzweigen und durch die Mittelpunkte der bereits auf dem ausgewählten Polygon vorhandenen Pivots verlaufen, eine pro Reihe, alle in derselben Richtung.",
+  "Traccia tubazioni": "Rohrleitungen zeichnen",
+  "Traccia tubazioni su «{name}»": "Rohrleitungen auf «{name}» zeichnen",
+  "Tubazioni attive": "Aktive Rohrleitungen",
+  "Tubazioni di adduzione dal canale": "Zuleitungsrohre vom Kanal",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Gezeichnete Rohrleitungen: {n} Abzweige vom Kanal ✓",
 };
 
 const PL: Dict = {
@@ -3750,6 +3904,20 @@ const PL: Dict = {
   "Numero massimo di pivot": "Maksymalna liczba pivotów",
   "Rimuovi diramazioni": "Usuń odgałęzienia",
   "Traccia prima un canale nella pagina Rilievo.": "Najpierw narysuj kanał na stronie Pomiar.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Automatyczny",
+  "Direzione delle tubazioni": "Kierunek rurociągów",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "Brak pivotów na tym poligonie: najpierw wstaw instalacje.",
+  "Nessuna tubazione tracciabile con questi pivot.": "Nie można wytyczyć żadnego rurociągu dla tych pivotów.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "Przechodzą przez środki pivotów i odchodzą od kanału najkrótszym odcinkiem.",
+  "Rimuovi tubazioni": "Usuń rurociągi",
+  "Ruota di 90°": "Obróć o 90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Wytycz rurociągi, które odchodzą od kanału i przechodzą przez środki pivotów już obecnych na wybranym poligonie, po jednym na rząd, wszystkie w tym samym kierunku.",
+  "Traccia tubazioni": "Wytycz rurociągi",
+  "Traccia tubazioni su «{name}»": "Wytycz rurociągi na «{name}»",
+  "Tubazioni attive": "Aktywne rurociągi",
+  "Tubazioni di adduzione dal canale": "Rurociągi zasilające z kanału",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Wytyczone rurociągi: {n} odgałęzień od kanału ✓",
 };
 
 const BG: Dict = {
@@ -4057,6 +4225,20 @@ const BG: Dict = {
   "Numero massimo di pivot": "Максимален брой пивоти",
   "Rimuovi diramazioni": "Премахни разклоненията",
   "Traccia prima un canale nella pagina Rilievo.": "Първо начертайте канал в страница Проучване.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Автоматична",
+  "Direzione delle tubazioni": "Посока на тръбите",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "Няма пивоти в този полигон: първо добавете инсталациите.",
+  "Nessuna tubazione tracciabile con questi pivot.": "Не могат да се проследят тръби с тези пивоти.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "Минават през центровете на пивотите и се разклоняват от канала по най-краткия участък.",
+  "Rimuovi tubazioni": "Премахни тръбите",
+  "Ruota di 90°": "Завърти на 90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Проследи тръбите, които се разклоняват от канала и минават през центровете на пивотите, вече налични в избрания полигон, по една на ред, всички в една и съща посока.",
+  "Traccia tubazioni": "Проследи тръбите",
+  "Traccia tubazioni su «{name}»": "Проследи тръбите върху «{name}»",
+  "Tubazioni attive": "Активни тръби",
+  "Tubazioni di adduzione dal canale": "Захранващи тръби от канала",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Проследени тръби: {n} разклонения от канала ✓",
 };
 
 const RU: Dict = {
@@ -4364,6 +4546,20 @@ const RU: Dict = {
   "Numero massimo di pivot": "Максимальное число пивотов",
   "Rimuovi diramazioni": "Убрать ответвления",
   "Traccia prima un canale nella pagina Rilievo.": "Сначала проведите канал на странице «Съёмка».",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Автоматически",
+  "Direzione delle tubazioni": "Направление трубопроводов",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "На этом полигоне нет пивотов: сначала добавьте установки.",
+  "Nessuna tubazione tracciabile con questi pivot.": "С этими пивотами невозможно проложить трубопроводы.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "Проходят через центры пивотов и ответвляются от канала по кратчайшему участку.",
+  "Rimuovi tubazioni": "Убрать трубопроводы",
+  "Ruota di 90°": "Повернуть на 90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Проложить трубопроводы, которые ответвляются от канала и проходят через центры пивотов, уже имеющихся на выбранном полигоне, по одному на ряд, все в одном направлении.",
+  "Traccia tubazioni": "Проложить трубопроводы",
+  "Traccia tubazioni su «{name}»": "Проложить трубопроводы на «{name}»",
+  "Tubazioni attive": "Активные трубопроводы",
+  "Tubazioni di adduzione dal canale": "Подводящие трубопроводы от канала",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Трубопроводы проложены: {n} ответвлений от канала ✓",
 };
 
 const AF: Dict = {
@@ -4671,6 +4867,20 @@ const AF: Dict = {
   "Numero massimo di pivot": "Maksimum aantal spilpunte",
   "Rimuovi diramazioni": "Verwyder vertakkings",
   "Traccia prima un canale nella pagina Rilievo.": "Teken eers 'n kanaal in die Reliëf-bladsy.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Outomaties",
+  "Direzione delle tubazioni": "Rigting van pype",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "Geen spilpunt op hierdie veelhoek nie: voeg eers die stelsels in.",
+  "Nessuna tubazione tracciabile con questi pivot.": "Geen pyp kan met hierdie spilpunte geteken word nie.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "Loop deur die middelpunte van die spilpunte en tak met die kortste stuk vanaf die kanaal af.",
+  "Rimuovi tubazioni": "Verwyder pype",
+  "Ruota di 90°": "Draai 90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Teken die pype wat vanaf die kanaal aftak en deur die middelpunte van die spilpunte loop wat reeds op die geselekteerde veelhoek is, een per ry, almal in dieselfde rigting.",
+  "Traccia tubazioni": "Teken pype",
+  "Traccia tubazioni su «{name}»": "Teken pype op «{name}»",
+  "Tubazioni attive": "Aktiewe pype",
+  "Tubazioni di adduzione dal canale": "Toevoerpype vanaf die kanaal",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Pype geteken: {n} takke vanaf die kanaal ✓",
 };
 
 const MS: Dict = {
@@ -4978,6 +5188,20 @@ const MS: Dict = {
   "Numero massimo di pivot": "Bilangan maksimum pivot",
   "Rimuovi diramazioni": "Buang cabang",
   "Traccia prima un canale nella pagina Rilievo.": "Lukis terusan dahulu dalam halaman Tinjauan.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Automatik",
+  "Direzione delle tubazioni": "Arah paip",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "Tiada pivot pada poligon ini: masukkan sistem dahulu.",
+  "Nessuna tubazione tracciabile con questi pivot.": "Tiada paip boleh dilukis dengan pivot ini.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "Melalui pusat pivot dan bercabang dari terusan dengan bahagian terpendek.",
+  "Rimuovi tubazioni": "Buang paip",
+  "Ruota di 90°": "Putar 90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Lukis paip yang bercabang dari terusan dan melalui pusat pivot yang sedia ada pada poligon terpilih, satu bagi setiap baris, semuanya dalam arah yang sama.",
+  "Traccia tubazioni": "Lukis paip",
+  "Traccia tubazioni su «{name}»": "Lukis paip pada «{name}»",
+  "Tubazioni attive": "Paip aktif",
+  "Tubazioni di adduzione dal canale": "Paip suapan dari terusan",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Paip dilukis: {n} cabang dari terusan ✓",
 };
 
 const VI: Dict = {
@@ -5285,6 +5509,20 @@ const VI: Dict = {
   "Numero massimo di pivot": "Số pivot tối đa",
   "Rimuovi diramazioni": "Xóa nhánh",
   "Traccia prima un canale nella pagina Rilievo.": "Hãy vẽ một kênh trước trong trang Khảo sát.",
+  // --- v0.6.102: tubazioni adduzione ---
+  "Automatica": "Tự động",
+  "Direzione delle tubazioni": "Hướng đường ống",
+  "Nessun pivot su questo poligono: inserisci prima gli impianti.": "Không có Pivot trên đa giác này: hãy thêm hệ thống trước.",
+  "Nessuna tubazione tracciabile con questi pivot.": "Không thể vẽ đường ống với các Pivot này.",
+  "Passano per i centri dei pivot e si diramano dal canale con il tratto più corto.": "Đi qua tâm các Pivot và phân nhánh từ Kênh theo đoạn ngắn nhất.",
+  "Rimuovi tubazioni": "Xóa đường ống",
+  "Ruota di 90°": "Xoay 90°",
+  "Traccia le tubazioni che si diramano dal canale e passano per i centri dei pivot già presenti sul poligono selezionato, una per fila, tutte nella stessa direzione.": "Vẽ các đường ống phân nhánh từ Kênh và đi qua tâm các Pivot đã có trên đa giác được chọn, mỗi hàng một đường, tất cả cùng một hướng.",
+  "Traccia tubazioni": "Vẽ đường ống",
+  "Traccia tubazioni su «{name}»": "Vẽ đường ống trên «{name}»",
+  "Tubazioni attive": "Đường ống đang hoạt động",
+  "Tubazioni di adduzione dal canale": "Đường ống dẫn từ Kênh",
+  "Tubazioni tracciate: {n} rami dal canale ✓": "Đã vẽ đường ống: {n} nhánh từ Kênh ✓",
 };
 
 const TR: Record<Exclude<Lang, "it">, Dict> = {
