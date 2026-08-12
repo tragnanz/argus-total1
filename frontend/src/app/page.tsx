@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.71";
+const REV = "v0.6.72";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -287,6 +287,7 @@ export default function Page() {
   const [gset, setGset] = useState<Settings>(DEFAULTS);
   const nextId = useRef(1);
   const pendingParentRef = useRef<number | null>(null);   // prossimo poligono disegnato → figlio di questo campo
+  const dragFieldRef = useRef<number | null>(null);       // riga trascinata nell'elenco Campi
   // visibilità dei livelli sulla mappa (accendi/spegni dal widget sinistro)
   const [layerVis, setLayerVis] = useState({ fields: true, macro: true, canal: true, layout: true, water: true, strade: true });
   const [watercourses, setWatercourses] = useState<Watercourse[]>([]);
@@ -381,6 +382,7 @@ export default function Page() {
   // Gerarchia pivot: modello modificabile (gruppo → singolo) derivato dal risultato.
   const [pivots, setPivots] = useState<PivotItem[]>([]);
   const [pivotLines, setPivotLines] = useState<{ kind: string; coords: number[][]; field?: number }[]>([]);
+  const [dragOverField, setDragOverField] = useState<number | "root" | null>(null);   // evidenzia il bersaglio del trascinamento
   const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
   // Livello Strade (linee, con spessore) disegnabile/importabile: i pivot le rispettano.
   const [roads, setRoads] = useState<{ id: string; coords: number[][]; width_m: number }[]>([]);
@@ -578,6 +580,21 @@ export default function Page() {
     pendingParentRef.current = parentId;
     setMsg(t("Disegna il poligono figlio sulla mappa…"));
     mapApi.current?.draw();
+  }
+  // Trascinamento: sposta un poligono sotto un altro (o a livello principale se
+  // newParentId è null). Guardia anti-ciclo: non si può annidare un campo dentro
+  // un proprio discendente.
+  function reparent(childId: number | null, newParentId: number | null) {
+    if (childId == null || childId === newParentId) return;
+    if (newParentId != null) {
+      let p: number | null = newParentId; const guard = new Set<number>();
+      while (p != null && !guard.has(p)) { if (p === childId) return; guard.add(p); p = fields.find((x) => x.id === p)?.parentId ?? null; }
+    }
+    setFields((fs) => {
+      const arr = fs.map((x) => x.id === childId ? { ...x, parentId: newParentId ?? undefined } : x);
+      renderFields(arr, activeId);
+      return arr;
+    });
   }
   function updateActiveGeom(geom: Polygon) {
     setFields((fs) => fs.map((f) => f.id === activeId ? { ...f, geom, lay: null, layGeo: null, suit: null } : f));
@@ -1461,9 +1478,15 @@ export default function Page() {
     const kids = fields.filter((x) => x.parentId === f.id);
     return (
       <li key={f.id}
-        className={`text-sm rounded-lg px-2 py-1 ${f.id === activeId ? "bg-brand/10 ring-1 ring-brand/40" : "bg-panel"} ${f.hidden ? "opacity-50" : ""}`}>
+        draggable
+        onDragStart={(e) => { e.stopPropagation(); dragFieldRef.current = f.id; e.dataTransfer.effectAllowed = "move"; }}
+        onDragOver={(e) => { if (dragFieldRef.current != null && dragFieldRef.current !== f.id) { e.preventDefault(); e.stopPropagation(); if (dragOverField !== f.id) setDragOverField(f.id); } }}
+        onDragLeave={(e) => { e.stopPropagation(); setDragOverField((d) => (d === f.id ? null : d)); }}
+        onDrop={(e) => { e.preventDefault(); e.stopPropagation(); reparent(dragFieldRef.current, f.id); dragFieldRef.current = null; setDragOverField(null); }}
+        onDragEnd={() => { dragFieldRef.current = null; setDragOverField(null); }}
+        className={`text-sm rounded-lg px-2 py-1 cursor-move ${dragOverField === f.id ? "ring-2 ring-brand" : f.id === activeId ? "bg-brand/10 ring-1 ring-brand/40" : "bg-panel"} ${f.hidden ? "opacity-50" : ""}`}>
         <div className="flex items-center justify-between">
-          <button className="truncate text-left flex-1" title={t("Seleziona campo")} onClick={() => selectField(f.id)}>
+          <button className="truncate text-left flex-1" title={t("Seleziona campo · trascina per annidare")} onClick={() => selectField(f.id)}>
             {depth > 0 && <span className="text-brand-light">↳ </span>}
             <span className={f.id === activeId ? "font-semibold text-brand" : ""}>{f.name}</span>
             <span className="text-sage"> · {uHa(ringAreaHa(f.geom.coordinates))}</span>
@@ -1653,7 +1676,16 @@ export default function Page() {
                   {rootFields.map((f) => renderFieldNode(f, 0))}
                 </ul>
               )}
-            <p className="text-[11px] text-sage-dark mt-1">{t("Usa «＋» su un campo per disegnargli sotto un poligono figlio (famiglia).")}</p>
+            {hasFields && fields.some((f) => f.parentId != null) && (
+              <div
+                onDragOver={(e) => { if (dragFieldRef.current != null) { e.preventDefault(); if (dragOverField !== "root") setDragOverField("root"); } }}
+                onDragLeave={() => setDragOverField((d) => (d === "root" ? null : d))}
+                onDrop={(e) => { e.preventDefault(); reparent(dragFieldRef.current, null); dragFieldRef.current = null; setDragOverField(null); }}
+                className={`text-[11px] text-center rounded-lg border border-dashed mt-1 py-1 ${dragOverField === "root" ? "border-brand text-brand bg-brand/5" : "border-black/15 text-sage-dark"}`}>
+                {t("Trascina qui per portare a livello principale")}
+              </div>
+            )}
+            <p className="text-[11px] text-sage-dark mt-1">{t("«＋» disegna un poligono figlio; trascina una riga su un'altra per annidarla (famiglia).")}</p>
 
             {/* I livelli (con visibilità, download, elimina) sono nel widget «Proprietà» a sinistra. */}
 
