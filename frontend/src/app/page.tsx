@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.103";
+const REV = "v0.6.104";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -643,10 +643,13 @@ export default function Page() {
         setPivots(rp); setPivotLines(rl); setPivotSel({ mode: "none", idx: -1 });
         setGuided({ geojson: fcFromModel(rp, rl), meta: pv.meta });
       }
-    } catch (e) { showErr(e); }
-    finally {
-      // Riallinea la firma allo stato caricato e riattiva l'autosave (dopo il flush di render).
+      // Caricamento COMPLETO: riallinea la firma e riattiva l'autosave (dopo il
+      // flush di render).
       setTimeout(() => { lastSavedSigRef.current = latestSigRef.current; suppressAutosaveRef.current = false; setAutosave("saved"); }, 600);
+    } catch (e) {
+      // Caricamento FALLITO: lascia l'autosave inibito, così uno stato parziale
+      // non sovrascrive (cancella) il progetto salvato.
+      showErr(e); setAutosave("error");
     }
   }
   function showErr(e: unknown) { setMsg(e instanceof Error ? e.message : String(e)); }
@@ -1088,17 +1091,20 @@ export default function Page() {
   async function saveAll(silent = false): Promise<boolean> {
     if (!projectId) { if (!silent) setMsg(t("Serve un progetto selezionato per salvare.")); return false; }
     const pid = projectId;
+    // GUARDIA anti-perdita: non salvare uno stato "vuoto" (nessun poligono), che
+    // di solito è un caricamento incompleto: cancellerebbe un progetto valido.
+    // (Un progetto nuovo davvero vuoto non ha nulla da salvare, quindi va bene.)
+    if (!fields.length) { setAutosave("saved"); return true; }
     if (!silent) { setBusy("save"); setMsg(t("Salvo il progetto…")); }
     setAutosave("saving");
+    // Strategia SICURA: prima CREA tutto il nuovo, poi cancella il vecchio; se
+    // qualcosa fallisce, si annulla il nuovo parziale e il vecchio resta intatto.
+    const newAreaIds: number[] = [];
+    const newLayerIds: number[] = [];
     try {
-      // 1) Pulisci il salvataggio precedente (layer + aree, dai più profondi).
       const [oldAreas, oldLayers] = await Promise.all([api.listAreas(pid), api.listLayers(pid)]);
-      for (const l of oldLayers) { try { await api.deleteLayer(l.id); } catch { /* ignora */ } }
-      const byId = new Map(oldAreas.map((a) => [a.id, a] as const));
-      const depth = (a: typeof oldAreas[number]) => { let d = 0; let cur: typeof oldAreas[number] | undefined = a; while (cur?.parent_area_id != null && d < 30) { d++; cur = byId.get(cur.parent_area_id); } return d; };
-      for (const a of [...oldAreas].sort((x, y) => depth(y) - depth(x))) { try { await api.deleteArea(a.id); } catch { /* ignora */ } }
 
-      // 2) Salva le famiglie (aree) e mappa idCampoFrontend → idAreaDB.
+      // 1) Crea le NUOVE aree (famiglie) e mappa idCampoFrontend → idAreaDB.
       const fieldToArea = new Map<number, number>();
       const saveNode = async (nd: Field, parentAreaId: number | null) => {
         const fa = await api.createArea({
@@ -1106,26 +1112,25 @@ export default function Page() {
           area_ha: Math.round(ringAreaHa(nd.geom.coordinates)),
           parent_area_id: parentAreaId, kind: parentAreaId == null ? "field" : "field-child",
         });
+        newAreaIds.push(fa.id);
         fieldToArea.set(nd.id, fa.id);
-        for (const mm of nd.macros ?? []) await api.createArea({ project_id: pid, name: mm.name, geojson: mm.geom, area_ha: Math.round(mm.area_ha), parent_area_id: fa.id, kind: "macro" });
+        for (const mm of nd.macros ?? []) { const ma = await api.createArea({ project_id: pid, name: mm.name, geojson: mm.geom, area_ha: Math.round(mm.area_ha), parent_area_id: fa.id, kind: "macro" }); newAreaIds.push(ma.id); }
         for (const kid of fields.filter((x) => x.parentId === nd.id)) await saveNode(kid, fa.id);
       };
       for (const root of fields.filter((f) => f.parentId == null)) await saveNode(root, null);
-      fieldToAreaRef.current = fieldToArea;   // per costruire la config dei link di condivisione
       const ownerArea = (o?: number) => (o != null && fieldToArea.has(o) ? fieldToArea.get(o)! : null);
 
-      // 3) Salva canali/strade/invasi come layer (owner → id area).
-      if (canals.length) await api.createLayer({ project_id: pid, kind: "canals", name: t("Canali"), data: { items: canals.map((c) => ({ ...c, ownerArea: ownerArea(c.owner) })) } });
-      if (roads.length) await api.createLayer({ project_id: pid, kind: "roads", name: t("Strade"), data: { items: roads.map((r) => ({ ...r, ownerArea: ownerArea(r.owner) })) } });
-      if (watercourses.length) await api.createLayer({ project_id: pid, kind: "waters", name: t("Invasi/corsi d'acqua"), data: { items: watercourses.map((w) => ({ ...w, ownerArea: ownerArea(w.owner) })) } });
+      // 2) Crea i NUOVI layer (solo i tipi con dati). Il pivot per ultimo perché è
+      //    il più pesante: se fallisse, il vecchio è ancora tutto al suo posto.
+      if (canals.length) newLayerIds.push((await api.createLayer({ project_id: pid, kind: "canals", name: t("Canali"), data: { items: canals.map((c) => ({ ...c, ownerArea: ownerArea(c.owner) })) } })).id);
+      if (roads.length) newLayerIds.push((await api.createLayer({ project_id: pid, kind: "roads", name: t("Strade"), data: { items: roads.map((r) => ({ ...r, ownerArea: ownerArea(r.owner) })) } })).id);
+      if (watercourses.length) newLayerIds.push((await api.createLayer({ project_id: pid, kind: "waters", name: t("Invasi/corsi d'acqua"), data: { items: watercourses.map((w) => ({ ...w, ownerArea: ownerArea(w.owner) })) } })).id);
 
-      // 3b) Salva stili (colore/trasparenza), LIVELLO (area/campo) e idoneità dei
-      // campi, mappati per id area, in un unico layer «styles».
       const styles: Record<number, { color?: string; fillColor?: string; fillOpacity?: number }> = {};
       const levels: Record<number, string> = {};
       const scores: Record<number, number> = {};
-      const hiddenFields: Record<number, boolean> = {};   // campi nascosti (occhio spento)
-      const hiddenPivots: Record<number, boolean> = {};   // gruppi pivot nascosti (per id area)
+      const hiddenFields: Record<number, boolean> = {};
+      const hiddenPivots: Record<number, boolean> = {};
       for (const f of fields) {
         const aid = fieldToArea.get(f.id); if (aid == null) continue;
         if (f.style) styles[aid] = f.style;
@@ -1134,23 +1139,41 @@ export default function Page() {
         if (f.hidden) hiddenFields[aid] = true;
       }
       for (const fid of hiddenPivotFields) { const aid = fieldToArea.get(fid); if (aid != null) hiddenPivots[aid] = true; }
-      if (Object.keys(styles).length || Object.keys(levels).length || Object.keys(scores).length || Object.keys(hiddenFields).length || Object.keys(hiddenPivots).length)
-        await api.createLayer({ project_id: pid, kind: "styles", name: t("Stili"), data: { byArea: styles, levels, scores, hiddenFields, hiddenPivots } });
+      const hasStyle = !!(Object.keys(styles).length || Object.keys(levels).length || Object.keys(scores).length || Object.keys(hiddenFields).length || Object.keys(hiddenPivots).length);
+      if (hasStyle) newLayerIds.push((await api.createLayer({ project_id: pid, kind: "styles", name: t("Stili"), data: { byArea: styles, levels, scores, hiddenFields, hiddenPivots } })).id);
 
-      // 4) Salva i pivot (field → id area nelle properties del FeatureCollection).
       if (pivots.length) {
         const mp = pivots.map((p) => ({ ...p, field: ownerArea(p.field) ?? undefined }));
         const ml = pivotLines.map((l) => ({ ...l, field: ownerArea(l.field) ?? undefined }));
-        await api.createLayer({ project_id: pid, kind: "pivots", name: t("Pivot"), data: { geojson: fcFromModel(mp, ml), meta: guided?.meta ?? { n_pivots: pivots.length } } });
+        newLayerIds.push((await api.createLayer({ project_id: pid, kind: "pivots", name: t("Pivot"), data: { geojson: fcFromModel(mp, ml), meta: guided?.meta ?? { n_pivots: pivots.length } } })).id);
       }
 
-      // 5) Aggiorna i savedId dei campi e ricarica gli elenchi.
+      // 3) Ora che TUTTO il nuovo è salvato, elimina il vecchio. I layer si
+      //    rimpiazzano solo per i tipi effettivamente riscritti: così un tipo
+      //    momentaneamente vuoto in memoria NON cancella quello salvato.
+      const rewritten = new Set<string>();
+      if (canals.length) { rewritten.add("canals"); rewritten.add("canal"); }
+      if (roads.length) rewritten.add("roads");
+      if (watercourses.length) rewritten.add("waters");
+      if (hasStyle) rewritten.add("styles");
+      if (pivots.length) rewritten.add("pivots");
+      for (const l of oldLayers) if (rewritten.has(l.kind)) { try { await api.deleteLayer(l.id); } catch { /* ignora */ } }
+      const byId = new Map(oldAreas.map((a) => [a.id, a] as const));
+      const depth = (a: typeof oldAreas[number]) => { let d = 0; let cur: typeof oldAreas[number] | undefined = a; while (cur?.parent_area_id != null && d < 30) { d++; cur = byId.get(cur.parent_area_id); } return d; };
+      for (const a of [...oldAreas].sort((x, y) => depth(y) - depth(x))) { try { await api.deleteArea(a.id); } catch { /* ignora */ } }
+
+      fieldToAreaRef.current = fieldToArea;   // per costruire la config dei link di condivisione
       setFields((fs) => fs.map((x) => fieldToArea.has(x.id) ? { ...x, savedId: fieldToArea.get(x.id) } : x));
       await Promise.all([refreshAreas(pid), refreshLayers(pid)]);
       setAutosave("saved");
       if (!silent) setMsg(t("Progetto salvato ✓ ({n} campi, {c} canali, {s} strade, {w} invasi, {p} pivot)", { n: fields.filter((f) => f.parentId == null).length, c: canals.length, s: roads.length, w: watercourses.length, p: pivots.length }));
       return true;
-    } catch (e) { setAutosave("error"); if (!silent) showErr(e); else console.error(e); return false; } finally { if (!silent) setBusy(""); }
+    } catch (e) {
+      // Rollback del nuovo parziale: il salvataggio precedente resta intatto.
+      for (const id of newLayerIds) { try { await api.deleteLayer(id); } catch { /* */ } }
+      for (const id of [...newAreaIds].reverse()) { try { await api.deleteArea(id); } catch { /* */ } }
+      setAutosave("error"); if (!silent) showErr(e); else console.error(e); return false;
+    } finally { if (!silent) setBusy(""); }
   }
 
   // ---- canale principale (M6, fase 2) ----
