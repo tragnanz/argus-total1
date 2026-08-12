@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.84";
+const REV = "v0.6.85";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1491,12 +1491,16 @@ export default function Page() {
     try {
       const p: LayoutParams = { ...paramsFrom(effSettings(active)), radius_m: pivotR, gap_m: safetyM, roads: obstacleLines(), clear_road_m: pivClearRoad };
       const r = await api.fetchLayout(active.geom, p);
-      const { pivots: np, lines: nl } = pivotsFromFC(r.geojson, pivotR);
+      const { pivots: np } = pivotsFromFC(r.geojson, pivotR);
       const taggedP = np.map((x) => ({ ...x, field: fid }));
-      const taggedL = nl.map((x) => ({ ...x, field: fid }));
+      // Solo i CERCHI: le linee di canali/tubazioni NON vanno disegnate qui
+      // (l'adduzione è un comando separato). Rimuovo eventuali linee di questo campo.
       const mergedP = [...pivots.filter((x) => x.field !== fid), ...taggedP];
-      const mergedL = [...pivotLines.filter((x) => x.field !== fid), ...taggedL];
-      setFields((fs) => fs.map((f) => f.id === fid ? { ...f, lay: r.meta, layGeo: r.geojson } : f));
+      const mergedL = pivotLines.filter((x) => x.field !== fid);
+      // Nel layGeo del campo tengo solo i poligoni pivot (niente LineString).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const layGeoNoLines = { type: "FeatureCollection" as const, features: (r.geojson.features || []).filter((ft: any) => ft.geometry?.type !== "LineString") };
+      setFields((fs) => fs.map((f) => f.id === fid ? { ...f, lay: r.meta, layGeo: layGeoNoLines } : f));
       setPivots(mergedP); setPivotLines(mergedL); setPivotSel({ mode: "none", idx: -1 });
       const netHa = mergedP.reduce((s, x) => s + (Math.PI * x.r * x.r) / 10000, 0);
       setGuided({ geojson: fcFromModel(mergedP, mergedL), meta: { n_pivots: mergedP.length, radius_m: pivotR, net_ha: Math.round(netHa * 10) / 10, safety_m: safetyM } });
