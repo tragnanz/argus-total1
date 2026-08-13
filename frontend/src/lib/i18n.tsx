@@ -375,6 +375,10 @@ const EN: Dict = {
   "Raggio max": "Max radius",
   "Raggio min": "Min radius",
   "Standard": "Standard",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Straight lines along the rows of pivots: each pipe branches off the canal and passes through the centers of the pivots in the same row.",
+  "Pivot per linea (max)": "Pivots per line (max)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "One line per row of pivots, split at most every {n} pivots; each line stops on its side of the canal.",
 };
 
 const FR: Dict = {
@@ -712,6 +716,10 @@ const FR: Dict = {
   "Raggio max": "Rayon max",
   "Raggio min": "Rayon min",
   "Standard": "Standard",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Lignes droites le long des rangées de pivots : chaque conduite se ramifie depuis le canal et passe par les centres des pivots de la même rangée.",
+  "Pivot per linea (max)": "Pivots par ligne (max)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "Une ligne par rangée de pivots, scindée au maximum tous les {n} pivots ; chaque ligne s'arrête de son côté du canal.",
 };
 
 const ES: Dict = {
@@ -1049,6 +1057,10 @@ const ES: Dict = {
   "Raggio max": "Radio máx",
   "Raggio min": "Radio mín",
   "Standard": "Estándar",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Líneas rectas a lo largo de las filas de pivotes: cada tubería se ramifica desde el canal y pasa por los centros de los pivotes de la misma fila.",
+  "Pivot per linea (max)": "Pivotes por línea (máx.)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "Una línea por fila de pivotes, dividida como máximo cada {n} pivotes; cada línea se detiene en su lado del canal.",
 };
 
 const PT: Dict = {
@@ -1386,6 +1398,10 @@ const PT: Dict = {
   "Raggio max": "Raio máx",
   "Raggio min": "Raio mín",
   "Standard": "Padrão",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Linhas retas ao longo das filas de pivôs: cada tubagem ramifica-se a partir do canal e passa pelos centros dos pivôs da mesma fila.",
+  "Pivot per linea (max)": "Pivôs por linha (máx.)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "Uma linha por fila de pivôs, dividida no máximo a cada {n} pivôs; cada linha termina no seu lado do canal.",
 };
 
 const RO: Dict = {
@@ -1725,6 +1741,10 @@ const RO: Dict = {
   "Raggio max": "Rază max",
   "Raggio min": "Rază min",
   "Standard": "Standard",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Linii drepte de-a lungul rândurilor de pivoturi: fiecare conductă se ramifică din canal și trece prin centrele pivoturilor din același rând.",
+  "Pivot per linea (max)": "Pivoturi pe linie (max)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "O linie pe rând de pivoturi, întreruptă cel mult la fiecare {n} pivoturi; fiecare linie se oprește pe partea sa a canalului.",
 };
 
 const KK: Dict = {
@@ -2064,6 +2084,10 @@ const KK: Dict = {
   "Raggio max": "Макс. радиус",
   "Raggio min": "Мин. радиус",
   "Standard": "Стандартты",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Пивот қатарлары бойымен түзу сызықтар: әрбір құбыр каналдан тарайды және сол қатардағы пивоттардың орталықтарынан өтеді.",
+  "Pivot per linea (max)": "Бір сызыққа пивот (макс.)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "Пивот қатарына бір сызық, ең көбі әрбір {n} пивот сайын үзіледі; әрбір сызық каналдың өз жағында тоқтайды.",
 };
 
 const AR: Dict = {
@@ -2401,6 +2425,10 @@ const AR: Dict = {
   "Raggio max": "نصف القطر الأقصى",
   "Raggio min": "نصف القطر الأدنى",
   "Standard": "قياسي",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "خطوط مستقيمة على امتداد صفوف المحاور: يتفرّع كل أنبوب من القناة ويمر عبر مراكز محاور الصف نفسه.",
+  "Pivot per linea (max)": "محاور لكل خط (حد أقصى)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "خط واحد لكل صف محاور، مقسّم بحد أقصى كل {n} محاور؛ يتوقف كل خط عند جانبه من القناة.",
 };
 
 const ZH: Dict = {
@@ -2740,6 +2768,10 @@ const ZH: Dict = {
   "Raggio max": "最大半径",
   "Raggio min": "最小半径",
   "Standard": "标准",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "沿枢轴行的直线：每条管道从渠道分支，穿过同一行枢轴的中心。",
+  "Pivot per linea (max)": "每条线枢轴数（最大）",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "每行枢轴一条线，最多每 {n} 个枢轴断开一次；每条线在其所在渠道一侧停止。",
 };
 
 const HU: Dict = {
@@ -3079,6 +3111,10 @@ const HU: Dict = {
   "Raggio max": "Max. sugár",
   "Raggio min": "Min. sugár",
   "Standard": "Normál",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Egyenes vonalak a pivotsorok mentén: minden csővezeték a csatornából ágazik le, és áthalad az azonos sorban lévő pivotok középpontján.",
+  "Pivot per linea (max)": "Pivot vonalanként (max.)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "Soronként egy vonal a pivotokhoz, legfeljebb {n} pivotonként megtörve; minden vonal a csatorna saját oldalán áll meg.",
 };
 
 const ID: Dict = {
@@ -3418,6 +3454,10 @@ const ID: Dict = {
   "Raggio max": "Radius maks",
   "Raggio min": "Radius min",
   "Standard": "Standar",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Garis lurus sepanjang baris pivot: setiap pipa bercabang dari kanal dan melewati pusat pivot pada baris yang sama.",
+  "Pivot per linea (max)": "Pivot per garis (maks)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "Satu garis per baris pivot, dipecah maksimal setiap {n} pivot; setiap garis berhenti di sisi kanalnya.",
 };
 
 const DE: Dict = {
@@ -3751,6 +3791,10 @@ const DE: Dict = {
   "Raggio max": "Max. Radius",
   "Raggio min": "Min. Radius",
   "Standard": "Standard",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Gerade Linien entlang der Pivotreihen: Jede Rohrleitung zweigt vom Kanal ab und verläuft durch die Mittelpunkte der Pivots derselben Reihe.",
+  "Pivot per linea (max)": "Pivots pro Linie (max.)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "Eine Linie pro Pivotreihe, höchstens alle {n} Pivots unterteilt; jede Linie endet auf ihrer Seite des Kanals.",
 };
 
 const PL: Dict = {
@@ -4086,6 +4130,10 @@ const PL: Dict = {
   "Raggio max": "Promień maks.",
   "Raggio min": "Promień min.",
   "Standard": "Standardowy",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Proste linie wzdłuż rzędów pivotów: każdy rurociąg odgałęzia się od kanału i przechodzi przez środki pivotów tego samego rzędu.",
+  "Pivot per linea (max)": "Pivotów na linię (maks.)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "Jedna linia na rząd pivotów, dzielona maksymalnie co {n} pivotów; każda linia kończy się po swojej stronie kanału.",
 };
 
 const BG: Dict = {
@@ -4421,6 +4469,10 @@ const BG: Dict = {
   "Raggio max": "Макс. радиус",
   "Raggio min": "Мин. радиус",
   "Standard": "Стандартна",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Прави линии по редовете от пивоти: всяка тръба се разклонява от канала и минава през центровете на пивотите от същия ред.",
+  "Pivot per linea (max)": "Пивоти на линия (макс.)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "По една линия на ред от пивоти, прекъсвана най-много на всеки {n} пивота; всяка линия спира от своята страна на канала.",
 };
 
 const RU: Dict = {
@@ -4756,6 +4808,10 @@ const RU: Dict = {
   "Raggio max": "Макс. радиус",
   "Raggio min": "Мин. радиус",
   "Standard": "Стандартный",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Прямые линии вдоль рядов пивотов: каждый трубопровод ответвляется от канала и проходит через центры пивотов того же ряда.",
+  "Pivot per linea (max)": "Пивотов на линию (макс.)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "Одна линия на ряд пивотов, разбиваемая максимум каждые {n} пивотов; каждая линия останавливается на своей стороне канала.",
 };
 
 const AF: Dict = {
@@ -5091,6 +5147,10 @@ const AF: Dict = {
   "Raggio max": "Maks. radius",
   "Raggio min": "Min. radius",
   "Standard": "Standaard",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Reguit lyne langs die rye spilpunte: elke pyp tak van die kanaal af en loop deur die middelpunte van die spilpunte in dieselfde ry.",
+  "Pivot per linea (max)": "Spilpunte per lyn (maks.)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "Een lyn per ry spilpunte, hoogstens elke {n} spilpunte gebreek; elke lyn stop aan sy kant van die kanaal.",
 };
 
 const MS: Dict = {
@@ -5426,6 +5486,10 @@ const MS: Dict = {
   "Raggio max": "Jejari maks",
   "Raggio min": "Jejari min",
   "Standard": "Standard",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Garis lurus di sepanjang barisan pivot: setiap paip bercabang dari terusan dan melalui pusat pivot dalam barisan yang sama.",
+  "Pivot per linea (max)": "Pivot per garis (maks.)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "Satu garis bagi setiap barisan pivot, dipecahkan paling banyak setiap {n} pivot; setiap garis berhenti pada sisi terusannya.",
 };
 
 const VI: Dict = {
@@ -5761,6 +5825,10 @@ const VI: Dict = {
   "Raggio max": "Bán kính tối đa",
   "Raggio min": "Bán kính tối thiểu",
   "Standard": "Tiêu chuẩn",
+  // --- v0.6.106: tubazioni dritte ---
+  "Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.": "Đường thẳng dọc theo các hàng pivot: mỗi đường ống rẽ nhánh từ kênh và đi qua tâm của các pivot trong cùng một hàng.",
+  "Pivot per linea (max)": "Pivot mỗi đường (tối đa)",
+  "Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.": "Một đường cho mỗi hàng pivot, chia tối đa mỗi {n} pivot; mỗi đường dừng lại ở phía kênh của nó.",
 };
 
 const TR: Record<Exclude<Lang, "it">, Dict> = {
