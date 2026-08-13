@@ -6,6 +6,9 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 pydantic>=2.8
 pydantic-settings>=2.4
+python-multipart>=0.0.9   # form login (OAuth2 password)
+PyJWT>=2.9                # token di autenticazione (JWT)
+bcrypt>=4.1              # hashing password
 
 # --- Database (SQLite in dev, Postgres in prod) ---
 SQLAlchemy>=2.0

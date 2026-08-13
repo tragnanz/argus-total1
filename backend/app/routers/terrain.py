@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 from ..deps import get_client
+from ..db import get_db
+from ..models import User
+from ..security import charge, get_current_user
 from ..schemas import ReachIn, ReachOut, TerrainIn, TerrainOut, WaterIn, WaterOut
 
 from analysis.terrain import detect_watercourses, reachable_region, terrain_readability
@@ -12,7 +16,8 @@ router = APIRouter(prefix="/api", tags=["terrain"])
 
 
 @router.post("/terrain", response_model=TerrainOut)
-def terrain(body: TerrainIn, client=Depends(get_client)):
+def terrain(body: TerrainIn, client=Depends(get_client), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    charge(db, user)
     try:
         out = terrain_readability(client, body.geom.model_dump(), vert_exag=body.vert_exag,
                                   interval_m=body.interval_m)
@@ -31,7 +36,8 @@ def canal_reachable(body: ReachIn, client=Depends(get_client)):
 
 
 @router.post("/watercourses", response_model=WaterOut)
-def watercourses(body: WaterIn, client=Depends(get_client)):
+def watercourses(body: WaterIn, client=Depends(get_client), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    charge(db, user)
     try:
         out = detect_watercourses(client, body.geom.model_dump(), body.date,
                                   min_area_ha=body.min_area_ha, ndwi_thr=body.ndwi_thr,

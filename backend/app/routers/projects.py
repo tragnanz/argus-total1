@@ -8,7 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Area, Client, Project
+from ..models import Area, Client, Project, User
+from ..security import get_current_user
 from ..schemas import (AreaIn, AreaOut, AreaPatch, ClientIn, ClientOut,
                        ClientPatch, ProjectIn, ProjectOut, ProjectPatch)
 
@@ -26,13 +27,16 @@ def _area_out(a: Area) -> AreaOut:
 
 # ---------------- Clienti ----------------
 @router.get("/clients", response_model=list[ClientOut])
-def list_clients(db: Session = Depends(get_db)):
-    return db.scalars(select(Client).order_by(Client.name)).all()
+def list_clients(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    # Isolamento per organizzazione: ogni utente vede solo i clienti della propria org.
+    return db.scalars(
+        select(Client).where(Client.organization_id == user.organization_id).order_by(Client.name)
+    ).all()
 
 
 @router.post("/clients", response_model=ClientOut, status_code=201)
-def create_client(body: ClientIn, db: Session = Depends(get_db)):
-    c = Client(name=body.name, notes=body.notes)
+def create_client(body: ClientIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    c = Client(name=body.name, notes=body.notes, organization_id=user.organization_id)
     db.add(c); db.commit(); db.refresh(c)
     return c
 

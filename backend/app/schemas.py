@@ -360,3 +360,68 @@ class HealthOut(BaseModel):
     status: str
     provider_mode: str
     rev: str
+
+
+# ---------- Autenticazione / utenti / crediti ----------
+class RegisterIn(BaseModel):
+    email: str
+    password: str
+    organization_name: str = "La mia organizzazione"
+    full_name: str | None = None
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class MeOut(BaseModel):
+    id: int
+    email: str
+    full_name: str | None = None
+    role: str
+    is_admin: bool
+    organization_id: int
+    credits: int | None = None
+    credits_used: int = 0
+    credits_remaining: int | None = None
+
+
+class UsageOut(BaseModel):
+    scope: Literal["org", "user"]
+    requests_used: int
+    requests_limit: int | None = None
+    requests_remaining: int | None = None
+    pct_used: float = 0.0
+
+
+class AdminUserOut(BaseModel):
+    id: int
+    email: str
+    full_name: str | None = None
+    role: str
+    is_active: bool
+    credits: int | None = None
+    credits_used: int = 0
+    credits_remaining: int | None = None
+    created_at: dt.datetime | None = None
+
+
+class AdminUserCreate(BaseModel):
+    email: str
+    password: str
+    full_name: str | None = None
+    credits: int | None = None
+
+
+class AdminUserPatch(BaseModel):
+    credits: int | None = None
+    reset_used: bool | None = None
+    is_active: bool | None = None
+    password: str | None = None
+    full_name: str | None = None

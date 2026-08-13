@@ -4,6 +4,23 @@
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "http://localhost:8000";
 
+// ---- Autenticazione: token in localStorage + header su ogni richiesta ----
+const TOKEN_KEY = "argus-total-token";
+export function getToken(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+export function setToken(tok: string) {
+  try { localStorage.setItem(TOKEN_KEY, tok); } catch { /* */ }
+}
+export function clearToken() {
+  try { localStorage.removeItem(TOKEN_KEY); } catch { /* */ }
+}
+// Errore con codice HTTP, per distinguere 401 (login) e 402 (crediti esauriti).
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) { super(message); this.status = status; }
+}
+
 // ---- Geometria ----
 export type Polygon = {
   type: "Polygon";
@@ -94,14 +111,24 @@ export type LayoutParams = {
 };
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const tok = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
+      ...(init?.headers || {}),
+    },
   });
   if (!res.ok) {
     let detail = res.statusText;
     try { detail = (await res.json())?.detail ?? detail; } catch { /* */ }
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    // Sessione scaduta/assente: torna al login (se non è già una pagina pubblica).
+    if (res.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth")) {
+      clearToken();
+      if (!location.pathname.startsWith("/login") && !location.pathname.startsWith("/view")) location.href = "/login";
+    }
+    throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -110,6 +137,33 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 // ---- Meta ----
 export const getHealth = () =>
   req<{ status: string; provider_mode: string; rev: string }>("/api/health");
+
+// ---- Autenticazione / utenti / crediti ----
+export type Me = {
+  id: number; email: string; full_name?: string | null; role: string; is_admin: boolean;
+  organization_id: number; credits: number | null; credits_used: number; credits_remaining: number | null;
+};
+export type Usage = {
+  scope: "org" | "user"; requests_used: number; requests_limit: number | null;
+  requests_remaining: number | null; pct_used: number;
+};
+export type AdminUser = {
+  id: number; email: string; full_name?: string | null; role: string; is_active: boolean;
+  credits: number | null; credits_used: number; credits_remaining: number | null; created_at?: string | null;
+};
+export const authRegister = (email: string, password: string, organization_name: string, full_name?: string) =>
+  req<{ access_token: string }>("/api/auth/register", { method: "POST", body: JSON.stringify({ email, password, organization_name, full_name }) });
+export const authLogin = (email: string, password: string) =>
+  req<{ access_token: string }>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+export const authMe = () => req<Me>("/api/auth/me");
+export const fetchUsage = () => req<Usage>("/api/usage");
+export const adminListUsers = () => req<AdminUser[]>("/api/admin/users");
+export const adminCreateUser = (body: { email: string; password: string; full_name?: string; credits?: number | null }) =>
+  req<AdminUser>("/api/admin/users", { method: "POST", body: JSON.stringify(body) });
+export const adminUpdateUser = (id: number, body: { credits?: number | null; reset_used?: boolean; is_active?: boolean; password?: string; full_name?: string }) =>
+  req<AdminUser>(`/api/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+export const adminDeleteUser = (id: number) =>
+  req<{ ok: boolean }>(`/api/admin/users/${id}`, { method: "DELETE" });
 
 // ---- Clienti ----
 export const listClients = () => req<Client[]>("/api/clients");

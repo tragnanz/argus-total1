@@ -41,14 +41,20 @@ def _ensure_columns() -> None:
     SQLite e Postgres; ignora l'errore se la colonna c'è già."""
     from sqlalchemy import inspect, text
     insp = inspect(engine)
-    if "areas" not in insp.get_table_names():
-        return
-    cols = {c["name"] for c in insp.get_columns("areas")}
+    tables = set(insp.get_table_names())
     stmts = []
-    if "parent_area_id" not in cols:
-        stmts.append("ALTER TABLE areas ADD COLUMN parent_area_id INTEGER")
-    if "kind" not in cols:
-        stmts.append("ALTER TABLE areas ADD COLUMN kind VARCHAR(20) DEFAULT 'field'")
+    if "areas" in tables:
+        cols = {c["name"] for c in insp.get_columns("areas")}
+        if "parent_area_id" not in cols:
+            stmts.append("ALTER TABLE areas ADD COLUMN parent_area_id INTEGER")
+        if "kind" not in cols:
+            stmts.append("ALTER TABLE areas ADD COLUMN kind VARCHAR(20) DEFAULT 'field'")
+    # Multi-tenant: organizzazione sui clienti già esistenti (NULL → assegnata
+    # alla prima organizzazione creata, vedi backfill nella registrazione owner).
+    if "clients" in tables:
+        ccols = {c["name"] for c in insp.get_columns("clients")}
+        if "organization_id" not in ccols:
+            stmts.append("ALTER TABLE clients ADD COLUMN organization_id INTEGER")
     for s in stmts:
         try:
             with engine.begin() as conn:

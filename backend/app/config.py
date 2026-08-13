@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     cdse_monthly_requests: int = 10_000
     cdse_monthly_pu: int = 10_000
 
+    # Autenticazione: segreto per firmare i token JWT (in prod SEMPRE via env
+    # JWT_SECRET, almeno 32 caratteri casuali).
+    jwt_secret: str = "argus-total-change-me-in-prod-0123456789abcdef"
+    jwt_expire_minutes: int = 60 * 24 * 14     # durata token: 14 giorni
+
     # CORS: origini del frontend autorizzate (CSV). "*" per aprire tutto in dev.
     cors_origins: str = "*"
 

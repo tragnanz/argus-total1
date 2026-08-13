@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 from ..deps import get_client
+from ..db import get_db
+from ..models import User
+from ..security import charge, get_current_user
 from ..schemas import LayoutIn, LayoutOut
 
 from analysis.layout import compute_layout
@@ -12,7 +16,8 @@ router = APIRouter(prefix="/api/layout", tags=["layout"])
 
 
 @router.post("", response_model=LayoutOut)
-def layout(body: LayoutIn, client=Depends(get_client)):
+def layout(body: LayoutIn, client=Depends(get_client), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    charge(db, user)
     params = {
         "config": body.config, "radius_m": body.radius_m, "gap_m": body.gap_m,
         "transport": body.transport,

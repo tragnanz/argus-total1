@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import JSZip from "jszip";
 import type { MapHandle, PivotItem, PivotSel } from "@/components/MapCanvas";
@@ -12,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.106";
+const REV = "v0.6.107";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -393,8 +394,16 @@ function SectionHead({ title, help, mb = "mb-2" }: { title: string; help?: strin
   );
 }
 
+// Colore del widget crediti in base alla % usata: verde <50%, arancio <80%, rosso.
+function creditColor(u: api.Usage): string {
+  if (u.requests_limit == null || u.requests_limit === 0) return "#123524";
+  const pct = u.pct_used ?? (100 * u.requests_used / u.requests_limit);
+  return pct >= 80 ? "#b23b1e" : pct >= 50 ? "#c07a1e" : "#123524";
+}
+
 export default function Page() {
   const { t, lang, setLang, fmt, fmtDate } = useI18n();
+  const router = useRouter();
   // Unità di misura: metrico (default) o imperiale. Converte i valori mostrati.
   const [units, setUnits] = useState<"metric" | "imperial">("metric");
   const imperial = units === "imperial";
@@ -410,6 +419,38 @@ export default function Page() {
   const mapApi = useRef<MapHandle | null>(null);
 
   const [providerMode, setProviderMode] = useState<string>("");
+  // --- Autenticazione / crediti ---
+  const [me, setMe] = useState<api.Me | null>(null);
+  const [usage, setUsage] = useState<api.Usage | null>(null);
+  const [showUsers, setShowUsers] = useState(false);
+  const [adminUsers, setAdminUsers] = useState<api.AdminUser[]>([]);
+  const [nuEmail, setNuEmail] = useState("");
+  const [nuName, setNuName] = useState("");
+  const [nuPass, setNuPass] = useState("");
+  const [nuCredits, setNuCredits] = useState<number>(50);
+  const [usersMsg, setUsersMsg] = useState("");
+  const refreshUsage = () => { api.fetchUsage().then(setUsage).catch(() => {}); };
+  function logout() { api.clearToken(); router.replace("/login"); }
+  async function openUsers() {
+    setShowUsers(true); setUsersMsg("");
+    try { setAdminUsers(await api.adminListUsers()); } catch (e) { setUsersMsg(e instanceof Error ? e.message : String(e)); }
+  }
+  async function createMember() {
+    setUsersMsg("");
+    try {
+      await api.adminCreateUser({ email: nuEmail.trim(), password: nuPass, full_name: nuName.trim() || undefined, credits: nuCredits });
+      setNuEmail(""); setNuName(""); setNuPass("");
+      setAdminUsers(await api.adminListUsers()); refreshUsage();
+    } catch (e) { setUsersMsg(e instanceof Error ? e.message : String(e)); }
+  }
+  async function patchMember(id: number, body: Parameters<typeof api.adminUpdateUser>[1]) {
+    try { await api.adminUpdateUser(id, body); setAdminUsers(await api.adminListUsers()); refreshUsage(); }
+    catch (e) { setUsersMsg(e instanceof Error ? e.message : String(e)); }
+  }
+  async function removeMember(id: number) {
+    try { await api.adminDeleteUser(id); setAdminUsers(await api.adminListUsers()); refreshUsage(); }
+    catch (e) { setUsersMsg(e instanceof Error ? e.message : String(e)); }
+  }
   const [clients, setClients] = useState<Client[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [areas, setAreas] = useState<Area[]>([]);
@@ -612,7 +653,17 @@ export default function Page() {
   // ---- caricamenti iniziali ----
   useEffect(() => { mapApi.current?.setUnits(imperial); }, [imperial]);
   useEffect(() => { api.getHealth().then((h) => setProviderMode(h.provider_mode)).catch(() => {}); }, []);
-  useEffect(() => { refreshClients(); }, []);
+  // Guardia di autenticazione: senza token → login; altrimenti carica profilo e
+  // crediti. L'uso viene aggiornato periodicamente (riflette i consumi).
+  useEffect(() => {
+    if (!api.getToken()) { router.replace("/login"); return; }
+    api.authMe().then(setMe).catch(() => {});   // 401 → redirect gestito in api.req
+    refreshUsage();
+    const iv = setInterval(refreshUsage, 15000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => { if (api.getToken()) refreshClients(); }, []);
   useEffect(() => { refreshProjects(clientId); setProjectId(null); }, [clientId]);
   useEffect(() => {
     if (projectId) { openProject(projectId); refreshShares(projectId); }
@@ -701,7 +752,7 @@ export default function Page() {
       showErr(e); setAutosave("error");
     }
   }
-  function showErr(e: unknown) { setMsg(e instanceof Error ? e.message : String(e)); }
+  function showErr(e: unknown) { setMsg(e instanceof Error ? e.message : String(e)); refreshUsage(); }
 
   // ---- clienti / progetti ----
   async function newClient() {
@@ -1661,6 +1712,7 @@ export default function Page() {
     setPivots(mergedP); setPivotLines(mergedL); setPivotSel({ mode: "none", idx: -1 });
     const netHa = mergedP.reduce((s, x) => s + (Math.PI * x.r * x.r) / 10000, 0);
     setGuided({ geojson: fcFromModel(mergedP, mergedL), meta: { n_pivots: mergedP.length, radius_m: radiusM, net_ha: Math.round(netHa * 10) / 10, safety_m: safetyM } });
+    refreshUsage();
   }
   // STANDARD: raggio scelto dall'utente (+ eventuale % di pivot marginali).
   async function insertImpiantiActive() {
@@ -2168,6 +2220,26 @@ export default function Page() {
             className="rounded-xl px-3 text-[13px] outline-none border-none text-white shadow" style={{ background: "#123524", height: 44 }}>
             {LANGS.map((l) => <option key={l.code} value={l.code} className="text-black">{l.label}</option>)}
           </select>
+
+          {/* Widget crediti: member → i propri; admin → totale organizzazione */}
+          {usage && (
+            <div className="rounded-xl px-3 text-[13px] text-white shadow flex flex-col justify-center leading-none" style={{ background: creditColor(usage), height: 44 }} title={t("Crediti")}>
+              <span className="text-[9px] uppercase tracking-wide opacity-90">{usage.scope === "user" ? t("I tuoi crediti") : t("Totale")}</span>
+              <b className="tabular-nums text-[13px]">{usage.requests_used}{usage.requests_limit != null ? ` / ${usage.requests_limit}` : ""}</b>
+            </div>
+          )}
+
+          {/* Gestione utenti (solo admin) */}
+          {me?.is_admin && (
+            <button onClick={openUsers} title={t("Gestione utenti")}
+              className="rounded-xl px-3 text-[18px] text-white shadow flex items-center" style={{ background: "#123524", height: 44 }}>👥</button>
+          )}
+
+          {/* Esci */}
+          {me && (
+            <button onClick={logout} title={t("Esci")}
+              className="rounded-xl px-3 text-[13px] font-medium text-white shadow" style={{ background: "#123524", height: 44 }}>{t("Esci")}</button>
+          )}
         </div>
 
         {/* Colonna sinistra: pannello Progetto + widget Proprietà (impilati) */}
@@ -3072,6 +3144,61 @@ export default function Page() {
 
         {/* Revisione software */}
         <div className="absolute bottom-1 left-3 text-[11px] text-white/80 z-10 pointer-events-none">Argus Total {REV} · by Nabu srl — Agrostar Group srl</div>
+
+        {/* Modale gestione utenti e crediti (solo admin) */}
+        {showUsers && me?.is_admin && (
+          <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={() => setShowUsers(false)}>
+            <div className="w-full max-w-2xl max-h-[85vh] bg-white rounded-2xl shadow-xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              <div className="px-4 py-3 flex items-center justify-between border-b border-black/5">
+                <div className="font-semibold text-brand-darker">{t("Gestione utenti e crediti")}</div>
+                <button onClick={() => setShowUsers(false)} className="text-sage-dark hover:text-brand text-xl leading-none px-2">×</button>
+              </div>
+
+              <div className="overflow-auto scroll-soft p-4 space-y-4">
+                {/* Nuovo utente */}
+                <div className="bg-panel rounded-lg p-3">
+                  <div className="text-xs font-semibold text-sage-dark mb-2">{t("Nuovo utente")}</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input className="field-input" placeholder={t("Email")} value={nuEmail} onChange={(e) => setNuEmail(e.target.value)} />
+                    <input className="field-input" placeholder={t("Nome (opzionale)")} value={nuName} onChange={(e) => setNuName(e.target.value)} />
+                    <input className="field-input" type="password" placeholder={t("Password (min 8)")} value={nuPass} onChange={(e) => setNuPass(e.target.value)} />
+                    <input className="field-input" type="number" min={0} step={1} placeholder={t("Crediti")} value={nuCredits} onChange={(e) => setNuCredits(Number(e.target.value))} />
+                  </div>
+                  <button className="btn-primary mt-2" onClick={createMember}>{t("Crea utente")}</button>
+                </div>
+
+                {usersMsg && <p className="text-sm text-danger">{usersMsg}</p>}
+
+                {/* Elenco utenti */}
+                <div className="space-y-2">
+                  {adminUsers.map((u) => (
+                    <div key={u.id} className="bg-panel rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-brand-darker truncate">{u.email}{!u.is_active && <span className="text-danger"> · {t("disattivato")}</span>}</div>
+                        <div className="text-[11px] text-sage-dark">{u.role === "owner" ? t("proprietario") : u.role}{u.full_name ? ` · ${u.full_name}` : ""}</div>
+                      </div>
+                      {u.role === "owner" ? (
+                        <span className="text-[11px] text-sage-dark italic">{t("crediti illimitati")}</span>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm tabular-nums text-sage-dark">{u.credits_used} /</span>
+                          <input type="number" min={0} step={1} defaultValue={u.credits ?? 0}
+                            onBlur={(e) => patchMember(u.id, { credits: Number(e.target.value) })}
+                            className="field-input w-20 px-2 py-1 text-sm" title={t("Crediti assegnati")} />
+                          <button className="btn-ghost px-2 py-1 text-xs" onClick={() => patchMember(u.id, { reset_used: true })} title={t("Azzera i crediti usati")}>{t("Azzera")}</button>
+                          <button className="btn-ghost px-2 py-1 text-xs" onClick={() => patchMember(u.id, { is_active: !u.is_active })}>{u.is_active ? t("Disattiva") : t("Attiva")}</button>
+                          <button className="btn-ghost px-2 py-1 text-xs text-danger" onClick={() => removeMember(u.id)} title={t("Elimina")}>×</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <p className="text-[11px] text-sage-dark">{t("Ogni operazione consuma 1 credito; l'amministratore ha crediti illimitati.")}</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );

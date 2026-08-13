@@ -14,10 +14,41 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
 
+class Organization(Base):
+    """Organizzazione (tenant). Creata alla prima registrazione; contiene gli
+    utenti e i dati (clienti/progetti) condivisi dall'organizzazione."""
+    __tablename__ = "organizations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class User(Base):
+    """Utente dell'organizzazione. Ruoli: owner (super-admin, crediti illimitati),
+    admin, member (con tetto di crediti), viewer. La password è salvata solo come
+    hash bcrypt. `credits` NULL = illimitati (owner/admin)."""
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="member")  # owner|admin|member|viewer
+    is_active: Mapped[bool] = mapped_column(Integer, nullable=False, default=1)
+    credits: Mapped[int | None] = mapped_column(Integer, nullable=True)          # NULL = illimitati
+    credits_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Client(Base):
     __tablename__ = "clients"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())

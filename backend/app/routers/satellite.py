@@ -8,8 +8,12 @@ import base64
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 from ..deps import get_client
+from ..db import get_db
+from ..models import User
+from ..security import charge, get_current_user
 from ..schemas import (DemIn, PreviewIn, PreviewOut, ScenesIn, SceneOut)
 
 from processing.satellite_export import (list_scenes, preview,
@@ -22,7 +26,8 @@ DEM_CMAP = "terrain"
 
 
 @router.post("/scenes", response_model=list[SceneOut])
-def scenes(body: ScenesIn, client=Depends(get_client)):
+def scenes(body: ScenesIn, client=Depends(get_client), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    charge(db, user)
     try:
         rows = list_scenes(client, body.geom.model_dump(),
                            months_back=body.months_back, max_cloud=body.max_cloud)
@@ -32,7 +37,8 @@ def scenes(body: ScenesIn, client=Depends(get_client)):
 
 
 @router.post("/preview", response_model=PreviewOut)
-def preview_index(body: PreviewIn, client=Depends(get_client)):
+def preview_index(body: PreviewIn, client=Depends(get_client), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    charge(db, user)
     try:
         image, bounds, meta = preview(client, body.geom.model_dump(),
                                       body.index, body.date, normalized=body.normalized)
@@ -42,8 +48,9 @@ def preview_index(body: PreviewIn, client=Depends(get_client)):
 
 
 @router.post("/dem", response_model=PreviewOut)
-def preview_dem(body: DemIn, client=Depends(get_client)):
+def preview_dem(body: DemIn, client=Depends(get_client), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Anteprima DEM (quota) sull'area: 1 sola immagine leggera (nessun timeout)."""
+    charge(db, user)
     geom = body.geom.model_dump()
     try:
         epsg, minx, miny, maxx, maxy, to_wgs = _utm_bbox(geom)

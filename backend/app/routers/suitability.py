@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 from ..deps import get_client
+from ..db import get_db
+from ..models import User
+from ..security import charge, get_current_user
 from ..schemas import SuitabilityIn, SuitabilityOut
 
 from analysis.suitability import compute_suitability
@@ -12,7 +16,8 @@ router = APIRouter(prefix="/api/suitability", tags=["suitability"])
 
 
 @router.post("", response_model=SuitabilityOut)
-def suitability(body: SuitabilityIn, client=Depends(get_client)):
+def suitability(body: SuitabilityIn, client=Depends(get_client), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    charge(db, user)
     params = {
         "weights": body.weights.model_dump(),
         "slope_ideal_pct": body.slope_ideal_pct,
