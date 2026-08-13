@@ -412,6 +412,9 @@ const EN: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Analysis",
   "Rilievo": "Survey",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Pipes",
+  "tubazioni": "pipes",
 };
 
 const FR: Dict = {
@@ -786,6 +789,9 @@ const FR: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Analyse",
   "Rilievo": "Relevé",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Conduites",
+  "tubazioni": "conduites",
 };
 
 const ES: Dict = {
@@ -1160,6 +1166,9 @@ const ES: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Análisis",
   "Rilievo": "Levantamiento",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Tuberías",
+  "tubazioni": "tuberías",
 };
 
 const PT: Dict = {
@@ -1534,6 +1543,9 @@ const PT: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Análise",
   "Rilievo": "Levantamento",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Tubagens",
+  "tubazioni": "tubagens",
 };
 
 const RO: Dict = {
@@ -1910,6 +1922,9 @@ const RO: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Analiză",
   "Rilievo": "Topografie",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Conducte",
+  "tubazioni": "conducte",
 };
 
 const KK: Dict = {
@@ -2286,6 +2301,9 @@ const KK: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Талдау",
   "Rilievo": "Топография",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Құбырлар",
+  "tubazioni": "құбырлар",
 };
 
 const AR: Dict = {
@@ -2660,6 +2678,9 @@ const AR: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "التحليل",
   "Rilievo": "المسح",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "أنابيب",
+  "tubazioni": "أنابيب",
 };
 
 const ZH: Dict = {
@@ -3036,6 +3057,9 @@ const ZH: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "分析",
   "Rilievo": "地形测量",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "管道",
+  "tubazioni": "管道",
 };
 
 const HU: Dict = {
@@ -3412,6 +3436,9 @@ const HU: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Elemzés",
   "Rilievo": "Felmérés",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Csővezetékek",
+  "tubazioni": "csővezetékek",
 };
 
 const ID: Dict = {
@@ -3788,6 +3815,9 @@ const ID: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Analisis",
   "Rilievo": "Survei",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Pipa",
+  "tubazioni": "pipa",
 };
 
 const DE: Dict = {
@@ -4158,6 +4188,9 @@ const DE: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Analyse",
   "Rilievo": "Vermessung",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Rohrleitungen",
+  "tubazioni": "Rohrleitungen",
 };
 
 const PL: Dict = {
@@ -4530,6 +4563,9 @@ const PL: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Analiza",
   "Rilievo": "Topografia",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Rurociągi",
+  "tubazioni": "rurociągi",
 };
 
 const BG: Dict = {
@@ -4902,6 +4938,9 @@ const BG: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Анализ",
   "Rilievo": "Топография",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Тръби",
+  "tubazioni": "тръби",
 };
 
 const RU: Dict = {
@@ -5274,6 +5313,9 @@ const RU: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Анализ",
   "Rilievo": "Топография",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Трубопроводы",
+  "tubazioni": "трубопроводы",
 };
 
 const AF: Dict = {
@@ -5646,6 +5688,9 @@ const AF: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Analise",
   "Rilievo": "Opmeting",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Pype",
+  "tubazioni": "pype",
 };
 
 const MS: Dict = {
@@ -6018,6 +6063,9 @@ const MS: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Analisis",
   "Rilievo": "Ukur Tanah",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Paip",
+  "tubazioni": "paip",
 };
 
 const VI: Dict = {
@@ -6390,6 +6438,9 @@ const VI: Dict = {
   // --- v0.6.108: etichette menu ---
   "Analisi": "Phân tích",
   "Rilievo": "Trắc địa",
+  // --- v0.6.109: tubazioni come oggetti ---
+  "Tubazioni": "Đường ống",
+  "tubazioni": "đường ống",
 };
 
 const TR: Record<Exclude<Lang, "it">, Dict> = {

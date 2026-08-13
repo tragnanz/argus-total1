@@ -49,6 +49,7 @@ export default function ViewPage({ params }: { params: { token: string } }) {
         // La visibilità del LINK (config) ha la precedenza; senza config, quella salvata del progetto.
         const hiddenField = (areaId: number) => cfg.hiddenFields ? !!cfg.hiddenFields[areaId] : !!styleLayer?.hiddenFields?.[areaId];
         const hiddenPivot = (areaId: number) => cfg.hiddenPivots ? !!cfg.hiddenPivots[areaId] : !!styleLayer?.hiddenPivots?.[areaId];
+        const hiddenPipe = (areaId: number) => cfg.hiddenPipes ? !!cfg.hiddenPipes[areaId] : !!styleLayer?.hiddenPipes?.[areaId];
         // Rispetta la visibilità impostata: i livelli nascosti NON compaiono nel link.
         const polys = areas.filter((a) => a.kind !== "macro" && !hiddenField(a.id));
         m.setFields(polys.map((a) => ({ id: a.id, name: a.name, geom: a.geojson, style: styleFor(a.id), level: levelFor(a.id) })), null, []);
@@ -59,8 +60,15 @@ export default function ViewPage({ params }: { params: { token: string } }) {
         const layers: Layer[] = data.layers || [];
         const pv = layers.filter((x) => x.kind === "pivots").map((x) => x.data).pop();
         if (pv?.geojson) {
+          // Pivot (con le misure) + tubazioni di adduzione, ognuno secondo la
+          // propria visibilità: ciò che è nascosto non compare nel link.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const feats = (pv.geojson.features || []).filter((f: any) => f?.properties?.kind === "pivot" && !hiddenPivot(f?.properties?.field));
+          const feats = (pv.geojson.features || []).filter((f: any) => {
+            const k = f?.properties?.kind;
+            if (k === "pivot") return !hiddenPivot(f?.properties?.field);
+            if (k === "pipe") return !hiddenPipe(f?.properties?.field);
+            return false;
+          });
           m.showLayouts([{ id: 1, fc: { type: "FeatureCollection", features: feats } }], { measures: true });
         }
 

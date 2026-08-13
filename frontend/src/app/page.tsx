@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.108";
+const REV = "v0.6.109";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -479,7 +479,7 @@ export default function Page() {
   const nextId = useRef(1);
   const pendingParentRef = useRef<number | null>(null);   // prossimo poligono disegnato → figlio di questo campo
   // Trascinamento generico nel pannello Livelli: campo O oggetto (canale/strada/invaso/pivot).
-  const dragRef = useRef<{ kind: "field" | "canal" | "road" | "water" | "pivot"; id: number | string } | null>(null);
+  const dragRef = useRef<{ kind: "field" | "canal" | "road" | "water" | "pivot" | "pipe"; id: number | string } | null>(null);
   // Salvataggio automatico: stato UI + riferimenti di serializzazione/serializzazione salvataggi.
   const savingRef = useRef(false);
   const pendingSaveRef = useRef<null | (() => Promise<void>)>(null);
@@ -590,6 +590,7 @@ export default function Page() {
   const [pivotLines, setPivotLines] = useState<{ kind: string; coords: number[][]; field?: number }[]>([]);
   const [dragOverField, setDragOverField] = useState<number | "root" | null>(null);   // evidenzia il bersaglio del trascinamento
   const [hiddenPivotFields, setHiddenPivotFields] = useState<Set<number>>(new Set()); // gruppi pivot (per campo) nascosti
+  const [hiddenPipeFields, setHiddenPipeFields] = useState<Set<number>>(new Set());   // gruppi tubazioni (per campo) nascosti
   const [openFolders, setOpenFolders] = useState({ campi: true, canali: true, strade: true, invasi: true, pivot: true }); // cartelle del pannello Livelli
   const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
   // Livello Strade (linee, con spessore) disegnabile/importabile: i pivot le rispettano.
@@ -699,7 +700,7 @@ export default function Page() {
   async function openProject(pid: number) {
     suppressAutosaveRef.current = true;   // non salvare durante il caricamento (evita di sovrascrivere il progetto)
     clearAllFields();
-    setCanals([]); setRoads([]); setWatercourses([]); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set());
+    setCanals([]); setRoads([]); setWatercourses([]); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set()); setHiddenPipeFields(new Set());
     try {
       const [areasList, layersList] = await Promise.all([api.listAreas(pid), api.listLayers(pid)]);
       setAreas(areasList); setLayers(layersList);
@@ -731,6 +732,13 @@ export default function Page() {
         const hp = new Set<number>();
         for (const aidStr of Object.keys(styleLayer.hiddenPivots)) { const fid = areaToField.get(Number(aidStr)); if (fid != null) hp.add(fid); }
         if (hp.size) setHiddenPivotFields(hp);
+      }
+      // Ripristina i gruppi tubazioni nascosti (progetti precedenti: nessuna
+      // chiave salvata → tutte visibili, com'era prima).
+      if (styleLayer?.hiddenPipes) {
+        const hq = new Set<number>();
+        for (const aidStr of Object.keys(styleLayer.hiddenPipes)) { const fid = areaToField.get(Number(aidStr)); if (fid != null) hq.add(fid); }
+        if (hq.size) setHiddenPipeFields(hq);
       }
       if (nf.length) {
         const firstRoot = nf.find((f) => f.parentId == null) ?? nf[0];
@@ -839,6 +847,17 @@ export default function Page() {
   function removeWater(i: number) { setWatercourses((ws) => { const arr = ws.filter((_, k) => k !== i); renderWater(arr); return arr; }); }
   function toggleRoadHidden(i: number) { setRoads((rs) => rs.map((r, k) => k === i ? { ...r, hidden: !r.hidden } : r)); }
   function togglePivotFieldHidden(fid: number) { setHiddenPivotFields((s) => { const n = new Set(s); if (n.has(fid)) n.delete(fid); else n.add(fid); return n; }); }
+  // ---- Tubazioni (oggetti): visibilità, rimozione e riassegnazione per campo ----
+  function togglePipeFieldHidden(fid: number) { setHiddenPipeFields((s) => { const n = new Set(s); if (n.has(fid)) n.delete(fid); else n.add(fid); return n; }); }
+  function removePipesOfField(fid: number) {
+    const ml = pivotLines.filter((l) => !(l.kind === "pipe" && (l.field ?? -1) === fid));
+    setPivotLines(ml);
+    if (guided) setGuided({ ...guided, geojson: fcFromModel(pivots, ml) });
+  }
+  function zoomToPipesOfField(fid: number) {
+    const first = pivotLines.find((l) => l.kind === "pipe" && (l.field ?? -1) === fid);
+    if (first?.coords?.length) zoomToCoords(first.coords);
+  }
   function removePivotsOfField(fid: number) {
     const mp = pivots.filter((p) => p.field !== fid);
     const ml = pivotLines.filter((l) => l.field !== fid);
@@ -919,7 +938,7 @@ export default function Page() {
   }
   // Assegna l'oggetto trascinato a un campo (fid) o lo scollega (fid=null).
   // Per i pivot «appartenere» = essere etichettati con quel campo.
-  function assignToField(p: { kind: "field" | "canal" | "road" | "water" | "pivot"; id: number | string } | null, fid: number | null) {
+  function assignToField(p: { kind: "field" | "canal" | "road" | "water" | "pivot" | "pipe"; id: number | string } | null, fid: number | null) {
     if (!p) return;
     if (p.kind === "field") { reparent(Number(p.id), fid); return; }
     if (p.kind === "canal") setCanals((cs) => cs.map((c, k) => k === Number(p.id) ? { ...c, owner: fid ?? undefined } : c));
@@ -928,7 +947,10 @@ export default function Page() {
     else if (p.kind === "pivot") {
       const src = Number(p.id);
       setPivots((ps) => ps.map((pv) => (pv.field ?? -1) === src ? { ...pv, field: fid ?? undefined } : pv));
-      setPivotLines((ls) => ls.map((l) => (l.field ?? -1) === src ? { ...l, field: fid ?? undefined } : l));
+      setPivotLines((ls) => ls.map((l) => l.kind !== "pipe" && (l.field ?? -1) === src ? { ...l, field: fid ?? undefined } : l));
+    } else if (p.kind === "pipe") {
+      const src = Number(p.id);
+      setPivotLines((ls) => ls.map((l) => l.kind === "pipe" && (l.field ?? -1) === src ? { ...l, field: fid ?? undefined } : l));
     }
     setMsg(fid != null ? t("Oggetto assegnato al campo ✓") : t("Oggetto scollegato dal campo ✓"));
   }
@@ -1251,6 +1273,7 @@ export default function Page() {
       const scores: Record<number, number> = {};
       const hiddenFields: Record<number, boolean> = {};
       const hiddenPivots: Record<number, boolean> = {};
+      const hiddenPipes: Record<number, boolean> = {};
       for (const f of fields) {
         const aid = fieldToArea.get(f.id); if (aid == null) continue;
         if (f.style) styles[aid] = f.style;
@@ -1259,8 +1282,9 @@ export default function Page() {
         if (f.hidden) hiddenFields[aid] = true;
       }
       for (const fid of hiddenPivotFields) { const aid = fieldToArea.get(fid); if (aid != null) hiddenPivots[aid] = true; }
-      const hasStyle = !!(Object.keys(styles).length || Object.keys(levels).length || Object.keys(scores).length || Object.keys(hiddenFields).length || Object.keys(hiddenPivots).length);
-      if (hasStyle) newLayerIds.push((await api.createLayer({ project_id: pid, kind: "styles", name: t("Stili"), data: { byArea: styles, levels, scores, hiddenFields, hiddenPivots } })).id);
+      for (const fid of hiddenPipeFields) { const aid = fieldToArea.get(fid); if (aid != null) hiddenPipes[aid] = true; }
+      const hasStyle = !!(Object.keys(styles).length || Object.keys(levels).length || Object.keys(scores).length || Object.keys(hiddenFields).length || Object.keys(hiddenPivots).length || Object.keys(hiddenPipes).length);
+      if (hasStyle) newLayerIds.push((await api.createLayer({ project_id: pid, kind: "styles", name: t("Stili"), data: { byArea: styles, levels, scores, hiddenFields, hiddenPivots, hiddenPipes } })).id);
 
       if (pivots.length) {
         const mp = pivots.map((p) => ({ ...p, field: ownerArea(p.field) ?? undefined }));
@@ -1558,7 +1582,11 @@ export default function Page() {
     // Filtra i gruppi pivot nascosti (per campo) e rimappa gli indici visibili → reali.
     const visIdx = pivots.map((_, k) => k).filter((k) => !hiddenPivotFields.has(pivots[k].field ?? -1));
     const visP = visIdx.map((k) => pivots[k]);
-    const visL = pivotLines.filter((l) => !hiddenPivotFields.has(l.field ?? -1));
+    // Le tubazioni hanno una visibilità propria (oggetto a sé); le altre linee
+    // seguono la visibilità del gruppo pivot del loro campo.
+    const visL = pivotLines.filter((l) => l.kind === "pipe"
+      ? !hiddenPipeFields.has(l.field ?? -1)
+      : !hiddenPivotFields.has(l.field ?? -1));
     if (!visP.length && !visL.length) { api2.clearPivots?.(); return; }
     let selForShow = pivotSel;
     if (pivotSel.mode === "single") { const vpos = visIdx.indexOf(pivotSel.idx); selForShow = vpos >= 0 ? { mode: "single", idx: vpos } : { mode: "none", idx: -1 }; }
@@ -1568,7 +1596,7 @@ export default function Page() {
       onBackground: () => setPivotSel({ mode: "none", idx: -1 }),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pivots, pivotLines, pivotSel, hiddenPivotFields]);
+  }, [pivots, pivotLines, pivotSel, hiddenPivotFields, hiddenPipeFields]);
 
   // Operazioni sul singolo pivot selezionato.
   const selPivot = pivotSel.mode === "single" && pivotSel.idx >= 0 ? pivots[pivotSel.idx] : null;
@@ -1951,10 +1979,12 @@ export default function Page() {
       const map = fieldToAreaRef.current;
       const hiddenFields: Record<number, boolean> = {};
       const hiddenPivots: Record<number, boolean> = {};
+      const hiddenPipes: Record<number, boolean> = {};
       for (const f of fields) if (f.hidden) { const aid = map.get(f.id); if (aid != null) hiddenFields[aid] = true; }
       for (const fid of hiddenPivotFields) { const aid = map.get(fid); if (aid != null) hiddenPivots[aid] = true; }
+      for (const fid of hiddenPipeFields) { const aid = map.get(fid); if (aid != null) hiddenPipes[aid] = true; }
       const name = (shareName.trim() || t("Vista {n}", { n: shares.length + 1 }));
-      const sv = await api.createShareView(pid, name, { hiddenFields, hiddenPivots });
+      const sv = await api.createShareView(pid, name, { hiddenFields, hiddenPivots, hiddenPipes });
       setShareName("");
       const url = `${window.location.origin}/view/${sv.token}`;
       try { await navigator.clipboard.writeText(url); setMsg(t("Link «{name}» creato e copiato ✓", { name: sv.name })); }
@@ -1994,9 +2024,10 @@ export default function Page() {
         pivots.map((p) => [Math.round(p.lat * 1e6), Math.round(p.lng * 1e6), p.r, p.field ?? 0, p.conn ?? ""]),
         pivotLines.map((l) => [l.kind, l.field ?? 0, l.coords.length]),
         [...hiddenPivotFields].sort((a, b) => a - b),
+        [...hiddenPipeFields].sort((a, b) => a - b),
       ]);
     } catch { return ""; }
-  }, [fields, canals, roads, watercourses, pivots, pivotLines, hiddenPivotFields]);
+  }, [fields, canals, roads, watercourses, pivots, pivotLines, hiddenPivotFields, hiddenPipeFields]);
   latestSigRef.current = saveSig;
 
   // Esegue un salvataggio serializzato: se ne arriva un altro mentre salva, lo
@@ -2046,10 +2077,16 @@ export default function Page() {
     for (const p of pivots) { const k = p.field ?? -1; m.set(k, (m.get(k) ?? 0) + 1); }
     return Array.from(m.entries()).map(([fid, n]) => ({ fid, n, name: fid < 0 ? t("Senza campo") : (fields.find((f) => f.id === fid)?.name ?? t("Campo")) }));
   })();
+  // Gruppi tubazioni per campo (le tubazioni sono oggetti come canali e pivot).
+  const pipeGroups = (() => {
+    const m = new Map<number, number>();
+    for (const l of pivotLines) if (l.kind === "pipe") { const k = l.field ?? -1; m.set(k, (m.get(k) ?? 0) + 1); }
+    return Array.from(m.entries()).map(([fid, n]) => ({ fid, n, name: fid < 0 ? t("Senza campo") : (fields.find((f) => f.id === fid)?.name ?? t("Campo")) }));
+  })();
 
   // Riga oggetto (canale/strada/invaso/pivot) trascinabile: occhio, zoom, elimina.
   // Trascinandola su un campo diventa «sua»; sulla dropzone si scollega.
-  function objRow(kind: "canal" | "road" | "water" | "pivot", dragId: number | string, key: string, hidden: boolean, onToggle: () => void, label: React.ReactNode, onZoom: () => void, onRemove: () => void) {
+  function objRow(kind: "canal" | "road" | "water" | "pivot" | "pipe", dragId: number | string, key: string, hidden: boolean, onToggle: () => void, label: React.ReactNode, onZoom: () => void, onRemove: () => void) {
     return (
       <li key={key} draggable
         onDragStart={(e) => { e.stopPropagation(); dragRef.current = { kind, id: dragId }; e.dataTransfer.effectAllowed = "move"; }}
@@ -2086,7 +2123,8 @@ export default function Page() {
     const ownedRoads = roads.map((r, i) => ({ r, i })).filter((x) => x.r.owner === f.id);
     const ownedWater = watercourses.map((w, i) => ({ w, i })).filter((x) => x.w.owner === f.id);
     const ownedPivN = pivots.filter((p) => p.field === f.id).length;
-    const hasNested = kids.length || (f.macros?.length ?? 0) || ownedCanals.length || ownedRoads.length || ownedWater.length || ownedPivN;
+    const ownedPipeN = pivotLines.filter((l) => l.kind === "pipe" && l.field === f.id).length;
+    const hasNested = kids.length || (f.macros?.length ?? 0) || ownedCanals.length || ownedRoads.length || ownedWater.length || ownedPivN || ownedPipeN;
     return (
       <li key={f.id}
         draggable
@@ -2132,6 +2170,7 @@ export default function Page() {
             {ownedRoads.map(({ r, i }) => objRow("road", r.id, `r${r.id}`, !!r.hidden, () => toggleRoadHidden(i), <>{t("Strada")} {i + 1} · {uM(r.width_m)}</>, () => zoomToCoords(r.coords), () => removeRoad(i)))}
             {ownedWater.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{w.kind} {i + 1}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
             {ownedPivN > 0 && objRow("pivot", f.id, `pv${f.id}`, hiddenPivotFields.has(f.id), () => togglePivotFieldHidden(f.id), <>{t("Pivot")} · {ownedPivN}</>, () => zoomToCoords(f.geom.coordinates[0]), () => removePivotsOfField(f.id))}
+            {ownedPipeN > 0 && objRow("pipe", f.id, `pi${f.id}`, hiddenPipeFields.has(f.id), () => togglePipeFieldHidden(f.id), <>{t("Tubazioni")} · {ownedPipeN}</>, () => zoomToPipesOfField(f.id), () => removePipesOfField(f.id))}
           </ul>
         ) : null}
       </li>
@@ -2336,7 +2375,8 @@ export default function Page() {
               const rItems = roads.map((r, i) => ({ r, i })).filter((x) => x.r.owner == null);
               const wItems = watercourses.map((w, i) => ({ w, i })).filter((x) => x.w.owner == null);
               const pGroups = pivotGroups.filter((g) => g.fid < 0 || !fields.some((f) => f.id === g.fid));
-              if (!cItems.length && !rItems.length && !wItems.length && !pGroups.length) return null;
+              const tGroups = pipeGroups.filter((g) => g.fid < 0 || !fields.some((f) => f.id === g.fid));
+              if (!cItems.length && !rItems.length && !wItems.length && !pGroups.length && !tGroups.length) return null;
               return (
                 <div className="mt-3 border-t border-brand/15 pt-2">
                   <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide mb-1">{t("Oggetti non assegnati")}</div>
@@ -2346,6 +2386,7 @@ export default function Page() {
                     {rItems.map(({ r, i }) => objRow("road", r.id, `r${r.id}`, !!r.hidden, () => toggleRoadHidden(i), <>{t("Strada")} {i + 1} · {uM(r.width_m)}</>, () => zoomToCoords(r.coords), () => removeRoad(i)))}
                     {wItems.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{w.kind} {i + 1}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
                     {pGroups.map((g) => objRow("pivot", g.fid, `pg${g.fid}`, hiddenPivotFields.has(g.fid), () => togglePivotFieldHidden(g.fid), <>{g.name} · {g.n} pivot</>, () => {}, () => removePivotsOfField(g.fid)))}
+                    {tGroups.map((g) => objRow("pipe", g.fid, `tg${g.fid}`, hiddenPipeFields.has(g.fid), () => togglePipeFieldHidden(g.fid), <>{g.name} · {g.n} {t("tubazioni")}</>, () => zoomToPipesOfField(g.fid), () => removePipesOfField(g.fid)))}
                   </ul>
                 </div>
               );
