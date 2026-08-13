@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.111";
+const REV = "v0.6.112";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -253,64 +253,95 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
   const toLL = (x: number, y: number): number[] => [x / mLng, y / mLat];
   const cap = Math.max(1, Math.round(maxPerLine || 999));
 
-  // Punto del canale più vicino a pt: restituisce il punto, la tangente locale
-  // (unitaria), la distanza e la posizione lungo il canale.
-  const cum: number[] = [0];
-  for (let k = 0; k < C.length - 1; k++) cum.push(cum[k] + Math.hypot(C[k + 1][0] - C[k][0], C[k + 1][1] - C[k][1]));
-  const onCanal = (pt: [number, number]) => {
-    let bd = Infinity, bk = 0, bt = 0, bq: [number, number] = C[0];
-    for (let k = 0; k < C.length - 1; k++) {
-      const a = C[k], b = C[k + 1]; const abx = b[0] - a[0], aby = b[1] - a[1];
-      const l2 = abx * abx + aby * aby || 1e-9;
-      const t = Math.max(0, Math.min(1, ((pt[0] - a[0]) * abx + (pt[1] - a[1]) * aby) / l2));
-      const qx = a[0] + abx * t, qy = a[1] + aby * t; const dd = (pt[0] - qx) ** 2 + (pt[1] - qy) ** 2;
-      if (dd < bd) { bd = dd; bk = k; bt = t; bq = [qx, qy]; }
-    }
-    const a = C[bk], b = C[bk + 1]; const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-    const T: [number, number] = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
-    const cross = T[0] * (pt[1] - bq[1]) - T[1] * (pt[0] - bq[0]);
-    return { q: bq, T, dist: Math.sqrt(bd), along: cum[bk] + bt * L, side: cross >= 0 ? 1 : -1 };
-  };
-
-  // Passo tipico tra pivot → larghezza delle colonne perpendicolari al canale.
+  // Passo tipico tra pivot (distanza dal vicino più prossimo).
   const nnd: number[] = [];
   for (let i = 0; i < P.length; i++) {
-    let best = Infinity;
-    for (let j = 0; j < P.length; j++) { if (i === j) continue; const d = (P[j][0] - P[i][0]) ** 2 + (P[j][1] - P[i][1]) ** 2; if (d < best) best = d; }
-    if (best < Infinity) nnd.push(Math.sqrt(best));
+    let b = Infinity;
+    for (let j = 0; j < P.length; j++) { if (i === j) continue; const d = (P[j][0] - P[i][0]) ** 2 + (P[j][1] - P[i][1]) ** 2; if (d < b) b = d; }
+    if (b < Infinity) nnd.push(Math.sqrt(b));
   }
-  const binw = Math.max(median(nnd) || 800, 1);
+  const pitch = median(nnd) || 800;
 
-  // Ogni pivot va nella colonna (posizione lungo il canale) del proprio LATO.
-  const info = P.map((pt, i) => ({ i, ...onCanal(pt) }));
-  const bins = new Map<string, typeof info>();
-  for (const f of info) {
-    const key = `${Math.round(f.along / binw)}|${f.side}`;
-    const arr = bins.get(key); if (arr) arr.push(f); else bins.set(key, [f]);
+  // Direzione media del canale → normale media (le tubazioni partono di lì).
+  let sx = 0, sy = 0;
+  for (let k = 0; k < C.length - 1; k++) { sx += C[k + 1][0] - C[k][0]; sy += C[k + 1][1] - C[k][1]; }
+  const L = Math.hypot(sx, sy) || 1;
+  const Tm: [number, number] = [sx / L, sy / L];
+  const Nm: [number, number] = [-Tm[1], Tm[0]];
+  const rot = (v: [number, number], a: number): [number, number] =>
+    [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a)];
+
+  // Raggruppa i pivot in file parallele alla direzione d (coordinata laterale).
+  const clusterFor = (d: [number, number]) => {
+    const p: [number, number] = [-d[1], d[0]];
+    const idx = P.map((_, i) => i).sort((a, b) => (P[a][0] * p[0] + P[a][1] * p[1]) - (P[b][0] * p[0] + P[b][1] * p[1]));
+    const cl: number[][] = []; let cur: number[] = []; let prev = NaN;
+    for (const i of idx) {
+      const u = P[i][0] * p[0] + P[i][1] * p[1];
+      if (cur.length && u - prev > 0.45 * pitch) { cl.push(cur); cur = []; }
+      cur.push(i); prev = u;
+    }
+    if (cur.length) cl.push(cur);
+    return { p, cl };
+  };
+
+  // Inclinazione: parte dalla perpendicolare al canale e ruota FINO A ±20° per
+  // allineare il maggior numero di centri (a parità, resta più perpendicolare).
+  let best: { deg: number; d: [number, number]; p: [number, number]; cl: number[][]; aligned: number } | null = null;
+  for (let deg = -20; deg <= 20; deg += 0.5) {
+    const d = rot(Nm, (deg * Math.PI) / 180);
+    const { p, cl } = clusterFor(d);
+    let aligned = 0;
+    for (const c of cl) {
+      const us = c.map((i) => P[i][0] * p[0] + P[i][1] * p[1]);
+      const m = median(us);
+      for (const u of us) if (Math.abs(u - m) <= 0.12 * pitch) aligned++;
+    }
+    if (!best || aligned > best.aligned || (aligned === best.aligned && Math.abs(deg) < Math.abs(best.deg))) best = { deg, d, p, cl, aligned };
   }
+  if (!best) return [];
+  const { d, p, cl } = best;
+
+  // Intersezione della retta (base B, direzione d) col tracciato del canale.
+  const crossings = (B: [number, number]): number[] => {
+    const out: number[] = [];
+    for (let k = 0; k < C.length - 1; k++) {
+      const a = C[k], b = C[k + 1]; const wx = b[0] - a[0], wy = b[1] - a[1];
+      const den = d[0] * wy - d[1] * wx; if (Math.abs(den) < 1e-9) continue;
+      const bx = a[0] - B[0], by = a[1] - B[1];
+      const s = (bx * wy - by * wx) / den;
+      const e = (d[0] * by - d[1] * bx) / -den;
+      if (e >= -0.02 && e <= 1.02) out.push(s);
+    }
+    return out;
+  };
 
   const pipes: number[][][] = [];
-  for (const list of bins.values()) {
-    list.sort((a, b) => a.dist - b.dist);
-    // Presa sul canale: punto medio della colonna, riportato sul tracciato.
-    const ref = list[0];
-    const sBar = list.reduce((s, f) => s + ((P[f.i][0] - ref.q[0]) * ref.T[0] + (P[f.i][1] - ref.q[1]) * ref.T[1]), 0) / list.length;
-    const tapRaw: [number, number] = [ref.q[0] + ref.T[0] * sBar, ref.q[1] + ref.T[1] * sBar];
-    const snap = onCanal(tapRaw);
-    const tap = snap.q;
-    // Direzione della tubazione: PERPENDICOLARE al canale, verso i pivot.
-    const N: [number, number] = [-snap.T[1] * ref.side, snap.T[0] * ref.side];
-    // Distanza di ogni pivot lungo la perpendicolare, dal punto di presa.
-    const ts = list.map((f) => (P[f.i][0] - tap[0]) * N[0] + (P[f.i][1] - tap[1]) * N[1]).filter((v) => v > 0).sort((a, b) => a - b);
-    if (!ts.length) continue;
-    // Una linea retta per ogni gruppo di `cap` pivot: la prima parte dal canale,
-    // le successive proseguono dove finisce la precedente (nessuna sovrapposizione).
-    let from = 0;
-    for (let c = 0; c < ts.length; c += cap) {
-      const to = ts[Math.min(c + cap, ts.length) - 1];
-      if (to <= from) continue;
-      pipes.push([toLL(tap[0] + N[0] * from, tap[1] + N[1] * from), toLL(tap[0] + N[0] * to, tap[1] + N[1] * to)]);
-      from = to;
+  for (const c of cl) {
+    const us = c.map((i) => P[i][0] * p[0] + P[i][1] * p[1]);
+    const u0 = median(us);                                   // la retta passa per i centri della fila
+    const B: [number, number] = [p[0] * u0, p[1] * u0];
+    const ss = c.map((i) => ({ i, s: (P[i][0] - B[0]) * d[0] + (P[i][1] - B[1]) * d[1] })).sort((x, y) => x.s - y.s);
+    const xs = crossings(B);
+    const med = median(ss.map((o) => o.s));
+    const sc = xs.length ? xs.reduce((a, b) => (Math.abs(b - med) < Math.abs(a - med) ? b : a)) : null;
+    // Dal punto di presa sul canale verso l'esterno, sui due lati.
+    const groups: { tap: number; list: { i: number; s: number }[] }[] = [];
+    if (sc == null) groups.push({ tap: ss[0].s, list: ss });
+    else {
+      const below = ss.filter((o) => o.s < sc).sort((a, b) => b.s - a.s);
+      const above = ss.filter((o) => o.s >= sc).sort((a, b) => a.s - b.s);
+      if (below.length) groups.push({ tap: sc, list: below });
+      if (above.length) groups.push({ tap: sc, list: above });
+    }
+    for (const g of groups) {
+      let from = g.tap;
+      for (let k = 0; k < g.list.length; k += cap) {
+        const to = g.list[Math.min(k + cap, g.list.length) - 1].s;
+        if (Math.abs(to - from) < 1e-6) continue;
+        pipes.push([toLL(B[0] + d[0] * from, B[1] + d[1] * from), toLL(B[0] + d[0] * to, B[1] + d[1] * to)]);
+        from = to;
+      }
     }
   }
   return pipes;
@@ -3077,7 +3108,7 @@ export default function Page() {
               </div>
 
               <div className="text-[10px] text-sage-dark bg-white/40 rounded-md p-1.5 mt-2 leading-relaxed">
-                {t("Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.", { n: pipeMaxPerLine })}
+                {t("Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.", { n: pipeMaxPerLine })}
                 {nPipes > 0 && <> · {t("Tubazioni attive")}: <b>{nPipes}</b></>}
               </div>
 

@@ -418,6 +418,8 @@ const EN: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Straight lines perpendicular to the canal: each pipe starts from the canal and runs into the field, serving the row of pivots in front of it.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Each pipe starts from the canal and is perpendicular to it; it serves at most {n} pivots per line.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Straight lines, all parallel: they start at the canal, tilted up to ±20° from the perpendicular to line up with the pivot centres; each line serves at most {n} pivots.",
 };
 
 const FR: Dict = {
@@ -798,6 +800,8 @@ const FR: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Lignes droites et perpendiculaires au canal : chaque conduite part du canal et pénètre dans le champ en desservant la rangée de pivots située devant elle.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Chaque conduite part du canal et lui est perpendiculaire ; elle dessert au maximum {n} pivots par ligne.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Lignes droites et toutes parallèles : elles partent du canal, inclinées jusqu'à ±20° par rapport à la perpendiculaire pour s'aligner sur les centres des pivots ; chaque ligne dessert au maximum {n} pivots.",
 };
 
 const ES: Dict = {
@@ -1178,6 +1182,8 @@ const ES: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Líneas rectas y perpendiculares al canal: cada tubería parte del canal y entra en el campo dando servicio a la fila de pivotes que tiene delante.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Cada tubería parte del canal y es perpendicular a él; da servicio a un máximo de {n} pivotes por línea.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Líneas rectas y todas paralelas: parten del canal, inclinadas hasta ±20° respecto a la perpendicular para alinearse con los centros de los pivotes; cada línea sirve como máximo {n} pivotes.",
 };
 
 const PT: Dict = {
@@ -1558,6 +1564,8 @@ const PT: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Linhas retas e perpendiculares ao canal: cada tubagem parte do canal e entra no campo, servindo a fila de pivôs que tem à frente.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Cada tubagem parte do canal e é perpendicular a este; serve no máximo {n} pivôs por linha.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Linhas retas e todas paralelas: partem do canal, inclinadas até ±20° em relação à perpendicular para se alinharem com os centros dos pivôs; cada linha serve no máximo {n} pivôs.",
 };
 
 const RO: Dict = {
@@ -1940,6 +1948,8 @@ const RO: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Linii drepte și perpendiculare pe canal: fiecare conductă pornește de la canal și intră în câmp, deservind rândul de pivoturi din fața sa.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Fiecare conductă pornește de la canal și este perpendiculară pe acesta; deservește cel mult {n} pivoturi pe linie.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Linii drepte și toate paralele: pornesc de la canal, înclinate până la ±20° față de perpendiculară pentru a se alinia cu centrele pivoturilor; fiecare linie deservește cel mult {n} pivoturi.",
 };
 
 const KK: Dict = {
@@ -2322,6 +2332,8 @@ const KK: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Каналға перпендикуляр түзу сызықтар: әрбір құбыр каналдан басталып, алқапқа еніп, өз алдындағы пивот қатарына қызмет етеді.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Әрбір құбыр каналдан басталады және оған перпендикуляр; бір сызыққа ең көбі {n} пивотқа қызмет етеді.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Түзу және бір-біріне параллель сызықтар: каналдан басталады, пивот орталықтарымен туралау үшін перпендикулярдан ±20°-қа дейін көлбеу; әрбір сызық ең көп {n} пивотқа қызмет етеді.",
 };
 
 const AR: Dict = {
@@ -2702,6 +2714,8 @@ const AR: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "خطوط مستقيمة وعمودية على القناة: يبدأ كل أنبوب من القناة ويدخل الحقل ليخدم صف المحاور الذي أمامه.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "يبدأ كل أنبوب من القناة ويكون عموديًا عليها؛ ويخدم {n} محور كحد أقصى لكل خط.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "خطوط مستقيمة ومتوازية جميعًا: تبدأ من القناة، ومائلة حتى ±20° عن العمودي لتتوافق مع مراكز المحاور؛ ويخدم كل خط {n} محاور كحد أقصى.",
 };
 
 const ZH: Dict = {
@@ -3084,6 +3098,8 @@ const ZH: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "垂直于渠道的直线：每条管道从渠道出发进入田块，为其正前方的一排枢轴供水。",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "每条管道从渠道出发并与其垂直；每条线最多服务 {n} 个枢轴。",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "直线且彼此平行：从渠道出发，相对垂直方向最大倾斜 ±20°，以对准枢轴中心；每条线最多供给 {n} 个枢轴。",
 };
 
 const HU: Dict = {
@@ -3466,6 +3482,8 @@ const HU: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "A csatornára merőleges egyenes vonalak: minden csővezeték a csatornától indul és behatol a táblába, kiszolgálva az előtte lévő pivotsort.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Minden csővezeték a csatornától indul és arra merőleges; vonalanként legfeljebb {n} pivotot szolgál ki.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Egyenes, egymással párhuzamos vonalak: a csatornától indulnak, a merőlegeshez képest legfeljebb ±20°-kal megdöntve, hogy a pivotok középpontjához igazodjanak; egy vonal legfeljebb {n} pivotot lát el.",
 };
 
 const ID: Dict = {
@@ -3848,6 +3866,8 @@ const ID: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Garis lurus tegak lurus terhadap kanal: setiap pipa berawal dari kanal dan masuk ke lahan untuk melayani barisan pivot di depannya.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Setiap pipa berawal dari kanal dan tegak lurus terhadapnya; melayani maksimal {n} pivot per garis.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Garis lurus dan semuanya sejajar: berawal dari kanal, dimiringkan hingga ±20° dari garis tegak lurus agar segaris dengan pusat pivot; setiap garis melayani maksimal {n} pivot.",
 };
 
 const DE: Dict = {
@@ -4224,6 +4244,8 @@ const DE: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Gerade, zum Kanal senkrechte Linien: Jede Rohrleitung beginnt am Kanal und verläuft ins Feld, um die davor liegende Pivot-Reihe zu versorgen.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Jede Rohrleitung beginnt am Kanal und verläuft senkrecht dazu; sie versorgt maximal {n} Pivots pro Linie.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Gerade, zueinander parallele Linien: Sie beginnen am Kanal und sind bis zu ±20° gegenüber der Senkrechten geneigt, um auf die Pivot-Mittelpunkte ausgerichtet zu sein; jede Linie versorgt höchstens {n} Pivots.",
 };
 
 const PL: Dict = {
@@ -4602,6 +4624,8 @@ const PL: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Linie proste i prostopadłe do kanału: każdy rurociąg zaczyna się przy kanale i wchodzi w pole, obsługując rząd pivotów znajdujący się przed nim.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Każdy rurociąg zaczyna się przy kanale i jest do niego prostopadły; obsługuje maksymalnie {n} pivotów na linię.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Linie proste i wzajemnie równoległe: zaczynają się przy kanale, nachylone do ±20° względem prostopadłej, aby pokryć się ze środkami pivotów; każda linia obsługuje maksymalnie {n} pivotów.",
 };
 
 const BG: Dict = {
@@ -4980,6 +5004,8 @@ const BG: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Прави линии, перпендикулярни на канала: всяка тръба тръгва от канала и навлиза в полето, обслужвайки реда пивоти пред нея.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Всяка тръба тръгва от канала и е перпендикулярна на него; обслужва максимум {n} пивота на линия.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Прави и взаимно успоредни линии: започват от канала, наклонени до ±20° спрямо перпендикуляра, за да съвпаднат с центровете на пивотите; всяка линия обслужва най-много {n} пивота.",
 };
 
 const RU: Dict = {
@@ -5358,6 +5384,8 @@ const RU: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Прямые линии, перпендикулярные каналу: каждый трубопровод начинается от канала и уходит в поле, обслуживая ряд пивотов перед собой.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Каждый трубопровод начинается от канала и перпендикулярен ему; обслуживает не более {n} пивотов на линию.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Прямые и параллельные друг другу линии: начинаются от канала, наклонены до ±20° от перпендикуляра, чтобы совпасть с центрами пивотов; каждая линия обслуживает не более {n} пивотов.",
 };
 
 const AF: Dict = {
@@ -5736,6 +5764,8 @@ const AF: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Reguit lyne loodreg op die kanaal: elke pyp begin by die kanaal en loop die land in om die ry spilpunte voor hom te bedien.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Elke pyp begin by die kanaal en is loodreg daarop; dit bedien hoogstens {n} spilpunte per lyn.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Reguit lyne, almal parallel: hulle begin by die kanaal en is tot ±20° vanaf die loodregte gekantel om met die spilpunte se middelpunte te belyn; elke lyn bedien hoogstens {n} spilpunte.",
 };
 
 const MS: Dict = {
@@ -6114,6 +6144,8 @@ const MS: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Garis lurus berserenjang dengan terusan: setiap paip bermula dari terusan dan masuk ke ladang untuk menyalurkan air ke barisan pivot di hadapannya.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Setiap paip bermula dari terusan dan berserenjang dengannya; melayani maksimum {n} pivot setiap garis.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Garis lurus dan semuanya selari: bermula dari terusan, dicondongkan sehingga ±20° daripada garis serenjang untuk sejajar dengan pusat pivot; setiap garis melayani maksimum {n} pivot.",
 };
 
 const VI: Dict = {
@@ -6492,6 +6524,8 @@ const VI: Dict = {
   // --- v0.6.111: tubazioni perpendicolari ---
   "Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.": "Các đường thẳng vuông góc với kênh: mỗi đường ống bắt đầu từ kênh và chạy vào cánh đồng, phục vụ hàng pivot phía trước nó.",
   "Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.": "Mỗi đường ống bắt đầu từ kênh và vuông góc với kênh; phục vụ tối đa {n} pivot mỗi đường.",
+  // --- v0.6.112 ---
+  "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Các đường thẳng và song song với nhau: bắt đầu từ kênh, nghiêng tối đa ±20° so với phương vuông góc để trùng với tâm các pivot; mỗi đường phục vụ tối đa {n} pivot.",
 };
 
 const TR: Record<Exclude<Lang, "it">, Dict> = {
