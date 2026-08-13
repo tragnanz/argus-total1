@@ -363,6 +363,18 @@ const EN: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Pipes drawn: {n} branches from the canal ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "One pipe per column and per canal side, up to the last pivot on that side.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Advanced",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Searching for the single radius (same for all pivots) that covers the most surface between {min} and {max} m, avoiding roads, canals and rivers and respecting clearances.",
+  "Modalità di progettazione": "Design mode",
+  "Nessun layout trovato nel range indicato.": "No layout found in the given range.",
+  "Ottimizza e inserisci": "Optimize and place",
+  "Ottimizza e inserisci su «{name}»": "Optimize and place on «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Optimizing: radius {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Best: radius {r} m, {a} covered ✓",
+  "Raggio max": "Max radius",
+  "Raggio min": "Min radius",
+  "Standard": "Standard",
 };
 
 const FR: Dict = {
@@ -688,6 +700,18 @@ const FR: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Conduites tracées : {n} branches depuis le canal ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Une conduite par colonne et par côté canal, jusqu'au dernier pivot de ce côté.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Avancé",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Recherche du rayon unique (identique pour tous les pivots) qui couvre le plus de surface entre {min} et {max} m, en évitant routes, canaux et rivières et en respectant les marges de sécurité.",
+  "Modalità di progettazione": "Mode de conception",
+  "Nessun layout trovato nel range indicato.": "Aucune disposition trouvée dans la plage indiquée.",
+  "Ottimizza e inserisci": "Optimiser et insérer",
+  "Ottimizza e inserisci su «{name}»": "Optimiser et insérer sur «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Optimisation : rayon {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Optimal : rayon {r} m, {a} couverts ✓",
+  "Raggio max": "Rayon max",
+  "Raggio min": "Rayon min",
+  "Standard": "Standard",
 };
 
 const ES: Dict = {
@@ -1013,6 +1037,18 @@ const ES: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Tuberías trazadas: {n} ramales desde el canal ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Una tubería por columna y por lado del canal, hasta el último pivote de ese lado.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Avanzada",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Busco el radio único (igual para todos los pivotes) que cubre más superficie entre {min} y {max} m, evitando carreteras, canales y ríos y respetando las distancias de seguridad.",
+  "Modalità di progettazione": "Modo de diseño",
+  "Nessun layout trovato nel range indicato.": "No se encontró ninguna disposición en el rango indicado.",
+  "Ottimizza e inserisci": "Optimizar e insertar",
+  "Ottimizza e inserisci su «{name}»": "Optimizar e insertar en «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Optimizando: radio {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Óptimo: radio {r} m, {a} cubiertos ✓",
+  "Raggio max": "Radio máx",
+  "Raggio min": "Radio mín",
+  "Standard": "Estándar",
 };
 
 const PT: Dict = {
@@ -1338,6 +1374,18 @@ const PT: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Tubagens traçadas: {n} ramos do canal ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Uma tubagem por coluna e por lado do canal, até ao último pivô desse lado.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Avançada",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Procuro o raio único (igual para todos os pivôs) que cobre mais superfície entre {min} e {max} m, evitando estradas, canais e rios e respeitando as margens de segurança.",
+  "Modalità di progettazione": "Modo de conceção",
+  "Nessun layout trovato nel range indicato.": "Nenhuma disposição encontrada no intervalo indicado.",
+  "Ottimizza e inserisci": "Otimizar e inserir",
+  "Ottimizza e inserisci su «{name}»": "Otimizar e inserir em «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "A otimizar: raio {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Ótimo: raio {r} m, {a} cobertos ✓",
+  "Raggio max": "Raio máx",
+  "Raggio min": "Raio mín",
+  "Standard": "Padrão",
 };
 
 const RO: Dict = {
@@ -1665,6 +1713,18 @@ const RO: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Conducte trasate: {n} ramuri din canal ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "O conductă pe coloană și pe latura canalului, până la ultimul pivot de pe acea latură.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Avansată",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Caut raza unică (identică pentru toți pivoții) care acoperă cea mai mare suprafață între {min} și {max} m, evitând drumurile, canalele și râurile și respectând distanțele de siguranță.",
+  "Modalità di progettazione": "Mod de proiectare",
+  "Nessun layout trovato nel range indicato.": "Nicio dispunere găsită în intervalul indicat.",
+  "Ottimizza e inserisci": "Optimizează și introdu",
+  "Ottimizza e inserisci su «{name}»": "Optimizează și introdu pe «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Optimizez: rază {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Optim: rază {r} m, {a} acoperiți ✓",
+  "Raggio max": "Rază max",
+  "Raggio min": "Rază min",
+  "Standard": "Standard",
 };
 
 const KK: Dict = {
@@ -1992,6 +2052,18 @@ const KK: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Сызылған құбырлар: каналдан {n} тармақ ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Әр бағанға және каналдың әр жағына бір құбыр, сол жақтағы соңғы пивотқа дейін.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Кеңейтілген",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "{min}–{max} м аралығында ең көп аумақты жабатын, барлық пивоттар үшін бірдей жалғыз радиусты іздеймін; жолдарды, каналдарды және өзендерді айналып өтіп, қауіпсіздік аралықтарын сақтаймын.",
+  "Modalità di progettazione": "Жобалау режимі",
+  "Nessun layout trovato nel range indicato.": "Көрсетілген ауқымда орналасу табылмады.",
+  "Ottimizza e inserisci": "Оңтайландыру және қою",
+  "Ottimizza e inserisci su «{name}»": "«{name}» бойынша оңтайландыру және қою",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Оңтайландыру: радиус {r} м ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Оңтайлы: радиус {r} м, {a} жабылды ✓",
+  "Raggio max": "Макс. радиус",
+  "Raggio min": "Мин. радиус",
+  "Standard": "Стандартты",
 };
 
 const AR: Dict = {
@@ -2317,6 +2389,18 @@ const AR: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "الأنابيب المرسومة: {n} فروع من القناة ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "أنبوب واحد لكل عمود ولكل جهة من القناة، حتى آخر محور في تلك الجهة.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "متقدّم",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "أبحث عن نصف القطر الموحّد (نفسه لجميع المحاور) الذي يغطّي أكبر مساحة بين {min} و{max} م، مع تجنّب الطرق والقنوات والأنهار واحترام مسافات الأمان.",
+  "Modalità di progettazione": "وضع التصميم",
+  "Nessun layout trovato nel range indicato.": "لم يُعثر على أي تخطيط ضمن النطاق المحدّد.",
+  "Ottimizza e inserisci": "تحسين وإدراج",
+  "Ottimizza e inserisci su «{name}»": "تحسين وإدراج في «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "جارٍ التحسين: نصف القطر {r} م ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "الأمثل: نصف القطر {r} م، {a} مغطّاة ✓",
+  "Raggio max": "نصف القطر الأقصى",
+  "Raggio min": "نصف القطر الأدنى",
+  "Standard": "قياسي",
 };
 
 const ZH: Dict = {
@@ -2644,6 +2728,18 @@ const ZH: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "已绘制管道：来自渠道的{n}条分支 ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "每列、渠道每侧一根管道，直到该侧最后一个枢轴。",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "高级",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "查找在 {min} 至 {max} m 之间覆盖最大面积的统一半径（所有枢轴相同），避开道路、渠道和河流并保持安全间距。",
+  "Modalità di progettazione": "设计模式",
+  "Nessun layout trovato nel range indicato.": "在指定范围内未找到布局。",
+  "Ottimizza e inserisci": "优化并插入",
+  "Ottimizza e inserisci su «{name}»": "在 «{name}» 上优化并插入",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "正在优化：半径 {r} m（{i}/{n}）…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "最佳：半径 {r} m，已覆盖 {a} ✓",
+  "Raggio max": "最大半径",
+  "Raggio min": "最小半径",
+  "Standard": "标准",
 };
 
 const HU: Dict = {
@@ -2971,6 +3067,18 @@ const HU: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Megrajzolt csővezetékek: {n} ág a csatornáról ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Egy csővezeték oszloponként és csatornaoldalanként, az adott oldal utolsó pivotjáig.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Speciális",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Megkeresi azt az egységes sugarat (minden pivotnál azonos), amely a legnagyobb felületet fedi le {min} és {max} m között, elkerülve az utakat, csatornákat és folyókat, és betartva a biztonsági távolságokat.",
+  "Modalità di progettazione": "Tervezési mód",
+  "Nessun layout trovato nel range indicato.": "Nem található elrendezés a megadott tartományban.",
+  "Ottimizza e inserisci": "Optimalizálás és beszúrás",
+  "Ottimizza e inserisci su «{name}»": "Optimalizálás és beszúrás ide: «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Optimalizálás: sugár {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Optimális: sugár {r} m, {a} lefedve ✓",
+  "Raggio max": "Max. sugár",
+  "Raggio min": "Min. sugár",
+  "Standard": "Normál",
 };
 
 const ID: Dict = {
@@ -3298,6 +3406,18 @@ const ID: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Pipa digambar: {n} cabang dari kanal ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Satu pipa per kolom dan per sisi kanal, hingga pivot terakhir di sisi tersebut.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Lanjutan",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Mencari radius tunggal (sama untuk semua pivot) yang menutupi permukaan terluas antara {min} dan {max} m, menghindari jalan, kanal, dan sungai serta menjaga jarak aman.",
+  "Modalità di progettazione": "Mode desain",
+  "Nessun layout trovato nel range indicato.": "Tidak ada tata letak yang ditemukan dalam rentang yang ditentukan.",
+  "Ottimizza e inserisci": "Optimalkan dan tambahkan",
+  "Ottimizza e inserisci su «{name}»": "Optimalkan dan tambahkan ke «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Mengoptimalkan: radius {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Optimal: radius {r} m, {a} tertutup ✓",
+  "Raggio max": "Radius maks",
+  "Raggio min": "Radius min",
+  "Standard": "Standar",
 };
 
 const DE: Dict = {
@@ -3619,6 +3739,18 @@ const DE: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Gezeichnete Rohrleitungen: {n} Abzweige vom Kanal ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Eine Rohrleitung pro Spalte und pro Kanalseite, bis zum letzten Pivot auf dieser Seite.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Erweitert",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Sucht den einheitlichen Radius (für alle Pivots gleich), der zwischen {min} und {max} m die größte Fläche abdeckt, wobei Straßen, Kanäle und Flüsse vermieden und die Sicherheitsabstände eingehalten werden.",
+  "Modalità di progettazione": "Planungsmodus",
+  "Nessun layout trovato nel range indicato.": "Kein Layout im angegebenen Bereich gefunden.",
+  "Ottimizza e inserisci": "Optimieren und einfügen",
+  "Ottimizza e inserisci su «{name}»": "Optimieren und einfügen auf «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Optimierung: Radius {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Optimal: Radius {r} m, {a} abgedeckt ✓",
+  "Raggio max": "Max. Radius",
+  "Raggio min": "Min. Radius",
+  "Standard": "Standard",
 };
 
 const PL: Dict = {
@@ -3942,6 +4074,18 @@ const PL: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Wytyczone rurociągi: {n} odgałęzień od kanału ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Jeden rurociąg na kolumnę i na stronę kanału, do ostatniego pivotu po tej stronie.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Zaawansowany",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Szuka jednego promienia (takiego samego dla wszystkich pivotów), który pokrywa największą powierzchnię między {min} a {max} m, omijając drogi, kanały i rzeki oraz zachowując odległości bezpieczeństwa.",
+  "Modalità di progettazione": "Tryb projektowania",
+  "Nessun layout trovato nel range indicato.": "Nie znaleziono układu w podanym zakresie.",
+  "Ottimizza e inserisci": "Optymalizuj i wstaw",
+  "Ottimizza e inserisci su «{name}»": "Optymalizuj i wstaw na «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Optymalizacja: promień {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Optymalnie: promień {r} m, {a} pokryte ✓",
+  "Raggio max": "Promień maks.",
+  "Raggio min": "Promień min.",
+  "Standard": "Standardowy",
 };
 
 const BG: Dict = {
@@ -4265,6 +4409,18 @@ const BG: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Проследени тръби: {n} разклонения от канала ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Една тръба на колона и на страна на канала, до последния пивот от тази страна.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Разширена",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Търся единствения радиус (еднакъв за всички пивоти), който покрива най-голяма площ между {min} и {max} m, като избягва пътища, канали и реки и спазва отстоянията.",
+  "Modalità di progettazione": "Режим на проектиране",
+  "Nessun layout trovato nel range indicato.": "Няма намерено разположение в зададения диапазон.",
+  "Ottimizza e inserisci": "Оптимизирай и постави",
+  "Ottimizza e inserisci su «{name}»": "Оптимизирай и постави върху «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Оптимизиране: радиус {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Оптимум: радиус {r} m, {a} покрити ✓",
+  "Raggio max": "Макс. радиус",
+  "Raggio min": "Мин. радиус",
+  "Standard": "Стандартна",
 };
 
 const RU: Dict = {
@@ -4588,6 +4744,18 @@ const RU: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Трубопроводы проложены: {n} ответвлений от канала ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Один трубопровод на колонку и на сторону канала, до последнего пивота на этой стороне.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Расширенный",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Ищу единый радиус (одинаковый для всех пивотов), покрывающий наибольшую площадь между {min} и {max} m, избегая дорог, каналов и рек и соблюдая отступы.",
+  "Modalità di progettazione": "Режим проектирования",
+  "Nessun layout trovato nel range indicato.": "В заданном диапазоне компоновка не найдена.",
+  "Ottimizza e inserisci": "Оптимизировать и разместить",
+  "Ottimizza e inserisci su «{name}»": "Оптимизировать и разместить на «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Оптимизация: радиус {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Оптимум: радиус {r} m, покрыто {a} ✓",
+  "Raggio max": "Макс. радиус",
+  "Raggio min": "Мин. радиус",
+  "Standard": "Стандартный",
 };
 
 const AF: Dict = {
@@ -4911,6 +5079,18 @@ const AF: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Pype geteken: {n} takke vanaf die kanaal ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Een pyp per kolom en per kanaalkant, tot by die laaste spilpunt aan daardie kant.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Gevorderd",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Ek soek die enkele radius (dieselfde vir alle spilpunte) wat die meeste oppervlak tussen {min} en {max} m dek, terwyl paaie, kanale en riviere vermy en veiligheidsafstande gerespekteer word.",
+  "Modalità di progettazione": "Ontwerpmodus",
+  "Nessun layout trovato nel range indicato.": "Geen uitleg in die gegewe reeks gevind nie.",
+  "Ottimizza e inserisci": "Optimeer en voeg in",
+  "Ottimizza e inserisci su «{name}»": "Optimeer en voeg in op «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Optimeer tans: radius {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Optimaal: radius {r} m, {a} gedek ✓",
+  "Raggio max": "Maks. radius",
+  "Raggio min": "Min. radius",
+  "Standard": "Standaard",
 };
 
 const MS: Dict = {
@@ -5234,6 +5414,18 @@ const MS: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Paip dilukis: {n} cabang dari terusan ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Satu paip bagi setiap lajur dan setiap sisi terusan, sehingga pivot terakhir di sisi tersebut.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Lanjutan",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Saya mencari jejari tunggal (sama untuk semua pivot) yang meliputi paling banyak permukaan antara {min} dan {max} m, sambil mengelakkan jalan, terusan dan sungai serta mematuhi jarak keselamatan.",
+  "Modalità di progettazione": "Mod reka bentuk",
+  "Nessun layout trovato nel range indicato.": "Tiada susun atur ditemui dalam julat yang ditetapkan.",
+  "Ottimizza e inserisci": "Optimumkan dan masukkan",
+  "Ottimizza e inserisci su «{name}»": "Optimumkan dan masukkan pada «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Mengoptimumkan: jejari {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Optimum: jejari {r} m, {a} diliputi ✓",
+  "Raggio max": "Jejari maks",
+  "Raggio min": "Jejari min",
+  "Standard": "Standard",
 };
 
 const VI: Dict = {
@@ -5557,6 +5749,18 @@ const VI: Dict = {
   "Tubazioni tracciate: {n} rami dal canale ✓": "Đã vẽ đường ống: {n} nhánh từ Kênh ✓",
   // --- v0.6.103 ---
   "Una tubazione per colonna e per lato del canale, fino all'ultimo pivot di quel lato.": "Một đường ống cho mỗi cột và mỗi phía kênh, đến pivot cuối cùng ở phía đó.",
+  // --- v0.6.105: progettazione avanzata ---
+  "Avanzata": "Nâng cao",
+  "Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.": "Tôi tìm bán kính duy nhất (giống nhau cho mọi pivot) bao phủ nhiều diện tích nhất giữa {min} và {max} m, tránh đường, kênh và sông, đồng thời tuân thủ khoảng cách an toàn.",
+  "Modalità di progettazione": "Chế độ thiết kế",
+  "Nessun layout trovato nel range indicato.": "Không tìm thấy bố cục trong phạm vi đã chỉ định.",
+  "Ottimizza e inserisci": "Tối ưu và thêm",
+  "Ottimizza e inserisci su «{name}»": "Tối ưu và thêm trên «{name}»",
+  "Ottimizzo: raggio {r} m ({i}/{n})…": "Đang tối ưu: bán kính {r} m ({i}/{n})…",
+  "Ottimo: raggio {r} m, {a} coperti ✓": "Tối ưu: bán kính {r} m, đã phủ {a} ✓",
+  "Raggio max": "Bán kính tối đa",
+  "Raggio min": "Bán kính tối thiểu",
+  "Standard": "Tiêu chuẩn",
 };
 
 const TR: Record<Exclude<Lang, "it">, Dict> = {

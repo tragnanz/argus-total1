@@ -12,7 +12,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.104";
+const REV = "v0.6.105";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -481,6 +481,9 @@ export default function Page() {
   const [pivClearWater, setPivClearWater] = useState(0); // franco pivot da acqua/invasi (m)
   const [pivotR, setPivotR] = useState(400);    // raggio pivot (parametro proprio della scheda Pivot)
   const [minPivotPct, setMinPivotPct] = useState(100);   // dimensione minima pivot di riempimento bordi (% del raggio); 100 = disattivato
+  const [designMode, setDesignMode] = useState<"standard" | "advanced">("standard"); // Systems: standard | avanzata (ottimizza raggio)
+  const [advMinR, setAdvMinR] = useState(250);           // avanzata: raggio minimo del range (m)
+  const [advMaxR, setAdvMaxR] = useState(450);           // avanzata: raggio massimo del range (m)
   const [pipeCanalIdx, setPipeCanalIdx] = useState(0);   // Accessori: canale da cui si diramano le tubazioni
   // Gerarchia pivot: modello modificabile (gruppo → singolo) derivato dal risultato.
   const [pivots, setPivots] = useState<PivotItem[]>([]);
@@ -1599,6 +1602,21 @@ export default function Page() {
   // Inserisci impianti SOLO sul poligono selezionato, accumulando i pivot degli
   // altri campi (ognuno è etichettato con il proprio field id, così ri-eseguire
   // su un campo sostituisce solo i suoi pivot e lascia intatti gli altri).
+  // Applica al campo `fid` il risultato di un layout, sostituendo solo i suoi
+  // pivot (accumula quelli degli altri campi). Condiviso da standard e avanzata.
+  function applyLayoutResult(fid: number, r: api.LayoutResult, radiusM: number) {
+    const { pivots: np } = pivotsFromFC(r.geojson, radiusM);
+    const taggedP = np.map((x) => ({ ...x, field: fid }));
+    const mergedP = [...pivots.filter((x) => x.field !== fid), ...taggedP];
+    const mergedL = pivotLines.filter((x) => x.field !== fid);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const layGeoNoLines = { type: "FeatureCollection" as const, features: (r.geojson.features || []).filter((ft: any) => ft.geometry?.type !== "LineString") };
+    setFields((fs) => fs.map((f) => f.id === fid ? { ...f, lay: r.meta, layGeo: layGeoNoLines } : f));
+    setPivots(mergedP); setPivotLines(mergedL); setPivotSel({ mode: "none", idx: -1 });
+    const netHa = mergedP.reduce((s, x) => s + (Math.PI * x.r * x.r) / 10000, 0);
+    setGuided({ geojson: fcFromModel(mergedP, mergedL), meta: { n_pivots: mergedP.length, radius_m: radiusM, net_ha: Math.round(netHa * 10) / 10, safety_m: safetyM } });
+  }
+  // STANDARD: raggio scelto dall'utente (+ eventuale % di pivot marginali).
   async function insertImpiantiActive() {
     if (!active) return needField();
     const fid = active.id;
@@ -1606,24 +1624,42 @@ export default function Page() {
     try {
       const p: LayoutParams = { ...paramsFrom(effSettings(active)), radius_m: pivotR, gap_m: safetyM, roads: obstacleLines(), clear_road_m: pivClearRoad, min_pivot_pct: minPivotPct };
       const r = await api.fetchLayout(active.geom, p);
-      const { pivots: np } = pivotsFromFC(r.geojson, pivotR);
-      const taggedP = np.map((x) => ({ ...x, field: fid }));
-      // Solo i CERCHI: le linee di canali/tubazioni NON vanno disegnate qui
-      // (l'adduzione è un comando separato). Rimuovo eventuali linee di questo campo.
-      const mergedP = [...pivots.filter((x) => x.field !== fid), ...taggedP];
-      const mergedL = pivotLines.filter((x) => x.field !== fid);
-      // Nel layGeo del campo tengo solo i poligoni pivot (niente LineString).
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const layGeoNoLines = { type: "FeatureCollection" as const, features: (r.geojson.features || []).filter((ft: any) => ft.geometry?.type !== "LineString") };
-      setFields((fs) => fs.map((f) => f.id === fid ? { ...f, lay: r.meta, layGeo: layGeoNoLines } : f));
-      setPivots(mergedP); setPivotLines(mergedL); setPivotSel({ mode: "none", idx: -1 });
-      const netHa = mergedP.reduce((s, x) => s + (Math.PI * x.r * x.r) / 10000, 0);
-      setGuided({ geojson: fcFromModel(mergedP, mergedL), meta: { n_pivots: mergedP.length, radius_m: pivotR, net_ha: Math.round(netHa * 10) / 10, safety_m: safetyM } });
+      applyLayoutResult(fid, r, pivotR);
       setMsg(t("Impianti inseriti su «{name}» ✓", { name: active.name }));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
-  // Comando unico: instrada al motore giusto secondo la disposizione scelta.
-  function insertImpianti() { return insertImpiantiActive(); }
+  // AVANZATA: dato un range [min,max], prova più raggi (uguali per tutti i pivot)
+  // e tiene quello che copre la MAGGIOR superficie, rispettando ostacoli e franchi.
+  async function insertAdvancedActive() {
+    if (!active) return needField();
+    const fid = active.id;
+    const lo = Math.max(30, Math.min(advMinR, advMaxR));
+    const hi = Math.min(1000, Math.max(advMinR, advMaxR));
+    const N = 9;                                   // numero di raggi campionati nel range
+    const step = Math.max(10, Math.round((hi - lo) / (N - 1)) || 10);
+    const radii: number[] = [];
+    for (let r = lo; r <= hi + 0.1; r += step) radii.push(Math.round(r));
+    if (radii[radii.length - 1] !== hi) radii.push(hi);
+    setBusy("layout"); setMsg("");
+    try {
+      let best: api.LayoutResult | null = null; let bestArea = -1; let bestR = lo;
+      for (let i = 0; i < radii.length; i++) {
+        const rad = radii[i];
+        setMsg(t("Ottimizzo: raggio {r} m ({i}/{n})…", { r: rad, i: i + 1, n: radii.length }));
+        const p: LayoutParams = { ...paramsFrom(effSettings(active)), radius_m: rad, gap_m: safetyM, roads: obstacleLines(), clear_road_m: pivClearRoad, min_pivot_pct: 100 };
+        const res = await api.fetchLayout(active.geom, p);
+        const { pivots: np } = pivotsFromFC(res.geojson, rad);
+        const area = np.reduce((s, x) => s + (Math.PI * x.r * x.r) / 10000, 0);
+        if (area > bestArea) { bestArea = area; best = res; bestR = rad; }
+      }
+      if (!best) { setMsg(t("Nessun layout trovato nel range indicato.")); return; }
+      setPivotR(bestR);
+      applyLayoutResult(fid, best, bestR);
+      setMsg(t("Ottimo: raggio {r} m, {a} coperti ✓", { r: bestR, a: uHa(Math.round(bestArea)) }));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  // Comando unico: instrada alla modalità scelta.
+  function insertImpianti() { return designMode === "advanced" ? insertAdvancedActive() : insertImpiantiActive(); }
   function clearImpianti() {
     clearGuided();
     setFields((fs) => fs.map((f) => ({ ...f, lay: null, layGeo: null })));
@@ -2699,14 +2735,35 @@ export default function Page() {
             </div>
             <div className="mb-2" />
 
+            <label className="text-xs text-sage-dark block mb-1">{t("Modalità di progettazione")}</label>
+            <div className="seg mb-2">
+              <div className="seg-item" data-active={designMode === "standard"} onClick={() => setDesignMode("standard")}>{t("Standard")}</div>
+              <div className="seg-item" data-active={designMode === "advanced"} onClick={() => setDesignMode("advanced")}>{t("Avanzata")}</div>
+            </div>
+
             <div className="bg-panel rounded-lg p-2 mt-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Raggio e distanze di rispetto (m)")}</div>
-              <div className="flex gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Raggio pivot")}</div>
+              {designMode === "standard" ? (
+                <div className="mb-2">
+                  <div className="text-[10px] leading-tight text-sage-dark mb-1">{t("Raggio pivot")}</div>
                   <input type="number" min={30} max={1000} step={10} value={pivotR}
                     onChange={(e) => setPivotR(Number(e.target.value))} className="field-input px-2 py-1.5 text-sm" />
                 </div>
+              ) : (
+                <div className="flex gap-2 mb-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Raggio min")}</div>
+                    <input type="number" min={30} max={1000} step={10} value={advMinR}
+                      onChange={(e) => setAdvMinR(Number(e.target.value))} className="field-input px-2 py-1.5 text-sm" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Raggio max")}</div>
+                    <input type="number" min={30} max={1000} step={10} value={advMaxR}
+                      onChange={(e) => setAdvMaxR(Number(e.target.value))} className="field-input px-2 py-1.5 text-sm" />
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-2">
                 <div className="flex-1 min-w-0">
                   <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Tra i pivot")}</div>
                   <input type="number" min={0} max={500} step={5} value={safetyM}
@@ -2727,28 +2784,38 @@ export default function Page() {
 
             {renderMeshParams()}
 
-            <div className="bg-panel rounded-lg p-2 mt-2">
-              <label className="text-xs text-sage-dark block mb-1">
-                {t("Copri di più con pivot più piccoli sui bordi")}: <b>{minPivotPct >= 100 ? t("no") : t("fino a {p}% del raggio", { p: minPivotPct })}</b>
-              </label>
-              <input type="range" min={40} max={100} step={5} value={minPivotPct}
-                onChange={(e) => setMinPivotPct(Number(e.target.value))} className="w-full" />
-              <p className="text-[10px] text-sage-dark mt-1 leading-snug">
-                {minPivotPct >= 100
-                  ? t("Tutti i pivot a piena dimensione. Abbassa la percentuale per riempire i contorni con pivot più piccoli e coprire più superficie.")
-                  : t("Il grosso del campo resta coperto dai pivot a piena dimensione ({r} m); sui contorni si aggiungono pivot ridotti fino a {min} m di raggio.", { r: Math.round(pivotR), min: Math.round(pivotR * minPivotPct / 100) })}
-              </p>
-            </div>
+            {designMode === "standard" && (
+              <div className="bg-panel rounded-lg p-2 mt-2">
+                <label className="text-xs text-sage-dark block mb-1">
+                  {t("Copri di più con pivot più piccoli sui bordi")}: <b>{minPivotPct >= 100 ? t("no") : t("fino a {p}% del raggio", { p: minPivotPct })}</b>
+                </label>
+                <input type="range" min={40} max={100} step={5} value={minPivotPct}
+                  onChange={(e) => setMinPivotPct(Number(e.target.value))} className="w-full" />
+                <p className="text-[10px] text-sage-dark mt-1 leading-snug">
+                  {minPivotPct >= 100
+                    ? t("Tutti i pivot a piena dimensione. Abbassa la percentuale per riempire i contorni con pivot più piccoli e coprire più superficie.")
+                    : t("Il grosso del campo resta coperto dai pivot a piena dimensione ({r} m); sui contorni si aggiungono pivot ridotti fino a {min} m di raggio.", { r: Math.round(pivotR), min: Math.round(pivotR * minPivotPct / 100) })}
+                </p>
+              </div>
+            )}
 
-            <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 mt-2 leading-relaxed">
-              {t("Raggio")}: <b>{uM(pivotR)}</b> · {t("Area per pivot")}: <b>{uHa(Math.PI * pivotR * pivotR / 10000, 1)}</b><br />
-              {t("Interasse (centro-centro)")}: <b>{uM(2 * pivotR + safetyM)}</b>
-            </div>
+            {designMode === "standard" ? (
+              <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 mt-2 leading-relaxed">
+                {t("Raggio")}: <b>{uM(pivotR)}</b> · {t("Area per pivot")}: <b>{uHa(Math.PI * pivotR * pivotR / 10000, 1)}</b><br />
+                {t("Interasse (centro-centro)")}: <b>{uM(2 * pivotR + safetyM)}</b>
+              </div>
+            ) : (
+              <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 mt-2 leading-relaxed">
+                {t("Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.", { min: Math.min(advMinR, advMaxR), max: Math.max(advMinR, advMaxR) })}
+              </div>
+            )}
             <div className="flex gap-2 mt-2">
               <button className="btn-primary flex-1 basis-0"
                 disabled={busy === "layout" || !active}
                 onClick={insertImpianti}>
-                {busy === "layout" ? t("Calcolo…") : active ? t("Inserisci su «{name}»", { name: active.name }) : t("Inserisci impianti")}
+                {busy === "layout" ? t("Calcolo…") : designMode === "advanced"
+                  ? (active ? t("Ottimizza e inserisci su «{name}»", { name: active.name }) : t("Ottimizza e inserisci"))
+                  : (active ? t("Inserisci su «{name}»", { name: active.name }) : t("Inserisci impianti"))}
               </button>
               <button className="btn-ghost flex-1 basis-0" onClick={clearImpianti}>{t("Rimuovi")}</button>
             </div>
