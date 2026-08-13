@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.107";
+const REV = "v0.6.108";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -375,6 +375,19 @@ const IcoMinimize = () => (<svg {...svgProps}><path d="M5 12h14" /></svg>);
 const IcoExpand = () => (<svg {...svgProps}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 12h6M12 9v6" /></svg>);
 const IcoCross = () => (<svg {...svgProps}><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></svg>);
 
+// Icone del menu verticale (20px): una per ogni pagina del flusso di progetto.
+const navProps = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none",
+  stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+const IcoNavAnalisi = () => (<svg {...navProps}><path d="M3 12h4l3-8 4 16 3-8h4" /></svg>);
+const IcoNavRilievo = () => (<svg {...navProps}><path d="m3 20 6-9 4 5 3-4 5 8z" /></svg>);
+const IcoNavImpianti = () => (<svg {...navProps}><circle cx="12" cy="12" r="8" /><path d="M12 12h8" /><circle cx="12" cy="12" r="1.6" /></svg>);
+const IcoNavAccessori = () => (<svg {...navProps}><path d="M4 7h16M4 12h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="12" r="2" /><circle cx="8" cy="17" r="2" /></svg>);
+const IcoNavExport = () => (<svg {...navProps}><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M4 20h16" /></svg>);
+const TAB_ICONS = {
+  analisi: IcoNavAnalisi, rilievo: IcoNavRilievo, impianti: IcoNavImpianti,
+  accessori: IcoNavAccessori, export: IcoNavExport,
+};
+
 // Intestazione di sezione con testo-guida apribile/chiudibile da "?"
 // (compatta la vista: i suggerimenti restano nascosti finché non servono).
 function SectionHead({ title, help, mb = "mb-2" }: { title: string; help?: string; mb?: string }) {
@@ -636,6 +649,13 @@ export default function Page() {
 
   const [tab, setTab] = useState("analisi");
   const secShow = (k: string) => (tab === k ? "" : "hidden");
+  // Menu verticale: clic su una voce apre la sua finestra; ri-clic sulla voce
+  // attiva la chiude (mappa libera). Usato anche dai salti automatici di pagina.
+  function goTab(k: string) { setTab(k); setRightMin(false); }
+  function toggleTab(k: string) {
+    if (tab === k && !rightMin) { setRightMin(true); return; }
+    goTab(k);
+  }
 
   const [notes, setNotes] = useState("");
   const [shares, setShares] = useState<api.ShareView[]>([]);   // link di sola lettura del progetto
@@ -1485,12 +1505,12 @@ export default function Page() {
         renderCanals(next);
         return next;
       });
-      setTab("rilievo");
+      goTab("rilievo");
     } else if (l.kind === "pivots") {
       const g = l.data as unknown as GuidedResult;
       setGuided(g);
       setModelFromGuided(g);
-      setTab("impianti");
+      goTab("impianti");
     }
     setMsg(t("Livello caricato ✓"));
   }
@@ -2477,17 +2497,31 @@ export default function Page() {
         )}
         </div>
 
-        {/* Pannello destro: schede (riducibile a icona) */}
-        {rightMin ? (
-          <button onClick={() => setRightMin(false)} title={t("Espandi il pannello schede")}
-            className="absolute top-[4.5rem] right-4 z-30 widget px-3 py-2 flex items-center gap-2 text-sm text-brand-darker hover:bg-black/5">
-            <IcoExpand /> {t("Strumenti")}
-          </button>
-        ) : (
-        <div className="absolute top-[4.5rem] right-4 w-[440px] max-w-[calc(100vw_-_2rem)] max-h-[78vh] widget flex flex-col overflow-hidden">
+        {/* Menu verticale (bordo destro): ogni voce apre la sua finestra;
+            ri-cliccando la voce attiva la finestra si chiude. */}
+        <div className="absolute top-[4.5rem] right-4 z-40 widget p-1.5 flex flex-col gap-1">
+          {TABS.map((tb, i) => {
+            const Ico = TAB_ICONS[tb.key as keyof typeof TAB_ICONS] ?? IcoNavAnalisi;
+            const on = tab === tb.key && !rightMin;
+            return (
+              <button key={tb.key} onClick={() => toggleTab(tb.key)} title={t(tb.label)}
+                className={"w-[68px] py-2 rounded-xl flex flex-col items-center gap-1 transition " +
+                  (on ? "bg-brand text-white" : "text-sage-dark hover:bg-black/5")}>
+                <Ico />
+                <span className="text-[10px] leading-none font-medium">
+                  <span className={on ? "opacity-70 mr-0.5" : "opacity-50 mr-0.5"}>{i + 1}</span>{t(tb.label)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Finestra degli strumenti: si apre a sinistra del menu verticale */}
+        {!rightMin && (
+        <div className="absolute top-[4.5rem] right-[7rem] w-[440px] max-w-[calc(100vw_-_9rem)] max-h-[78vh] widget flex flex-col overflow-hidden">
           <div className="flex items-center justify-between px-3 pt-2 shrink-0">
-            <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Strumenti")}</span>
-            <button onClick={() => setRightMin(true)} title={t("Riduci a icona")}
+            <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t(TABS.find((x) => x.key === tab)?.label ?? "Strumenti")}</span>
+            <button onClick={() => setRightMin(true)} title={t("Chiudi")}
               className="text-sage-dark hover:text-brand p-1 rounded hover:bg-black/5"><IcoMinimize /></button>
           </div>
           <div className="overflow-auto scroll-soft p-4 pt-2 space-y-4">
@@ -2496,17 +2530,6 @@ export default function Page() {
               {t("Stai modificando: {name}", { name: active.name })}
             </div>
           )}
-
-          {/* Schede progressive del flusso */}
-          <div className="flex flex-wrap gap-1 sticky top-0 z-10 bg-white/95 backdrop-blur -mx-4 px-4 py-2 -mt-1">
-            {TABS.map((tb, i) => (
-              <button key={tb.key} onClick={() => setTab(tb.key)}
-                className={"text-xs px-2 py-1 rounded-lg transition " +
-                  (tab === tb.key ? "bg-brand text-white font-semibold" : "bg-panel text-sage-dark")}>
-                <span className="opacity-60 mr-1">{i + 1}</span>{t(tb.label)}
-              </button>
-            ))}
-          </div>
 
           <section className={secShow("analisi")}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Anteprima satellitare")}</h3>

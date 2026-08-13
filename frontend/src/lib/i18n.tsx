@@ -409,6 +409,9 @@ const EN: Dict = {
   "crediti illimitati": "unlimited credits",
   "disattivato": "deactivated",
   "proprietario": "owner",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Analysis",
+  "Rilievo": "Survey",
 };
 
 const FR: Dict = {
@@ -780,6 +783,9 @@ const FR: Dict = {
   "crediti illimitati": "crédits illimités",
   "disattivato": "désactivé",
   "proprietario": "propriétaire",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Analyse",
+  "Rilievo": "Relevé",
 };
 
 const ES: Dict = {
@@ -1151,6 +1157,9 @@ const ES: Dict = {
   "crediti illimitati": "créditos ilimitados",
   "disattivato": "desactivado",
   "proprietario": "propietario",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Análisis",
+  "Rilievo": "Levantamiento",
 };
 
 const PT: Dict = {
@@ -1522,6 +1531,9 @@ const PT: Dict = {
   "crediti illimitati": "créditos ilimitados",
   "disattivato": "desativado",
   "proprietario": "proprietário",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Análise",
+  "Rilievo": "Levantamento",
 };
 
 const RO: Dict = {
@@ -1895,6 +1907,9 @@ const RO: Dict = {
   "crediti illimitati": "credite nelimitate",
   "disattivato": "dezactivat",
   "proprietario": "proprietar",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Analiză",
+  "Rilievo": "Topografie",
 };
 
 const KK: Dict = {
@@ -2268,6 +2283,9 @@ const KK: Dict = {
   "crediti illimitati": "шектеусіз кредиттер",
   "disattivato": "өшірілген",
   "proprietario": "иесі",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Талдау",
+  "Rilievo": "Топография",
 };
 
 const AR: Dict = {
@@ -2639,6 +2657,9 @@ const AR: Dict = {
   "crediti illimitati": "أرصدة غير محدودة",
   "disattivato": "معطّل",
   "proprietario": "المالك",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "التحليل",
+  "Rilievo": "المسح",
 };
 
 const ZH: Dict = {
@@ -3012,6 +3033,9 @@ const ZH: Dict = {
   "crediti illimitati": "无限积分",
   "disattivato": "已停用",
   "proprietario": "所有者",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "分析",
+  "Rilievo": "地形测量",
 };
 
 const HU: Dict = {
@@ -3385,6 +3409,9 @@ const HU: Dict = {
   "crediti illimitati": "korlátlan kreditek",
   "disattivato": "deaktiválva",
   "proprietario": "tulajdonos",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Elemzés",
+  "Rilievo": "Felmérés",
 };
 
 const ID: Dict = {
@@ -3758,6 +3785,9 @@ const ID: Dict = {
   "crediti illimitati": "kredit tak terbatas",
   "disattivato": "nonaktif",
   "proprietario": "pemilik",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Analisis",
+  "Rilievo": "Survei",
 };
 
 const DE: Dict = {
@@ -4125,6 +4155,9 @@ const DE: Dict = {
   "crediti illimitati": "unbegrenzte Credits",
   "disattivato": "deaktiviert",
   "proprietario": "Eigentümer",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Analyse",
+  "Rilievo": "Vermessung",
 };
 
 const PL: Dict = {
@@ -4494,6 +4527,9 @@ const PL: Dict = {
   "crediti illimitati": "nieograniczone kredyty",
   "disattivato": "dezaktywowany",
   "proprietario": "właściciel",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Analiza",
+  "Rilievo": "Topografia",
 };
 
 const BG: Dict = {
@@ -4863,6 +4899,9 @@ const BG: Dict = {
   "crediti illimitati": "неограничени кредити",
   "disattivato": "деактивиран",
   "proprietario": "собственик",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Анализ",
+  "Rilievo": "Топография",
 };
 
 const RU: Dict = {
@@ -5232,6 +5271,9 @@ const RU: Dict = {
   "crediti illimitati": "неограниченные кредиты",
   "disattivato": "деактивирован",
   "proprietario": "владелец",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Анализ",
+  "Rilievo": "Топография",
 };
 
 const AF: Dict = {
@@ -5601,6 +5643,9 @@ const AF: Dict = {
   "crediti illimitati": "onbeperkte krediete",
   "disattivato": "gedeaktiveer",
   "proprietario": "eienaar",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Analise",
+  "Rilievo": "Opmeting",
 };
 
 const MS: Dict = {
@@ -5970,6 +6015,9 @@ const MS: Dict = {
   "crediti illimitati": "kredit tanpa had",
   "disattivato": "dinyahaktifkan",
   "proprietario": "pemilik",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Analisis",
+  "Rilievo": "Ukur Tanah",
 };
 
 const VI: Dict = {
@@ -6339,6 +6387,9 @@ const VI: Dict = {
   "crediti illimitati": "tín dụng không giới hạn",
   "disattivato": "đã vô hiệu hóa",
   "proprietario": "chủ sở hữu",
+  // --- v0.6.108: etichette menu ---
+  "Analisi": "Phân tích",
+  "Rilievo": "Trắc địa",
 };
 
 const TR: Record<Exclude<Lang, "it">, Dict> = {
