@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.110";
+const REV = "v0.6.111";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -244,102 +244,73 @@ function median(a: number[]): number {
   const s = [...a].sort((x, y) => x - y); const m = s.length >> 1;
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
-function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ring: number[][] | null, maxPerLine: number, flip: boolean): number[][][] {
+function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], maxPerLine: number): number[][][] {
   if (pivs.length < 1 || canal.length < 2) return [];
   const lat0 = pivs.reduce((s, p) => s + p.lat, 0) / pivs.length;
   const mLat = 111320, mLng = 111320 * Math.cos((lat0 * Math.PI) / 180) || 1e-9;
   const P: [number, number][] = pivs.map((p) => [p.lng * mLng, p.lat * mLat]);
   const C: [number, number][] = canal.map((c) => [c[0] * mLng, c[1] * mLat]);
-  const R: [number, number][] | null = ring ? ring.map((c) => [c[0] * mLng, c[1] * mLat]) : null;
   const toLL = (x: number, y: number): number[] => [x / mLng, y / mLat];
   const cap = Math.max(1, Math.round(maxPerLine || 999));
 
-  // passo tipico tra pivot (per separare le file)
+  // Punto del canale più vicino a pt: restituisce il punto, la tangente locale
+  // (unitaria), la distanza e la posizione lungo il canale.
+  const cum: number[] = [0];
+  for (let k = 0; k < C.length - 1; k++) cum.push(cum[k] + Math.hypot(C[k + 1][0] - C[k][0], C[k + 1][1] - C[k][1]));
+  const onCanal = (pt: [number, number]) => {
+    let bd = Infinity, bk = 0, bt = 0, bq: [number, number] = C[0];
+    for (let k = 0; k < C.length - 1; k++) {
+      const a = C[k], b = C[k + 1]; const abx = b[0] - a[0], aby = b[1] - a[1];
+      const l2 = abx * abx + aby * aby || 1e-9;
+      const t = Math.max(0, Math.min(1, ((pt[0] - a[0]) * abx + (pt[1] - a[1]) * aby) / l2));
+      const qx = a[0] + abx * t, qy = a[1] + aby * t; const dd = (pt[0] - qx) ** 2 + (pt[1] - qy) ** 2;
+      if (dd < bd) { bd = dd; bk = k; bt = t; bq = [qx, qy]; }
+    }
+    const a = C[bk], b = C[bk + 1]; const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const T: [number, number] = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
+    const cross = T[0] * (pt[1] - bq[1]) - T[1] * (pt[0] - bq[0]);
+    return { q: bq, T, dist: Math.sqrt(bd), along: cum[bk] + bt * L, side: cross >= 0 ? 1 : -1 };
+  };
+
+  // Passo tipico tra pivot → larghezza delle colonne perpendicolari al canale.
   const nnd: number[] = [];
   for (let i = 0; i < P.length; i++) {
     let best = Infinity;
     for (let j = 0; j < P.length; j++) { if (i === j) continue; const d = (P[j][0] - P[i][0]) ** 2 + (P[j][1] - P[i][1]) ** 2; if (d < best) best = d; }
     if (best < Infinity) nnd.push(Math.sqrt(best));
   }
-  const pitch = median(nnd) || 800;
+  const binw = Math.max(median(nnd) || 800, 1);
 
-  // Assi candidati del reticolo: il lato più lungo del campo (come l'auto-orient
-  // del solutore) e la sua perpendicolare.
-  let alpha = 0;
-  if (R && R.length >= 2) { let bestLen = -1; for (let k = 0; k < R.length - 1; k++) { const dx = R[k + 1][0] - R[k][0], dy = R[k + 1][1] - R[k][1]; const L = dx * dx + dy * dy; if (L > bestLen) { bestLen = L; alpha = Math.atan2(dy, dx); } } }
+  // Ogni pivot va nella colonna (posizione lungo il canale) del proprio LATO.
+  const info = P.map((pt, i) => ({ i, ...onCanal(pt) }));
+  const bins = new Map<string, typeof info>();
+  for (const f of info) {
+    const key = `${Math.round(f.along / binw)}|${f.side}`;
+    const arr = bins.get(key); if (arr) arr.push(f); else bins.set(key, [f]);
+  }
 
-  const dot = (a: [number, number], b: [number, number]) => a[0] * b[0] + a[1] * b[1];
-  const clusterRows = (d: [number, number]): number[][] => {
-    const n: [number, number] = [-d[1], d[0]];
-    const order = P.map((_, i) => i).sort((a, b) => dot(P[a], n) - dot(P[b], n));
-    const rows: number[][] = []; let cur: number[] = []; let prev = NaN;
-    for (const i of order) { const pr = dot(P[i], n); if (cur.length && pr - prev > 0.5 * pitch) { rows.push(cur); cur = []; } cur.push(i); prev = pr; }
-    if (cur.length) rows.push(cur);
-    return rows;
-  };
-  // Residuo di "rettilineità": quanto i pivot di una fila si scostano dalla retta
-  // fra i due estremi. L'asse giusto (file collineari) ha residuo minimo.
-  const residual = (d: [number, number], rows: number[][]): number => {
-    let tot = 0;
-    for (const row of rows) {
-      if (row.length < 3) continue;
-      const s = row.slice().sort((a, b) => dot(P[a], d) - dot(P[b], d));
-      const a = P[s[0]], b = P[s[s.length - 1]]; const ex = b[0] - a[0], ey = b[1] - a[1]; const el = Math.hypot(ex, ey) || 1;
-      for (const i of row) tot += Math.abs(ex * (P[i][1] - a[1]) - ey * (P[i][0] - a[0])) / el;
-    }
-    return tot;
-  };
-  let ang = alpha, bestRes = Infinity;
-  for (const a of [alpha, alpha + Math.PI / 2]) { const d: [number, number] = [Math.cos(a), Math.sin(a)]; const r = residual(d, clusterRows(d)); if (r < bestRes) { bestRes = r; ang = a; } }
-  if (flip) ang += Math.PI / 2;
-  const d: [number, number] = [Math.cos(ang), Math.sin(ang)];
-
-  // Utility canale: punto più vicino, distanza, lato, e intersezione di una retta.
-  const nearest = (pt: [number, number]): { q: [number, number]; dist: number; side: number } => {
-    let bd = Infinity, bq: [number, number] = C[0], bk = 0;
-    for (let k = 0; k < C.length - 1; k++) {
-      const a = C[k], b = C[k + 1]; const abx = b[0] - a[0], aby = b[1] - a[1]; const l2 = abx * abx + aby * aby || 1e-9;
-      const t = Math.max(0, Math.min(1, ((pt[0] - a[0]) * abx + (pt[1] - a[1]) * aby) / l2));
-      const qx = a[0] + abx * t, qy = a[1] + aby * t; const dd = (pt[0] - qx) ** 2 + (pt[1] - qy) ** 2;
-      if (dd < bd) { bd = dd; bq = [qx, qy]; bk = k; }
-    }
-    const a = C[bk], b = C[bk + 1]; const tl = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-    const cross = ((b[0] - a[0]) / tl) * (pt[1] - bq[1]) - ((b[1] - a[1]) / tl) * (pt[0] - bq[0]);
-    return { q: bq, dist: Math.sqrt(bd), side: cross >= 0 ? 1 : -1 };
-  };
-  // Intersezione della retta (A + t·d) col canale, punto più vicino ad A: mantiene
-  // la tubazione PERFETTAMENTE dritta fino al canale.
-  const lineHitCanal = (A: [number, number]): [number, number] | null => {
-    let best: [number, number] | null = null, bestAbsT = Infinity;
-    for (let k = 0; k < C.length - 1; k++) {
-      const s0 = C[k], s1 = C[k + 1]; const ex = s1[0] - s0[0], ey = s1[1] - s0[1];
-      const den = d[1] * ex - d[0] * ey; if (Math.abs(den) < 1e-9) continue;
-      const bx = s0[0] - A[0], by = s0[1] - A[1];
-      const t = (by * ex - bx * ey) / den; const u = (d[0] * by - d[1] * bx) / den;
-      if (u < -0.02 || u > 1.02) continue;
-      if (Math.abs(t) < bestAbsT) { bestAbsT = Math.abs(t); best = [A[0] + d[0] * t, A[1] + d[1] * t]; }
-    }
-    return best;
-  };
-
-  const rows = clusterRows(d);
   const pipes: number[][][] = [];
-  for (const row of rows) {
-    const sorted = row.slice().sort((a, b) => dot(P[a], d) - dot(P[b], d));
-    // spezza in tratte dello stesso LATO del canale (niente scavalcamenti)
-    const runs: number[][] = []; let cur: number[] = []; let curSide = 0;
-    for (const i of sorted) { const sd = nearest(P[i]).side; if (cur.length && sd !== curSide) { runs.push(cur); cur = []; } cur.push(i); curSide = sd; }
-    if (cur.length) runs.push(cur);
-    for (const run of runs) {
-      for (let c = 0; c < run.length; c += cap) {
-        const chunk = run.slice(c, c + cap);
-        const first = P[chunk[0]], last = P[chunk[chunk.length - 1]];
-        const seq = nearest(last).dist < nearest(first).dist ? chunk.slice().reverse() : chunk;   // dal canale verso l'esterno
-        const nearP = P[seq[0]];
-        const tap = lineHitCanal(nearP) ?? nearest(nearP).q;
-        const pts: [number, number][] = [tap, ...seq.map((i) => P[i])];
-        pipes.push(pts.map(([x, y]) => toLL(x, y)));
-      }
+  for (const list of bins.values()) {
+    list.sort((a, b) => a.dist - b.dist);
+    // Presa sul canale: punto medio della colonna, riportato sul tracciato.
+    const ref = list[0];
+    const sBar = list.reduce((s, f) => s + ((P[f.i][0] - ref.q[0]) * ref.T[0] + (P[f.i][1] - ref.q[1]) * ref.T[1]), 0) / list.length;
+    const tapRaw: [number, number] = [ref.q[0] + ref.T[0] * sBar, ref.q[1] + ref.T[1] * sBar];
+    const snap = onCanal(tapRaw);
+    const tap = snap.q;
+    // Direzione della tubazione: PERPENDICOLARE al canale, verso i pivot.
+    const N: [number, number] = [-snap.T[1] * ref.side, snap.T[0] * ref.side];
+    // Distanza di ogni pivot lungo la perpendicolare, dal punto di presa.
+    const ts = list.map((f) => (P[f.i][0] - tap[0]) * N[0] + (P[f.i][1] - tap[1]) * N[1]).filter((v) => v > 0).sort((a, b) => a - b);
+    if (!ts.length) continue;
+    // Una linea retta per ogni gruppo di `cap` pivot: la prima parte dal canale,
+    // le successive proseguono dove finisce la precedente (nessuna sovrapposizione).
+    let from = 0;
+    for (let c = 0; c < ts.length; c += cap) {
+      const to = ts[Math.min(c + cap, ts.length) - 1];
+      if (to <= from) continue;
+      pipes.push([toLL(tap[0] + N[0] * from, tap[1] + N[1] * from), toLL(tap[0] + N[0] * to, tap[1] + N[1] * to)]);
+      from = to;
     }
   }
   return pipes;
@@ -584,7 +555,6 @@ export default function Page() {
   const [advMaxR, setAdvMaxR] = useState(450);           // avanzata: raggio massimo del range (m)
   const [pipeCanalIdx, setPipeCanalIdx] = useState(0);   // Accessori: canale da cui si diramano le tubazioni
   const [pipeMaxPerLine, setPipeMaxPerLine] = useState(8); // max pivot collegati sulla stessa tubazione
-  const [pipeFlip, setPipeFlip] = useState(false);       // ruota di 90° la direzione delle file
   // Gerarchia pivot: modello modificabile (gruppo → singolo) derivato dal risultato.
   const [pivots, setPivots] = useState<PivotItem[]>([]);
   const [pivotLines, setPivotLines] = useState<{ kind: string; coords: number[][]; field?: number }[]>([]);
@@ -1821,8 +1791,7 @@ export default function Page() {
     const fieldPivs = pivots.filter((p) => p.field === fid);
     if (!fieldPivs.length) { setMsg(t("Nessun pivot su questo poligono: inserisci prima gli impianti.")); return; }
     const canal = canals[Math.min(pipeCanalIdx, canals.length - 1)];
-    const ring = active.geom?.coordinates?.[0] ?? null;
-    const pipesLL = feederPipes(canal.geojson.coordinates, fieldPivs.map((p) => ({ lat: p.lat, lng: p.lng })), ring, pipeMaxPerLine, pipeFlip);
+    const pipesLL = feederPipes(canal.geojson.coordinates, fieldPivs.map((p) => ({ lat: p.lat, lng: p.lng })), pipeMaxPerLine);
     if (!pipesLL.length) { setMsg(t("Nessuna tubazione tracciabile con questi pivot.")); return; }
     const newL = pipesLL.map((coords) => ({ kind: "pipe", coords, field: fid }));
     const mergedL = [...pivotLines.filter((l) => !(l.kind === "pipe" && l.field === fid)), ...newL];
@@ -3088,7 +3057,7 @@ export default function Page() {
             <div className="bg-panel rounded-lg p-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Tubazioni di adduzione dal canale")}</div>
               <p className="text-[10px] text-sage-dark leading-snug mb-2">
-                {t("Linee dritte lungo le file di pivot: ogni tubazione si dirama dal canale e passa per i centri dei pivot della stessa fila.")}
+                {t("Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.")}
               </p>
 
               {canals.length > 1 && (
@@ -3101,23 +3070,14 @@ export default function Page() {
                 </label>
               )}
 
-              <div className="flex gap-2 items-end">
-                <div className="flex-1 min-w-0">
-                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Pivot per linea (max)")}</div>
-                  <input type="number" min={1} max={100} step={1} value={pipeMaxPerLine}
-                    onChange={(e) => setPipeMaxPerLine(Math.max(1, Number(e.target.value)))} className="field-input px-2 py-1.5 text-sm" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Direzione delle tubazioni")}</div>
-                  <div className="seg">
-                    <div className="seg-item" data-active={!pipeFlip} onClick={() => setPipeFlip(false)}>{t("Automatica")}</div>
-                    <div className="seg-item" data-active={pipeFlip} onClick={() => setPipeFlip(true)}>{t("Ruota di 90°")}</div>
-                  </div>
-                </div>
+              <div className="max-w-[12rem]">
+                <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Pivot per linea (max)")}</div>
+                <input type="number" min={1} max={100} step={1} value={pipeMaxPerLine}
+                  onChange={(e) => setPipeMaxPerLine(Math.max(1, Number(e.target.value)))} className="field-input px-2 py-1.5 text-sm" />
               </div>
 
               <div className="text-[10px] text-sage-dark bg-white/40 rounded-md p-1.5 mt-2 leading-relaxed">
-                {t("Una linea per fila di pivot, spezzata al massimo ogni {n} pivot; ogni linea si ferma sul suo lato del canale.", { n: pipeMaxPerLine })}
+                {t("Ogni tubazione parte dal canale ed è perpendicolare ad esso; serve al massimo {n} pivot per linea.", { n: pipeMaxPerLine })}
                 {nPipes > 0 && <> · {t("Tubazioni attive")}: <b>{nPipes}</b></>}
               </div>
 
