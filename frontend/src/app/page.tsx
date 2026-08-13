@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.109";
+const REV = "v0.6.110";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2560,8 +2560,9 @@ export default function Page() {
         {/* Finestra degli strumenti: si apre a sinistra del menu verticale */}
         {!rightMin && (
         <div className="absolute top-[4.5rem] right-[7rem] w-[440px] max-w-[calc(100vw_-_9rem)] max-h-[78vh] widget flex flex-col overflow-hidden">
-          <div className="flex items-center justify-between px-3 pt-2 shrink-0">
-            <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t(TABS.find((x) => x.key === tab)?.label ?? "Strumenti")}</span>
+          {/* Intestazione minima: la pagina attiva è già indicata dal menu
+              verticale, qui resta solo il comando per chiudere la finestra. */}
+          <div className="flex items-center justify-end px-2 pt-2 shrink-0">
             <button onClick={() => setRightMin(true)} title={t("Chiudi")}
               className="text-sage-dark hover:text-brand p-1 rounded hover:bg-black/5"><IcoMinimize /></button>
           </div>
