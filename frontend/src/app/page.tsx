@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.115";
+const REV = "v0.6.116";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -262,7 +262,7 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
     }
     return c;
   };
-  // Punto del canale più vicino (piede della perpendicolare = tratto più corto).
+  // Punto del canale più vicino (allaccio più corto = piede della perpendicolare).
   const footOf = (pt: [number, number]) => {
     let bd = Infinity, bq: [number, number] = C[0];
     for (let k = 0; k < C.length - 1; k++) {
@@ -283,81 +283,97 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
     if (b < Infinity) nnd.push(Math.sqrt(b));
   }
   const pitch = median(nnd) || 800;
-  const COS_TOL = Math.cos((15 * Math.PI) / 180);   // la catena prosegue DRITTA (±15°)
 
-  // Catene rettilinee di pivot: il 2° pivot fissa la direzione, i successivi
-  // devono restare su quella retta → la tubazione è dritta per costruzione.
-  const chainsFor = (d: [number, number]): number[][] => {
-    const p: [number, number] = [-d[1], d[0]];
-    const order = P.map((_, i) => i).sort((a, b) => distC[a] - distC[b]);
-    const used = new Array(P.length).fill(false);
-    const chains: number[][] = [];
-    for (const st of order) {
-      if (used[st]) continue;
-      used[st] = true; const ch = [st]; let cur = st; let e: [number, number] | null = null;
-      while (ch.length < cap) {
-        let bj = -1, bd = Infinity;
-        for (let j = 0; j < P.length; j++) {
-          if (used[j]) continue;
-          const vx = P[j][0] - P[cur][0], vy = P[j][1] - P[cur][1];
-          const dist = Math.hypot(vx, vy);
-          if (dist > 1.9 * pitch || dist < 1e-6) continue;
-          if (e) { if ((vx * e[0] + vy * e[1]) / dist < COS_TOL) continue; }
-          else {
-            if (distC[j] <= distC[cur] + 0.15 * pitch) continue;          // si allontana dal canale
-            if (Math.abs(vx * p[0] + vy * p[1]) > 0.75 * pitch) continue; // resta nel corridoio
-          }
-          if (dist < bd) { bd = dist; bj = j; }
-        }
-        if (bj < 0) break;
-        const vx = P[bj][0] - P[cur][0], vy = P[bj][1] - P[cur][1], L = Math.hypot(vx, vy);
-        if (!e) e = [vx / L, vy / L];
-        used[bj] = true; ch.push(bj); cur = bj;
-      }
-      chains.push(ch);
-    }
-    return chains;
-  };
-
-  const off = 0.16 * pitch;    // scostamento fra tratte parallele della stessa fila
-  const buildFor = (d: [number, number]): [number, number][][] => {
-    const p: [number, number] = [-d[1], d[0]];
-    const chains = chainsFor(d);
-    const lane = new Map<number, number>();
-    const out: [number, number][][] = [];
-    for (const ch of chains) {
-      const A = P[ch[0]];
-      const key = Math.round((A[0] * p[0] + A[1] * p[1]) / (0.6 * pitch));
-      const k = (lane.get(key) ?? -1) + 1; lane.set(key, k);
-      const sh: [number, number] = [p[0] * off * k, p[1] * off * k];
-      const start: [number, number] = [A[0] + sh[0], A[1] + sh[1]];
-      const f = footOf(start);
-      const path: [number, number][] = [f.q];              // parte SEMPRE dal canale
-      if (k > 0) path.push(start);                          // tratto parallelo alla tratta precedente
-      for (const i of ch) path.push(P[i]);                  // passa per TUTTI i centri
-      out.push(path);
-    }
-    return out;
-  };
-
-  // Direzione: entro ±20° dalla perpendicolare al canale, su entrambi i versi;
-  // si sceglie la rete complessivamente PIÙ CORTA.
   let sx = 0, sy = 0;
   for (let k = 0; k < C.length - 1; k++) { sx += C[k + 1][0] - C[k][0]; sy += C[k + 1][1] - C[k][1]; }
   const L0 = Math.hypot(sx, sy) || 1;
   const Nm: [number, number] = [-sy / L0, sx / L0];
+  const angN = (Math.atan2(Nm[1], Nm[0]) * 180) / Math.PI;
   const rot = (v: [number, number], a: number): [number, number] =>
     [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a)];
+
+  // 1) Direzioni del reticolo RILEVATE dai pivot: istogramma degli angoli verso i
+  //    vicini, riferito alla perpendicolare al canale (0° = perpendicolare).
+  const hist = new Array(90).fill(0);
+  for (let i = 0; i < P.length; i++) {
+    for (let j = i + 1; j < P.length; j++) {
+      const vx = P[j][0] - P[i][0], vy = P[j][1] - P[i][1];
+      const dd = Math.hypot(vx, vy);
+      if (dd > 1.35 * pitch) continue;
+      let a = (Math.atan2(vy, vx) * 180) / Math.PI - angN;
+      a = ((a % 180) + 180) % 180; if (a > 90) a -= 180;
+      hist[Math.min(89, Math.floor((a + 90) / 2))]++;
+    }
+  }
+  const peaks: { a: number; v: number }[] = [];
+  for (let i = 0; i < 90; i++) if (hist[i] >= 4) peaks.push({ a: i * 2 - 90 + 1, v: hist[i] + 0.5 * (hist[(i + 89) % 90] + hist[(i + 1) % 90]) });
+  peaks.sort((x, y) => y.v - x.v);
+  const lattice: number[] = [];
+  for (const pk of peaks) if (!lattice.some((q) => Math.abs(q - pk.a) < 15)) lattice.push(pk.a);
+  // Si preferiscono le direzioni entro ±20° dalla perpendicolare (regola data);
+  // se il reticolo non ne ha, si usano comunque quelle rilevate (meglio che
+  // forzare una direzione senza pivot allineati).
+  let cand = lattice.filter((a) => Math.abs(a) <= 20);
+  if (!cand.length) cand = lattice.slice(0, 3);
+  if (!cand.length) cand = [0];
+
+  const off = 0.16 * pitch;
+  // 2) Per una direzione: file di pivot allineati → tratte da `cap` pivot.
+  const buildFor = (thetaDeg: number): [number, number][][] => {
+    const d = rot(Nm, (thetaDeg * Math.PI) / 180);
+    const p: [number, number] = [-d[1], d[0]];
+    const idx = P.map((_, i) => i).sort((a, b) => (P[a][0] * p[0] + P[a][1] * p[1]) - (P[b][0] * p[0] + P[b][1] * p[1]));
+    const rows: number[][] = []; let cur: number[] = []; let prev = NaN;
+    for (const i of idx) {
+      const u = P[i][0] * p[0] + P[i][1] * p[1];
+      if (cur.length && u - prev > 0.5 * pitch) { rows.push(cur); cur = []; }
+      cur.push(i); prev = u;
+    }
+    if (cur.length) rows.push(cur);
+    const out: [number, number][][] = [];
+    for (const row of rows) {
+      const srt = row.slice().sort((a, b) => (P[a][0] * d[0] + P[a][1] * d[1]) - (P[b][0] * d[0] + P[b][1] * d[1]));
+      // Spezza la fila dove c'è un vuoto O dove il tracciato non prosegue DRITTO:
+      // così ogni tubazione resta una linea retta invece di zigzagare.
+      const COS_STRAIGHT = Math.cos((25 * Math.PI) / 180);
+      const segs: number[][] = []; let seg: number[] = [srt[0]]; let e: [number, number] | null = null;
+      for (let k = 1; k < srt.length; k++) {
+        const a = P[srt[k - 1]], b = P[srt[k]];
+        const vx = b[0] - a[0], vy = b[1] - a[1]; const L = Math.hypot(vx, vy);
+        const gap = L > 1.6 * pitch;
+        const bend = !!e && (vx * e[0] + vy * e[1]) / (L || 1) < COS_STRAIGHT;
+        if (gap || bend) { segs.push(seg); seg = []; e = null; }
+        else if (!e && L > 1e-6) e = [vx / L, vy / L];
+        seg.push(srt[k]);
+      }
+      segs.push(seg);
+      for (const s of segs) {
+        // dal pivot più vicino al canale verso l'esterno
+        const ordered = distC[s[0]] <= distC[s[s.length - 1]] ? s : [...s].reverse();
+        for (let k = 0, ci = 0; k < ordered.length; k += cap, ci++) {
+          const chunk = ordered.slice(k, k + cap);
+          const A = P[chunk[0]];
+          const st: [number, number] = [A[0] + p[0] * off * ci, A[1] + p[1] * off * ci];
+          let f = footOf(st);
+          if (!inside(f.q)) { const alt = footOf(A); if (inside(alt.q)) f = alt; }
+          const path: [number, number][] = [f.q];        // 1) parte sempre dal canale
+          if (ci > 0) path.push(st);                     // 4) tratta successiva: parallela
+          for (const i of chunk) path.push(P[i]);        // 3) passa per tutti i centri
+          out.push(path);
+        }
+      }
+    }
+    return out;
+  };
+
+  // 3) Fra le direzioni candidate si sceglie la rete PIÙ CORTA.
   const totalLen = (ps: [number, number][][]) =>
     ps.reduce((s, path) => { let L = 0; for (let i = 0; i < path.length - 1; i++) L += Math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]); return s + L; }, 0);
   let best: { len: number; pipes: [number, number][][] } | null = null;
-  for (let deg = -20; deg <= 20; deg += 2) {
-    for (const sgn of [1, -1]) {
-      const d = rot([Nm[0] * sgn, Nm[1] * sgn], (deg * Math.PI) / 180);
-      const pipes = buildFor(d);
-      const len = totalLen(pipes);
-      if (!best || len < best.len) best = { len, pipes };
-    }
+  for (const th of cand) {
+    const pipes = buildFor(th);
+    const len = totalLen(pipes);
+    if (!best || len < best.len) best = { len, pipes };
   }
   if (!best) return [];
   return best.pipes.map((path) => path.map((q) => toLL(q[0], q[1])));
