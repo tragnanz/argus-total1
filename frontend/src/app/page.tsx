@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.123";
+const REV = "v0.6.124";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -770,6 +770,7 @@ export default function Page() {
   // Salvataggio automatico: stato UI + riferimenti di serializzazione/serializzazione salvataggi.
   const savingRef = useRef(false);
   const pendingSaveRef = useRef<null | (() => Promise<void>)>(null);
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const lastSavedSigRef = useRef("");
   const latestSigRef = useRef("");
   const suppressAutosaveRef = useRef(false);
@@ -1545,7 +1546,17 @@ export default function Page() {
   // gerarchia) e canali/strade/invasi/pivot (come layer). Le assegnazioni
   // oggetto→campo sono memorizzate con l'ID area del DB (stabile), poi rimappate
   // alla riapertura. Rifà il salvataggio da zero (cancella il precedente).
-  async function saveAll(silent = false): Promise<boolean> {
+  // Ogni salvataggio passa da questa catena: due saveAll non possono MAI girare
+  // insieme. Senza questa serializzazione due salvataggi sovrapposti leggevano
+  // entrambi la stessa lista di aree "vecchie", creavano ciascuno la propria
+  // copia dei poligoni e cancellavano solo quella vecchia comune: risultato, i
+  // poligoni raddoppiati che comparivano dopo un aggiornamento.
+  function saveAll(silent = false): Promise<boolean> {
+    const run = saveChainRef.current.then(() => saveAllInner(silent), () => saveAllInner(silent));
+    saveChainRef.current = run.then(() => undefined, () => undefined);
+    return run;
+  }
+  async function saveAllInner(silent = false): Promise<boolean> {
     if (!projectId) { if (!silent) setMsg(t("Serve un progetto selezionato per salvare.")); return false; }
     const pid = projectId;
     // GUARDIA anti-perdita: non salvare uno stato "vuoto" (nessun poligono), che
@@ -1559,7 +1570,6 @@ export default function Page() {
     const newAreaIds: number[] = [];
     const newLayerIds: number[] = [];
     try {
-      const [oldAreas, oldLayers] = await Promise.all([api.listAreas(pid), api.listLayers(pid)]);
 
       // 1) Crea le NUOVE aree (famiglie) e mappa idCampoFrontend → idAreaDB.
       const fieldToArea = new Map<number, number>();
@@ -1616,10 +1626,16 @@ export default function Page() {
       if (watercourses.length) rewritten.add("waters");
       if (hasStyle) rewritten.add("styles");
       if (pivots.length) rewritten.add("pivots");
-      for (const l of oldLayers) if (rewritten.has(l.kind)) { try { await api.deleteLayer(l.id); } catch { /* ignora */ } }
-      const byId = new Map(oldAreas.map((a) => [a.id, a] as const));
-      const depth = (a: typeof oldAreas[number]) => { let d = 0; let cur: typeof oldAreas[number] | undefined = a; while (cur?.parent_area_id != null && d < 30) { d++; cur = byId.get(cur.parent_area_id); } return d; };
-      for (const a of [...oldAreas].sort((x, y) => depth(y) - depth(x))) { try { await api.deleteArea(a.id); } catch { /* ignora */ } }
+      // Si rilegge lo stato ATTUALE del server invece di fidarsi della fotografia
+      // iniziale: si tiene solo quello appena creato e si elimina tutto il resto.
+      // Così un eventuale doppione rimasto da prima sparisce al primo salvataggio.
+      const keepA = new Set(newAreaIds), keepL = new Set(newLayerIds);
+      const [curAreas, curLayers] = await Promise.all([api.listAreas(pid), api.listLayers(pid)]);
+      for (const l of curLayers) if (rewritten.has(l.kind) && !keepL.has(l.id)) { try { await api.deleteLayer(l.id); } catch { /* ignora */ } }
+      const stale = curAreas.filter((a) => !keepA.has(a.id));
+      const byId = new Map(curAreas.map((a) => [a.id, a] as const));
+      const depth = (a: typeof curAreas[number]) => { let d = 0; let cur: typeof curAreas[number] | undefined = a; while (cur?.parent_area_id != null && d < 30) { d++; cur = byId.get(cur.parent_area_id); } return d; };
+      for (const a of stale.sort((x, y) => depth(y) - depth(x))) { try { await api.deleteArea(a.id); } catch { /* ignora */ } }
 
       fieldToAreaRef.current = fieldToArea;   // per costruire la config dei link di condivisione
       setFields((fs) => fs.map((x) => fieldToArea.has(x.id) ? { ...x, savedId: fieldToArea.get(x.id) } : x));
