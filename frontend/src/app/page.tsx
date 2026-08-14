@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.127";
+const REV = "v0.6.128";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -244,7 +244,7 @@ function median(a: number[]): number {
   const s = [...a].sort((x, y) => x - y); const m = s.length >> 1;
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
-function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], maxPerLine: number, ring: number[][] | null): number[][][] {
+function feederPipes(canal: number[][], pivs: { lat: number; lng: number; r?: number }[], maxPerLine: number, ring: number[][] | null): number[][][] {
   if (pivs.length < 1 || canal.length < 2) return [];
   const lat0 = pivs.reduce((s, p) => s + p.lat, 0) / pivs.length;
   const mLat = 111320, mLng = 111320 * Math.cos((lat0 * Math.PI) / 180) || 1e-9;
@@ -463,8 +463,10 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
   // se la presa calcolata coincide con una già usata, scivola lungo il canale.
   const MIN_SEP = 0.12 * pitch;
   const OFF_LANE = 0.45 * pitch;   // distanza fra due tubi paralleli della stessa fila
-  // Ogni pivot prende acqua da UNA sola tubazione: nessun tratto può passare
-  // accanto al centro di un pivot che non alimenta.
+  // REGOLA: un pivot può essere attraversato SOLO dalla sua tubazione. Il raggio
+  // di rispetto è quello del pivot stesso (il suo cerchio); dove il raggio non è
+  // noto si usa una frazione del passo.
+  const RAD = pivs.map((p) => (p.r && p.r > 0 ? p.r : 0.30 * pitch));
   const CLEAR = 0.30 * pitch;
   const distSeg = (p: [number, number], a: [number, number], b: [number, number]) => {
     const vx = b[0] - a[0], vy = b[1] - a[1]; const l2 = vx * vx + vy * vy || 1e-9;
@@ -472,7 +474,7 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
     return Math.hypot(p[0] - (a[0] + vx * t), p[1] - (a[1] + vy * t));
   };
   const clearOf = (a: [number, number], b: [number, number], own: Set<number>) => {
-    for (let i = 0; i < P.length; i++) { if (own.has(i)) continue; if (distSeg(P[i], a, b) < CLEAR) return false; }
+    for (let i = 0; i < P.length; i++) { if (own.has(i)) continue; if (distSeg(P[i], a, b) < RAD[i]) return false; }
     return true;
   };
   const usedTaps: [number, number][] = [];
@@ -555,7 +557,10 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
             arr.reduce((b, c) => (Math.hypot(c[0] - A[0], c[1] - A[1]) < Math.hypot(b[0] - A[0], b[1] - A[1]) ? c : b));
           const okC = cands.filter((c) => inside(c) && segInside(c, A));
           const freeC = okC.filter((c) => clearOf(c, A, own));       // niente pivot altrui sul percorso
-          tp = freeC.length ? pick2(freeC) : okC.length ? pick2(okC) : pick2(cands);
+          // REGOLA VINCOLANTE: se nessun allaccio evita i pivot altrui non si
+          // traccia nulla — questi pivot vanno agganciati a una fila vicina.
+          if (!freeC.length) { far.push(...ch); continue; }
+          tp = pick2(freeC);
         }
         // Allaccio spropositato — vale per QUALSIASI presa, anche quella dritta:
         // non si traccia, e i pivot passano al recupero finale che li aggancia a
@@ -656,8 +661,13 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
   // era spropositato: si agganciano in coda alla fila vicina (che ha ancora
   // posto entro il massimo per linea) invece di farsi una linea propria.
   if (leftovers.length) {
-    const stillFar: number[] = [];
-    for (const i of leftovers) {
+    let stillFar: number[] = [];
+    // Dal più vicino al canale: agganciato il primo, il secondo può agganciarsi a
+    // lui, e così via — è così che un lembo lontano diventa un'unica fila.
+    let queue = [...new Set(leftovers)].sort((a, b) => foot[a].dist - foot[b].dist);
+    for (let pass = 0; pass < 6 && queue.length; pass++) {
+      stillFar = [];
+      for (const i of queue) {
       let best = -1, bs = Infinity;
       for (let pi = 0; pi < pipes.length; pi++) {
         const pp = pipes[pi];
@@ -678,21 +688,58 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
         const sc = d + 8 * ang;
         if (sc < bs) { bs = sc; best = pi; }
       }
-      if (best >= 0) { pipes[best].path.push(P[i]); pipes[best].ids.push(i); }
-      else stillFar.push(i);
+        if (best >= 0) { pipes[best].path.push(P[i]); pipes[best].ids.push(i); }
+        else stillFar.push(i);
+      }
+      if (stillFar.length === queue.length) break;   // nessun progresso
+      queue = stillFar;
     }
-    // Chi non ha nemmeno una fila vicina disponibile riceve comunque la sua
-    // tubazione: nessun pivot resta senz'acqua.
-    for (const i of stillFar) {
-      const d = dv[kA[i]]; const q = foot[i].q;
-      const s1 = (P[i][0] - q[0]) * d[0] + (P[i][1] - q[1]) * d[1];
-      const dir: [number, number] = s1 >= 0 ? [d[0], d[1]] : [-d[0], -d[1]];
-      const own2 = new Set([i]);
-      const cands: [number, number][] = [straightTap(P[i], dir) ?? footOf(P[i]).q, nearTap(P[i], null, own2), footOf(P[i]).q];
-      const ok2 = cands.filter((c) => inside(c) && segInside(c, P[i]));
-      const arr = ok2.length ? ok2 : cands;
-      const tp2 = arr.reduce((b, c) => (Math.hypot(c[0] - P[i][0], c[1] - P[i][1]) < Math.hypot(b[0] - P[i][0], b[1] - P[i][1]) ? c : b));
-      pipes.push({ path: [tp2, P[i]], ids: [i] });
+    stillFar = queue;
+    // Restano i lembi dove NON esiste ancora nessuna tubazione a cui agganciarsi:
+    // vanno raggruppati e serviti da una capofila unica. I pivot dello stesso
+    // gruppo finiscono sulla stessa linea, quindi attraversarli è legittimo.
+    if (stillFar.length) {
+      const idx = new Map(stillFar.map((v, k) => [v, k] as const));
+      const par = stillFar.map((_, k) => k);
+      const find = (a: number): number => (par[a] === a ? a : (par[a] = find(par[a])));
+      for (const a of stillFar) for (const b of stillFar) {
+        if (a >= b) continue;
+        if (Math.hypot(P[a][0] - P[b][0], P[a][1] - P[b][1]) <= 1.9 * pitch) {
+          const ra = find(idx.get(a) as number), rb = find(idx.get(b) as number); if (ra !== rb) par[ra] = rb;
+        }
+      }
+      const groups = new Map<number, number[]>();
+      for (const v of stillFar) { const r = find(idx.get(v) as number); const g2 = groups.get(r); if (g2) g2.push(v); else groups.set(r, [v]); }
+      for (const grp of groups.values()) {
+        const ord = [...grp].sort((a, b) => foot[a].dist - foot[b].dist);
+        const ownG = new Set(ord);                     // il gruppo starà tutto su questa linea
+        const head = ord[0];
+        const d = dv[kA[head]]; const q = foot[head].q;
+        const s1 = (P[head][0] - q[0]) * d[0] + (P[head][1] - q[1]) * d[1];
+        const dir: [number, number] = s1 >= 0 ? [d[0], d[1]] : [-d[0], -d[1]];
+        const cands: [number, number][] = [straightTap(P[head], dir) ?? footOf(P[head]).q, nearTap(P[head], null, ownG), footOf(P[head]).q];
+        const ok2 = cands.filter((c) => inside(c) && segInside(c, P[head]) && clearOf(c, P[head], ownG));
+        const arr = ok2.length ? ok2 : cands.filter((c) => inside(c) && segInside(c, P[head]));
+        const arr2 = arr.length ? arr : cands;
+        const tp2 = arr2.reduce((b, c) => (Math.hypot(c[0] - P[head][0], c[1] - P[head][1]) < Math.hypot(b[0] - P[head][0], b[1] - P[head][1]) ? c : b));
+        // La capofila raccoglie il gruppo in fila, fino al massimo per linea.
+        const chainIds: number[] = [head]; const path: [number, number][] = [tp2, P[head]];
+        let cur = head; const rest = new Set(ord.slice(1));
+        while (rest.size && chainIds.length < cap) {
+          let bj = -1, bd = Infinity;
+          for (const j of rest) { const dd = Math.hypot(P[j][0] - P[cur][0], P[j][1] - P[cur][1]); if (dd < bd) { bd = dd; bj = j; } }
+          if (bj < 0) break;
+          rest.delete(bj); chainIds.push(bj); path.push(P[bj]); cur = bj;
+        }
+        pipes.push({ path, ids: chainIds });
+        // eventuali avanzi del gruppo: una seconda linea affiancata
+        if (rest.size) {
+          const ord2 = [...rest].sort((a, b) => foot[a].dist - foot[b].dist);
+          const h2 = ord2[0];
+          const t2 = nearTap(P[h2], null, ownG);
+          pipes.push({ path: [t2, ...ord2.map((i) => P[i])], ids: ord2 });
+        }
+      }
     }
   }
 
@@ -2271,7 +2318,7 @@ export default function Page() {
     if (!fieldPivs.length) { setMsg(t("Nessun pivot su questo poligono: inserisci prima gli impianti.")); return; }
     const canal = canals[Math.min(pipeCanalIdx, canals.length - 1)];
     const ring = active.geom?.coordinates?.[0] ?? null;   // le tubazioni restano dentro il campo
-    const pipesLL = feederPipes(canal.geojson.coordinates, fieldPivs.map((p) => ({ lat: p.lat, lng: p.lng })), pipeMaxPerLine, ring);
+    const pipesLL = feederPipes(canal.geojson.coordinates, fieldPivs.map((p) => ({ lat: p.lat, lng: p.lng, r: p.r })), pipeMaxPerLine, ring);
     if (!pipesLL.length) { setMsg(t("Nessuna tubazione tracciabile con questi pivot.")); return; }
     const newL = pipesLL.map((coords) => ({ kind: "pipe", coords, field: fid }));
     const mergedL = [...pivotLines.filter((l) => !(l.kind === "pipe" && l.field === fid)), ...newL];
