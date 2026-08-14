@@ -422,6 +422,9 @@ const EN: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Straight lines, all parallel: they start at the canal, tilted up to ±20° from the perpendicular to line up with the pivot centres; each line serves at most {n} pivots.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Drag the points to edit the pipe; click the line to add one, double-click a point to remove it.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "They start from the canal, tilted up to ±20° from the perpendicular: the system picks the solution with the SHORTEST network. Each line serves at most {n} pivots and passes through their centres.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Pipes drawn: {n} branches from the canal · {km} km ✓",
 };
 
 const FR: Dict = {
@@ -806,6 +809,9 @@ const FR: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Lignes droites et toutes parallèles : elles partent du canal, inclinées jusqu'à ±20° par rapport à la perpendiculaire pour s'aligner sur les centres des pivots ; chaque ligne dessert au maximum {n} pivots.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Faites glisser les points pour modifier la conduite ; cliquez sur la ligne pour en ajouter un, double-cliquez sur un point pour le supprimer.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "Elles partent du canal, inclinées jusqu'à ±20° par rapport à la perpendiculaire : le système choisit la solution au réseau LE PLUS COURT. Chaque ligne dessert au maximum {n} pivots et passe par leurs centres.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Conduites tracées : {n} ramifications depuis le canal · {km} km ✓",
 };
 
 const ES: Dict = {
@@ -1190,6 +1196,9 @@ const ES: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Líneas rectas y todas paralelas: parten del canal, inclinadas hasta ±20° respecto a la perpendicular para alinearse con los centros de los pivotes; cada línea sirve como máximo {n} pivotes.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Arrastra los puntos para modificar la tubería; haz clic en la línea para añadir uno, haz doble clic en un punto para eliminarlo.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "Parten del canal, inclinadas hasta ±20° respecto a la perpendicular: el sistema elige la solución con la red MÁS CORTA. Cada línea da servicio a un máximo de {n} pivotes y pasa por sus centros.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Tuberías trazadas: {n} ramales desde el canal · {km} km ✓",
 };
 
 const PT: Dict = {
@@ -1574,6 +1583,9 @@ const PT: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Linhas retas e todas paralelas: partem do canal, inclinadas até ±20° em relação à perpendicular para se alinharem com os centros dos pivôs; cada linha serve no máximo {n} pivôs.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Arraste os pontos para modificar a tubagem; clique na linha para adicionar um, faça duplo clique num ponto para o remover.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "Partem do canal, inclinadas até ±20° em relação à perpendicular: o sistema escolhe a solução com a rede MAIS CURTA. Cada linha serve no máximo {n} pivôs e passa pelos seus centros.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Tubagens traçadas: {n} ramais do canal · {km} km ✓",
 };
 
 const RO: Dict = {
@@ -1960,6 +1972,9 @@ const RO: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Linii drepte și toate paralele: pornesc de la canal, înclinate până la ±20° față de perpendiculară pentru a se alinia cu centrele pivoturilor; fiecare linie deservește cel mult {n} pivoturi.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Trage punctele pentru a modifica conducta; dă clic pe linie pentru a adăuga unul, dublu clic pe un punct pentru a-l elimina.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "Pornesc de la canal, înclinate cu până la ±20° față de perpendiculară: sistemul alege soluția cu rețeaua CEA MAI SCURTĂ. Fiecare linie deservește cel mult {n} pivoți și trece prin centrele acestora.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Conducte trasate: {n} ramuri de la canal · {km} km ✓",
 };
 
 const KK: Dict = {
@@ -2346,6 +2361,9 @@ const KK: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Түзу және бір-біріне параллель сызықтар: каналдан басталады, пивот орталықтарымен туралау үшін перпендикулярдан ±20°-қа дейін көлбеу; әрбір сызық ең көп {n} пивотқа қызмет етеді.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Құбырды өзгерту үшін нүктелерді сүйреңіз; жаңа нүкте қосу үшін сызықты басыңыз, нүктені жою үшін оны екі рет басыңыз.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "Каналдан басталады, перпендикулярдан ±20°-қа дейін көлбеумен: жүйе ең ҚЫСҚА желісі бар шешімді таңдайды. Әр сызық ең көбі {n} пивотқа қызмет етеді және олардың орталықтары арқылы өтеді.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Құбырлар сызылды: каналдан {n} тармақ · {km} км ✓",
 };
 
 const AR: Dict = {
@@ -2730,6 +2748,9 @@ const AR: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "خطوط مستقيمة ومتوازية جميعًا: تبدأ من القناة، ومائلة حتى ±20° عن العمودي لتتوافق مع مراكز المحاور؛ ويخدم كل خط {n} محاور كحد أقصى.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "اسحب النقاط لتعديل الأنبوب؛ انقر على الخط لإضافة نقطة، وانقر نقرًا مزدوجًا على نقطة لإزالتها.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "تبدأ من القناة بميل يصل إلى ±20° عن العمود: يختار النظام الحل ذا الشبكة الأقصر. يخدم كل خط {n} محور كحد أقصى ويمر عبر مراكزها.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "تم رسم الأنابيب: {n} فرع من القناة · {km} كم ✓",
 };
 
 const ZH: Dict = {
@@ -3116,6 +3137,9 @@ const ZH: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "直线且彼此平行：从渠道出发，相对垂直方向最大倾斜 ±20°，以对准枢轴中心；每条线最多供给 {n} 个枢轴。",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "拖动节点以修改管道；单击线条可添加节点，双击节点可删除该节点。",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "从渠道出发，相对垂直方向倾斜不超过 ±20°：系统会选择管道网络最短的方案。每条管道最多服务 {n} 个枢轴，并经过它们的中心。",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "管道已绘制：从渠道分出 {n} 条支线 · {km} km ✓",
 };
 
 const HU: Dict = {
@@ -3502,6 +3526,9 @@ const HU: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Egyenes, egymással párhuzamos vonalak: a csatornától indulnak, a merőlegeshez képest legfeljebb ±20°-kal megdöntve, hogy a pivotok középpontjához igazodjanak; egy vonal legfeljebb {n} pivotot lát el.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Húzza a pontokat a csővezeték módosításához; kattintson a vonalra új pont hozzáadásához, dupla kattintással távolíthat el egy pontot.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "A csatornától indulnak, a merőlegeshez képest legfeljebb ±20°-os dőléssel: a rendszer a LEGRÖVIDEBB hálózatot adó megoldást választja. Minden vonal legfeljebb {n} pivotot szolgál ki, és azok középpontján halad át.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Csővezetékek megrajzolva: {n} ág a csatornából · {km} km ✓",
 };
 
 const ID: Dict = {
@@ -3888,6 +3915,9 @@ const ID: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Garis lurus dan semuanya sejajar: berawal dari kanal, dimiringkan hingga ±20° dari garis tegak lurus agar segaris dengan pusat pivot; setiap garis melayani maksimal {n} pivot.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Seret titik untuk mengubah pipa; klik garis untuk menambah titik, klik dua kali pada titik untuk menghapusnya.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "Berawal dari kanal, miring hingga ±20° dari garis tegak lurus: sistem memilih solusi dengan jaringan TERPENDEK. Setiap jalur melayani maksimal {n} pivot dan melewati titik pusatnya.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Pipa tergambar: {n} cabang dari kanal · {km} km ✓",
 };
 
 const DE: Dict = {
@@ -4268,6 +4298,9 @@ const DE: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Gerade, zueinander parallele Linien: Sie beginnen am Kanal und sind bis zu ±20° gegenüber der Senkrechten geneigt, um auf die Pivot-Mittelpunkte ausgerichtet zu sein; jede Linie versorgt höchstens {n} Pivots.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Ziehen Sie die Punkte, um die Rohrleitung zu ändern; klicken Sie auf die Linie, um einen hinzuzufügen, doppelklicken Sie auf einen Punkt, um ihn zu entfernen.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "Sie beginnen am Kanal, um bis zu ±20° gegenüber der Senkrechten geneigt: Das System wählt die Lösung mit dem KÜRZESTEN Netz. Jede Linie versorgt höchstens {n} Pivots und verläuft durch deren Mittelpunkte.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Rohrleitungen gezeichnet: {n} Abzweige vom Kanal · {km} km ✓",
 };
 
 const PL: Dict = {
@@ -4650,6 +4683,9 @@ const PL: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Linie proste i wzajemnie równoległe: zaczynają się przy kanale, nachylone do ±20° względem prostopadłej, aby pokryć się ze środkami pivotów; każda linia obsługuje maksymalnie {n} pivotów.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Przeciągnij punkty, aby zmodyfikować rurociąg; kliknij linię, aby dodać punkt, kliknij dwukrotnie punkt, aby go usunąć.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "Odchodzą od kanału, nachylone do ±20° względem prostopadłej: system wybiera rozwiązanie z NAJKRÓTSZĄ siecią. Każda linia obsługuje maksymalnie {n} pivotów i przechodzi przez ich środki.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Rurociągi wytyczone: {n} odgałęzień od kanału · {km} km ✓",
 };
 
 const BG: Dict = {
@@ -5032,6 +5068,9 @@ const BG: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Прави и взаимно успоредни линии: започват от канала, наклонени до ±20° спрямо перпендикуляра, за да съвпаднат с центровете на пивотите; всяка линия обслужва най-много {n} пивота.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Плъзнете точките, за да промените тръбата; щракнете върху линията, за да добавите точка, щракнете двукратно върху точка, за да я премахнете.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "Тръгват от канала, наклонени до ±20° спрямо перпендикуляра: системата избира решението с НАЙ-КЪСАТА мрежа. Всяка линия обслужва най-много {n} пивота и минава през центровете им.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Начертани тръби: {n} разклонения от канала · {km} км ✓",
 };
 
 const RU: Dict = {
@@ -5414,6 +5453,9 @@ const RU: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Прямые и параллельные друг другу линии: начинаются от канала, наклонены до ±20° от перпендикуляра, чтобы совпасть с центрами пивотов; каждая линия обслуживает не более {n} пивотов.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Перетаскивайте точки, чтобы изменить трубопровод; щёлкните по линии, чтобы добавить точку, дважды щёлкните по точке, чтобы удалить её.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "Отходят от канала с наклоном до ±20° от перпендикуляра: система выбирает решение с САМОЙ КОРОТКОЙ сетью. Каждая линия обслуживает не более {n} пивотов и проходит через их центры.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Трубопроводы построены: {n} ответвлений от канала · {km} км ✓",
 };
 
 const AF: Dict = {
@@ -5796,6 +5838,9 @@ const AF: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Reguit lyne, almal parallel: hulle begin by die kanaal en is tot ±20° vanaf die loodregte gekantel om met die spilpunte se middelpunte te belyn; elke lyn bedien hoogstens {n} spilpunte.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Sleep die punte om die pyp te wysig; klik op die lyn om een by te voeg, dubbelklik op 'n punt om dit te verwyder.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "Hulle begin by die kanaal, tot ±20° vanaf die loodlyn gekantel: die stelsel kies die oplossing met die KORTSTE netwerk. Elke lyn bedien hoogstens {n} spilpunte en loop deur hul middelpunte.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Pype geteken: {n} takke vanaf die kanaal · {km} km ✓",
 };
 
 const MS: Dict = {
@@ -6178,6 +6223,9 @@ const MS: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Garis lurus dan semuanya selari: bermula dari terusan, dicondongkan sehingga ±20° daripada garis serenjang untuk sejajar dengan pusat pivot; setiap garis melayani maksimum {n} pivot.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Seret titik untuk mengubah suai paip; klik pada garisan untuk menambah satu, klik dua kali pada titik untuk membuangnya.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "Bermula dari terusan, condong sehingga ±20° dari garis serenjang: sistem memilih penyelesaian dengan rangkaian TERPENDEK. Setiap talian melayani maksimum {n} pivot dan melalui pusatnya.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Paip dilukis: {n} cabang dari terusan · {km} km ✓",
 };
 
 const VI: Dict = {
@@ -6560,6 +6608,9 @@ const VI: Dict = {
   "Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.": "Các đường thẳng và song song với nhau: bắt đầu từ kênh, nghiêng tối đa ±20° so với phương vuông góc để trùng với tâm các pivot; mỗi đường phục vụ tối đa {n} pivot.",
   // --- v0.6.113 ---
   "Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo.": "Kéo các điểm để chỉnh sửa đường ống; nhấp vào đường để thêm điểm, nhấp đúp vào điểm để xóa.",
+  // --- v0.6.114: rete piu corta ---
+  "Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.": "Xuất phát từ kênh, nghiêng tối đa ±20° so với đường vuông góc: hệ thống chọn phương án có mạng lưới NGẮN NHẤT. Mỗi tuyến phục vụ tối đa {n} pivot và đi qua tâm của chúng.",
+  "Tubazioni tracciate: {n} rami dal canale · {km} km ✓": "Đã vẽ đường ống: {n} nhánh từ kênh · {km} km ✓",
 };
 
 const TR: Record<Exclude<Lang, "it">, Dict> = {

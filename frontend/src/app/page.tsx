@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.113";
+const REV = "v0.6.114";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -253,7 +253,7 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
   const R: [number, number][] | null = ring ? ring.map((c) => [c[0] * mLng, c[1] * mLat]) : null;
   const toLL = (x: number, y: number): number[] => [x / mLng, y / mLat];
   const cap = Math.max(1, Math.round(maxPerLine || 999));
-  // Punto dentro il poligono del campo (le tubazioni non devono uscirne).
+  // Il percorso deve restare dentro il poligono del campo.
   const inside = (pt: [number, number]) => {
     if (!R) return true;
     let c = false;
@@ -273,16 +273,17 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
   }
   const pitch = median(nnd) || 800;
 
-  // Direzione media del canale → normale media.
+  // Direzione media del canale → normale media (punto di partenza della ricerca).
   let sx = 0, sy = 0;
   for (let k = 0; k < C.length - 1; k++) { sx += C[k + 1][0] - C[k][0]; sy += C[k + 1][1] - C[k][1]; }
   const L0 = Math.hypot(sx, sy) || 1;
-  const Tm: [number, number] = [sx / L0, sy / L0];
-  const Nm: [number, number] = [-Tm[1], Tm[0]];
+  const Nm: [number, number] = [-sy / L0, sx / L0];
   const rot = (v: [number, number], a: number): [number, number] =>
     [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a)];
+  const off = 0.16 * pitch;    // scostamento fra tratte parallele della stessa fila
 
-  const clusterFor = (d: [number, number]) => {
+  // Costruisce l'intera rete per una data direzione.
+  const buildFor = (d: [number, number]): [number, number][][] => {
     const p: [number, number] = [-d[1], d[0]];
     const idx = P.map((_, i) => i).sort((a, b) => (P[a][0] * p[0] + P[a][1] * p[1]) - (P[b][0] * p[0] + P[b][1] * p[1]));
     const cl: number[][] = []; let cur: number[] = []; let prev = NaN;
@@ -292,81 +293,74 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
       cur.push(i); prev = u;
     }
     if (cur.length) cl.push(cur);
-    return { p, cl };
-  };
-
-  // Inclinazione: dalla perpendicolare al canale, fino a ±20°, scelta per
-  // allineare il maggior numero di centri.
-  let best: { deg: number; d: [number, number]; p: [number, number]; cl: number[][]; aligned: number } | null = null;
-  for (let deg = -20; deg <= 20; deg += 0.5) {
-    const d = rot(Nm, (deg * Math.PI) / 180);
-    const { p, cl } = clusterFor(d);
-    let al = 0;
+    const crossings = (B: [number, number]): number[] => {
+      const out: number[] = [];
+      for (let k = 0; k < C.length - 1; k++) {
+        const a = C[k], b = C[k + 1]; const wx = b[0] - a[0], wy = b[1] - a[1];
+        const den = d[0] * wy - d[1] * wx; if (Math.abs(den) < 1e-9) continue;
+        const bx = a[0] - B[0], by = a[1] - B[1];
+        const s = (bx * wy - by * wx) / den;
+        const e = (d[0] * by - d[1] * bx) / -den;
+        if (e >= -0.02 && e <= 1.02) out.push(s);
+      }
+      return out;
+    };
+    const out: [number, number][][] = [];
     for (const c of cl) {
       const us = c.map((i) => P[i][0] * p[0] + P[i][1] * p[1]);
-      const m = median(us);
-      for (const u of us) if (Math.abs(u - m) <= 0.12 * pitch) al++;
-    }
-    if (!best || al > best.aligned || (al === best.aligned && Math.abs(deg) < Math.abs(best.deg))) best = { deg, d, p, cl, aligned: al };
-  }
-  if (!best) return [];
-  const { d, p, cl } = best;
-
-  // Incroci della retta (base B, direzione d) col tracciato del canale.
-  const crossings = (B: [number, number]): number[] => {
-    const out: number[] = [];
-    for (let k = 0; k < C.length - 1; k++) {
-      const a = C[k], b = C[k + 1]; const wx = b[0] - a[0], wy = b[1] - a[1];
-      const den = d[0] * wy - d[1] * wx; if (Math.abs(den) < 1e-9) continue;
-      const bx = a[0] - B[0], by = a[1] - B[1];
-      const s = (bx * wy - by * wx) / den;
-      const e = (d[0] * by - d[1] * bx) / -den;
-      if (e >= -0.02 && e <= 1.02) out.push(s);
+      const u0 = median(us);
+      const B: [number, number] = [p[0] * u0, p[1] * u0];
+      const at = (s: number, u: number): [number, number] => [p[0] * u + d[0] * s, p[1] * u + d[1] * s];
+      const ss = c.map((i) => ({ i, s: (P[i][0] - B[0]) * d[0] + (P[i][1] - B[1]) * d[1] })).sort((x, y) => x.s - y.s);
+      const x0 = crossings(B);
+      const xin = x0.filter((s) => inside(at(s, u0)));
+      const allx = xin.length ? xin : x0;
+      const med = median(ss.map((o) => o.s));
+      const sc = allx.length ? allx.reduce((a, b) => (Math.abs(b - med) < Math.abs(a - med) ? b : a)) : null;
+      // Le due metà della fila; per ognuna la presa è l'incrocio col canale PIÙ
+      // VICINO al primo pivot, così la tubazione resta la più corta possibile.
+      const sides: { list: { i: number; s: number }[]; tap: number }[] = [];
+      const nearestX = (ref: number, fb: number) => (allx.length ? allx.reduce((a, b) => (Math.abs(b - ref) < Math.abs(a - ref) ? b : a)) : fb);
+      if (sc == null) sides.push({ list: ss.slice(), tap: ss[0].s });
+      else {
+        const below = ss.filter((o) => o.s < sc).sort((a, b) => b.s - a.s);
+        const above = ss.filter((o) => o.s >= sc).sort((a, b) => a.s - b.s);
+        if (below.length) sides.push({ list: below, tap: nearestX(below[0].s, sc) });
+        if (above.length) sides.push({ list: above, tap: nearestX(above[0].s, sc) });
+      }
+      for (const side of sides) {
+        for (let k = 0, ci = 0; k < side.list.length; k += cap, ci++) {
+          const chunk = side.list.slice(k, k + cap);
+          const uk = u0 + off * ci;
+          const Bk: [number, number] = [p[0] * uk, p[1] * uk];
+          const atk = (s: number): [number, number] => [p[0] * uk + d[0] * s, p[1] * uk + d[1] * s];
+          const xk = crossings(Bk);
+          const inx = xk.filter((s) => inside(atk(s)));
+          const pool = inx.length ? inx : xk;
+          const ref = chunk[0].s;
+          const tapS = pool.length ? pool.reduce((a, b) => (Math.abs(b - ref) < Math.abs(a - ref) ? b : a)) : side.tap;
+          const path: [number, number][] = [atk(tapS)];      // parte sempre dal canale
+          if (ci > 0) path.push(atk(chunk[0].s));            // tratto parallelo alla tratta precedente
+          for (const o of chunk) path.push(P[o.i]);          // passa per tutti i centri
+          out.push(path);
+        }
+      }
     }
     return out;
   };
 
-  const off = 0.16 * pitch;      // scostamento delle linee parallele della stessa fila
-  const pipes: number[][][] = [];
-  for (const c of cl) {
-    const us = c.map((i) => P[i][0] * p[0] + P[i][1] * p[1]);
-    const u0 = median(us);
-    const B: [number, number] = [p[0] * u0, p[1] * u0];
-    const at = (s: number, u: number): [number, number] => [p[0] * u + d[0] * s, p[1] * u + d[1] * s];
-    const ss = c.map((i) => ({ i, s: (P[i][0] - B[0]) * d[0] + (P[i][1] - B[1]) * d[1] })).sort((x, y) => x.s - y.s);
-    const xs0 = crossings(B);
-    const xs = xs0.filter((s) => inside(at(s, u0)));
-    const allx = xs.length ? xs : xs0;
-    const med = median(ss.map((o) => o.s));
-    const sc = allx.length ? allx.reduce((a, b) => (Math.abs(b - med) < Math.abs(a - med) ? b : a)) : null;
-    // Le due metà della fila, ognuna ordinata dal canale verso l'esterno.
-    const sides: { list: { i: number; s: number }[]; tap: number }[] = [];
-    if (sc == null) sides.push({ list: ss.slice(), tap: ss[0].s });
-    else {
-      const below = ss.filter((o) => o.s < sc).sort((a, b) => b.s - a.s);
-      const above = ss.filter((o) => o.s >= sc).sort((a, b) => a.s - b.s);
-      if (below.length) sides.push({ list: below, tap: sc });
-      if (above.length) sides.push({ list: above, tap: sc });
-    }
-    for (const side of sides) {
-      for (let k = 0, ci = 0; k < side.list.length; k += cap, ci++) {
-        const chunk = side.list.slice(k, k + cap);
-        const uk = u0 + off * ci;                       // tratte successive: linee parallele
-        const Bk: [number, number] = [p[0] * uk, p[1] * uk];
-        const atk = (s: number): [number, number] => [p[0] * uk + d[0] * s, p[1] * uk + d[1] * s];
-        const xk = crossings(Bk);
-        const inx = xk.filter((s) => inside(atk(s)));
-        const pool = inx.length ? inx : xk;
-        const tapS = pool.length ? pool.reduce((a, b) => (Math.abs(b - side.tap) < Math.abs(a - side.tap) ? b : a)) : side.tap;
-        const path: [number, number][] = [];
-        path.push(atk(tapS));                            // 1) ogni tubazione parte dal canale
-        if (ci > 0) path.push(atk(chunk[0].s));          // 4) tratto parallelo fino alla propria tratta
-        for (const o of chunk) path.push(P[o.i]);        // 3) passa per TUTTI i centri
-        pipes.push(path.map((q) => toLL(q[0], q[1])));
-      }
-    }
+  // Inclinazione entro ±20° dalla perpendicolare al canale: si sceglie quella
+  // che rende la rete complessivamente PIÙ CORTA (a parità, la più perpendicolare).
+  const totalLen = (ps: [number, number][][]) =>
+    ps.reduce((s, path) => { let L = 0; for (let i = 0; i < path.length - 1; i++) L += Math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]); return s + L; }, 0);
+  let best: { deg: number; len: number; pipes: [number, number][][] } | null = null;
+  for (let deg = -20; deg <= 20; deg += 0.5) {
+    const pipes = buildFor(rot(Nm, (deg * Math.PI) / 180));
+    const len = totalLen(pipes);
+    if (!best || len < best.len - 1e-6 || (Math.abs(len - best.len) <= 1e-6 && Math.abs(deg) < Math.abs(best.deg))) best = { deg, len, pipes };
   }
-  return pipes;
+  if (!best) return [];
+  return best.pipes.map((path) => path.map((q) => toLL(q[0], q[1])));
 }
 
 // Preimpostazioni grafiche di sistema, distinte per livello della piramide:
@@ -1866,7 +1860,18 @@ export default function Page() {
     const mergedL = [...pivotLines.filter((l) => !(l.kind === "pipe" && l.field === fid)), ...newL];
     setPivotLines(mergedL);
     if (guided) setGuided({ ...guided, geojson: fcFromModel(pivots, mergedL) });
-    setMsg(t("Tubazioni tracciate: {n} rami dal canale ✓", { n: pipesLL.length }));
+    // Lunghezza totale della rete tracciata (utile per confrontare le soluzioni).
+    const km = pipesLL.reduce((s, path) => {
+      let L = 0;
+      for (let i = 0; i < path.length - 1; i++) {
+        const la = ((path[i][1] + path[i + 1][1]) / 2) * Math.PI / 180;
+        const dx = (path[i + 1][0] - path[i][0]) * 111320 * Math.cos(la);
+        const dy = (path[i + 1][1] - path[i][1]) * 111320;
+        L += Math.hypot(dx, dy);
+      }
+      return s + L;
+    }, 0) / 1000;
+    setMsg(t("Tubazioni tracciate: {n} rami dal canale · {km} km ✓", { n: pipesLL.length, km: fmt(km, { maximumFractionDigits: 1 }) }));
   }
   // Rimuove le tubazioni di adduzione del poligono attivo (i pivot restano).
   function removePipes() {
@@ -3146,7 +3151,7 @@ export default function Page() {
               </div>
 
               <div className="text-[10px] text-sage-dark bg-white/40 rounded-md p-1.5 mt-2 leading-relaxed">
-                {t("Linee dritte e tutte parallele: partono dal canale, inclinate fino a ±20° dalla perpendicolare per allinearsi ai centri dei pivot; ogni linea serve al massimo {n} pivot.", { n: pipeMaxPerLine })}
+                {t("Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.", { n: pipeMaxPerLine })}
                 {nPipes > 0 && <> · {t("Tubazioni attive")}: <b>{nPipes}</b></>}
               </div>
 
