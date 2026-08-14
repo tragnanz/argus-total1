@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.133";
+const REV = "v0.6.134";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3971,7 +3971,7 @@ export default function Page() {
         {/* Messaggi */}
         {/* Barra di disegno delle tubazioni: compare sulla pagina Accessori o
             quando una tubazione è selezionata. */}
-        {(tab === "accessori" || pipeSel.mode !== "none") && (
+        {(tab === "accessori" || pipeSel.mode !== "none" || pivotSel.mode === "single") && (
           <div className="absolute bottom-16 left-1/2 -translate-x-1/2 nabu-cluster gap-1 px-1.5 py-1.5 z-[1400]">
             <span className="text-[11px] text-sage-dark px-1.5 select-none">{t("Tubazioni")}</span>
             <span className="w-px h-6 bg-black/10" />
