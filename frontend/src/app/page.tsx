@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.118";
+const REV = "v0.6.119";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -329,17 +329,44 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
   if (!dirsDeg.length) dirsDeg.push(90);
   const dv: [number, number][] = dirsDeg.map((a) => [Math.cos((a * Math.PI) / 180), Math.sin((a * Math.PI) / 180)]);
 
-  // Direzione globale: quella del reticolo più vicina alla PERPENDICOLARE media
-  // del canale (media circolare sugli angoli doppi, pesata sulla lunghezza).
-  let sxA = 0, syA = 0;
-  for (let k = 0; k < C.length - 1; k++) {
-    const vx = C[k + 1][0] - C[k][0], vy = C[k + 1][1] - C[k][1]; const L = Math.hypot(vx, vy) || 1;
-    const a = Math.atan2(vy, vx) * 2; sxA += Math.cos(a) * L; syA += Math.sin(a) * L;
+  // Il canale viene semplificato in pochi TRATTI lunghi con orientamento stabile
+  // (Douglas-Peucker): ogni tratto detta la direzione delle tubazioni che gli
+  // stanno davanti, così le linee restano perpendicolari al canale LOCALE anche
+  // dove il canale gira, invece di seguire un'unica direzione media.
+  const RDP_TOL = 1500;
+  const rdp = (pts: [number, number][], tol: number): [number, number][] => {
+    if (pts.length < 3) return pts.slice();
+    const dOf = (p: [number, number], a: [number, number], b: [number, number]) => {
+      const vx = b[0] - a[0], vy = b[1] - a[1]; const l2 = vx * vx + vy * vy || 1e-9;
+      const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / l2));
+      return Math.hypot(p[0] - (a[0] + vx * t), p[1] - (a[1] + vy * t));
+    };
+    const rec = (a: number, b: number): [number, number][] => {
+      let bi = -1, bd = 0;
+      for (let i = a + 1; i < b; i++) { const d = dOf(pts[i], pts[a], pts[b]); if (d > bd) { bd = d; bi = i; } }
+      if (bd > tol && bi > 0) return [...rec(a, bi), ...rec(bi, b).slice(1)];
+      return [pts[a], pts[b]];
+    };
+    return rec(0, pts.length - 1);
+  };
+  const CS = rdp(C, RDP_TOL);
+  const segK: number[] = [];
+  for (let k = 0; k < CS.length - 1; k++) {
+    const vx = CS[k + 1][0] - CS[k][0], vy = CS[k + 1][1] - CS[k][1]; const L = Math.hypot(vx, vy) || 1;
+    const nx = -vy / L, ny = vx / L; let bk = 0, bc = -1;
+    for (let q = 0; q < dv.length; q++) { const c = Math.abs(dv[q][0] * nx + dv[q][1] * ny); if (c > bc) { bc = c; bk = q; } }
+    segK.push(bk);
   }
-  const angC = Math.atan2(syA, sxA) / 2;
-  const gN: [number, number] = [-Math.sin(angC), Math.cos(angC)];
-  let gk = 0, gc = -1;
-  for (let q = 0; q < dv.length; q++) { const c = Math.abs(dv[q][0] * gN[0] + dv[q][1] * gN[1]); if (c > gc) { gc = c; gk = q; } }
+  const nearSeg = (pt: [number, number]) => {
+    let bi = 0, bd = Infinity;
+    for (let k = 0; k < CS.length - 1; k++) {
+      const a = CS[k], b = CS[k + 1]; const vx = b[0] - a[0], vy = b[1] - a[1]; const l2 = vx * vx + vy * vy || 1e-9;
+      const t = Math.max(0, Math.min(1, ((pt[0] - a[0]) * vx + (pt[1] - a[1]) * vy) / l2));
+      const d = Math.hypot(pt[0] - (a[0] + vx * t), pt[1] - (a[1] + vy * t));
+      if (d < bd) { bd = d; bi = k; }
+    }
+    return bi;
+  };
 
   // --- vicinato ----------------------------------------------------------
   type NB = { j: number; ux: number; uy: number; L: number };
@@ -417,6 +444,25 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
     return out;
   };
 
+  // Due tubazioni non possono partire dallo stesso identico punto del canale:
+  // se la presa calcolata coincide con una già usata, scivola lungo il canale.
+  const MIN_SEP = 0.12 * pitch;
+  const usedTaps: [number, number][] = [];
+  const tapFree = (q: [number, number]) => usedTaps.every((u) => Math.hypot(u[0] - q[0], u[1] - q[1]) >= MIN_SEP);
+  const spread = (q: [number, number], p0: [number, number], dir: [number, number] | null): [number, number] => {
+    if (tapFree(q)) return q;
+    let best: [number, number] | null = null, bd = Infinity;
+    for (const c of canalPts) {
+      if (!tapFree(c) || !inside(c)) continue;
+      const d = Math.hypot(c[0] - q[0], c[1] - q[1]); if (d >= bd) continue;
+      const L = Math.hypot(p0[0] - c[0], p0[1] - c[1]) || 1;
+      if (dir && ((p0[0] - c[0]) / L * dir[0] + (p0[1] - c[1]) / L * dir[1]) < tapMax) continue;
+      if (!segInside(c, p0)) continue;
+      bd = d; best = c;
+    }
+    return best ?? q;
+  };
+
   const toPipes = (cuts: { idx: number[]; tap: [number, number] | null }[], kOf: (i: number) => number, allowFallback: boolean) => {
     const pipes: [number, number][][] = []; const orphans: number[] = [];
     for (const s of cuts) {
@@ -439,15 +485,33 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
         }
         let tp: [number, number] | null = (k === 0 && s.tap && segInside(s.tap, P[ch[0]])) ? s.tap : straightTap(P[ch[0]], dir);
         if (!tp) { if (allowFallback) tp = nearTap(P[ch[0]], dir); else { orphans.push(...ch); continue; } }
+        tp = spread(tp, P[ch[0]], dir); usedTaps.push(tp);
         pipes.push([tp, ...ch.map((i) => P[i])]);
       }
     }
     return { pipes, orphans };
   };
 
-  // PASSO 1 — tutta l'area con la direzione perpendicolare al canale.
+  // PASSO 1 — ogni pivot prende la direzione perpendicolare al TRATTO di canale
+  // che ha davanti; il voto di maggioranza fra vicini rende netti i confini fra
+  // zone con orientamento diverso, così le file non si spezzano al passaggio.
   const all = P.map((_, i) => i);
-  const r1 = toPipes(cutRows(makeRows(all, () => gk)), () => gk, false);
+  let kA = P.map((pt) => segK[nearSeg(pt)] ?? 0);
+  for (let it = 0; it < 8; it++) {
+    let same = true;
+    const nx = kA.map((_, i) => {
+      const w = new Map<number, number>();
+      w.set(kA[i], 1.3);
+      for (const n2 of nb[i]) w.set(kA[n2.j], (w.get(kA[n2.j]) || 0) + 1);
+      let bk = kA[i], bv = -1;
+      for (const [k, v] of w) if (v > bv) { bv = v; bk = k; }
+      return bk;
+    });
+    for (let i = 0; i < kA.length; i++) if (nx[i] !== kA[i]) same = false;
+    kA = nx; if (same) break;
+  }
+  const kG = (i: number) => kA[i];
+  const r1 = toPipes(cutRows(makeRows(all, kG)), kG, false);
   let pipes = r1.pipes;
 
   // PASSO 2 — i pivot che con quella direzione non arrivano dritti al canale
@@ -465,9 +529,9 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
     };
     const k2 = new Map<number, number>();
     for (const i of orph) {
-      let bk = gk, bc = Infinity;
+      let bk = kA[i], bc = Infinity;
       for (let k = 0; k < dv.length; k++) { const c = costK(i, k); if (c < bc) { bc = c; bk = k; } }
-      k2.set(i, isFinite(bc) ? bk : gk);
+      k2.set(i, isFinite(bc) ? bk : kA[i]);
     }
     for (let it = 0; it < 6; it++) {
       const nx = new Map<number, number>(); let same = true;
@@ -482,7 +546,7 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
       for (const [a, b] of nx) k2.set(a, b);
       if (same) break;
     }
-    const kOf2 = (i: number) => k2.get(i) ?? gk;
+    const kOf2 = (i: number) => k2.get(i) ?? kA[i];
     const r2 = toPipes(cutRows(makeRows(orph, kOf2)), kOf2, true);
     pipes = pipes.concat(r2.pipes);
   }
