@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.119";
+const REV = "v0.6.120";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -447,6 +447,7 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
   // Due tubazioni non possono partire dallo stesso identico punto del canale:
   // se la presa calcolata coincide con una già usata, scivola lungo il canale.
   const MIN_SEP = 0.12 * pitch;
+  const OFF_LANE = 0.45 * pitch;   // distanza fra due tubi paralleli della stessa fila
   const usedTaps: [number, number][] = [];
   const tapFree = (q: [number, number]) => usedTaps.every((u) => Math.hypot(u[0] - q[0], u[1] - q[1]) >= MIN_SEP);
   const spread = (q: [number, number], p0: [number, number], dir: [number, number] | null): [number, number] => {
@@ -472,21 +473,34 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
         const a = P[ln[0]], b = P[ln[ln.length - 1]];
         if (Math.hypot(b[0] - s.tap[0], b[1] - s.tap[1]) < Math.hypot(a[0] - s.tap[0], a[1] - s.tap[1])) ln = [...ln].reverse();
       } else if (foot[ln[ln.length - 1]].dist < foot[ln[0]].dist) ln = [...ln].reverse();
-      for (let k = 0; k < ln.length; k += cap) {
+      for (let k = 0, ci = 0; k < ln.length; k += cap, ci++) {
         const ch = ln.slice(k, k + cap);
         let dir: [number, number];
         if (ch.length > 1) {
           const a = P[ch[0]], b = P[ch[1]]; const vx = b[0] - a[0], vy = b[1] - a[1]; const L = Math.hypot(vx, vy) || 1;
+          dir = [vx / L, vy / L];
+        } else if (ln.length > 1) {
+          const a = P[ln[Math.max(0, k - 1)]], b = P[ch[0]]; const vx = b[0] - a[0], vy = b[1] - a[1]; const L = Math.hypot(vx, vy) || 1;
           dir = [vx / L, vy / L];
         } else {
           const d = dv[kOf(ch[0])]; const q = foot[ch[0]].q;
           const s1 = (P[ch[0]][0] - q[0]) * d[0] + (P[ch[0]][1] - q[1]) * d[1];
           dir = s1 >= 0 ? [d[0], d[1]] : [-d[0], -d[1]];
         }
-        let tp: [number, number] | null = (k === 0 && s.tap && segInside(s.tap, P[ch[0]])) ? s.tap : straightTap(P[ch[0]], dir);
-        if (!tp) { if (allowFallback) tp = nearTap(P[ch[0]], dir); else { orphans.push(...ch); continue; } }
-        tp = spread(tp, P[ch[0]], dir); usedTaps.push(tp);
-        pipes.push([tp, ...ch.map((i) => P[i])]);
+        // Tratti successivi della STESSA fila: se ripartissero dal canale sulla
+        // stessa retta ricalcherebbero il tubo precedente. Vengono quindi spostati
+        // di lato (linea parallela) e rientrano sulla fila al loro primo pivot.
+        const lat: [number, number] = [-dir[1], dir[0]];
+        const off = ci * OFF_LANE;
+        const A = P[ch[0]];
+        const st: [number, number] = ci > 0 ? [A[0] + lat[0] * off, A[1] + lat[1] * off] : A;
+        let tp: [number, number] | null = (k === 0 && s.tap && segInside(s.tap, A)) ? s.tap : straightTap(st, dir);
+        if (!tp) { if (allowFallback) tp = nearTap(st, dir); else { orphans.push(...ch); continue; } }
+        tp = spread(tp, st, dir); usedTaps.push(tp);
+        const path: [number, number][] = [tp];
+        if (ci > 0) path.push(st);
+        for (const i of ch) path.push(P[i]);
+        pipes.push(path);
       }
     }
     return { pipes, orphans };
