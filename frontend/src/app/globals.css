@@ -47,6 +47,29 @@ body {
   .hint {
     @apply text-xs text-sage-dark bg-panel rounded-lg p-3 leading-relaxed;
   }
+
+  /* Header a cluster flottanti — stesse classi di Argus Smart, così i due
+     prodotti restano riconoscibili come una famiglia. */
+  .nabu-bar {
+    @apply bg-nabu-green rounded-xl shadow-cluster flex items-center;
+  }
+  .nabu-cluster {
+    @apply bg-nabu-panel border border-nabu-edge/90 rounded-xl shadow-cluster flex items-center;
+  }
+  .nav-pill {
+    @apply grid place-items-center text-[13px] font-semibold rounded-[9px] px-3.5 py-2
+           text-nabu-sage hover:text-white hover:bg-white/10 transition cursor-pointer
+           disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .nav-pill-active {
+    @apply bg-nabu-accent text-white hover:bg-nabu-accent hover:text-white;
+  }
+  /* bottone quadrato dei cluster chiari (Livelli, Righello, …) */
+  .tool-btn {
+    @apply w-9 h-9 grid place-items-center rounded-[9px] text-brand-dark hover:bg-black/5 transition
+           disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .tool-btn-active { @apply bg-nabu-accent text-white hover:bg-nabu-accent; }
 }
 
 /* Scrollbar morbida per i pannelli */

@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.120";
+const REV = "v0.6.121";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -597,6 +597,9 @@ const IcoElevation = () => (<svg {...svgProps}><path d="M3 20h18" /><path d="m3 
 const IcoMinimize = () => (<svg {...svgProps}><path d="M5 12h14" /></svg>);
 const IcoExpand = () => (<svg {...svgProps}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 12h6M12 9v6" /></svg>);
 const IcoCross = () => (<svg {...svgProps}><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></svg>);
+const IcoHome = () => (<svg {...svgProps}><path d="m3 11 9-7 9 7" /><path d="M5 10v10h14V10" /><path d="M10 20v-6h4v6" /></svg>);
+const IcoBell = () => (<svg {...svgProps}><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></svg>);
+const IcoDash = () => (<svg {...svgProps}><rect x="3" y="3" width="7" height="9" rx="1" /><rect x="14" y="3" width="7" height="5" rx="1" /><rect x="14" y="12" width="7" height="9" rx="1" /><rect x="3" y="16" width="7" height="5" rx="1" /></svg>);
 
 // Icone del menu verticale (20px): una per ogni pagina del flusso di progetto.
 const navProps = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none",
@@ -630,11 +633,11 @@ function SectionHead({ title, help, mb = "mb-2" }: { title: string; help?: strin
   );
 }
 
-// Colore del widget crediti in base alla % usata: verde <50%, arancio <80%, rosso.
-function creditColor(u: api.Usage): string {
-  if (u.requests_limit == null || u.requests_limit === 0) return "#123524";
+// Colore del testo del chip crediti secondo la % usata: ≥80% rosso, ≥50% ruggine.
+function creditClass(u: api.Usage): string {
+  if (u.requests_limit == null || u.requests_limit === 0) return "text-sage-dark";
   const pct = u.pct_used ?? (100 * u.requests_used / u.requests_limit);
-  return pct >= 80 ? "#b23b1e" : pct >= 50 ? "#c07a1e" : "#123524";
+  return pct >= 80 ? "text-danger" : pct >= 50 ? "text-rust" : "text-sage-dark";
 }
 
 export default function Page() {
@@ -726,6 +729,8 @@ export default function Page() {
   const [rightMin, setRightMin] = useState(false);  // pannello schede ridotto a icona
   const [propsOpen, setPropsOpen] = useState(true);   // widget Proprietà docked in basso a sinistra (toggle con «i»)
   const [canUndo, setCanUndo] = useState(false);
+  const [undoN, setUndoN] = useState(0);
+  const [redoN, setRedoN] = useState(0);
   const [canRedo, setCanRedo] = useState(false);
   const activeIdRef = useRef<number | null>(null);
   activeIdRef.current = activeId;
@@ -837,6 +842,7 @@ export default function Page() {
     hist.current.fut = [];
     prevSnap.current = curr;
     setCanUndo(true); setCanRedo(false);
+    setUndoN(hist.current.past.length); setRedoN(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fields, pivots, pivotLines, roads, guided]);
   function applySnap(s: Snapshot) {
@@ -850,12 +856,14 @@ export default function Page() {
     h.fut.push(prevSnap.current);
     applySnap(h.past.pop()!);
     setCanUndo(h.past.length > 0); setCanRedo(true);
+    setUndoN(h.past.length); setRedoN(h.fut.length);
   }
   function redo() {
     const h = hist.current; if (!h.fut.length || !prevSnap.current) return;
     h.past.push(prevSnap.current);
     applySnap(h.fut.pop()!);
     setCanUndo(true); setCanRedo(h.fut.length > 0);
+    setUndoN(h.past.length); setRedoN(h.fut.length);
   }
 
   const [excludeWater, setExcludeWater] = useState(true);  // niente pivot su acqua/paludi (NDWI)
@@ -891,6 +899,29 @@ export default function Page() {
   const elevCache = useRef<Map<number, api.ElevationStats>>(new Map());
   const [busy, setBusy] = useState<string>("");
   const [msg, setMsg] = useState<string>("");
+
+  // ---- Header: livelli mappa, avvisi, vista iniziale ----
+  const [mapMenuOpen, setMapMenuOpen] = useState(false);
+  const [basemap, setBasemap] = useState<"sat" | "street" | "topo">("sat");
+  const [mapLabels, setMapLabels] = useState(false);
+  const [bellOpen, setBellOpen] = useState(false);
+  // Gli avvisi sono i messaggi dell'app (esiti, errori, elaborazioni concluse):
+  // restano consultabili invece di sparire con il messaggio successivo.
+  const [alerts, setAlerts] = useState<{ id: number; text: string; at: number }[]>([]);
+  const [alertsSeen, setAlertsSeen] = useState(0);
+  const alertId = useRef(1);
+  const lastAlert = useRef("");
+  useEffect(() => {
+    const txt = (msg || "").trim();
+    if (!txt || txt === lastAlert.current) return;
+    lastAlert.current = txt;
+    setAlerts((n) => [{ id: alertId.current++, text: txt, at: Date.now() }, ...n].slice(0, 40));
+  }, [msg]);
+  const unseen = Math.max(0, alerts.length - alertsSeen);
+  useEffect(() => { mapApi.current?.setBasemap(basemap); }, [basemap]);
+  useEffect(() => { mapApi.current?.setMapLabels(mapLabels); }, [mapLabels]);
+  function goHome() { setMapMenuOpen(false); setBellOpen(false); mapApi.current?.fitAll(); }
+
   const fileRef = useRef<HTMLInputElement | null>(null);
   const roadFileRef = useRef<HTMLInputElement | null>(null);
 
@@ -2441,113 +2472,199 @@ export default function Page() {
       )}
 
       <div className="overlay-layer">
-        {/* Header stile Argus Smart: pillole flottanti (verde scuro / bianco) */}
-        <div className="absolute top-3 left-3 right-3 z-30 flex items-center gap-2"
-          style={{ fontFamily: '"IBM Plex Sans", Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' }}>
-          {/* Marchio */}
-          <div className="flex items-center gap-2 px-3 rounded-xl shadow" style={{ background: "#123524", height: 44 }}>
-            <div className="bg-white rounded-full p-1 flex items-center justify-center shrink-0">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/argusmark.png" alt="Argus" className="h-6 w-6" />
-            </div>
-            <div className="leading-tight pr-1">
-              <div className="font-semibold text-white text-[15px]">Argus Total</div>
-              <div className="text-[9px] tracking-[0.22em]" style={{ color: "#b9d3c0" }}>NABU</div>
-            </div>
+        {/* Header "famiglia Argus": cluster flottanti sopra la mappa, non una
+            barra piena. Il contenitore lascia passare i click alla mappa negli
+            spazi vuoti; ogni cluster è un'isola con ombra propria. */}
+        <div className="absolute top-3 left-3 right-3 grid grid-cols-[1fr_auto_1fr] items-start gap-3 z-[1500] font-brand">
+
+          {/* colonna sinistra */}
+          <div className="flex items-center gap-3 flex-wrap justify-self-start">
+
+          {/* 1 — marchio · Home · cronologia · avvisi */}
+          <div className="nabu-bar pl-2 pr-2 py-1.5 gap-1 relative">
+            <button onClick={goHome} title={t("Vista iniziale")} className="flex items-center gap-2 pr-1">
+              <div className="bg-white rounded-full p-1 flex items-center justify-center shrink-0">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/argusmark.png" alt="Argus" className="h-6 w-6" />
+              </div>
+              <div className="leading-tight text-left">
+                <div className="font-brand font-extrabold text-[15px] text-nabu-cream">Argus Total</div>
+                <div className="text-[9px] uppercase tracking-[0.18em] text-nabu-sub">NABU</div>
+              </div>
+            </button>
+
+            <span className="w-px h-7 bg-white/10" />
+
+            <button onClick={goHome} className="nav-pill" title={t("Vista iniziale")} aria-label={t("Home")}><IcoHome /></button>
+
+            <button onClick={undo} disabled={!canUndo} className="nav-pill"
+              title={canUndo ? t("Annulla l'ultima operazione") : t("Niente da annullare")} aria-label={t("Annulla")}>
+              ↩{undoN > 1 ? ` (${undoN})` : ""}
+            </button>
+            <button onClick={redo} disabled={!canRedo} className="nav-pill"
+              title={canRedo ? t("Rifai l'operazione annullata") : t("Niente da rifare")} aria-label={t("Rifai")}>
+              ↪{redoN > 1 ? ` (${redoN})` : ""}
+            </button>
+
+            <button onClick={() => { setBellOpen((o) => { if (!o) setAlertsSeen(alerts.length); return !o; }); setMapMenuOpen(false); }}
+              className="nav-pill relative" title={t("Avvisi")} aria-label={t("Avvisi")}>
+              <IcoBell />
+              {unseen > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 text-[10px] font-bold bg-nabu-accent text-white rounded-full grid place-items-center">
+                  {unseen > 9 ? "9+" : unseen}
+                </span>
+              )}
+            </button>
+
+            {bellOpen && (<>
+              <div className="fixed inset-0" onClick={() => setBellOpen(false)} />
+              <div className="absolute top-full right-0 mt-2 widget p-2 w-80 max-h-72 overflow-auto scroll-soft z-10">
+                <div className="px-2 py-1 text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Avvisi")}</div>
+                {!alerts.length && <div className="px-2 py-2 text-sm text-sage-dark">{t("Nessun avviso.")}</div>}
+                {alerts.map((n) => (
+                  <div key={n.id} className="px-2 py-1.5 text-[13px] text-brand-darker border-t border-black/5 first:border-0">
+                    <span className="text-[10px] text-sage-dark tabular-nums mr-2">
+                      {new Date(n.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                    {n.text}
+                  </div>
+                ))}
+                {alerts.length > 0 && (
+                  <button onClick={() => { setAlerts([]); setAlertsSeen(0); }}
+                    className="mt-1 w-full text-[12px] text-sage-dark hover:text-brand py-1">{t("Svuota")}</button>
+                )}
+              </div>
+            </>)}
           </div>
 
-          {/* Strumenti (pillola bianca): annulla/ripristina · livelli · misura */}
+          {/* 2 — strumenti mappa */}
           <div className="relative">
-            <div className="flex items-center gap-1 px-1.5 rounded-xl shadow" style={{ background: "#fbfdfb", height: 44 }}>
-              <button title={t("Annulla")} disabled={!canUndo} onClick={undo}
-                className="p-1.5 rounded-[9px] text-brand-darker disabled:opacity-30 hover:bg-black/5"><IcoUndo /></button>
-              <button title={t("Ripristina")} disabled={!canRedo} onClick={redo}
-                className="p-1.5 rounded-[9px] text-brand-darker disabled:opacity-30 hover:bg-black/5"><IcoRedo /></button>
+            <div className="nabu-cluster gap-1 px-1.5 py-1.5">
+              <button onClick={() => { setMapMenuOpen((o) => !o); setBellOpen(false); }}
+                className={"tool-btn " + (mapMenuOpen ? "tool-btn-active" : "")}
+                title={t("Livelli e mappa di base")} aria-label={t("Livelli")}><IcoLayers /></button>
+              <button onClick={toggleMeasure} className={"tool-btn " + (measuring ? "tool-btn-active" : "")}
+                title={t("Misura distanze/aree")} aria-label={t("Righello")}><IcoRuler /></button>
+              <button onClick={toggleElevation} className={"tool-btn " + (elevOn ? "text-white" : "")}
+                style={elevOn ? { background: "#b23b1e" } : undefined}
+                title={t("Profilo altimetrico / dislivelli (polilinea)")} aria-label={t("Quote")}><IcoElevation /></button>
               <span className="w-px h-5 bg-black/10" />
-              <button title={t("Misura distanze/aree")} onClick={toggleMeasure}
-                className={"p-1.5 rounded-[9px] " + (measuring ? "text-white" : "text-brand-darker hover:bg-black/5")}
-                style={measuring ? { background: "#3f8e4e" } : undefined}><IcoRuler /></button>
-              <button title={t("Profilo altimetrico / dislivelli (polilinea)")} onClick={toggleElevation}
-                className={"p-1.5 rounded-[9px] " + (elevOn ? "text-white" : "text-brand-darker hover:bg-black/5")}
-                style={elevOn ? { background: "#b23b1e" } : undefined}><IcoElevation /></button>
-              <span className="w-px h-5 bg-black/10" />
-              <button title={t("Proprietà (livello / oggetto selezionato)")} onClick={() => setPropsOpen((o) => !o)}
-                className={"p-1.5 rounded-[9px] font-semibold italic w-7 " + (propsOpen ? "bg-brand/10 text-brand" : "text-brand-darker hover:bg-black/5")}>i</button>
+              <button onClick={() => setPropsOpen((o) => !o)}
+                className={"tool-btn font-semibold italic " + (propsOpen ? "bg-brand/10 text-brand" : "")}
+                title={t("Proprietà (livello / oggetto selezionato)")} aria-label={t("Proprietà")}>i</button>
             </div>
+
+            {mapMenuOpen && (<>
+              <div className="fixed inset-0" onClick={() => setMapMenuOpen(false)} />
+              <div className="absolute top-full left-0 mt-2 widget p-3 w-56 z-10 space-y-2">
+                <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Mappa di base")}</div>
+                {([["sat", t("Satellite")], ["street", t("Stradale")], ["topo", t("Topografica")]] as const).map(([k, label]) => (
+                  <label key={k} className="flex items-center gap-2 text-sm text-brand-darker cursor-pointer">
+                    <input type="radio" name="basemap" checked={basemap === k} onChange={() => setBasemap(k)} />
+                    {label}
+                  </label>
+                ))}
+                <div className="border-t border-black/5 pt-2">
+                  <label className="flex items-center gap-2 text-sm text-brand-darker cursor-pointer">
+                    <input type="checkbox" checked={mapLabels} onChange={(e) => setMapLabels(e.target.checked)} />
+                    {t("Etichette (confini e nomi)")}
+                  </label>
+                </div>
+                {measuring && (
+                  <button onClick={() => { mapApi.current?.stopMeasure(); setMeasureTxt(""); mapApi.current?.startMeasure(setMeasureTxt); }}
+                    className="btn-ghost w-full">{t("Cancella misure")}</button>
+                )}
+              </div>
+            </>)}
           </div>
+
           {measuring && measureTxt && (
-            <div className="px-3 rounded-xl text-sm text-white flex items-center shadow" style={{ background: "#123524", height: 44 }}>{measureTxt}</div>
+            <div className="nabu-bar px-3 py-2.5 text-sm text-white">{measureTxt}</div>
           )}
-          {elevOn && (
-            <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 z-40 px-3 py-1.5 rounded-xl text-xs text-white shadow w-[280px]" style={{ background: "#123524" }}>
-              {!elevData || !elevData.points.length ? (
-                <span>{t("Profilo: clicca i punti sulla mappa")}</span>
-              ) : (<>
-                <div className="font-semibold">
-                  {t("Dislivello totale")}: {elevData.total_drop_m != null ? uM(elevData.total_drop_m, 1) : "—"}
-                  {" · "}{t("Lungh.")}: {uKm((elevData.length_m || 0) / 1000)}
-                </div>
-                <div className="mt-0.5 max-h-28 overflow-y-auto scroll-soft leading-tight">
-                  {elevData.points.map((p, i) => (
-                    <div key={i} className="flex justify-between gap-3">
-                      <span className="opacity-90">{i + 1}</span>
-                      <span>{p.elev_m != null ? uM(p.elev_m, 0) : "—"}</span>
-                      <span className="opacity-80 w-16 text-right">
-                        {p.drop_prev_m != null ? (p.drop_prev_m >= 0 ? `▼ ${uM(p.drop_prev_m, 1)}` : `▲ ${uM(-p.drop_prev_m, 1)}`) : ""}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </>)}
-            </div>
-          )}
+          </div>
 
-          <div className="flex-1" />
-
-          {/* Ricerca (pillola bianca) */}
-          <form onSubmit={geocode} className="flex items-center gap-1.5 px-1.5 rounded-xl shadow" style={{ background: "#fbfdfb", height: 44 }}>
-            <button type="button" title={t("Usa la mia posizione (GPS)")} onClick={() => mapApi.current?.locate()}
-              className="text-white rounded-[9px] p-1.5 flex items-center justify-center shrink-0" style={{ background: "#3f8e4e" }}><IcoCross /></button>
+          {/* 3 — ricerca: colonna centrale della griglia, quindi centrata sullo schermo */}
+          <form onSubmit={geocode} className="nabu-cluster gap-2 pl-1.5 pr-1.5 py-1.5 w-[min(28rem,42vw)] min-w-[220px] justify-self-center">
+            <button type="button" onClick={() => mapApi.current?.locate()}
+              className="bg-nabu-accent text-white rounded-[9px] w-9 h-9 grid place-items-center shrink-0 hover:bg-nabu-accentDark"
+              title={t("Usa la mia posizione (GPS)")} aria-label={t("La mia posizione")}><IcoCross /></button>
             <input value={q} onChange={(e) => setQ(e.target.value)}
-              placeholder={t("Indirizzo o coordinate GPS")}
-              className="bg-transparent outline-none text-sm w-48" />
-            <button type="submit" className="text-white text-[13px] font-semibold rounded-[9px] px-3.5 py-2 shrink-0" style={{ background: "#3f8e4e" }}>{t("Cerca")}</button>
+              placeholder={t("Indirizzo o coordinate GPS (lat, lon)")}
+              className="flex-1 bg-transparent text-sm outline-none min-w-0" />
+            <button type="submit"
+              className="bg-nabu-accent text-white text-[13px] font-semibold rounded-[9px] px-3.5 py-2 shrink-0 hover:bg-nabu-accentDark">
+              {t("Cerca")}
+            </button>
           </form>
 
-          {/* Metrico / Imperiale (pillola verde scuro) */}
-          <div className="flex items-center gap-0.5 px-1 rounded-xl text-[13px] shadow" style={{ background: "#123524", height: 44 }}>
-            <button onClick={() => setUnits("metric")}
-              className="px-3 py-1.5 rounded-[9px] font-medium" style={!imperial ? { background: "#3f8e4e", color: "#fff" } : { color: "#b9d3c0" }}>{t("Metrico")}</button>
-            <button onClick={() => setUnits("imperial")}
-              className="px-3 py-1.5 rounded-[9px] font-medium" style={imperial ? { background: "#3f8e4e", color: "#fff" } : { color: "#b9d3c0" }}>{t("Imperiale")}</button>
-          </div>
-
-          {/* Lingua (pillola verde scuro) */}
-          <select value={lang} onChange={(e) => setLang(e.target.value as Lang)}
-            className="rounded-xl px-3 text-[13px] outline-none border-none text-white shadow" style={{ background: "#123524", height: 44 }}>
-            {LANGS.map((l) => <option key={l.code} value={l.code} className="text-black">{l.label}</option>)}
-          </select>
-
-          {/* Widget crediti: member → i propri; admin → totale organizzazione */}
-          {usage && (
-            <div className="rounded-xl px-3 text-[13px] text-white shadow flex flex-col justify-center leading-none" style={{ background: creditColor(usage), height: 44 }} title={t("Crediti")}>
-              <span className="text-[9px] uppercase tracking-wide opacity-90">{usage.scope === "user" ? t("I tuoi crediti") : t("Totale")}</span>
-              <b className="tabular-nums text-[13px]">{usage.requests_used}{usage.requests_limit != null ? ` / ${usage.requests_limit}` : ""}</b>
+          {/* 4 — blocco destro */}
+          <div className="flex items-center gap-3 flex-wrap justify-end justify-self-end">
+            <div className="nabu-bar p-1 gap-1" role="group" aria-label={t("Unità di misura")}>
+              <button onClick={() => setUnits("metric")}
+                className={"px-3 py-1.5 rounded-[9px] text-[13px] font-medium transition " + (!imperial ? "bg-nabu-accent text-white" : "text-nabu-sage hover:text-white")}>
+                {t("Metrico")}
+              </button>
+              <button onClick={() => setUnits("imperial")}
+                className={"px-3 py-1.5 rounded-[9px] text-[13px] font-medium transition " + (imperial ? "bg-nabu-accent text-white" : "text-nabu-sage hover:text-white")}>
+                {t("Imperiale")}
+              </button>
             </div>
-          )}
 
-          {/* Gestione utenti (solo admin) */}
-          {me?.is_admin && (
-            <button onClick={openUsers} title={t("Gestione utenti")}
-              className="rounded-xl px-3 text-[18px] text-white shadow flex items-center" style={{ background: "#123524", height: 44 }}>👥</button>
-          )}
+            <select value={lang} onChange={(e) => setLang(e.target.value as Lang)}
+              className="nabu-bar text-white text-sm px-3.5 py-2.5 appearance-none outline-none border-none"
+              aria-label={t("Lingua")}>
+              {LANGS.map((l) => <option key={l.code} value={l.code} className="text-brand-dark">{l.label}</option>)}
+            </select>
 
-          {/* Esci */}
-          {me && (
-            <button onClick={logout} title={t("Esci")}
-              className="rounded-xl px-3 text-[13px] font-medium text-white shadow" style={{ background: "#123524", height: 44 }}>{t("Esci")}</button>
-          )}
+            {usage && (
+              <div className={"nabu-cluster text-xs px-3.5 py-2.5 font-medium " + creditClass(usage)}
+                title={t("Crediti")}>
+                <span className="opacity-80 mr-1.5">{usage.scope === "user" ? t("Crediti") : t("Totale")}</span>
+                <b className="tabular-nums">{usage.requests_used}{usage.requests_limit != null ? ` / ${usage.requests_limit}` : ""}</b>
+              </div>
+            )}
+
+            {me?.is_admin && (
+              <button onClick={() => setMsg(t("Dashboard multi-cliente: non ancora disponibile in Argus Total."))}
+                className="nabu-bar text-white px-3.5 py-2.5 hover:bg-nabu-greenDark"
+                title={t("Dashboard")} aria-label={t("Dashboard")}><IcoDash /></button>
+            )}
+            {me?.is_admin && (
+              <button onClick={openUsers}
+                className="nabu-bar text-white px-3.5 py-2.5 hover:bg-nabu-greenDark"
+                title={t("Gestione utenti")} aria-label={t("Gestione utenti")}>👥</button>
+            )}
+            {me && (
+              <button onClick={logout}
+                className="nabu-bar text-white text-sm px-4 py-2.5 hover:bg-nabu-greenDark"
+                title={t("Esci")}>{t("Esci")}</button>
+            )}
+          </div>
         </div>
+
+        {elevOn && (
+          <div className="absolute top-[4.5rem] left-1/2 -translate-x-1/2 z-[1400] px-3 py-1.5 rounded-xl text-xs text-white shadow-cluster w-[280px] bg-nabu-green">
+            {!elevData || !elevData.points.length ? (
+              <span>{t("Profilo: clicca i punti sulla mappa")}</span>
+            ) : (<>
+              <div className="font-semibold">
+                {t("Dislivello totale")}: {elevData.total_drop_m != null ? uM(elevData.total_drop_m, 1) : "—"}
+                {" · "}{t("Lungh.")}: {uKm((elevData.length_m || 0) / 1000)}
+              </div>
+              <div className="mt-0.5 max-h-28 overflow-y-auto scroll-soft leading-tight">
+                {elevData.points.map((p, i) => (
+                  <div key={i} className="flex justify-between gap-3">
+                    <span className="opacity-90">{i + 1}</span>
+                    <span>{p.elev_m != null ? uM(p.elev_m, 0) : "—"}</span>
+                    <span className="opacity-80 w-16 text-right">
+                      {p.drop_prev_m != null ? (p.drop_prev_m >= 0 ? `▼ ${uM(p.drop_prev_m, 1)}` : `▲ ${uM(-p.drop_prev_m, 1)}`) : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>)}
+          </div>
+        )}
 
         {/* Colonna sinistra: pannello Progetto + widget Proprietà (impilati) */}
         <div className="absolute top-[4.5rem] left-4 bottom-[6.5rem] w-[440px] max-w-[calc(100vw_-_2rem)] flex flex-col gap-3 z-30 pointer-events-none">

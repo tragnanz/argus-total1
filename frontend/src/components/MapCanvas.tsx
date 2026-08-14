@@ -70,10 +70,21 @@ export type MapHandle = {
   drawCancel: () => void;    // annulla e chiude la modalità disegno
   armPick: (cb: (lon: number, lat: number) => void) => void;
   disarmPick: () => void;
+  setBasemap: (kind: "sat" | "street" | "topo") => void;   // mappa di base
+  setMapLabels: (on: boolean) => void;                      // etichette (confini e nomi)
 };
 
 const ESRI =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+// Mappe di base alternative + strato di sole etichette (confini e nomi) da
+// sovrapporre al satellite, che di suo non ne ha.
+const BASEMAPS: Record<string, { url: string; attr: string; max: number }> = {
+  sat: { url: ESRI, attr: "Imagery © Esri, Maxar, Earthstar", max: 20 },
+  street: { url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", attr: "© OpenStreetMap", max: 19 },
+  topo: { url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", attr: "© OpenTopoMap, © OpenStreetMap", max: 17 },
+};
+const LABELS_URL =
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}";
 // Campo attivo (in modifica): azzurro pieno. Campi inattivi: verde tratteggiato.
 const ACTIVE_STYLE = { color: "#20aae2", weight: 3, fillColor: "#20aae2", fillOpacity: 0.15 };
 const IDLE_STYLE = { color: "#03a047", weight: 3, fillColor: "#038037", fillOpacity: 0.14, dashArray: "6,4" };
@@ -165,6 +176,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const imperialRef = useRef(false);
 
   // Callback sempre aggiornate (la mappa viene creata una sola volta).
+  const baseRef = useRef<L.TileLayer | null>(null);
+  const labelsRef = useRef<L.TileLayer | null>(null);
   const cbRef = useRef({ onCreate, onEditActive, onSelect, onCanalProfile, onDrawChange });
   useEffect(() => { cbRef.current = { onCreate, onEditActive, onSelect, onCanalProfile, onDrawChange }; });
 
@@ -172,7 +185,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     if (!elRef.current || mapRef.current) return;
     const map = L.map(elRef.current, { zoomControl: false, attributionControl: true, keyboard: false })
       .setView([44.6646, 10.4736], 12);
-    L.tileLayer(ESRI, { maxZoom: 20, attribution: "Imagery © Esri, Maxar, Earthstar" }).addTo(map);
+    baseRef.current = L.tileLayer(BASEMAPS.sat.url, { maxZoom: BASEMAPS.sat.max, attribution: BASEMAPS.sat.attr }).addTo(map);
     L.control.zoom({ position: "bottomleft" }).addTo(map);
     fieldsGroupRef.current = L.layerGroup().addTo(map);
     macroRef.current = L.layerGroup().addTo(map);
@@ -917,6 +930,22 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
       disarmPick() {
         pickCbRef.current = null;
         try { if (mapRef.current) mapRef.current.getContainer().style.cursor = ""; } catch { /* */ }
+      },
+      setBasemap(kind) {
+        const map = mapRef.current; if (!map) return;
+        const cfg = BASEMAPS[kind] || BASEMAPS.sat;
+        try { if (baseRef.current) map.removeLayer(baseRef.current); } catch { /* */ }
+        baseRef.current = L.tileLayer(cfg.url, { maxZoom: cfg.max, attribution: cfg.attr }).addTo(map);
+        try { baseRef.current.bringToBack(); } catch { /* */ }
+      },
+      setMapLabels(on) {
+        const map = mapRef.current; if (!map) return;
+        if (on && !labelsRef.current) {
+          labelsRef.current = L.tileLayer(LABELS_URL, { maxZoom: 20, opacity: 0.9 }).addTo(map);
+        } else if (!on && labelsRef.current) {
+          try { map.removeLayer(labelsRef.current); } catch { /* */ }
+          labelsRef.current = null;
+        }
       },
     };
   });
