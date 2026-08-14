@@ -41,6 +41,7 @@ export const LOCALES: Record<Lang, string> = {
 type Dict = Record<string, string>;
 
 const EN: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Pipe group selected: click a pipe to edit it.",
   "Agganciato al canale": "Snapped to canal",
   "Agganciato al centro del pivot": "Snapped to pivot centre",
   "Punto libero": "Free point",
@@ -457,6 +458,7 @@ const EN: Dict = {
 };
 
 const FR: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Groupe de conduites sélectionné : cliquez sur une conduite pour la modifier.",
   "Agganciato al canale": "Accroché au canal",
   "Agganciato al centro del pivot": "Accroché au centre du pivot",
   "Punto libero": "Point libre",
@@ -873,6 +875,7 @@ const FR: Dict = {
 };
 
 const ES: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Grupo de tuberías seleccionado: haz clic en una tubería para editarla.",
   "Agganciato al canale": "Enganchado al canal",
   "Agganciato al centro del pivot": "Enganchado al centro del pivot",
   "Punto libero": "Punto libre",
@@ -1289,6 +1292,7 @@ const ES: Dict = {
 };
 
 const PT: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Grupo de tubulações selecionado: clique numa tubulação para a editar.",
   "Agganciato al canale": "Fixado ao canal",
   "Agganciato al centro del pivot": "Fixado ao centro do pivô",
   "Punto libero": "Ponto livre",
@@ -1705,6 +1709,7 @@ const PT: Dict = {
 };
 
 const RO: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Grup de conducte selectat: dați clic pe o conductă pentru a o modifica.",
   "Agganciato al canale": "Ancorat la canal",
   "Agganciato al centro del pivot": "Ancorat la centrul pivotului",
   "Punto libero": "Punct liber",
@@ -2123,6 +2128,7 @@ const RO: Dict = {
 };
 
 const KK: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Құбыр тобы таңдалды: өзгерту үшін құбырды басыңыз.",
   "Agganciato al canale": "Каналға бекітілген",
   "Agganciato al centro del pivot": "Пивот орталығына бекітілген",
   "Punto libero": "Еркін нүкте",
@@ -2541,6 +2547,7 @@ const KK: Dict = {
 };
 
 const AR: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "تم تحديد مجموعة الأنابيب: انقر على أنبوب لتعديله.",
   "Agganciato al canale": "مثبَّت على القناة",
   "Agganciato al centro del pivot": "مثبَّت على مركز البيفوت",
   "Punto libero": "نقطة حرة",
@@ -2957,6 +2964,7 @@ const AR: Dict = {
 };
 
 const ZH: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "已选中管道组：点击某条管道进行编辑。",
   "Agganciato al canale": "已吸附到渠道",
   "Agganciato al centro del pivot": "已吸附到中心支轴机中心",
   "Punto libero": "自由点",
@@ -3375,6 +3383,7 @@ const ZH: Dict = {
 };
 
 const HU: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Csővezeték-csoport kijelölve: kattintson egy vezetékre a szerkesztéshez.",
   "Agganciato al canale": "Csatornához illesztve",
   "Agganciato al centro del pivot": "Pivot középpontjához illesztve",
   "Punto libero": "Szabad pont",
@@ -3793,6 +3802,7 @@ const HU: Dict = {
 };
 
 const ID: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Grup pipa dipilih: klik salah satu pipa untuk mengeditnya.",
   "Agganciato al canale": "Terkunci ke kanal",
   "Agganciato al centro del pivot": "Terkunci ke pusat pivot",
   "Punto libero": "Titik bebas",
@@ -4211,6 +4221,7 @@ const ID: Dict = {
 };
 
 const DE: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Rohrleitungsgruppe ausgewählt: Klicken Sie auf eine Rohrleitung, um sie zu bearbeiten.",
   "Agganciato al canale": "Am Kanal eingerastet",
   "Agganciato al centro del pivot": "Am Pivot-Zentrum eingerastet",
   "Punto libero": "Freier Punkt",
@@ -4623,6 +4634,7 @@ const DE: Dict = {
 };
 
 const PL: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Wybrano grupę rurociągów: kliknij rurociąg, aby go edytować.",
   "Agganciato al canale": "Przypięty do kanału",
   "Agganciato al centro del pivot": "Przypięty do środka pivota",
   "Punto libero": "Punkt swobodny",
@@ -5037,6 +5049,7 @@ const PL: Dict = {
 };
 
 const BG: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Избрана е група тръбопроводи: щракнете върху тръбопровод, за да го редактирате.",
   "Agganciato al canale": "Закачено за канала",
   "Agganciato al centro del pivot": "Закачено за центъра на пивота",
   "Punto libero": "Свободна точка",
@@ -5451,6 +5464,7 @@ const BG: Dict = {
 };
 
 const RU: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Выбрана группа трубопроводов: щёлкните по трубопроводу, чтобы изменить его.",
   "Agganciato al canale": "Привязано к каналу",
   "Agganciato al centro del pivot": "Привязано к центру пивота",
   "Punto libero": "Свободная точка",
@@ -5865,6 +5879,7 @@ const RU: Dict = {
 };
 
 const AF: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Pypleidinggroep gekies: klik op 'n pypleiding om dit te wysig.",
   "Agganciato al canale": "Vasgeklik aan die kanaal",
   "Agganciato al centro del pivot": "Vasgeklik aan die pivot se middelpunt",
   "Punto libero": "Vrye punt",
@@ -6279,6 +6294,7 @@ const AF: Dict = {
 };
 
 const MS: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Kumpulan paip dipilih: klik satu paip untuk mengeditnya.",
   "Agganciato al canale": "Terkunci pada saluran",
   "Agganciato al centro del pivot": "Terkunci pada pusat pivot",
   "Punto libero": "Titik bebas",
@@ -6693,6 +6709,7 @@ const MS: Dict = {
 };
 
 const VI: Dict = {
+  "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Đã chọn nhóm đường ống: nhấp vào một đường ống để chỉnh sửa.",
   "Agganciato al canale": "Đã bám vào kênh",
   "Agganciato al centro del pivot": "Đã bám vào tâm pivot",
   "Punto libero": "Điểm tự do",

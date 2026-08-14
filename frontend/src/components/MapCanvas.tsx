@@ -38,7 +38,7 @@ export type MapHandle = {
   clearOverlay: (key: OverlayKey) => void;
   showLayouts: (items: { id: number; fc: GeoJSONFC }[], opts?: { measures?: boolean }) => void;
   clearLayout: () => void;
-  showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs) => void;
+  showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs, pipeSel?: PivotSel) => void;
   editPipe: (coords: number[][], cb: (coords: number[][]) => void, snap?: number[][], snapLines?: number[][][],
     labels?: { pivot: string; canal: string; free: string }) => void;
   endPipeEdit: () => void;
@@ -479,20 +479,27 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         if (lb && lb.isValid()) map.fitBounds(lb, { padding: [40, 40] });
       },
       clearLayout() { layoutRef.current?.clearLayers(); pivotsRef.current?.clearLayers(); pivotBgRef.current = null; },
-      showPivots(model, sel, cbs) {
+      showPivots(model, sel, cbs, pipeSel) {
         const map = mapRef.current; const g = pivotsRef.current;
         if (!map || !g) return;
         g.clearLayers();
         pivotBgRef.current = cbs.onBackground;
         // Adduzione: le TUBAZIONI sono cliccabili (si possono modificare una per
         // una); le altre linee restano di sfondo, non interattive.
+        // Tubazioni: selezione a due tempi come i pivot — primo clic = gruppo
+        // (tutte evidenziate), secondo clic = la singola, che entra in modifica.
+        const pipeGroup = pipeSel && (pipeSel.mode === "group" || pipeSel.mode === "single");
         model.lines.forEach((ln, li) => {
           const latlngs = ln.coords.map((p) => [p[1], p[0]] as [number, number]);
-          const st = ln.kind === "pipe" ? { color: "#20aae2", weight: 2 }
+          const isSinglePipe = ln.kind === "pipe" && pipeSel?.mode === "single" && pipeSel.idx === li;
+          const st = ln.kind === "pipe"
+            ? (isSinglePipe ? { color: "#f0b429", weight: 5, opacity: 0.95 }
+              : pipeGroup ? { color: "#20aae2", weight: 4, opacity: 1 }
+                : { color: "#20aae2", weight: 2 })
             : ln.kind === "header" ? { color: "#b23b1e", weight: 3 }
-            : { color: "#0284c7", weight: 3, dashArray: "6,4" };
+              : { color: "#0284c7", weight: 3, dashArray: "6,4" };
           if (ln.kind === "pipe" && cbs.onLineClick) {
-            const pl = L.polyline(latlngs, { ...st, interactive: true, weight: st.weight + 1 });
+            const pl = L.polyline(latlngs, { ...st, interactive: true, weight: (st.weight ?? 2) + 1 });
             pl.on("click", (e) => { L.DomEvent.stop(e); cbs.onLineClick?.(li); });
             pl.bindTooltip(String(li + 1), { direction: "top", sticky: true });
             g.addLayer(pl);

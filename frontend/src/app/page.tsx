@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.125";
+const REV = "v0.6.126";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -957,6 +957,9 @@ export default function Page() {
   const [hiddenPivotFields, setHiddenPivotFields] = useState<Set<number>>(new Set()); // gruppi pivot (per campo) nascosti
   const [hiddenPipeFields, setHiddenPipeFields] = useState<Set<number>>(new Set());   // gruppi tubazioni (per campo) nascosti
   const editPipeRef = useRef<number | null>(null);   // indice della tubazione in modifica
+  // Selezione delle tubazioni a due tempi, come per i pivot: primo clic = gruppo,
+  // secondo clic = la singola tubazione, che entra in modifica con i suoi vertici.
+  const [pipeSel, setPipeSel] = useState<{ mode: "none" | "group" | "single"; idx: number }>({ mode: "none", idx: -1 });
   const [openFolders, setOpenFolders] = useState({ campi: true, canali: true, strade: true, invasi: true, pivot: true }); // cartelle del pannello Livelli
   const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
   // Livello Strade (linee, con spessore) disegnabile/importabile: i pivot le rispettano.
@@ -1997,14 +2000,34 @@ export default function Page() {
     if (!visP.length && !visL.length) { api2.clearPivots?.(); return; }
     let selForShow = pivotSel;
     if (pivotSel.mode === "single") { const vpos = visIdx.indexOf(pivotSel.idx); selForShow = vpos >= 0 ? { mode: "single", idx: vpos } : { mode: "none", idx: -1 }; }
+    const pipeSelForShow = pipeSel;
     api2.showPivots?.({ pivots: visP, lines: visL }, selForShow, {
-      onClick: (i) => { const real = visIdx[i]; setPivotSel((s) => (s.mode === "none" ? { mode: "group", idx: -1 } : { mode: "single", idx: real })); },
+      onClick: (i) => {
+        const real = visIdx[i];
+        // lavorare sui pivot chiude la modifica di una tubazione
+        if (editPipeRef.current != null) { editPipeRef.current = null; api2.endPipeEdit?.(); }
+        setPipeSel({ mode: "none", idx: -1 });
+        setPivotSel((s) => (s.mode === "none" ? { mode: "group", idx: -1 } : { mode: "single", idx: real }));
+      },
       onMove: (i, lat, lng) => { const real = visIdx[i]; commitPivots(pivots.map((p, k) => (k === real ? { ...p, lat, lng } : p))); },
-      onBackground: () => { setPivotSel({ mode: "none", idx: -1 }); if (editPipeRef.current != null) { editPipeRef.current = null; api2.endPipeEdit?.(); setMsg(""); } },
+      onBackground: () => {
+        setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 });
+        if (editPipeRef.current != null) { editPipeRef.current = null; api2.endPipeEdit?.(); setMsg(""); }
+      },
       // Clic su una tubazione: la rende modificabile (maniglie sui vertici).
       onLineClick: (li) => {
         const target = pivotLines.indexOf(visL[li]);   // indice reale nel modello
         if (target < 0) return;
+        // PRIMO clic: seleziona il GRUPPO delle tubazioni, senza entrare in modifica.
+        if (pipeSel.mode === "none") {
+          setPivotSel({ mode: "none", idx: -1 });
+          setPipeSel({ mode: "group", idx: -1 });
+          if (editPipeRef.current != null) { editPipeRef.current = null; api2.endPipeEdit?.(); }
+          setMsg(t("Gruppo tubazioni selezionato: clicca una tubazione per modificarla."));
+          return;
+        }
+        // SECONDO clic (o clic su un'altra tubazione): modifica quella singola.
+        setPipeSel({ mode: "single", idx: li });
         editPipeRef.current = target;
         setMsg(t("Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo."));
         api2.editPipe?.(pivotLines[target].coords, (coords) => {
@@ -2020,9 +2043,9 @@ export default function Page() {
            .map((w) => w.geojson.coordinates as unknown as number[][])],   // aggancio al canale / fiume
         { pivot: t("Agganciato al centro del pivot"), canal: t("Agganciato al canale"), free: t("Punto libero") });
       },
-    });
+    }, pipeSelForShow);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pivots, pivotLines, pivotSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses]);
+  }, [pivots, pivotLines, pivotSel, pipeSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses]);
 
   // Operazioni sul singolo pivot selezionato.
   const selPivot = pivotSel.mode === "single" && pivotSel.idx >= 0 ? pivots[pivotSel.idx] : null;
