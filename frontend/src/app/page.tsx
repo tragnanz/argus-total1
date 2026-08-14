@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.116";
+const REV = "v0.6.117";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -275,6 +275,39 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
     return { q: bq, dist: Math.sqrt(bd) };
   };
   const distC = P.map((pt) => footOf(pt).dist);
+  // Punti del canale campionati ogni ~25 m: servono a scegliere una presa che
+  // stia DENTRO il campo e il cui allaccio non esca dal poligono.
+  const canalPts: [number, number][] = [];
+  for (let k = 0; k < C.length - 1; k++) {
+    const a = C[k], b = C[k + 1];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const n = Math.max(1, Math.ceil(L / 25));
+    for (let i = 0; i < n; i++) canalPts.push([a[0] + ((b[0] - a[0]) * i) / n, a[1] + ((b[1] - a[1]) * i) / n]);
+  }
+  canalPts.push(C[C.length - 1]);
+  const segInside = (a: [number, number], b: [number, number]) => {
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const n = Math.max(2, Math.ceil(L / 60));
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      if (!inside([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t])) return false;
+    }
+    return true;
+  };
+  // Presa migliore per un punto: la più corta fra quelle valide; se nessuna è
+  // valida si ripiega sul piede della perpendicolare (caso limite).
+  const tapFor = (pt: [number, number]): [number, number] => {
+    let best: [number, number] | null = null, bd = Infinity;
+    let fallback: [number, number] | null = null, fd = Infinity;
+    for (const q of canalPts) {
+      const d = Math.hypot(q[0] - pt[0], q[1] - pt[1]);
+      if (d >= bd && d >= fd) continue;
+      if (!inside(q)) continue;
+      if (d < fd) { fd = d; fallback = q; }
+      if (d < bd && segInside(q, pt)) { bd = d; best = q; }
+    }
+    return best ?? fallback ?? footOf(pt).q;
+  };
 
   const nnd: number[] = [];
   for (let i = 0; i < P.length; i++) {
@@ -354,9 +387,10 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
           const chunk = ordered.slice(k, k + cap);
           const A = P[chunk[0]];
           const st: [number, number] = [A[0] + p[0] * off * ci, A[1] + p[1] * off * ci];
-          let f = footOf(st);
-          if (!inside(f.q)) { const alt = footOf(A); if (inside(alt.q)) f = alt; }
-          const path: [number, number][] = [f.q];        // 1) parte sempre dal canale
+          // Presa sul canale: fra i punti del canale DENTRO il campo si prende il
+          // più vicino il cui collegamento resta anch'esso dentro il campo.
+          const tap = tapFor(st);
+          const path: [number, number][] = [tap];        // 1) parte sempre dal canale
           if (ci > 0) path.push(st);                     // 4) tratta successiva: parallela
           for (const i of chunk) path.push(P[i]);        // 3) passa per tutti i centri
           out.push(path);
