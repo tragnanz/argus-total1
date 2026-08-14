@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.124";
+const REV = "v0.6.125";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -354,19 +354,21 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
   // PERPENDICOLARE. Se nessuna ci rientra si tiene comunque la più vicina (con
   // tre direzioni a 60° lo scarto massimo è 30°), altrimenti le tubazioni non
   // potrebbero più seguire le file di pivot.
-  const ORTHO_TOL = Math.cos((20 * Math.PI) / 180);
+  // Tolleranza di ortogonalità: entro questo scarto dalla perpendicolare del
+  // tratto una direzione del reticolo è AMMESSA. Con ±45° su un tratto ce n'è
+  // quasi sempre più d'una: fra quelle ammesse si sceglie poi la migliore, cioè
+  // quella che forma le file più lunghe (meno tubazioni, rete più ordinata).
+  const ORTHO_DEG = 45;
+  const ORTHO_TOL = Math.cos((ORTHO_DEG * Math.PI) / 180);
   let offGrid = 0;
-  const segK: number[] = [];
+  const segCand: number[][] = [];   // direzioni ammesse per ogni tratto, dalla più ortogonale
   for (let k = 0; k < CS.length - 1; k++) {
     const vx = CS[k + 1][0] - CS[k][0], vy = CS[k + 1][1] - CS[k][1]; const L = Math.hypot(vx, vy) || 1;
     const nx = -vy / L, ny = vx / L;
-    let bk = 0, bc = -1;
-    for (let q = 0; q < dv.length; q++) { const c = Math.abs(dv[q][0] * nx + dv[q][1] * ny); if (c > bc) { bc = c; bk = q; } }
-    // Se nemmeno la migliore rientra in ±20° si tiene comunque quella (con tre
-    // direzioni a 60° lo scarto non supera i 30°): rinunciare al reticolo
-    // vorrebbe dire tubazioni che non seguono più le file di pivot.
-    if (bc < ORTHO_TOL) offGrid++;
-    segK.push(bk);
+    const scored = dv.map((d, q) => ({ q, c: Math.abs(d[0] * nx + d[1] * ny) })).sort((a, b) => b.c - a.c);
+    const ok = scored.filter((x) => x.c >= ORTHO_TOL).map((x) => x.q);
+    if (!ok.length) { offGrid++; ok.push(scored[0].q); }   // nessuna ammessa: la più vicina
+    segCand.push(ok);
   }
   const nearSeg = (pt: [number, number]) => {
     let bi = 0, bd = Infinity;
@@ -489,8 +491,12 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
     return best ?? q;
   };
 
+  // Un allaccio non può essere più lungo di questo: oltre, il pivot viene
+  // attaccato alla fila vicina invece di ricevere una tubazione tutta sua che
+  // attraversa mezzo campo.
+  const maxTap = (i: number) => Math.max(2 * foot[i].dist, 1.5 * pitch);
   const toPipes = (cuts: { idx: number[]; tap: [number, number] | null }[], kOf: (i: number) => number, allowFallback: boolean) => {
-    const pipes: [number, number][][] = []; const orphans: number[] = [];
+    const pipes: { path: [number, number][]; ids: number[] }[] = []; const orphans: number[] = []; const far: number[] = [];
     for (const s of cuts) {
       if (!s.idx.length) continue;
       let ln = s.idx;
@@ -551,21 +557,44 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
           const freeC = okC.filter((c) => clearOf(c, A, own));       // niente pivot altrui sul percorso
           tp = freeC.length ? pick2(freeC) : okC.length ? pick2(okC) : pick2(cands);
         }
-        tp = spread(tp, via ?? A, dir); usedTaps.push(tp);
+        // Allaccio spropositato — vale per QUALSIASI presa, anche quella dritta:
+        // non si traccia, e i pivot passano al recupero finale che li aggancia a
+        // una fila vicina invece di far attraversare il campo a un tubo solo.
+        const ref = via ?? A;
+        if (Math.hypot(tp[0] - ref[0], tp[1] - ref[1]) > maxTap(ch[0])) { far.push(...ch); continue; }
+        tp = spread(tp, ref, dir); usedTaps.push(tp);
         const path: [number, number][] = [tp];
         if (via) path.push(via);
         for (const i of ch) path.push(P[i]);
-        pipes.push(path);
+        pipes.push({ path, ids: ch });
       }
     }
-    return { pipes, orphans };
+    return { pipes, orphans, far };
   };
 
   // PASSO 1 — ogni pivot prende la direzione perpendicolare al TRATTO di canale
   // che ha davanti; il voto di maggioranza fra vicini rende netti i confini fra
   // zone con orientamento diverso, così le file non si spezzano al passaggio.
   const all = P.map((_, i) => i);
-  let kA = P.map((pt) => segK[nearSeg(pt)] ?? 0);
+  // Per ogni tratto si prova ogni direzione ammessa sui SOLI pivot che gli stanno
+  // davanti e si tiene quella che li mette in file più lunghe: con ±45° è questa
+  // scelta, non la pura ortogonalità, a decidere la qualità del tracciato.
+  const bySeg = new Map<number, number[]>();
+  P.forEach((pt, i) => { const sg = nearSeg(pt); const arr = bySeg.get(sg); if (arr) arr.push(i); else bySeg.set(sg, [i]); });
+  const segDir: number[] = [];
+  for (let sg = 0; sg < segCand.length; sg++) {
+    const ids = bySeg.get(sg) ?? [];
+    const cands = segCand[sg];
+    let bk = cands[0], bs = -Infinity;
+    for (const k of cands) {
+      const rws = makeRows(ids, () => k);
+      const inChains = rws.reduce((a, r) => a + (r.length > 1 ? r.length : 0), 0);
+      const score = inChains - 0.6 * rws.length;      // molti pivot in fila, poche file
+      if (score > bs) { bs = score; bk = k; }
+    }
+    segDir.push(bk);
+  }
+  let kA = P.map((pt) => segDir[nearSeg(pt)] ?? 0);
   for (let it = 0; it < 8; it++) {
     let same = true;
     const nx = kA.map((_, i) => {
@@ -582,6 +611,7 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
   const kG = (i: number) => kA[i];
   const r1 = toPipes(cutRows(makeRows(all, kG)), kG, false);
   let pipes = r1.pipes;
+  const leftovers: number[] = [];
 
   // PASSO 2 — i pivot che con quella direzione non arrivano dritti al canale
   // (tipico dei lembi dove il canale gira) usano la direzione del reticolo che
@@ -618,15 +648,61 @@ function feederPipes(canal: number[][], pivs: { lat: number; lng: number }[], ma
     const kOf2 = (i: number) => k2.get(i) ?? kA[i];
     const r2 = toPipes(cutRows(makeRows(orph, kOf2)), kOf2, true);
     pipes = pipes.concat(r2.pipes);
+    leftovers.push(...r2.far);
+  }
+  leftovers.push(...r1.far);
+
+  // PASSO 3 — pivot rimasti senza tubazione perché l'unico allaccio possibile
+  // era spropositato: si agganciano in coda alla fila vicina (che ha ancora
+  // posto entro il massimo per linea) invece di farsi una linea propria.
+  if (leftovers.length) {
+    const stillFar: number[] = [];
+    for (const i of leftovers) {
+      let best = -1, bs = Infinity;
+      for (let pi = 0; pi < pipes.length; pi++) {
+        const pp = pipes[pi];
+        if (pp.ids.length >= cap) continue;
+        const last = P[pp.ids[pp.ids.length - 1]];
+        const d = Math.hypot(P[i][0] - last[0], P[i][1] - last[1]);
+        if (d > 1.9 * pitch) continue;
+        if (!segInside(last, P[i])) continue;
+        const own2 = new Set([...pp.ids, i]);
+        if (!clearOf(last, P[i], own2)) continue;
+        // piega all'innesto: si preferisce il prolungamento più dritto
+        const prev = pp.path[pp.path.length - 2];
+        const ax = last[0] - prev[0], ay = last[1] - prev[1];
+        const bx = P[i][0] - last[0], by = P[i][1] - last[1];
+        const cos = (ax * bx + ay * by) / ((Math.hypot(ax, ay) * Math.hypot(bx, by)) || 1);
+        const ang = (Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI;
+        if (ang > 60) continue;
+        const sc = d + 8 * ang;
+        if (sc < bs) { bs = sc; best = pi; }
+      }
+      if (best >= 0) { pipes[best].path.push(P[i]); pipes[best].ids.push(i); }
+      else stillFar.push(i);
+    }
+    // Chi non ha nemmeno una fila vicina disponibile riceve comunque la sua
+    // tubazione: nessun pivot resta senz'acqua.
+    for (const i of stillFar) {
+      const d = dv[kA[i]]; const q = foot[i].q;
+      const s1 = (P[i][0] - q[0]) * d[0] + (P[i][1] - q[1]) * d[1];
+      const dir: [number, number] = s1 >= 0 ? [d[0], d[1]] : [-d[0], -d[1]];
+      const own2 = new Set([i]);
+      const cands: [number, number][] = [straightTap(P[i], dir) ?? footOf(P[i]).q, nearTap(P[i], null, own2), footOf(P[i]).q];
+      const ok2 = cands.filter((c) => inside(c) && segInside(c, P[i]));
+      const arr = ok2.length ? ok2 : cands;
+      const tp2 = arr.reduce((b, c) => (Math.hypot(c[0] - P[i][0], c[1] - P[i][1]) < Math.hypot(b[0] - P[i][0], b[1] - P[i][1]) ? c : b));
+      pipes.push({ path: [tp2, P[i]], ids: [i] });
+    }
   }
 
   if (offGrid) {
     // diagnostica non bloccante: quanti tratti di canale non hanno una direzione
     // del reticolo ortogonale entro 20°
     // eslint-disable-next-line no-console
-    console.info(`[tubazioni] ${offGrid} tratti di canale senza direzione ortogonale entro 20°`);
+    console.info(`[tubazioni] ${offGrid} tratti di canale senza direzione ortogonale entro ${ORTHO_DEG}°`);
   }
-  return pipes.map((path) => path.map((q) => toLL(q[0], q[1])));
+  return pipes.map((pp) => pp.path.map((q) => toLL(q[0], q[1])));
 }
 
 // Preimpostazioni grafiche di sistema, distinte per livello della piramide:
