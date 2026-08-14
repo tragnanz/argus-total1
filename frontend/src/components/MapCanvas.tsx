@@ -39,7 +39,7 @@ export type MapHandle = {
   showLayouts: (items: { id: number; fc: GeoJSONFC }[], opts?: { measures?: boolean }) => void;
   clearLayout: () => void;
   showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs) => void;
-  editPipe: (coords: number[][], cb: (coords: number[][]) => void) => void;
+  editPipe: (coords: number[][], cb: (coords: number[][]) => void, snap?: number[][]) => void;
   endPipeEdit: () => void;
   clearPivots: () => void;
   showRoads: (roads: { coords: number[][]; width_m?: number }[], onRemove?: (i: number) => void) => void;
@@ -496,6 +496,11 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
               ? { color: "#0d3b26", weight: 2.5, fillColor: base, fillOpacity: 0.30 }
               : { color: "#0d3b26", weight: 1, fillColor: base, fillOpacity: 0.22 };
           const c = L.circle([pv.lat, pv.lng], { radius: pv.r, ...style });
+          // Punto del CENTRO: è il punto da alimentare, utile come riferimento
+          // per le tubazioni (e come aggancio quando si modificano).
+          g.addLayer(L.circleMarker([pv.lat, pv.lng], {
+            radius: 2.5, color: "#0d3b26", weight: 1, fillColor: "#0d3b26", fillOpacity: 1, interactive: false,
+          }));
           c.on("click", (e) => { L.DomEvent.stop(e); cbs.onClick(i); });
           c.bindTooltip(`#${i + 1} · r ${Math.round(pv.r)} m`, { direction: "top", sticky: true });
           g.addLayer(c);
@@ -814,13 +819,25 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
       // Modifica di UNA tubazione: maniglie trascinabili su ogni vertice, clic
       // sulla linea per inserire un punto, doppio clic su una maniglia per
       // toglierlo. Ogni modifica richiama cb con il nuovo tracciato.
-      editPipe(coords, cb) {
+      editPipe(coords, cb, snap) {
         const map = mapRef.current, g = canalEditRef.current;
         if (!map || !g) return;
         g.clearLayers();
         let pts = coords.map((p) => [...p]);
-        const redraw = () => { this.editPipe(pts, cb); };
+        const redraw = () => { this.editPipe(pts, cb, snap); };
         const fire = () => cb(pts.map((q) => [...q]));
+        // Aggancio ai CENTRI dei pivot: entro ~25 px il vertice scatta sul centro.
+        const snapTo = (lng: number, lat: number): [number, number] => {
+          if (!snap || !snap.length || !map) return [lng, lat];
+          const here = map.latLngToContainerPoint([lat, lng]);
+          let bestP: [number, number] = [lng, lat], bd = 25;
+          for (const s of snap) {
+            const q = map.latLngToContainerPoint([s[1], s[0]]);
+            const d = Math.hypot(q.x - here.x, q.y - here.y);
+            if (d < bd) { bd = d; bestP = [s[0], s[1]]; }
+          }
+          return bestP;
+        };
         const line = L.polyline(pts.map((p) => [p[1], p[0]] as [number, number]),
           { color: "#f0b429", weight: 5, opacity: 0.85 });
         g.addLayer(line);
@@ -832,10 +849,16 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           });
           m.on("drag", (e) => {
             const ll = (e.target as L.Marker).getLatLng();
-            pts[i] = [ll.lng, ll.lat];
+            pts[i] = snapTo(ll.lng, ll.lat);
             line.setLatLngs(pts.map((q) => [q[1], q[0]] as [number, number]));
           });
-          m.on("dragend", () => fire());
+          m.on("dragend", (e) => {
+            const ll = (e.target as L.Marker).getLatLng();
+            pts[i] = snapTo(ll.lng, ll.lat);
+            (e.target as L.Marker).setLatLng([pts[i][1], pts[i][0]]);   // scatta sul centro
+            line.setLatLngs(pts.map((q) => [q[1], q[0]] as [number, number]));
+            fire();
+          });
           m.on("dblclick", (e) => {
             L.DomEvent.stop(e);
             if (pts.length <= 2) return;                 // servono almeno 2 punti
@@ -852,7 +875,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             const d = (cl.lng - (ax + tt * dx)) ** 2 + (cl.lat - (ay + tt * dy)) ** 2;
             if (d < bd) { bd = d; best = i; }
           }
-          pts.splice(best + 1, 0, [cl.lng, cl.lat]); fire(); redraw();
+          pts.splice(best + 1, 0, snapTo(cl.lng, cl.lat)); fire(); redraw();
         });
       },
       endPipeEdit() { canalEditRef.current?.clearLayers(); },
