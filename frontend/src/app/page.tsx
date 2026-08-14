@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.131";
+const REV = "v0.6.132";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2096,20 +2096,29 @@ export default function Page() {
         setPipeSel({ mode: "single", idx: li });
         editPipeRef.current = target;
         setMsg(t("Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo."));
-        api2.editPipe?.(pivotLines[target].coords, (coords) => {
-          setPivotLines((ls) => {
-            const arr = ls.map((l, k) => (k === target ? { ...l, coords } : l));
-            setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, arr) } : gp));
-            return arr;
-          });
-        },
-        pivots.map((pv) => [pv.lng, pv.lat]),                       // aggancio ai centri dei pivot
-        [...canals.filter((c) => !c.hidden).map((c) => c.geojson.coordinates as number[][]),
-         ...watercourses.filter((w) => !w.hidden && w.geojson?.type === "LineString")
-           .map((w) => w.geojson.coordinates as unknown as number[][])],   // aggancio al canale / fiume
-        { pivot: t("Agganciato al centro del pivot"), canal: t("Agganciato al canale"), free: t("Punto libero") });
+        const openEditor = (coords0: number[][]) => {
+          api2.editPipe?.(coords0, (coords) => {
+            // Se la modifica ha staccato la tubazione dall'acqua, viene riattaccata
+            // subito e l'editor riaperto sul tracciato corretto, così le maniglie
+            // mostrano la nuova presa invece di restare indietro.
+            const fixed = reattachToWater(coords);
+            setPivotLines((ls) => {
+              const arr = ls.map((l, k) => (k === target ? { ...l, coords: fixed } : l));
+              setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, arr) } : gp));
+              return arr;
+            });
+            if (fixed.length !== coords.length) {
+              setMsg(t("Presa spostata: la tubazione è stata riportata fino al canale ✓"));
+              setTimeout(() => openEditor(fixed), 0);
+            }
+          },
+          pivots.map((pv) => [pv.lng, pv.lat]),                       // aggancio ai centri dei pivot
+          waterLinesLL(),                                             // aggancio al canale / fiume
+          { pivot: t("Agganciato al centro del pivot"), canal: t("Agganciato al canale"), free: t("Punto libero") });
+        };
+        openEditor(pivotLines[target].coords);
       },
-    }, pipeSelForShow);
+    }, pipeSelForShow, waterLinesLL());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pivots, pivotLines, pivotSel, pipeSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses]);
 
@@ -2355,6 +2364,56 @@ export default function Page() {
       return s + L;
     }, 0) / 1000;
     setMsg(t("Tubazioni tracciate: {n} rami dal canale · {km} km ✓", { n: pipesLL.length, km: fmt(km, { maximumFractionDigits: 1 }) }));
+  }
+  // Linee d'acqua visibili (canali + corsi d'acqua lineari): servono al simbolo
+  // della presa e al riaggancio automatico.
+  function waterLinesLL(): number[][][] {
+    return [...canals.filter((c) => !c.hidden).map((c) => c.geojson.coordinates as number[][]),
+      ...watercourses.filter((w) => !w.hidden && w.geojson?.type === "LineString")
+        .map((w) => w.geojson.coordinates as unknown as number[][])];
+  }
+  // Dopo una modifica la tubazione deve restare attaccata all'acqua: se nessun
+  // suo punto tocca più il canale, l'estremità più vicina viene PROLUNGATA in
+  // linea retta fino a incontrarlo, e lì nasce la nuova presa.
+  function reattachToWater(coords: number[][]): number[][] {
+    const W = waterLinesLL(); if (!W.length || coords.length < 2) return coords;
+    const lat0 = coords[0][1], mLat = 111320, mLng = 111320 * Math.cos((lat0 * Math.PI) / 180) || 1e-9;
+    const M = (q: number[]): [number, number] => [q[0] * mLng, q[1] * mLat];
+    const Wm = W.map((ln) => ln.map(M));
+    const dSeg = (p: [number, number], a: [number, number], b: [number, number]) => {
+      const vx = b[0] - a[0], vy = b[1] - a[1]; const l2 = vx * vx + vy * vy || 1e-9;
+      let t = ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / l2; t = Math.max(0, Math.min(1, t));
+      return Math.hypot(p[0] - (a[0] + vx * t), p[1] - (a[1] + vy * t));
+    };
+    const distW = (q: number[]) => {
+      const m2 = M(q); let d = Infinity;
+      for (const ln of Wm) for (let i = 0; i < ln.length - 1; i++) d = Math.min(d, dSeg(m2, ln[i], ln[i + 1]));
+      return d;
+    };
+    if (coords.some((q) => distW(q) < 6)) return coords;      // tocca ancora l'acqua
+    // prolunga l'estremità più vicina lungo la propria direzione
+    const tryEnd = (endIdx: number, prevIdx: number) => {
+      const A = M(coords[endIdx]), B = M(coords[prevIdx]);
+      const vx = A[0] - B[0], vy = A[1] - B[1]; const L = Math.hypot(vx, vy) || 1;
+      const far: [number, number] = [A[0] + (vx / L) * 20000, A[1] + (vy / L) * 20000];
+      let best: [number, number] | null = null, bd = Infinity;
+      for (const ln of Wm) for (let i = 0; i < ln.length - 1; i++) {
+        const c = ln[i], d = ln[i + 1];
+        const rx = far[0] - A[0], ry = far[1] - A[1], sx = d[0] - c[0], sy = d[1] - c[1];
+        const den = rx * sy - ry * sx; if (Math.abs(den) < 1e-9) continue;
+        const t = ((c[0] - A[0]) * sy - (c[1] - A[1]) * sx) / den;
+        const u = ((c[0] - A[0]) * ry - (c[1] - A[1]) * rx) / den;
+        if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+        const P2: [number, number] = [A[0] + rx * t, A[1] + ry * t];
+        const dd = Math.hypot(P2[0] - A[0], P2[1] - A[1]);
+        if (dd < bd) { bd = dd; best = P2; }
+      }
+      return best ? { p: [best[0] / mLng, best[1] / mLat], d: bd } : null;
+    };
+    const a = tryEnd(0, 1), b = tryEnd(coords.length - 1, coords.length - 2);
+    if (a && (!b || a.d <= b.d)) return [a.p, ...coords];
+    if (b) return [...coords, b.p];
+    return coords;
   }
   // Chiave di confronto fra centro pivot e vertice di tubazione (6 decimali ≈ 10 cm).
   const pKey = (p: { lat: number; lng: number }) => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`;

@@ -38,7 +38,7 @@ export type MapHandle = {
   clearOverlay: (key: OverlayKey) => void;
   showLayouts: (items: { id: number; fc: GeoJSONFC }[], opts?: { measures?: boolean }) => void;
   clearLayout: () => void;
-  showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs, pipeSel?: PivotSel) => void;
+  showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs, pipeSel?: PivotSel, waterLines?: number[][][]) => void;
   editPipe: (coords: number[][], cb: (coords: number[][]) => void, snap?: number[][], snapLines?: number[][][],
     labels?: { pivot: string; canal: string; free: string }) => void;
   endPipeEdit: () => void;
@@ -516,7 +516,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         if (lb && lb.isValid()) map.fitBounds(lb, { padding: [40, 40] });
       },
       clearLayout() { layoutRef.current?.clearLayers(); pivotsRef.current?.clearLayers(); pivotBgRef.current = null; },
-      showPivots(model, sel, cbs, pipeSel) {
+      showPivots(model, sel, cbs, pipeSel, waterLines) {
         const map = mapRef.current; const g = pivotsRef.current;
         if (!map || !g) return;
         g.clearLayers();
@@ -540,18 +540,35 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             pl.on("click", (e) => { L.DomEvent.stop(e); cbs.onLineClick?.(li); });
             pl.bindTooltip(String(li + 1), { direction: "top", sticky: true });
             g.addLayer(pl);
-            // Simbolo della PRESA sul canale: quadratino sul primo punto della
-            // tubazione, cioè dove si allaccia all'acqua.
-            const tap = latlngs[0];
-            if (tap) {
-              const size = isSinglePipe || pipeGroup ? 11 : 9;
-              g.addLayer(L.marker(tap, {
+            // Simbolo della PRESA: si mette dove la tubazione TOCCA DAVVERO il
+            // canale, non sul primo punto per convenzione. Se sposti l'attacco
+            // su un pivot, il quadratino si sposta o sparisce di conseguenza.
+            const onWater = (q: number[]) => {
+              if (!waterLines || !waterLines.length) return false;
+              const a0 = map.latLngToContainerPoint([q[1], q[0]]);
+              for (const ln2 of waterLines) for (let i = 0; i < ln2.length - 1; i++) {
+                const a = map.latLngToContainerPoint([ln2[i][1], ln2[i][0]]);
+                const b = map.latLngToContainerPoint([ln2[i + 1][1], ln2[i + 1][0]]);
+                const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-9;
+                let t = ((a0.x - a.x) * dx + (a0.y - a.y) * dy) / l2; t = Math.max(0, Math.min(1, t));
+                if (Math.hypot(a.x + dx * t - a0.x, a.y + dy * t - a0.y) < 4) return true;
+              }
+              return false;
+            };
+            const taps = waterLines && waterLines.length
+              ? ln.coords.filter(onWater)
+              : (ln.coords[0] ? [ln.coords[0]] : []);
+            const size = isSinglePipe || pipeGroup ? 11 : 9;
+            for (const q of taps) {
+              g.addLayer(L.marker([q[1], q[0]], {
                 interactive: false, zIndexOffset: 900,
                 icon: L.divIcon({ className: "", iconSize: [size, size], iconAnchor: [size / 2, size / 2],
                   html: '<div style="width:' + size + 'px;height:' + size + 'px;background:#b23b1e;border:2px solid #fff;'
                     + 'box-shadow:0 0 0 1px rgba(13,59,38,.5);border-radius:2px"></div>' }),
               }));
             }
+            // Nessun contatto con l'acqua: la tubazione si segnala tratteggiata.
+            if (!taps.length) pl.setStyle({ dashArray: "8,6" });
           } else {
             g.addLayer(L.polyline(latlngs, { ...st, interactive: false }));
           }
