@@ -41,6 +41,12 @@ export const LOCALES: Record<Lang, string> = {
 type Dict = Record<string, string>;
 
 const EN: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Click the pipe points: they snap to pivot centres and to the canal. Double-click to close.",
+  "Disegna tubazione": "Draw pipe",
+  "Elimina la tubazione selezionata": "Delete selected pipe",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "To correct by hand: the first click on a pipe selects the group, the second the single pipe — then drag or delete its points, or press Delete to remove it entirely.",
+  "Tubazione aggiunta ✓": "Pipe added ✓",
+  "Tubazione eliminata ✓": "Pipe deleted ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Pipe group selected: click a pipe to edit it.",
   "Agganciato al canale": "Snapped to canal",
   "Agganciato al centro del pivot": "Snapped to pivot centre",
@@ -458,6 +464,12 @@ const EN: Dict = {
 };
 
 const FR: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Cliquez les points de la conduite : ils s'accrochent aux centres des pivots et au canal. Double-clic pour fermer.",
+  "Disegna tubazione": "Tracer une conduite",
+  "Elimina la tubazione selezionata": "Supprimer la conduite sélectionnée",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "Pour corriger à la main : le premier clic sur une conduite sélectionne le groupe, le second la conduite seule — puis déplacez ou supprimez ses points, ou appuyez sur Suppr pour la retirer entièrement.",
+  "Tubazione aggiunta ✓": "Conduite ajoutée ✓",
+  "Tubazione eliminata ✓": "Conduite supprimée ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Groupe de conduites sélectionné : cliquez sur une conduite pour la modifier.",
   "Agganciato al canale": "Accroché au canal",
   "Agganciato al centro del pivot": "Accroché au centre du pivot",
@@ -875,6 +887,12 @@ const FR: Dict = {
 };
 
 const ES: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Haz clic en los puntos de la tubería: se enganchan a los centros de los pivotes y al canal. Doble clic para cerrar.",
+  "Disegna tubazione": "Dibujar tubería",
+  "Elimina la tubazione selezionata": "Eliminar la tubería seleccionada",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "Para corregir a mano: el primer clic en una tubería selecciona el grupo, el segundo la tubería individual — luego arrastra o elimina sus puntos, o pulsa Supr para quitarla entera.",
+  "Tubazione aggiunta ✓": "Tubería añadida ✓",
+  "Tubazione eliminata ✓": "Tubería eliminada ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Grupo de tuberías seleccionado: haz clic en una tubería para editarla.",
   "Agganciato al canale": "Enganchado al canal",
   "Agganciato al centro del pivot": "Enganchado al centro del pivot",
@@ -1292,6 +1310,12 @@ const ES: Dict = {
 };
 
 const PT: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Clique nos pontos da tubulação: eles se encaixam nos centros dos pivôs e no canal. Clique duplo para fechar.",
+  "Disegna tubazione": "Desenhar tubulação",
+  "Elimina la tubazione selezionata": "Excluir a tubulação selecionada",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "Para corrigir à mão: o primeiro clique numa tubulação seleciona o grupo, o segundo a tubulação individual — depois arraste ou exclua os seus pontos, ou pressione Delete para removê-la inteira.",
+  "Tubazione aggiunta ✓": "Tubulação adicionada ✓",
+  "Tubazione eliminata ✓": "Tubulação excluída ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Grupo de tubulações selecionado: clique numa tubulação para a editar.",
   "Agganciato al canale": "Fixado ao canal",
   "Agganciato al centro del pivot": "Fixado ao centro do pivô",
@@ -1709,6 +1733,12 @@ const PT: Dict = {
 };
 
 const RO: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Faceți clic pe punctele conductei: se fixează pe centrele pivoților și pe canal. Dublu clic pentru a închide.",
+  "Disegna tubazione": "Desenează conductă",
+  "Elimina la tubazione selezionata": "Șterge conducta selectată",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "Pentru corectare manuală: primul clic pe o conductă selectează grupul, al doilea conducta individuală — apoi trageți sau ștergeți punctele ei, ori apăsați Delete pentru a o elimina complet.",
+  "Tubazione aggiunta ✓": "Conductă adăugată ✓",
+  "Tubazione eliminata ✓": "Conductă ștearsă ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Grup de conducte selectat: dați clic pe o conductă pentru a o modifica.",
   "Agganciato al canale": "Ancorat la canal",
   "Agganciato al centro del pivot": "Ancorat la centrul pivotului",
@@ -2128,6 +2158,12 @@ const RO: Dict = {
 };
 
 const KK: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Құбырдың нүктелерін басыңыз: олар пивоттардың орталықтарына және арнаға бекітіледі. Жабу үшін қос рет басыңыз.",
+  "Disegna tubazione": "Құбыр сызу",
+  "Elimina la tubazione selezionata": "Таңдалған құбырды жою",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "Қолмен түзету үшін: құбырды бірінші басқанда топ таңдалады, екіншісінде жеке құбыр — содан кейін оның нүктелерін сүйреңіз немесе жойыңыз, не оны толығымен алып тастау үшін Delete пернесін басыңыз.",
+  "Tubazione aggiunta ✓": "Құбыр қосылды ✓",
+  "Tubazione eliminata ✓": "Құбыр жойылды ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Құбыр тобы таңдалды: өзгерту үшін құбырды басыңыз.",
   "Agganciato al canale": "Каналға бекітілген",
   "Agganciato al centro del pivot": "Пивот орталығына бекітілген",
@@ -2547,6 +2583,12 @@ const KK: Dict = {
 };
 
 const AR: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "انقر على نقاط الأنبوب: تلتصق بمراكز أجهزة الري المحوري وبالقناة. انقر نقرًا مزدوجًا للإغلاق.",
+  "Disegna tubazione": "رسم أنبوب",
+  "Elimina la tubazione selezionata": "حذف الأنبوب المحدد",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "للتصحيح يدويًا: النقرة الأولى على أنبوب تحدّد المجموعة، والثانية تحدّد الأنبوب المفرد — ثم اسحب نقاطه أو احذفها، أو اضغط Delete لإزالته بالكامل.",
+  "Tubazione aggiunta ✓": "تمت إضافة الأنبوب ✓",
+  "Tubazione eliminata ✓": "تم حذف الأنبوب ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "تم تحديد مجموعة الأنابيب: انقر على أنبوب لتعديله.",
   "Agganciato al canale": "مثبَّت على القناة",
   "Agganciato al centro del pivot": "مثبَّت على مركز البيفوت",
@@ -2964,6 +3006,12 @@ const AR: Dict = {
 };
 
 const ZH: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "点击管道的各个点：会自动吸附到喷灌机中心和渠道上。双击结束。",
+  "Disegna tubazione": "绘制管道",
+  "Elimina la tubazione selezionata": "删除选中的管道",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "手动修正：第一次点击管道选中整组，第二次选中单条管道——然后拖动或删除它的节点，或按 Delete 键将整条移除。",
+  "Tubazione aggiunta ✓": "管道已添加 ✓",
+  "Tubazione eliminata ✓": "管道已删除 ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "已选中管道组：点击某条管道进行编辑。",
   "Agganciato al canale": "已吸附到渠道",
   "Agganciato al centro del pivot": "已吸附到中心支轴机中心",
@@ -3383,6 +3431,12 @@ const ZH: Dict = {
 };
 
 const HU: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Kattintson a vezeték pontjaira: a pivotok középpontjához és a csatornához illeszkednek. Dupla kattintás a lezáráshoz.",
+  "Disegna tubazione": "Vezeték rajzolása",
+  "Elimina la tubazione selezionata": "Kijelölt vezeték törlése",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "Kézi javításhoz: a vezetéken az első kattintás a csoportot jelöli ki, a második az egyes vezetéket — ezután húzza vagy törölje a pontjait, vagy nyomja meg a Delete billentyűt a teljes eltávolításához.",
+  "Tubazione aggiunta ✓": "Vezeték hozzáadva ✓",
+  "Tubazione eliminata ✓": "Vezeték törölve ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Csővezeték-csoport kijelölve: kattintson egy vezetékre a szerkesztéshez.",
   "Agganciato al canale": "Csatornához illesztve",
   "Agganciato al centro del pivot": "Pivot középpontjához illesztve",
@@ -3802,6 +3856,12 @@ const HU: Dict = {
 };
 
 const ID: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Klik titik-titik pipa: titik akan menempel ke pusat pivot dan ke saluran. Klik ganda untuk menutup.",
+  "Disegna tubazione": "Gambar pipa",
+  "Elimina la tubazione selezionata": "Hapus pipa terpilih",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "Untuk koreksi manual: klik pertama pada pipa memilih grupnya, klik kedua memilih pipa tunggal — lalu seret atau hapus titik-titiknya, atau tekan Delete untuk menghapusnya seluruhnya.",
+  "Tubazione aggiunta ✓": "Pipa ditambahkan ✓",
+  "Tubazione eliminata ✓": "Pipa dihapus ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Grup pipa dipilih: klik salah satu pipa untuk mengeditnya.",
   "Agganciato al canale": "Terkunci ke kanal",
   "Agganciato al centro del pivot": "Terkunci ke pusat pivot",
@@ -4221,6 +4281,12 @@ const ID: Dict = {
 };
 
 const DE: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Klicken Sie die Punkte der Leitung an: Sie rasten an den Pivot-Mittelpunkten und am Kanal ein. Doppelklick zum Schließen.",
+  "Disegna tubazione": "Leitung zeichnen",
+  "Elimina la tubazione selezionata": "Ausgewählte Leitung löschen",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "Zum manuellen Korrigieren: Der erste Klick auf eine Leitung wählt die Gruppe aus, der zweite die einzelne Leitung — dann ziehen oder löschen Sie ihre Punkte, oder drücken Sie Entf, um sie ganz zu entfernen.",
+  "Tubazione aggiunta ✓": "Leitung hinzugefügt ✓",
+  "Tubazione eliminata ✓": "Leitung gelöscht ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Rohrleitungsgruppe ausgewählt: Klicken Sie auf eine Rohrleitung, um sie zu bearbeiten.",
   "Agganciato al canale": "Am Kanal eingerastet",
   "Agganciato al centro del pivot": "Am Pivot-Zentrum eingerastet",
@@ -4634,6 +4700,12 @@ const DE: Dict = {
 };
 
 const PL: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Kliknij punkty rurociągu: przyciągają się do środków pivotów i do kanału. Kliknij dwukrotnie, aby zamknąć.",
+  "Disegna tubazione": "Rysuj rurociąg",
+  "Elimina la tubazione selezionata": "Usuń wybrany rurociąg",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "Aby poprawić ręcznie: pierwsze kliknięcie na rurociągu zaznacza grupę, drugie pojedynczy rurociąg — następnie przeciągnij lub usuń jego punkty albo naciśnij Delete, aby usunąć go w całości.",
+  "Tubazione aggiunta ✓": "Rurociąg dodany ✓",
+  "Tubazione eliminata ✓": "Rurociąg usunięty ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Wybrano grupę rurociągów: kliknij rurociąg, aby go edytować.",
   "Agganciato al canale": "Przypięty do kanału",
   "Agganciato al centro del pivot": "Przypięty do środka pivota",
@@ -5049,6 +5121,12 @@ const PL: Dict = {
 };
 
 const BG: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Кликнете точките на тръбопровода: те се прихващат към центровете на пивотите и към канала. Двоен клик за затваряне.",
+  "Disegna tubazione": "Начертай тръбопровод",
+  "Elimina la tubazione selezionata": "Изтрий избрания тръбопровод",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "За ръчна корекция: първото кликване върху тръбопровод избира групата, второто отделния тръбопровод — след това плъзнете или изтрийте точките му, или натиснете Delete, за да го премахнете изцяло.",
+  "Tubazione aggiunta ✓": "Тръбопроводът е добавен ✓",
+  "Tubazione eliminata ✓": "Тръбопроводът е изтрит ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Избрана е група тръбопроводи: щракнете върху тръбопровод, за да го редактирате.",
   "Agganciato al canale": "Закачено за канала",
   "Agganciato al centro del pivot": "Закачено за центъра на пивота",
@@ -5464,6 +5542,12 @@ const BG: Dict = {
 };
 
 const RU: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Кликните по точкам трубопровода: они привязываются к центрам пивотов и к каналу. Двойной клик, чтобы замкнуть.",
+  "Disegna tubazione": "Нарисовать трубопровод",
+  "Elimina la tubazione selezionata": "Удалить выбранный трубопровод",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "Для ручной правки: первый клик по трубопроводу выделяет группу, второй — отдельный трубопровод, затем перетащите или удалите его точки либо нажмите Delete, чтобы убрать его целиком.",
+  "Tubazione aggiunta ✓": "Трубопровод добавлен ✓",
+  "Tubazione eliminata ✓": "Трубопровод удалён ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Выбрана группа трубопроводов: щёлкните по трубопроводу, чтобы изменить его.",
   "Agganciato al canale": "Привязано к каналу",
   "Agganciato al centro del pivot": "Привязано к центру пивота",
@@ -5879,6 +5963,12 @@ const RU: Dict = {
 };
 
 const AF: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Klik die punte van die pyplyn: hulle klik vas aan die pivotsentrums en aan die kanaal. Dubbelklik om te sluit.",
+  "Disegna tubazione": "Teken pyplyn",
+  "Elimina la tubazione selezionata": "Vee gekose pyplyn uit",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "Om met die hand reg te stel: die eerste klik op 'n pyplyn kies die groep, die tweede die enkele pyplyn — sleep of vee dan sy punte uit, of druk Delete om dit heeltemal te verwyder.",
+  "Tubazione aggiunta ✓": "Pyplyn bygevoeg ✓",
+  "Tubazione eliminata ✓": "Pyplyn uitgevee ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Pypleidinggroep gekies: klik op 'n pypleiding om dit te wysig.",
   "Agganciato al canale": "Vasgeklik aan die kanaal",
   "Agganciato al centro del pivot": "Vasgeklik aan die pivot se middelpunt",
@@ -6294,6 +6384,12 @@ const AF: Dict = {
 };
 
 const MS: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Klik titik-titik paip: titik akan melekat pada pusat pivot dan pada saluran. Klik dua kali untuk menutup.",
+  "Disegna tubazione": "Lukis paip",
+  "Elimina la tubazione selezionata": "Padam paip terpilih",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "Untuk pembetulan manual: klik pertama pada paip memilih kumpulan, klik kedua memilih paip tunggal — kemudian seret atau padam titiknya, atau tekan Delete untuk membuangnya sepenuhnya.",
+  "Tubazione aggiunta ✓": "Paip ditambah ✓",
+  "Tubazione eliminata ✓": "Paip dipadam ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Kumpulan paip dipilih: klik satu paip untuk mengeditnya.",
   "Agganciato al canale": "Terkunci pada saluran",
   "Agganciato al centro del pivot": "Terkunci pada pusat pivot",
@@ -6709,6 +6805,12 @@ const MS: Dict = {
 };
 
 const VI: Dict = {
+  "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Nhấp vào các điểm của đường ống: chúng sẽ bám vào tâm các pivot và vào kênh. Nhấp đúp để đóng.",
+  "Disegna tubazione": "Vẽ đường ống",
+  "Elimina la tubazione selezionata": "Xóa đường ống đã chọn",
+  "Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.": "Để chỉnh bằng tay: lần nhấp đầu tiên vào một đường ống sẽ chọn cả nhóm, lần thứ hai chọn từng đường ống — sau đó kéo hoặc xóa các điểm của nó, hoặc nhấn Delete để xóa toàn bộ.",
+  "Tubazione aggiunta ✓": "Đã thêm đường ống ✓",
+  "Tubazione eliminata ✓": "Đã xóa đường ống ✓",
   "Gruppo tubazioni selezionato: clicca una tubazione per modificarla.": "Đã chọn nhóm đường ống: nhấp vào một đường ống để chỉnh sửa.",
   "Agganciato al canale": "Đã bám vào kênh",
   "Agganciato al centro del pivot": "Đã bám vào tâm pivot",

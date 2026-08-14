@@ -66,6 +66,7 @@ export type MapHandle = {
     cb: (start: number[], end: number[], waypoints: number[][]) => void) => void;
   endCanalEdit: () => void;
   drawCanalManual: (cb: (coords: number[][]) => void) => void;
+  drawPipeManual: (cb: (coords: number[][]) => void, snap?: number[][], snapLines?: number[][][]) => void;
   drawUndo: () => void;      // rimuove l'ultimo punto tracciato
   drawFinish: () => void;    // chiude/conclude il tracciato in corso
   drawCancel: () => void;    // annulla e chiude la modalità disegno
@@ -159,11 +160,13 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const canalEditRef = useRef<L.LayerGroup | null>(null);
   const waterRef = useRef<L.LayerGroup | null>(null);
   const waterPreviewRef = useRef<L.FeatureGroup | null>(null);
-  const drawModeRef = useRef<"river" | "basin" | "canal-manual" | "road-manual" | null>(null);
+  const drawModeRef = useRef<"river" | "basin" | "canal-manual" | "road-manual" | "pipe-manual" | null>(null);
   const roadsRef = useRef<L.LayerGroup | null>(null);
   const roadManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
   const waterRemoveRef = useRef(false);
   const canalManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
+  const pipeManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
+  const pipeSnapRef = useRef<{ pts: number[][]; lines: number[][][] }>({ pts: [], lines: [] });
   const pickCbRef = useRef<((lon: number, lat: number) => void) | null>(null);
   const measureRef = useRef<L.LayerGroup | null>(null);
   const measuringRef = useRef(false);
@@ -247,6 +250,40 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         drawModeRef.current = null;
         try { (map as any).pm.disableDraw(); } catch { /* */ }
         const cb = canalManualCbRef.current; canalManualCbRef.current = null;
+        if (coords.length >= 2) cb?.(coords);
+        return;
+      }
+      if (dm === "pipe-manual") {                       // tubazione tracciata a mano
+        const lls = (layer.getLatLngs?.() || []) as any[];
+        // I punti cliccati si agganciano ai centri dei pivot e al canale, come
+        // in modifica: una tubazione disegnata a mano nasce già collegata.
+        const snapOne = (lng: number, lat: number): [number, number] => {
+          const here = map.latLngToContainerPoint([lat, lng]);
+          let best: [number, number] = [lng, lat], bd = 22, kind = 0;
+          for (const q of pipeSnapRef.current.pts) {
+            const c = map.latLngToContainerPoint([q[1], q[0]]);
+            const d = Math.hypot(c.x - here.x, c.y - here.y);
+            if (d < bd) { bd = d; best = [q[0], q[1]]; kind = 1; }
+          }
+          if (kind === 1) return best;
+          for (const ln of pipeSnapRef.current.lines) {
+            for (let i = 0; i < ln.length - 1; i++) {
+              const a = map.latLngToContainerPoint([ln[i][1], ln[i][0]]);
+              const b = map.latLngToContainerPoint([ln[i + 1][1], ln[i + 1][0]]);
+              const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-9;
+              let t = ((here.x - a.x) * dx + (here.y - a.y) * dy) / l2; t = Math.max(0, Math.min(1, t));
+              const qx = a.x + dx * t, qy = a.y + dy * t;
+              const d = Math.hypot(qx - here.x, qy - here.y);
+              if (d < bd) { bd = d; const ll = map.containerPointToLatLng([qx, qy] as unknown as L.PointExpression); best = [ll.lng, ll.lat]; }
+            }
+          }
+          return best;
+        };
+        const coords = lls.map((p: any) => snapOne(p.lng, p.lat));
+        try { map.removeLayer(layer); } catch { /* */ }
+        drawModeRef.current = null;
+        try { (map as any).pm.disableDraw(); } catch { /* */ }
+        const cb = pipeManualCbRef.current; pipeManualCbRef.current = null;
         if (coords.length >= 2) cb?.(coords);
         return;
       }
@@ -503,6 +540,18 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             pl.on("click", (e) => { L.DomEvent.stop(e); cbs.onLineClick?.(li); });
             pl.bindTooltip(String(li + 1), { direction: "top", sticky: true });
             g.addLayer(pl);
+            // Simbolo della PRESA sul canale: quadratino sul primo punto della
+            // tubazione, cioè dove si allaccia all'acqua.
+            const tap = latlngs[0];
+            if (tap) {
+              const size = isSinglePipe || pipeGroup ? 11 : 9;
+              g.addLayer(L.marker(tap, {
+                interactive: false, zIndexOffset: 900,
+                icon: L.divIcon({ className: "", iconSize: [size, size], iconAnchor: [size / 2, size / 2],
+                  html: '<div style="width:' + size + 'px;height:' + size + 'px;background:#b23b1e;border:2px solid #fff;'
+                    + 'box-shadow:0 0 0 1px rgba(13,59,38,.5);border-radius:2px"></div>' }),
+              }));
+            }
           } else {
             g.addLayer(L.polyline(latlngs, { ...st, interactive: false }));
           }
@@ -987,6 +1036,13 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         drawModeRef.current = "canal-manual";
         try { (map as any).pm.enableDraw("Line", { allowSelfIntersection: true }); } catch { /* */ }
       },
+      drawPipeManual(cb, snap, snapLines) {
+        const map = mapRef.current; if (!map) return;
+        pipeManualCbRef.current = cb;
+        pipeSnapRef.current = { pts: snap ?? [], lines: snapLines ?? [] };
+        drawModeRef.current = "pipe-manual";
+        try { (map as any).pm.enableDraw("Line", { allowSelfIntersection: true }); } catch { /* */ }
+      },
       drawUndo() {
         const map = mapRef.current; if (!map) return;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1008,7 +1064,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
       drawCancel() {
         const map = mapRef.current; if (!map) return;
         drawModeRef.current = null;
-        canalManualCbRef.current = null; roadManualCbRef.current = null;
+        canalManualCbRef.current = null; roadManualCbRef.current = null; pipeManualCbRef.current = null;
         try { (map as any).pm.disableDraw(); } catch { /* */ }
         try { map.getContainer().style.cursor = ""; } catch { /* */ }
       },

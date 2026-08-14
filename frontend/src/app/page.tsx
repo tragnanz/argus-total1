@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.128";
+const REV = "v0.6.129";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1108,6 +1108,18 @@ export default function Page() {
   const unseen = Math.max(0, alerts.length - alertsSeen);
   useEffect(() => { mapApi.current?.setBasemap(basemap); }, [basemap]);
   useEffect(() => { mapApi.current?.setMapLabels(mapLabels); }, [mapLabels]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if (pipeSel.mode === "single") { e.preventDefault(); deleteSelectedPipe(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipeSel, pivotLines, hiddenPipeFields, pivots]);
+
   function goHome() { setMapMenuOpen(false); setBellOpen(false); mapApi.current?.fitAll(); }
 
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -2336,6 +2348,37 @@ export default function Page() {
       return s + L;
     }, 0) / 1000;
     setMsg(t("Tubazioni tracciate: {n} rami dal canale · {km} km ✓", { n: pipesLL.length, km: fmt(km, { maximumFractionDigits: 1 }) }));
+  }
+  // Disegna a mano una NUOVA tubazione: i punti cliccati si agganciano ai centri
+  // dei pivot e al canale, quindi nasce già collegata come quelle calcolate.
+  function drawPipeManual() {
+    if (!active) return needField();
+    const fid = active.id;
+    setMsg(t("Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere."));
+    mapApi.current?.drawPipeManual?.((coords) => {
+      if (coords.length < 2) { setMsg(""); return; }
+      const next = [...pivotLines, { kind: "pipe", coords, field: fid }];
+      setPivotLines(next);
+      setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, next) } : gp));
+      setPipeSel({ mode: "group", idx: -1 });
+      setMsg(t("Tubazione aggiunta ✓"));
+    }, pivots.map((pv) => [pv.lng, pv.lat]),
+    [...canals.filter((c) => !c.hidden).map((c) => c.geojson.coordinates as number[][]),
+     ...watercourses.filter((w) => !w.hidden && w.geojson?.type === "LineString")
+       .map((w) => w.geojson.coordinates as unknown as number[][])]);
+  }
+  // Elimina la SINGOLA tubazione selezionata (le altre restano).
+  function deleteSelectedPipe() {
+    if (pipeSel.mode !== "single") return;
+    const visL = pivotLines.filter((l) => !(l.kind === "pipe" && l.field != null && hiddenPipeFields.has(l.field)));
+    const target = pivotLines.indexOf(visL[pipeSel.idx]);
+    if (target < 0) return;
+    const next = pivotLines.filter((_, k) => k !== target);
+    setPivotLines(next);
+    setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, next) } : gp));
+    editPipeRef.current = null; mapApi.current?.endPipeEdit?.();
+    setPipeSel({ mode: "group", idx: -1 });
+    setMsg(t("Tubazione eliminata ✓"));
   }
   // Rimuove le tubazioni di adduzione del poligono attivo (i pivot restano).
   function removePipes() {
@@ -3711,6 +3754,15 @@ export default function Page() {
                   {active ? t("Traccia tubazioni su «{name}»", { name: active.name }) : t("Traccia tubazioni")}
                 </button>
                 <button className="btn-ghost flex-1 basis-0" disabled={!nPipes} onClick={removePipes}>{t("Rimuovi tubazioni")}</button>
+              </div>
+              <div className="flex gap-2 mt-2">
+                <button className="btn-ghost flex-1 basis-0" disabled={!active} onClick={drawPipeManual}>{t("Disegna tubazione")}</button>
+                <button className="btn-ghost flex-1 basis-0" disabled={pipeSel.mode !== "single"} onClick={deleteSelectedPipe}>
+                  {t("Elimina la tubazione selezionata")}
+                </button>
+              </div>
+              <div className="text-[10px] text-sage-dark mt-1 leading-relaxed">
+                {t("Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.")}
               </div>
               {!canals.length && <p className="text-[10px] text-danger mt-1">{t("Traccia prima un canale nella pagina Rilievo.")}</p>}
             </div>
