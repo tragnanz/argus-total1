@@ -5,7 +5,7 @@ import "./globals.css";
 import { I18nProvider } from "@/lib/i18n";
 
 export const metadata: Metadata = {
-  title: "Argus Total — Nabu",
+  title: "Argus Total",
   description: "Progettazione di grandi progetti agroindustriali con analisi satellitare.",
   icons: {
     icon: [{ url: "/favicon.png", type: "image/png" }],
