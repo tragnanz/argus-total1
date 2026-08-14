@@ -15,6 +15,7 @@ export type PivotCbs = {
   onClick: (idx: number) => void;
   onMove: (idx: number, lat: number, lng: number) => void;
   onBackground: () => void;
+  onLineClick?: (idx: number) => void;   // clic su una tubazione (per modificarla)
 };
 export type MapHandle = {
   draw: () => void;
@@ -38,6 +39,8 @@ export type MapHandle = {
   showLayouts: (items: { id: number; fc: GeoJSONFC }[], opts?: { measures?: boolean }) => void;
   clearLayout: () => void;
   showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs) => void;
+  editPipe: (coords: number[][], cb: (coords: number[][]) => void) => void;
+  endPipeEdit: () => void;
   clearPivots: () => void;
   showRoads: (roads: { coords: number[][]; width_m?: number }[], onRemove?: (i: number) => void) => void;
   drawRoadManual: (cb: (coords: number[][]) => void) => void;
@@ -467,14 +470,22 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         if (!map || !g) return;
         g.clearLayers();
         pivotBgRef.current = cbs.onBackground;
-        // Connessioni e canale principale (non interattivi, fanno da sfondo).
-        for (const ln of model.lines) {
+        // Adduzione: le TUBAZIONI sono cliccabili (si possono modificare una per
+        // una); le altre linee restano di sfondo, non interattive.
+        model.lines.forEach((ln, li) => {
           const latlngs = ln.coords.map((p) => [p[1], p[0]] as [number, number]);
           const st = ln.kind === "pipe" ? { color: "#20aae2", weight: 2 }
             : ln.kind === "header" ? { color: "#b23b1e", weight: 3 }
             : { color: "#0284c7", weight: 3, dashArray: "6,4" };
-          g.addLayer(L.polyline(latlngs, { ...st, interactive: false }));
-        }
+          if (ln.kind === "pipe" && cbs.onLineClick) {
+            const pl = L.polyline(latlngs, { ...st, interactive: true, weight: st.weight + 1 });
+            pl.on("click", (e) => { L.DomEvent.stop(e); cbs.onLineClick?.(li); });
+            pl.bindTooltip(String(li + 1), { direction: "top", sticky: true });
+            g.addLayer(pl);
+          } else {
+            g.addLayer(L.polyline(latlngs, { ...st, interactive: false }));
+          }
+        });
         const groupSel = sel.mode === "group" || sel.mode === "single";
         model.pivots.forEach((pv, i) => {
           const isSingle = sel.mode === "single" && sel.idx === i;
@@ -800,6 +811,51 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         });
       },
       endCanalEdit() { canalEditRef.current?.clearLayers(); },
+      // Modifica di UNA tubazione: maniglie trascinabili su ogni vertice, clic
+      // sulla linea per inserire un punto, doppio clic su una maniglia per
+      // toglierlo. Ogni modifica richiama cb con il nuovo tracciato.
+      editPipe(coords, cb) {
+        const map = mapRef.current, g = canalEditRef.current;
+        if (!map || !g) return;
+        g.clearLayers();
+        let pts = coords.map((p) => [...p]);
+        const redraw = () => { this.editPipe(pts, cb); };
+        const fire = () => cb(pts.map((q) => [...q]));
+        const line = L.polyline(pts.map((p) => [p[1], p[0]] as [number, number]),
+          { color: "#f0b429", weight: 5, opacity: 0.85 });
+        g.addLayer(line);
+        pts.forEach((pt, i) => {
+          const m = L.marker([pt[1], pt[0]], {
+            draggable: true, zIndexOffset: 1200,
+            icon: L.divIcon({ className: "", iconSize: [14, 14], iconAnchor: [7, 7],
+              html: '<div style="width:14px;height:14px;border-radius:50%;background:#f0b429;border:2px solid #b23b1e;box-shadow:0 0 0 2px #fff;cursor:grab"></div>' }),
+          });
+          m.on("drag", (e) => {
+            const ll = (e.target as L.Marker).getLatLng();
+            pts[i] = [ll.lng, ll.lat];
+            line.setLatLngs(pts.map((q) => [q[1], q[0]] as [number, number]));
+          });
+          m.on("dragend", () => fire());
+          m.on("dblclick", (e) => {
+            L.DomEvent.stop(e);
+            if (pts.length <= 2) return;                 // servono almeno 2 punti
+            pts.splice(i, 1); fire(); redraw();
+          });
+          g.addLayer(m);
+        });
+        line.on("click", (ev: L.LeafletMouseEvent) => {
+          const cl = ev.latlng; let best = 0, bd = Infinity;
+          for (let i = 0; i < pts.length - 1; i++) {
+            const ax = pts[i][0], ay = pts[i][1], bx = pts[i + 1][0], by = pts[i + 1][1];
+            const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1e-12;
+            let tt = ((cl.lng - ax) * dx + (cl.lat - ay) * dy) / L2; tt = Math.max(0, Math.min(1, tt));
+            const d = (cl.lng - (ax + tt * dx)) ** 2 + (cl.lat - (ay + tt * dy)) ** 2;
+            if (d < bd) { bd = d; best = i; }
+          }
+          pts.splice(best + 1, 0, [cl.lng, cl.lat]); fire(); redraw();
+        });
+      },
+      endPipeEdit() { canalEditRef.current?.clearLayers(); },
       drawCanalManual(cb) {
         const map = mapRef.current; if (!map) return;
         canalManualCbRef.current = cb;
