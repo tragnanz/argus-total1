@@ -41,6 +41,7 @@ export const LOCALES: Record<Lang, string> = {
 type Dict = Record<string, string>;
 
 const EN: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Pipe reconnected to network ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Intake moved: the feeder pipe has been extended back to the canal ✓",
   "A destra": "Right",
   "A sinistra": "Left",
@@ -478,6 +479,7 @@ const EN: Dict = {
 };
 
 const FR: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Conduite reconnectée au réseau ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Prise déplacée : la conduite a été prolongée jusqu'au canal ✓",
   "A destra": "Droite",
   "A sinistra": "Gauche",
@@ -915,6 +917,7 @@ const FR: Dict = {
 };
 
 const ES: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Tubería reconectada a la red ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Toma desplazada: la tubería se ha prolongado hasta el canal ✓",
   "A destra": "Derecha",
   "A sinistra": "Izquierda",
@@ -1352,6 +1355,7 @@ const ES: Dict = {
 };
 
 const PT: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Tubulação reconectada à rede ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Tomada deslocada: a tubulação foi estendida até o canal ✓",
   "A destra": "Direita",
   "A sinistra": "Esquerda",
@@ -1789,6 +1793,7 @@ const PT: Dict = {
 };
 
 const RO: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Conductă reconectată la rețea ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Priză mutată: conducta a fost prelungită până la canal ✓",
   "A destra": "Dreapta",
   "A sinistra": "Stânga",
@@ -2228,6 +2233,7 @@ const RO: Dict = {
 };
 
 const KK: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Құбыр желіге қайта қосылды ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Су алу нүктесі жылжытылды: құбыр каналға дейін ұзартылды ✓",
   "A destra": "Оңға",
   "A sinistra": "Солға",
@@ -2667,6 +2673,7 @@ const KK: Dict = {
 };
 
 const AR: Dict = {
+  "Tubazione ricollegata alla rete ✓": "تمت إعادة توصيل الأنبوب بالشبكة ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "تم نقل مأخذ المياه: تم تمديد الأنبوب حتى القناة ✓",
   "A destra": "يمين",
   "A sinistra": "يسار",
@@ -3104,6 +3111,7 @@ const AR: Dict = {
 };
 
 const ZH: Dict = {
+  "Tubazione ricollegata alla rete ✓": "管道已重新接入管网 ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "取水口已移动：管道已延伸至渠道 ✓",
   "A destra": "向右",
   "A sinistra": "向左",
@@ -3543,6 +3551,7 @@ const ZH: Dict = {
 };
 
 const HU: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Vezeték újracsatlakoztatva a hálózatra ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Vízkivétel áthelyezve: a vezeték a csatornáig lett meghosszabbítva ✓",
   "A destra": "Jobbra",
   "A sinistra": "Balra",
@@ -3982,6 +3991,7 @@ const HU: Dict = {
 };
 
 const ID: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Pipa tersambung kembali ke jaringan ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Titik pengambilan dipindahkan: pipa telah diperpanjang hingga ke saluran ✓",
   "A destra": "Kanan",
   "A sinistra": "Kiri",
@@ -4421,6 +4431,7 @@ const ID: Dict = {
 };
 
 const DE: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Leitung wieder mit dem Netz verbunden ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Entnahmestelle verschoben: die Leitung wurde bis zum Kanal verlängert ✓",
   "A destra": "Rechts",
   "A sinistra": "Links",
@@ -4854,6 +4865,7 @@ const DE: Dict = {
 };
 
 const PL: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Rurociąg ponownie podłączony do sieci ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Ujęcie przeniesione: rurociąg został przedłużony do kanału ✓",
   "A destra": "W prawo",
   "A sinistra": "W lewo",
@@ -5289,6 +5301,7 @@ const PL: Dict = {
 };
 
 const BG: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Тръбопроводът е свързан отново към мрежата ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Водовземането е преместено: тръбопроводът беше удължен до канала ✓",
   "A destra": "Надясно",
   "A sinistra": "Наляво",
@@ -5724,6 +5737,7 @@ const BG: Dict = {
 };
 
 const RU: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Трубопровод снова подключён к сети ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Водозабор перемещён: трубопровод продлён до канала ✓",
   "A destra": "Вправо",
   "A sinistra": "Влево",
@@ -6159,6 +6173,7 @@ const RU: Dict = {
 };
 
 const AF: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Pyplyn weer aan die netwerk gekoppel ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Inlaat geskuif: die pyplyn is tot by die kanaal verleng ✓",
   "A destra": "Regs",
   "A sinistra": "Links",
@@ -6594,6 +6609,7 @@ const AF: Dict = {
 };
 
 const MS: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Paip disambung semula ke rangkaian ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Titik pengambilan dipindahkan: paip telah dipanjangkan sehingga ke saluran ✓",
   "A destra": "Kanan",
   "A sinistra": "Kiri",
@@ -7029,6 +7045,7 @@ const MS: Dict = {
 };
 
 const VI: Dict = {
+  "Tubazione ricollegata alla rete ✓": "Đường ống đã nối lại vào mạng lưới ✓",
   "Presa spostata: la tubazione è stata riportata fino al canale ✓": "Đã di chuyển điểm lấy nước: đường ống đã được kéo dài đến kênh ✓",
   "A destra": "Phải",
   "A sinistra": "Trái",

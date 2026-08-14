@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.132";
+const REV = "v0.6.133";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2101,14 +2101,14 @@ export default function Page() {
             // Se la modifica ha staccato la tubazione dall'acqua, viene riattaccata
             // subito e l'editor riaperto sul tracciato corretto, così le maniglie
             // mostrano la nuova presa invece di restare indietro.
-            const fixed = reattachToWater(coords);
+            const fixed = reattachToWater(coords, target);
             setPivotLines((ls) => {
               const arr = ls.map((l, k) => (k === target ? { ...l, coords: fixed } : l));
               setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, arr) } : gp));
               return arr;
             });
             if (fixed.length !== coords.length) {
-              setMsg(t("Presa spostata: la tubazione è stata riportata fino al canale ✓"));
+              setMsg(t("Tubazione ricollegata alla rete ✓"));
               setTimeout(() => openEditor(fixed), 0);
             }
           },
@@ -2372,11 +2372,45 @@ export default function Page() {
       ...watercourses.filter((w) => !w.hidden && w.geojson?.type === "LineString")
         .map((w) => w.geojson.coordinates as unknown as number[][])];
   }
+  // Tubazioni che hanno acqua: toccano il canale, o toccano una che ce l'ha.
+  // (L'alimentazione si propaga lungo la rete, esattamente come sulla mappa.)
+  function fedPipeLines(exclude?: number): number[][][] {
+    const lines = pivotLines.map((l, i) => ({ l, i })).filter((x) => x.l.kind === "pipe" && x.i !== exclude);
+    if (!lines.length) return [];
+    const lat0 = lines[0].l.coords[0]?.[1] ?? 0;
+    const mLat = 111320, mLng = 111320 * Math.cos((lat0 * Math.PI) / 180) || 1e-9;
+    const M = (q: number[]): [number, number] => [q[0] * mLng, q[1] * mLat];
+    const dSeg = (p: [number, number], a: [number, number], b: [number, number]) => {
+      const vx = b[0] - a[0], vy = b[1] - a[1]; const l2 = vx * vx + vy * vy || 1e-9;
+      let t = ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / l2; t = Math.max(0, Math.min(1, t));
+      return Math.hypot(p[0] - (a[0] + vx * t), p[1] - (a[1] + vy * t));
+    };
+    const touch = (A: [number, number][], B: [number, number][]) => {
+      for (const p of A) for (let i = 0; i < B.length - 1; i++) if (dSeg(p, B[i], B[i + 1]) < 15) return true;
+      return false;
+    };
+    const wm = waterLinesLL().map((ln) => ln.map(M));
+    const pm = lines.map((x) => x.l.coords.map(M));
+    const fed = new Set<number>();
+    pm.forEach((p, k) => { if (wm.some((w) => touch(p, w))) fed.add(k); });
+    for (let pass = 0; pass < 8; pass++) {
+      let grew = false;
+      pm.forEach((p, k) => {
+        if (fed.has(k)) return;
+        for (const j of fed) if (touch(p, pm[j]) || touch(pm[j], p)) { fed.add(k); grew = true; return; }
+      });
+      if (!grew) break;
+    }
+    return [...fed].map((k) => lines[k].l.coords);
+  }
   // Dopo una modifica la tubazione deve restare attaccata all'acqua: se nessun
   // suo punto tocca più il canale, l'estremità più vicina viene PROLUNGATA in
   // linea retta fino a incontrarlo, e lì nasce la nuova presa.
-  function reattachToWater(coords: number[][]): number[][] {
-    const W = waterLinesLL(); if (!W.length || coords.length < 2) return coords;
+  function reattachToWater(coords: number[][], selfIdx?: number): number[][] {
+    // Bersagli validi: il canale E le altre tubazioni già alimentate — se la
+    // linea tocca una di quelle, l'acqua le arriva lo stesso.
+    const W = [...waterLinesLL(), ...fedPipeLines(selfIdx)];
+    if (!W.length || coords.length < 2) return coords;
     const lat0 = coords[0][1], mLat = 111320, mLng = 111320 * Math.cos((lat0 * Math.PI) / 180) || 1e-9;
     const M = (q: number[]): [number, number] => [q[0] * mLng, q[1] * mLat];
     const Wm = W.map((ln) => ln.map(M));
