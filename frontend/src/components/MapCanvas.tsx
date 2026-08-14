@@ -8,7 +8,7 @@ export type OverlayKey = "index" | "dem" | "suitability";
 export type FieldStyle = { color?: string; fillColor?: string; fillOpacity?: number; weight?: number };
 export type FieldGeom = { id: number; name: string; geom: Polygon; style?: FieldStyle; level?: "area" | "campo" };
 // Modello pivot interattivo (gerarchia gruppo → singolo)
-export type PivotItem = { lat: number; lng: number; r: number; conn?: string; field?: number };
+export type PivotItem = { lat: number; lng: number; r: number; conn?: string; field?: number; unconn?: boolean };
 export type PivotModel = { pivots: PivotItem[]; lines: { kind: string; coords: number[][] }[] };
 export type PivotSel = { mode: "none" | "group" | "single"; idx: number };
 export type PivotCbs = {
@@ -568,8 +568,11 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           const c = L.circle([pv.lat, pv.lng], { radius: pv.r, ...style });
           // Punto del CENTRO: è il punto da alimentare, utile come riferimento
           // per le tubazioni (e come aggancio quando si modificano).
+          // Centro del pivot. In ROSSO se non è alimentato da nessuna tubazione:
+          // si individua a colpo d'occhio quale va ancora collegato.
           g.addLayer(L.circleMarker([pv.lat, pv.lng], {
-            radius: 2.5, color: "#0d3b26", weight: 1, fillColor: "#0d3b26", fillOpacity: 1, interactive: false,
+            radius: pv.unconn ? 4 : 2.5, color: pv.unconn ? "#b23b1e" : "#0d3b26", weight: pv.unconn ? 2 : 1,
+            fillColor: pv.unconn ? "#fff" : "#0d3b26", fillOpacity: 1, interactive: false,
           }));
           c.on("click", (e) => { L.DomEvent.stop(e); cbs.onClick(i); });
           c.bindTooltip(`#${i + 1} · r ${Math.round(pv.r)} m`, { direction: "top", sticky: true });

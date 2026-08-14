@@ -41,6 +41,14 @@ export const LOCALES: Record<Lang, string> = {
 type Dict = Record<string, string>;
 
 const EN: Dict = {
+  "A destra": "Right",
+  "A sinistra": "Left",
+  "Collega il pivot": "Connect pivot",
+  "Collega il pivot alla tubazione a destra": "Connect the pivot to the feeder pipe on the right",
+  "Collega il pivot alla tubazione a sinistra": "Connect the pivot to the feeder pipe on the left",
+  "Nessuna tubazione a destra di questo pivot.": "No feeder pipe to the right of this pivot.",
+  "Nessuna tubazione a sinistra di questo pivot.": "No feeder pipe to the left of this pivot.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Pivot connected to the feeder pipe ✓ (+{m} m)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Add a point: select the pipe and click on the line",
   "Aggiungi un ramo da una tubazione esistente": "Add a branch from an existing pipe",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Click the take-off point on an existing pipe, then the branch points. Double-click to finish.",
@@ -469,6 +477,14 @@ const EN: Dict = {
 };
 
 const FR: Dict = {
+  "A destra": "Droite",
+  "A sinistra": "Gauche",
+  "Collega il pivot": "Relier le pivot",
+  "Collega il pivot alla tubazione a destra": "Relier le pivot à la conduite d'alimentation à droite",
+  "Collega il pivot alla tubazione a sinistra": "Relier le pivot à la conduite d'alimentation à gauche",
+  "Nessuna tubazione a destra di questo pivot.": "Aucune conduite d'alimentation à droite de ce pivot.",
+  "Nessuna tubazione a sinistra di questo pivot.": "Aucune conduite d'alimentation à gauche de ce pivot.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Pivot relié à la conduite d'alimentation ✓ (+{m} m)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Ajouter un point : sélectionnez la conduite et cliquez sur la ligne",
   "Aggiungi un ramo da una tubazione esistente": "Ajouter une antenne à partir d'une conduite existante",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Cliquez sur le point de piquage sur une conduite existante, puis sur les points de l'antenne. Double-cliquez pour terminer.",
@@ -897,6 +913,14 @@ const FR: Dict = {
 };
 
 const ES: Dict = {
+  "A destra": "Derecha",
+  "A sinistra": "Izquierda",
+  "Collega il pivot": "Conectar pívot",
+  "Collega il pivot alla tubazione a destra": "Conectar el pívot a la tubería de alimentación de la derecha",
+  "Collega il pivot alla tubazione a sinistra": "Conectar el pívot a la tubería de alimentación de la izquierda",
+  "Nessuna tubazione a destra di questo pivot.": "No hay tubería de alimentación a la derecha de este pívot.",
+  "Nessuna tubazione a sinistra di questo pivot.": "No hay tubería de alimentación a la izquierda de este pívot.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Pívot conectado a la tubería de alimentación ✓ (+{m} m)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Añadir un punto: selecciona la tubería y haz clic en la línea",
   "Aggiungi un ramo da una tubazione esistente": "Añadir un ramal desde una tubería existente",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Haz clic en el punto de derivación de una tubería existente y luego en los puntos del ramal. Doble clic para cerrar.",
@@ -1325,6 +1349,14 @@ const ES: Dict = {
 };
 
 const PT: Dict = {
+  "A destra": "Direita",
+  "A sinistra": "Esquerda",
+  "Collega il pivot": "Ligar pivô",
+  "Collega il pivot alla tubazione a destra": "Ligar o pivô à tubagem de alimentação à direita",
+  "Collega il pivot alla tubazione a sinistra": "Ligar o pivô à tubagem de alimentação à esquerda",
+  "Nessuna tubazione a destra di questo pivot.": "Não há tubagem de alimentação à direita deste pivô.",
+  "Nessuna tubazione a sinistra di questo pivot.": "Não há tubagem de alimentação à esquerda deste pivô.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Pivô ligado à tubagem de alimentação ✓ (+{m} m)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Adicionar um ponto: selecione a tubulação e clique na linha",
   "Aggiungi un ramo da una tubazione esistente": "Adicionar um ramal a partir de uma tubulação existente",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Clique no ponto de derivação em uma tubulação existente e depois nos pontos do ramal. Clique duplo para fechar.",
@@ -1753,6 +1785,14 @@ const PT: Dict = {
 };
 
 const RO: Dict = {
+  "A destra": "Dreapta",
+  "A sinistra": "Stânga",
+  "Collega il pivot": "Conectează pivotul",
+  "Collega il pivot alla tubazione a destra": "Conectează pivotul la conducta de alimentare din dreapta",
+  "Collega il pivot alla tubazione a sinistra": "Conectează pivotul la conducta de alimentare din stânga",
+  "Nessuna tubazione a destra di questo pivot.": "Nicio conductă de alimentare în dreapta acestui pivot.",
+  "Nessuna tubazione a sinistra di questo pivot.": "Nicio conductă de alimentare în stânga acestui pivot.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Pivot conectat la conducta de alimentare ✓ (+{m} m)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Adaugă un punct: selectează conducta și dă clic pe linie",
   "Aggiungi un ramo da una tubazione esistente": "Adaugă o ramificație de la o conductă existentă",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Dă clic pe punctul de racord de pe o conductă existentă, apoi pe punctele ramificației. Dublu clic pentru a închide.",
@@ -2183,6 +2223,14 @@ const RO: Dict = {
 };
 
 const KK: Dict = {
+  "A destra": "Оңға",
+  "A sinistra": "Солға",
+  "Collega il pivot": "Пивотты қосу",
+  "Collega il pivot alla tubazione a destra": "Пивотты оң жақтағы қоректендіру құбырына қосу",
+  "Collega il pivot alla tubazione a sinistra": "Пивотты сол жақтағы қоректендіру құбырына қосу",
+  "Nessuna tubazione a destra di questo pivot.": "Бұл пивоттың оң жағында қоректендіру құбыры жоқ.",
+  "Nessuna tubazione a sinistra di questo pivot.": "Бұл пивоттың сол жағында қоректендіру құбыры жоқ.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Пивот қоректендіру құбырына қосылды ✓ (+{m} м)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Нүкте қосу: құбырды таңдап, сызықты басыңыз",
   "Aggiungi un ramo da una tubazione esistente": "Бар құбырдан тармақ қосу",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Бар құбырдағы тарамдау нүктесін, содан кейін тармақ нүктелерін басыңыз. Аяқтау үшін қос рет басыңыз.",
@@ -2613,6 +2661,14 @@ const KK: Dict = {
 };
 
 const AR: Dict = {
+  "A destra": "يمين",
+  "A sinistra": "يسار",
+  "Collega il pivot": "توصيل المحور",
+  "Collega il pivot alla tubazione a destra": "توصيل المحور بأنبوب التغذية على اليمين",
+  "Collega il pivot alla tubazione a sinistra": "توصيل المحور بأنبوب التغذية على اليسار",
+  "Nessuna tubazione a destra di questo pivot.": "لا يوجد أنبوب تغذية على يمين هذا المحور.",
+  "Nessuna tubazione a sinistra di questo pivot.": "لا يوجد أنبوب تغذية على يسار هذا المحور.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "تم توصيل المحور بأنبوب التغذية ✓ (+{m} م)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "إضافة نقطة: حدد الأنبوب وانقر على الخط",
   "Aggiungi un ramo da una tubazione esistente": "إضافة تفريعة من أنبوب موجود",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "انقر على نقطة التفريع على أنبوب موجود، ثم على نقاط التفريعة. انقر نقرًا مزدوجًا للإنهاء.",
@@ -3041,6 +3097,14 @@ const AR: Dict = {
 };
 
 const ZH: Dict = {
+  "A destra": "向右",
+  "A sinistra": "向左",
+  "Collega il pivot": "连接圆形喷灌机",
+  "Collega il pivot alla tubazione a destra": "将圆形喷灌机连接到右侧的供水管道",
+  "Collega il pivot alla tubazione a sinistra": "将圆形喷灌机连接到左侧的供水管道",
+  "Nessuna tubazione a destra di questo pivot.": "该圆形喷灌机右侧没有供水管道。",
+  "Nessuna tubazione a sinistra di questo pivot.": "该圆形喷灌机左侧没有供水管道。",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "圆形喷灌机已连接到供水管道 ✓ (+{m} 米)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "添加节点：选择管道并点击线路",
   "Aggiungi un ramo da una tubazione esistente": "从现有管道添加支管",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "点击现有管道上的分支点，然后依次点击支管节点。双击结束。",
@@ -3471,6 +3535,14 @@ const ZH: Dict = {
 };
 
 const HU: Dict = {
+  "A destra": "Jobbra",
+  "A sinistra": "Balra",
+  "Collega il pivot": "Pivot csatlakoztatása",
+  "Collega il pivot alla tubazione a destra": "A pivot csatlakoztatása a jobb oldali tápvezetékhez",
+  "Collega il pivot alla tubazione a sinistra": "A pivot csatlakoztatása a bal oldali tápvezetékhez",
+  "Nessuna tubazione a destra di questo pivot.": "Nincs tápvezeték a pivottól jobbra.",
+  "Nessuna tubazione a sinistra di questo pivot.": "Nincs tápvezeték a pivottól balra.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "A pivot csatlakoztatva a tápvezetékhez ✓ (+{m} m)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Pont hozzáadása: válassza ki a vezetéket, és kattintson a vonalra",
   "Aggiungi un ramo da una tubazione esistente": "Leágazás hozzáadása meglévő vezetékből",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Kattintson a leágazási pontra egy meglévő vezetéken, majd a leágazás pontjaira. Dupla kattintás a befejezéshez.",
@@ -3901,6 +3973,14 @@ const HU: Dict = {
 };
 
 const ID: Dict = {
+  "A destra": "Kanan",
+  "A sinistra": "Kiri",
+  "Collega il pivot": "Sambungkan pivot",
+  "Collega il pivot alla tubazione a destra": "Sambungkan pivot ke pipa pengumpan di sebelah kanan",
+  "Collega il pivot alla tubazione a sinistra": "Sambungkan pivot ke pipa pengumpan di sebelah kiri",
+  "Nessuna tubazione a destra di questo pivot.": "Tidak ada pipa pengumpan di sebelah kanan pivot ini.",
+  "Nessuna tubazione a sinistra di questo pivot.": "Tidak ada pipa pengumpan di sebelah kiri pivot ini.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Pivot tersambung ke pipa pengumpan ✓ (+{m} m)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Tambahkan titik: pilih pipa dan klik pada garis",
   "Aggiungi un ramo da una tubazione esistente": "Tambahkan cabang dari pipa yang ada",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Klik titik percabangan pada pipa yang ada, lalu titik-titik cabang. Klik dua kali untuk menutup.",
@@ -4331,6 +4411,14 @@ const ID: Dict = {
 };
 
 const DE: Dict = {
+  "A destra": "Rechts",
+  "A sinistra": "Links",
+  "Collega il pivot": "Pivot verbinden",
+  "Collega il pivot alla tubazione a destra": "Pivot mit der Zuleitung rechts verbinden",
+  "Collega il pivot alla tubazione a sinistra": "Pivot mit der Zuleitung links verbinden",
+  "Nessuna tubazione a destra di questo pivot.": "Keine Zuleitung rechts von diesem Pivot.",
+  "Nessuna tubazione a sinistra di questo pivot.": "Keine Zuleitung links von diesem Pivot.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Pivot mit der Zuleitung verbunden ✓ (+{m} m)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Punkt hinzufügen: Leitung auswählen und auf die Linie klicken",
   "Aggiungi un ramo da una tubazione esistente": "Abzweig von einer bestehenden Leitung hinzufügen",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Klicken Sie auf den Abzweigpunkt einer bestehenden Leitung, dann auf die Punkte des Abzweigs. Doppelklick zum Beenden.",
@@ -4755,6 +4843,14 @@ const DE: Dict = {
 };
 
 const PL: Dict = {
+  "A destra": "W prawo",
+  "A sinistra": "W lewo",
+  "Collega il pivot": "Podłącz pivot",
+  "Collega il pivot alla tubazione a destra": "Podłącz pivot do rurociągu zasilającego po prawej",
+  "Collega il pivot alla tubazione a sinistra": "Podłącz pivot do rurociągu zasilającego po lewej",
+  "Nessuna tubazione a destra di questo pivot.": "Brak rurociągu zasilającego po prawej stronie tego pivotu.",
+  "Nessuna tubazione a sinistra di questo pivot.": "Brak rurociągu zasilającego po lewej stronie tego pivotu.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Pivot podłączony do rurociągu zasilającego ✓ (+{m} m)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Dodaj punkt: wybierz rurociąg i kliknij linię",
   "Aggiungi un ramo da una tubazione esistente": "Dodaj odgałęzienie od istniejącego rurociągu",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Kliknij punkt odgałęzienia na istniejącym rurociągu, a następnie punkty odgałęzienia. Kliknij dwukrotnie, aby zakończyć.",
@@ -5181,6 +5277,14 @@ const PL: Dict = {
 };
 
 const BG: Dict = {
+  "A destra": "Надясно",
+  "A sinistra": "Наляво",
+  "Collega il pivot": "Свържи пивота",
+  "Collega il pivot alla tubazione a destra": "Свържи пивота към захранващия тръбопровод отдясно",
+  "Collega il pivot alla tubazione a sinistra": "Свържи пивота към захранващия тръбопровод отляво",
+  "Nessuna tubazione a destra di questo pivot.": "Няма захранващ тръбопровод отдясно на този пивот.",
+  "Nessuna tubazione a sinistra di questo pivot.": "Няма захранващ тръбопровод отляво на този пивот.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Пивотът е свързан към захранващия тръбопровод ✓ (+{m} м)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Добавяне на точка: изберете тръбопровода и щракнете върху линията",
   "Aggiungi un ramo da una tubazione esistente": "Добавяне на разклонение от съществуващ тръбопровод",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Щракнете върху точката на отклонение върху съществуващ тръбопровод, след това върху точките на разклонението. Двойно щракване за приключване.",
@@ -5607,6 +5711,14 @@ const BG: Dict = {
 };
 
 const RU: Dict = {
+  "A destra": "Вправо",
+  "A sinistra": "Влево",
+  "Collega il pivot": "Подключить пивот",
+  "Collega il pivot alla tubazione a destra": "Подключить пивот к питающему трубопроводу справа",
+  "Collega il pivot alla tubazione a sinistra": "Подключить пивот к питающему трубопроводу слева",
+  "Nessuna tubazione a destra di questo pivot.": "Справа от этого пивота нет питающего трубопровода.",
+  "Nessuna tubazione a sinistra di questo pivot.": "Слева от этого пивота нет питающего трубопровода.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Пивот подключён к питающему трубопроводу ✓ (+{m} м)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Добавить точку: выберите трубопровод и щёлкните по линии",
   "Aggiungi un ramo da una tubazione esistente": "Добавить отвод от существующего трубопровода",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Щёлкните точку врезки на существующем трубопроводе, затем точки отвода. Двойной щелчок для завершения.",
@@ -6033,6 +6145,14 @@ const RU: Dict = {
 };
 
 const AF: Dict = {
+  "A destra": "Regs",
+  "A sinistra": "Links",
+  "Collega il pivot": "Koppel spilpunt",
+  "Collega il pivot alla tubazione a destra": "Koppel die spilpunt aan die toevoerpyp regs",
+  "Collega il pivot alla tubazione a sinistra": "Koppel die spilpunt aan die toevoerpyp links",
+  "Nessuna tubazione a destra di questo pivot.": "Geen toevoerpyp regs van hierdie spilpunt nie.",
+  "Nessuna tubazione a sinistra di questo pivot.": "Geen toevoerpyp links van hierdie spilpunt nie.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Spilpunt aan die toevoerpyp gekoppel ✓ (+{m} m)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Voeg 'n punt by: kies die pyplyn en klik op die lyn",
   "Aggiungi un ramo da una tubazione esistente": "Voeg 'n tak by vanaf 'n bestaande pyplyn",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Klik op die aftakpunt op 'n bestaande pyplyn, dan die takpunte. Dubbelklik om te voltooi.",
@@ -6459,6 +6579,14 @@ const AF: Dict = {
 };
 
 const MS: Dict = {
+  "A destra": "Kanan",
+  "A sinistra": "Kiri",
+  "Collega il pivot": "Sambung pivot",
+  "Collega il pivot alla tubazione a destra": "Sambungkan pivot ke paip suapan di sebelah kanan",
+  "Collega il pivot alla tubazione a sinistra": "Sambungkan pivot ke paip suapan di sebelah kiri",
+  "Nessuna tubazione a destra di questo pivot.": "Tiada paip suapan di sebelah kanan pivot ini.",
+  "Nessuna tubazione a sinistra di questo pivot.": "Tiada paip suapan di sebelah kiri pivot ini.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Pivot disambungkan ke paip suapan ✓ (+{m} m)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Tambah titik: pilih paip dan klik pada garisan",
   "Aggiungi un ramo da una tubazione esistente": "Tambah cabang daripada paip sedia ada",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Klik titik pencabangan pada paip sedia ada, kemudian titik-titik cabang. Klik dua kali untuk menutup.",
@@ -6885,6 +7013,14 @@ const MS: Dict = {
 };
 
 const VI: Dict = {
+  "A destra": "Phải",
+  "A sinistra": "Trái",
+  "Collega il pivot": "Kết nối pivot",
+  "Collega il pivot alla tubazione a destra": "Kết nối pivot với đường ống cấp nước bên phải",
+  "Collega il pivot alla tubazione a sinistra": "Kết nối pivot với đường ống cấp nước bên trái",
+  "Nessuna tubazione a destra di questo pivot.": "Không có đường ống cấp nước bên phải pivot này.",
+  "Nessuna tubazione a sinistra di questo pivot.": "Không có đường ống cấp nước bên trái pivot này.",
+  "Pivot collegato alla tubazione ✓ (+{m} m)": "Đã kết nối pivot với đường ống cấp nước ✓ (+{m} m)",
   "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Thêm một điểm: chọn đường ống và nhấp vào đường kẻ",
   "Aggiungi un ramo da una tubazione esistente": "Thêm một nhánh từ đường ống hiện có",
   "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Nhấp vào điểm rẽ nhánh trên đường ống hiện có, rồi các điểm của nhánh. Nhấp đúp để kết thúc.",

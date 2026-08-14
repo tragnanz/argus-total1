@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.130";
+const REV = "v0.6.131";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -786,6 +786,8 @@ const IcoBell = () => (<svg {...svgProps}><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-
 const IcoPipeNew = () => (<svg {...svgProps}><path d="M3 20h6l6-12h6" /><path d="M15 5h5v5" /></svg>);
 const IcoPipeBranch = () => (<svg {...svgProps}><path d="M4 20h6a4 4 0 0 0 4-4V4" /><path d="M14 10h6" /><circle cx="14" cy="10" r="1.6" /></svg>);
 const IcoPipePoint = () => (<svg {...svgProps}><path d="M3 12h18" /><circle cx="12" cy="12" r="3" /></svg>);
+const IcoArrowLeft = () => (<svg {...svgProps}><path d="M20 12H4" /><path d="m10 6-6 6 6 6" /></svg>);
+const IcoArrowRight = () => (<svg {...svgProps}><path d="M4 12h16" /><path d="m14 6 6 6-6 6" /></svg>);
 const IcoTrash = () => (<svg {...svgProps}><path d="M4 7h16" /><path d="M9 7V4h6v3" /><path d="M6 7l1 13h10l1-13" /></svg>);
 const IcoDash = () => (<svg {...svgProps}><rect x="3" y="3" width="7" height="9" rx="1" /><rect x="14" y="3" width="7" height="5" rx="1" /><rect x="14" y="12" width="7" height="9" rx="1" /><rect x="3" y="16" width="7" height="5" rx="1" /></svg>);
 
@@ -2054,7 +2056,8 @@ export default function Page() {
     const api2 = mapApi.current; if (!api2) return;
     // Filtra i gruppi pivot nascosti (per campo) e rimappa gli indici visibili → reali.
     const visIdx = pivots.map((_, k) => k).filter((k) => !hiddenPivotFields.has(pivots[k].field ?? -1));
-    const visP = visIdx.map((k) => pivots[k]);
+    const fed = fedPivotKeys(pivotLines);
+    const visP = visIdx.map((k) => ({ ...pivots[k], unconn: pivotLines.some((l) => l.kind === "pipe") && !fed.has(pKey(pivots[k])) }));
     // Le tubazioni hanno una visibilità propria (oggetto a sé); le altre linee
     // seguono la visibilità del gruppo pivot del loro campo.
     const visL = pivotLines.filter((l) => l.kind === "pipe"
@@ -2352,6 +2355,50 @@ export default function Page() {
       return s + L;
     }, 0) / 1000;
     setMsg(t("Tubazioni tracciate: {n} rami dal canale · {km} km ✓", { n: pipesLL.length, km: fmt(km, { maximumFractionDigits: 1 }) }));
+  }
+  // Chiave di confronto fra centro pivot e vertice di tubazione (6 decimali ≈ 10 cm).
+  const pKey = (p: { lat: number; lng: number }) => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`;
+  function fedPivotKeys(lines: { kind: string; coords: number[][] }[]) {
+    const s2 = new Set<string>();
+    for (const l of lines) if (l.kind === "pipe") for (const q of l.coords) s2.add(`${q[0].toFixed(6)},${q[1].toFixed(6)}`);
+    return s2;
+  }
+  // Collega il pivot selezionato alla tubazione più vicina a SINISTRA o a DESTRA:
+  // il punto entra nella linea dove costa meno metri di tubo.
+  function connectSelPivot(side: "left" | "right") {
+    if (pivotSel.mode !== "single") return;
+    const pv = pivots[pivotSel.idx]; if (!pv) return;
+    const lat0 = pv.lat, mLat = 111320, mLng = 111320 * Math.cos((lat0 * Math.PI) / 180) || 1e-9;
+    const M = (q: number[]) => [q[0] * mLng, q[1] * mLat] as [number, number];
+    const A = M([pv.lng, pv.lat]);
+    let bestLine = -1, bestPos = -1, bestCost = Infinity;
+    pivotLines.forEach((l, li) => {
+      if (l.kind !== "pipe") return;
+      if (l.field != null && hiddenPipeFields.has(l.field)) return;
+      // da che parte sta la tubazione: si guarda il suo punto più vicino
+      let near = M(l.coords[0]), nd = Infinity;
+      for (const q of l.coords) { const m2 = M(q); const d = Math.hypot(m2[0] - A[0], m2[1] - A[1]); if (d < nd) { nd = d; near = m2; } }
+      const isLeft = near[0] < A[0];
+      if ((side === "left") !== isLeft) return;
+      // inserimento più economico: si prova ogni posizione della polilinea
+      for (let k = 1; k <= l.coords.length; k++) {
+        const a = M(l.coords[k - 1]);
+        const b = k < l.coords.length ? M(l.coords[k]) : null;
+        const add = b
+          ? Math.hypot(A[0] - a[0], A[1] - a[1]) + Math.hypot(b[0] - A[0], b[1] - A[1]) - Math.hypot(b[0] - a[0], b[1] - a[1])
+          : Math.hypot(A[0] - a[0], A[1] - a[1]);
+        if (add < bestCost) { bestCost = add; bestLine = li; bestPos = k; }
+      }
+    });
+    if (bestLine < 0) { setMsg(side === "left" ? t("Nessuna tubazione a sinistra di questo pivot.") : t("Nessuna tubazione a destra di questo pivot.")); return; }
+    const next = pivotLines.map((l, li) => {
+      if (li !== bestLine) return l;
+      const cc = [...l.coords]; cc.splice(bestPos, 0, [pv.lng, pv.lat]);
+      return { ...l, coords: cc };
+    });
+    setPivotLines(next);
+    setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, next) } : gp));
+    setMsg(t("Pivot collegato alla tubazione ✓ (+{m} m)", { m: Math.round(bestCost) }));
   }
   // Disegna a mano una NUOVA tubazione: i punti cliccati si agganciano ai centri
   // dei pivot e al canale, quindi nasce già collegata come quelle calcolate.
@@ -3845,6 +3892,14 @@ export default function Page() {
             <span className="w-px h-6 bg-black/10" />
             <button className="tool-btn" title={t("Elimina la tubazione selezionata")} aria-label={t("Elimina")}
               disabled={pipeSel.mode !== "single"} onClick={deleteSelectedPipe}><IcoTrash /></button>
+            {pivotSel.mode === "single" && (<>
+              <span className="w-px h-6 bg-black/10" />
+              <span className="text-[11px] text-sage-dark px-1 select-none">{t("Collega il pivot")}</span>
+              <button className="tool-btn" title={t("Collega il pivot alla tubazione a sinistra")} aria-label={t("A sinistra")}
+                onClick={() => connectSelPivot("left")}><IcoArrowLeft /></button>
+              <button className="tool-btn" title={t("Collega il pivot alla tubazione a destra")} aria-label={t("A destra")}
+                onClick={() => connectSelPivot("right")}><IcoArrowRight /></button>
+            </>)}
           </div>
         )}
 
