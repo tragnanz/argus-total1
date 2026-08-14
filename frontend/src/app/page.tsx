@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.129";
+const REV = "v0.6.130";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -783,6 +783,10 @@ const IcoExpand = () => (<svg {...svgProps}><rect x="3" y="3" width="18" height=
 const IcoCross = () => (<svg {...svgProps}><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></svg>);
 const IcoHome = () => (<svg {...svgProps}><path d="m3 11 9-7 9 7" /><path d="M5 10v10h14V10" /><path d="M10 20v-6h4v6" /></svg>);
 const IcoBell = () => (<svg {...svgProps}><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></svg>);
+const IcoPipeNew = () => (<svg {...svgProps}><path d="M3 20h6l6-12h6" /><path d="M15 5h5v5" /></svg>);
+const IcoPipeBranch = () => (<svg {...svgProps}><path d="M4 20h6a4 4 0 0 0 4-4V4" /><path d="M14 10h6" /><circle cx="14" cy="10" r="1.6" /></svg>);
+const IcoPipePoint = () => (<svg {...svgProps}><path d="M3 12h18" /><circle cx="12" cy="12" r="3" /></svg>);
+const IcoTrash = () => (<svg {...svgProps}><path d="M4 7h16" /><path d="M9 7V4h6v3" /><path d="M6 7l1 13h10l1-13" /></svg>);
 const IcoDash = () => (<svg {...svgProps}><rect x="3" y="3" width="7" height="9" rx="1" /><rect x="14" y="3" width="7" height="5" rx="1" /><rect x="14" y="12" width="7" height="9" rx="1" /><rect x="3" y="16" width="7" height="5" rx="1" /></svg>);
 
 // Icone del menu verticale (20px): una per ogni pagina del flusso di progetto.
@@ -2351,10 +2355,12 @@ export default function Page() {
   }
   // Disegna a mano una NUOVA tubazione: i punti cliccati si agganciano ai centri
   // dei pivot e al canale, quindi nasce già collegata come quelle calcolate.
-  function drawPipeManual() {
+  function drawPipeManual(mode: "new" | "branch" = "new") {
     if (!active) return needField();
     const fid = active.id;
-    setMsg(t("Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere."));
+    setMsg(mode === "branch"
+      ? t("Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.")
+      : t("Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere."));
     mapApi.current?.drawPipeManual?.((coords) => {
       if (coords.length < 2) { setMsg(""); return; }
       const next = [...pivotLines, { kind: "pipe", coords, field: fid }];
@@ -2365,7 +2371,10 @@ export default function Page() {
     }, pivots.map((pv) => [pv.lng, pv.lat]),
     [...canals.filter((c) => !c.hidden).map((c) => c.geojson.coordinates as number[][]),
      ...watercourses.filter((w) => !w.hidden && w.geojson?.type === "LineString")
-       .map((w) => w.geojson.coordinates as unknown as number[][])]);
+       .map((w) => w.geojson.coordinates as unknown as number[][]),
+     // per un RAMO anche le tubazioni esistenti sono bersaglio di aggancio:
+     // lo stacco cade esattamente sulla linea da cui deriva
+     ...(mode === "branch" ? pivotLines.filter((l) => l.kind === "pipe").map((l) => l.coords) : [])]);
   }
   // Elimina la SINGOLA tubazione selezionata (le altre restano).
   function deleteSelectedPipe() {
@@ -3756,7 +3765,7 @@ export default function Page() {
                 <button className="btn-ghost flex-1 basis-0" disabled={!nPipes} onClick={removePipes}>{t("Rimuovi tubazioni")}</button>
               </div>
               <div className="flex gap-2 mt-2">
-                <button className="btn-ghost flex-1 basis-0" disabled={!active} onClick={drawPipeManual}>{t("Disegna tubazione")}</button>
+                <button className="btn-ghost flex-1 basis-0" disabled={!active} onClick={() => drawPipeManual("new")}>{t("Disegna tubazione")}</button>
                 <button className="btn-ghost flex-1 basis-0" disabled={pipeSel.mode !== "single"} onClick={deleteSelectedPipe}>
                   {t("Elimina la tubazione selezionata")}
                 </button>
@@ -3820,6 +3829,25 @@ export default function Page() {
         )}
 
         {/* Messaggi */}
+        {/* Barra di disegno delle tubazioni: compare sulla pagina Accessori o
+            quando una tubazione è selezionata. */}
+        {(tab === "accessori" || pipeSel.mode !== "none") && (
+          <div className="absolute bottom-16 left-1/2 -translate-x-1/2 nabu-cluster gap-1 px-1.5 py-1.5 z-[1400]">
+            <span className="text-[11px] text-sage-dark px-1.5 select-none">{t("Tubazioni")}</span>
+            <span className="w-px h-6 bg-black/10" />
+            <button className="tool-btn" title={t("Disegna tubazione")} aria-label={t("Disegna tubazione")}
+              disabled={!active} onClick={() => drawPipeManual("new")}><IcoPipeNew /></button>
+            <button className="tool-btn" title={t("Aggiungi un ramo da una tubazione esistente")} aria-label={t("Ramo")}
+              disabled={!active || !nPipes} onClick={() => drawPipeManual("branch")}><IcoPipeBranch /></button>
+            <button className="tool-btn" title={t("Aggiungi un punto: seleziona la tubazione e clicca sulla linea")} aria-label={t("Punto")}
+              disabled={!nPipes}
+              onClick={() => setMsg(t("Aggiungi un punto: seleziona la tubazione e clicca sulla linea"))}><IcoPipePoint /></button>
+            <span className="w-px h-6 bg-black/10" />
+            <button className="tool-btn" title={t("Elimina la tubazione selezionata")} aria-label={t("Elimina")}
+              disabled={pipeSel.mode !== "single"} onClick={deleteSelectedPipe}><IcoTrash /></button>
+          </div>
+        )}
+
         {msg && (
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 pill-dark px-4 py-2 text-sm max-w-[80vw]">
             {msg} <button className="ml-2 opacity-70" onClick={() => setMsg("")}>✕</button>

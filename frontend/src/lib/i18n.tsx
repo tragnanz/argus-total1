@@ -41,6 +41,11 @@ export const LOCALES: Record<Lang, string> = {
 type Dict = Record<string, string>;
 
 const EN: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Add a point: select the pipe and click on the line",
+  "Aggiungi un ramo da una tubazione esistente": "Add a branch from an existing pipe",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Click the take-off point on an existing pipe, then the branch points. Double-click to finish.",
+  "Punto": "Point",
+  "Ramo": "Branch",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Click the pipe points: they snap to pivot centres and to the canal. Double-click to close.",
   "Disegna tubazione": "Draw pipe",
   "Elimina la tubazione selezionata": "Delete selected pipe",
@@ -464,6 +469,11 @@ const EN: Dict = {
 };
 
 const FR: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Ajouter un point : sélectionnez la conduite et cliquez sur la ligne",
+  "Aggiungi un ramo da una tubazione esistente": "Ajouter une antenne à partir d'une conduite existante",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Cliquez sur le point de piquage sur une conduite existante, puis sur les points de l'antenne. Double-cliquez pour terminer.",
+  "Punto": "Point",
+  "Ramo": "Antenne",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Cliquez les points de la conduite : ils s'accrochent aux centres des pivots et au canal. Double-clic pour fermer.",
   "Disegna tubazione": "Tracer une conduite",
   "Elimina la tubazione selezionata": "Supprimer la conduite sélectionnée",
@@ -887,6 +897,11 @@ const FR: Dict = {
 };
 
 const ES: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Añadir un punto: selecciona la tubería y haz clic en la línea",
+  "Aggiungi un ramo da una tubazione esistente": "Añadir un ramal desde una tubería existente",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Haz clic en el punto de derivación de una tubería existente y luego en los puntos del ramal. Doble clic para cerrar.",
+  "Punto": "Punto",
+  "Ramo": "Ramal",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Haz clic en los puntos de la tubería: se enganchan a los centros de los pivotes y al canal. Doble clic para cerrar.",
   "Disegna tubazione": "Dibujar tubería",
   "Elimina la tubazione selezionata": "Eliminar la tubería seleccionada",
@@ -1310,6 +1325,11 @@ const ES: Dict = {
 };
 
 const PT: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Adicionar um ponto: selecione a tubulação e clique na linha",
+  "Aggiungi un ramo da una tubazione esistente": "Adicionar um ramal a partir de uma tubulação existente",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Clique no ponto de derivação em uma tubulação existente e depois nos pontos do ramal. Clique duplo para fechar.",
+  "Punto": "Ponto",
+  "Ramo": "Ramal",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Clique nos pontos da tubulação: eles se encaixam nos centros dos pivôs e no canal. Clique duplo para fechar.",
   "Disegna tubazione": "Desenhar tubulação",
   "Elimina la tubazione selezionata": "Excluir a tubulação selecionada",
@@ -1733,6 +1753,11 @@ const PT: Dict = {
 };
 
 const RO: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Adaugă un punct: selectează conducta și dă clic pe linie",
+  "Aggiungi un ramo da una tubazione esistente": "Adaugă o ramificație de la o conductă existentă",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Dă clic pe punctul de racord de pe o conductă existentă, apoi pe punctele ramificației. Dublu clic pentru a închide.",
+  "Punto": "Punct",
+  "Ramo": "Ramificație",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Faceți clic pe punctele conductei: se fixează pe centrele pivoților și pe canal. Dublu clic pentru a închide.",
   "Disegna tubazione": "Desenează conductă",
   "Elimina la tubazione selezionata": "Șterge conducta selectată",
@@ -2158,6 +2183,11 @@ const RO: Dict = {
 };
 
 const KK: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Нүкте қосу: құбырды таңдап, сызықты басыңыз",
+  "Aggiungi un ramo da una tubazione esistente": "Бар құбырдан тармақ қосу",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Бар құбырдағы тарамдау нүктесін, содан кейін тармақ нүктелерін басыңыз. Аяқтау үшін қос рет басыңыз.",
+  "Punto": "Нүкте",
+  "Ramo": "Тармақ",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Құбырдың нүктелерін басыңыз: олар пивоттардың орталықтарына және арнаға бекітіледі. Жабу үшін қос рет басыңыз.",
   "Disegna tubazione": "Құбыр сызу",
   "Elimina la tubazione selezionata": "Таңдалған құбырды жою",
@@ -2583,6 +2613,11 @@ const KK: Dict = {
 };
 
 const AR: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "إضافة نقطة: حدد الأنبوب وانقر على الخط",
+  "Aggiungi un ramo da una tubazione esistente": "إضافة تفريعة من أنبوب موجود",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "انقر على نقطة التفريع على أنبوب موجود، ثم على نقاط التفريعة. انقر نقرًا مزدوجًا للإنهاء.",
+  "Punto": "نقطة",
+  "Ramo": "تفريعة",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "انقر على نقاط الأنبوب: تلتصق بمراكز أجهزة الري المحوري وبالقناة. انقر نقرًا مزدوجًا للإغلاق.",
   "Disegna tubazione": "رسم أنبوب",
   "Elimina la tubazione selezionata": "حذف الأنبوب المحدد",
@@ -3006,6 +3041,11 @@ const AR: Dict = {
 };
 
 const ZH: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "添加节点：选择管道并点击线路",
+  "Aggiungi un ramo da una tubazione esistente": "从现有管道添加支管",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "点击现有管道上的分支点，然后依次点击支管节点。双击结束。",
+  "Punto": "节点",
+  "Ramo": "支管",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "点击管道的各个点：会自动吸附到喷灌机中心和渠道上。双击结束。",
   "Disegna tubazione": "绘制管道",
   "Elimina la tubazione selezionata": "删除选中的管道",
@@ -3431,6 +3471,11 @@ const ZH: Dict = {
 };
 
 const HU: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Pont hozzáadása: válassza ki a vezetéket, és kattintson a vonalra",
+  "Aggiungi un ramo da una tubazione esistente": "Leágazás hozzáadása meglévő vezetékből",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Kattintson a leágazási pontra egy meglévő vezetéken, majd a leágazás pontjaira. Dupla kattintás a befejezéshez.",
+  "Punto": "Pont",
+  "Ramo": "Leágazás",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Kattintson a vezeték pontjaira: a pivotok középpontjához és a csatornához illeszkednek. Dupla kattintás a lezáráshoz.",
   "Disegna tubazione": "Vezeték rajzolása",
   "Elimina la tubazione selezionata": "Kijelölt vezeték törlése",
@@ -3856,6 +3901,11 @@ const HU: Dict = {
 };
 
 const ID: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Tambahkan titik: pilih pipa dan klik pada garis",
+  "Aggiungi un ramo da una tubazione esistente": "Tambahkan cabang dari pipa yang ada",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Klik titik percabangan pada pipa yang ada, lalu titik-titik cabang. Klik dua kali untuk menutup.",
+  "Punto": "Titik",
+  "Ramo": "Cabang",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Klik titik-titik pipa: titik akan menempel ke pusat pivot dan ke saluran. Klik ganda untuk menutup.",
   "Disegna tubazione": "Gambar pipa",
   "Elimina la tubazione selezionata": "Hapus pipa terpilih",
@@ -4281,6 +4331,11 @@ const ID: Dict = {
 };
 
 const DE: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Punkt hinzufügen: Leitung auswählen und auf die Linie klicken",
+  "Aggiungi un ramo da una tubazione esistente": "Abzweig von einer bestehenden Leitung hinzufügen",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Klicken Sie auf den Abzweigpunkt einer bestehenden Leitung, dann auf die Punkte des Abzweigs. Doppelklick zum Beenden.",
+  "Punto": "Punkt",
+  "Ramo": "Abzweig",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Klicken Sie die Punkte der Leitung an: Sie rasten an den Pivot-Mittelpunkten und am Kanal ein. Doppelklick zum Schließen.",
   "Disegna tubazione": "Leitung zeichnen",
   "Elimina la tubazione selezionata": "Ausgewählte Leitung löschen",
@@ -4700,6 +4755,11 @@ const DE: Dict = {
 };
 
 const PL: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Dodaj punkt: wybierz rurociąg i kliknij linię",
+  "Aggiungi un ramo da una tubazione esistente": "Dodaj odgałęzienie od istniejącego rurociągu",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Kliknij punkt odgałęzienia na istniejącym rurociągu, a następnie punkty odgałęzienia. Kliknij dwukrotnie, aby zakończyć.",
+  "Punto": "Punkt",
+  "Ramo": "Odgałęzienie",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Kliknij punkty rurociągu: przyciągają się do środków pivotów i do kanału. Kliknij dwukrotnie, aby zamknąć.",
   "Disegna tubazione": "Rysuj rurociąg",
   "Elimina la tubazione selezionata": "Usuń wybrany rurociąg",
@@ -5121,6 +5181,11 @@ const PL: Dict = {
 };
 
 const BG: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Добавяне на точка: изберете тръбопровода и щракнете върху линията",
+  "Aggiungi un ramo da una tubazione esistente": "Добавяне на разклонение от съществуващ тръбопровод",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Щракнете върху точката на отклонение върху съществуващ тръбопровод, след това върху точките на разклонението. Двойно щракване за приключване.",
+  "Punto": "Точка",
+  "Ramo": "Разклонение",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Кликнете точките на тръбопровода: те се прихващат към центровете на пивотите и към канала. Двоен клик за затваряне.",
   "Disegna tubazione": "Начертай тръбопровод",
   "Elimina la tubazione selezionata": "Изтрий избрания тръбопровод",
@@ -5542,6 +5607,11 @@ const BG: Dict = {
 };
 
 const RU: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Добавить точку: выберите трубопровод и щёлкните по линии",
+  "Aggiungi un ramo da una tubazione esistente": "Добавить отвод от существующего трубопровода",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Щёлкните точку врезки на существующем трубопроводе, затем точки отвода. Двойной щелчок для завершения.",
+  "Punto": "Точка",
+  "Ramo": "Отвод",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Кликните по точкам трубопровода: они привязываются к центрам пивотов и к каналу. Двойной клик, чтобы замкнуть.",
   "Disegna tubazione": "Нарисовать трубопровод",
   "Elimina la tubazione selezionata": "Удалить выбранный трубопровод",
@@ -5963,6 +6033,11 @@ const RU: Dict = {
 };
 
 const AF: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Voeg 'n punt by: kies die pyplyn en klik op die lyn",
+  "Aggiungi un ramo da una tubazione esistente": "Voeg 'n tak by vanaf 'n bestaande pyplyn",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Klik op die aftakpunt op 'n bestaande pyplyn, dan die takpunte. Dubbelklik om te voltooi.",
+  "Punto": "Punt",
+  "Ramo": "Tak",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Klik die punte van die pyplyn: hulle klik vas aan die pivotsentrums en aan die kanaal. Dubbelklik om te sluit.",
   "Disegna tubazione": "Teken pyplyn",
   "Elimina la tubazione selezionata": "Vee gekose pyplyn uit",
@@ -6384,6 +6459,11 @@ const AF: Dict = {
 };
 
 const MS: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Tambah titik: pilih paip dan klik pada garisan",
+  "Aggiungi un ramo da una tubazione esistente": "Tambah cabang daripada paip sedia ada",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Klik titik pencabangan pada paip sedia ada, kemudian titik-titik cabang. Klik dua kali untuk menutup.",
+  "Punto": "Titik",
+  "Ramo": "Cabang",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Klik titik-titik paip: titik akan melekat pada pusat pivot dan pada saluran. Klik dua kali untuk menutup.",
   "Disegna tubazione": "Lukis paip",
   "Elimina la tubazione selezionata": "Padam paip terpilih",
@@ -6805,6 +6885,11 @@ const MS: Dict = {
 };
 
 const VI: Dict = {
+  "Aggiungi un punto: seleziona la tubazione e clicca sulla linea": "Thêm một điểm: chọn đường ống và nhấp vào đường kẻ",
+  "Aggiungi un ramo da una tubazione esistente": "Thêm một nhánh từ đường ống hiện có",
+  "Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.": "Nhấp vào điểm rẽ nhánh trên đường ống hiện có, rồi các điểm của nhánh. Nhấp đúp để kết thúc.",
+  "Punto": "Điểm",
+  "Ramo": "Nhánh",
   "Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere.": "Nhấp vào các điểm của đường ống: chúng sẽ bám vào tâm các pivot và vào kênh. Nhấp đúp để đóng.",
   "Disegna tubazione": "Vẽ đường ống",
   "Elimina la tubazione selezionata": "Xóa đường ống đã chọn",
