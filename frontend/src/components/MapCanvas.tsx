@@ -39,7 +39,8 @@ export type MapHandle = {
   showLayouts: (items: { id: number; fc: GeoJSONFC }[], opts?: { measures?: boolean }) => void;
   clearLayout: () => void;
   showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs) => void;
-  editPipe: (coords: number[][], cb: (coords: number[][]) => void, snap?: number[][]) => void;
+  editPipe: (coords: number[][], cb: (coords: number[][]) => void, snap?: number[][], snapLines?: number[][][],
+    labels?: { pivot: string; canal: string; free: string }) => void;
   endPipeEdit: () => void;
   clearPivots: () => void;
   showRoads: (roads: { coords: number[][]; width_m?: number }[], onRemove?: (i: number) => void) => void;
@@ -832,51 +833,130 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
       // Modifica di UNA tubazione: maniglie trascinabili su ogni vertice, clic
       // sulla linea per inserire un punto, doppio clic su una maniglia per
       // toglierlo. Ogni modifica richiama cb con il nuovo tracciato.
-      editPipe(coords, cb, snap) {
+      editPipe(coords, cb, snap, snapLines, labels) {
         const map = mapRef.current, g = canalEditRef.current;
         if (!map || !g) return;
         g.clearLayers();
         let pts = coords.map((p) => [...p]);
-        const redraw = () => { this.editPipe(pts, cb, snap); };
-        const fire = () => cb(pts.map((q) => [...q]));
-        // Aggancio ai CENTRI dei pivot: entro ~25 px il vertice scatta sul centro.
-        const snapTo = (lng: number, lat: number): [number, number] => {
-          if (!snap || !snap.length || !map) return [lng, lat];
-          const here = map.latLngToContainerPoint([lat, lng]);
-          let bestP: [number, number] = [lng, lat], bd = 25;
-          for (const s of snap) {
-            const q = map.latLngToContainerPoint([s[1], s[0]]);
+        const redraw = () => { this.editPipe(pts, cb, snap, snapLines, labels); };
+        const SNAP_PX = 22;     // distanza di aggancio
+        const ON_PX = 7;        // "sta già sopra": crea il vertice automaticamente
+        const px = (lng: number, lat: number) => map.latLngToContainerPoint([lat, lng]);
+        // Aggancio: prima i CENTRI dei pivot (bersaglio esatto), poi il canale o
+        // il fiume (punto qualsiasi lungo la linea, non solo i suoi vertici).
+        const snapTo = (lng: number, lat: number): { p: [number, number]; kind: "free" | "pivot" | "canal" } => {
+          const here = px(lng, lat);
+          let bestP: [number, number] = [lng, lat], bd = SNAP_PX, kind: "free" | "pivot" | "canal" = "free";
+          for (const s of snap || []) {
+            const q = px(s[0], s[1]);
             const d = Math.hypot(q.x - here.x, q.y - here.y);
-            if (d < bd) { bd = d; bestP = [s[0], s[1]]; }
+            if (d < bd) { bd = d; bestP = [s[0], s[1]]; kind = "pivot"; }
           }
-          return bestP;
+          if (kind === "pivot") return { p: bestP, kind };
+          for (const ln of snapLines || []) {
+            for (let i = 0; i < ln.length - 1; i++) {
+              const a = px(ln[i][0], ln[i][1]), b = px(ln[i + 1][0], ln[i + 1][1]);
+              const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-9;
+              let tt = ((here.x - a.x) * dx + (here.y - a.y) * dy) / l2; tt = Math.max(0, Math.min(1, tt));
+              const qx = a.x + dx * tt, qy = a.y + dy * tt;
+              const d = Math.hypot(qx - here.x, qy - here.y);
+              if (d < bd) {
+                bd = d; kind = "canal";
+                const ll = map.containerPointToLatLng([qx, qy] as unknown as L.PointExpression);
+                bestP = [ll.lng, ll.lat];
+              }
+            }
+          }
+          return { p: bestP, kind };
         };
+        // Che cosa c'è sotto un vertice: serve solo a colorare la maniglia.
+        const kindOf = (p: number[]): "free" | "pivot" | "canal" => {
+          const here = px(p[0], p[1]);
+          for (const s of snap || []) { const q = px(s[0], s[1]); if (Math.hypot(q.x - here.x, q.y - here.y) < 3) return "pivot"; }
+          for (const ln of snapLines || []) for (let i = 0; i < ln.length - 1; i++) {
+            const a = px(ln[i][0], ln[i][1]), b = px(ln[i + 1][0], ln[i + 1][1]);
+            const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-9;
+            let tt = ((here.x - a.x) * dx + (here.y - a.y) * dy) / l2; tt = Math.max(0, Math.min(1, tt));
+            if (Math.hypot(a.x + dx * tt - here.x, a.y + dy * tt - here.y) < 3) return "canal";
+          }
+          return "free";
+        };
+        // Dove la tubazione PASSA su un centro pivot o incrocia il canale senza
+        // avere lì un vertice, il vertice viene creato: così ogni aggancio è un
+        // estremo di segmento, spostabile ed eliminabile da solo.
+        const addJoints = () => {
+          const out: number[][] = [];
+          for (let i = 0; i < pts.length - 1; i++) {
+            const A = pts[i], B = pts[i + 1];
+            const a = px(A[0], A[1]), b = px(B[0], B[1]);
+            const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-9;
+            const mid: { t: number; p: number[] }[] = [];
+            for (const s of snap || []) {
+              const q = px(s[0], s[1]);
+              let tt = ((q.x - a.x) * dx + (q.y - a.y) * dy) / l2;
+              if (tt <= 0.02 || tt >= 0.98) continue;
+              if (Math.hypot(a.x + dx * tt - q.x, a.y + dy * tt - q.y) > ON_PX) continue;
+              mid.push({ t: tt, p: [s[0], s[1]] });
+            }
+            for (const ln of snapLines || []) for (let k = 0; k < ln.length - 1; k++) {
+              const c = px(ln[k][0], ln[k][1]), d = px(ln[k + 1][0], ln[k + 1][1]);
+              const rx = dx, ry = dy, sx = d.x - c.x, sy = d.y - c.y;
+              const den = rx * sy - ry * sx; if (Math.abs(den) < 1e-9) continue;
+              const tt = ((c.x - a.x) * sy - (c.y - a.y) * sx) / den;
+              const uu = ((c.x - a.x) * ry - (c.y - a.y) * rx) / den;
+              if (tt <= 0.02 || tt >= 0.98 || uu < 0 || uu > 1) continue;
+              const ll = map.containerPointToLatLng([a.x + rx * tt, a.y + ry * tt] as unknown as L.PointExpression);
+              mid.push({ t: tt, p: [ll.lng, ll.lat] });
+            }
+            mid.sort((x, y) => x.t - y.t);
+            out.push(A);
+            let last = -1;
+            for (const m2 of mid) { if (m2.t - last < 0.02) continue; last = m2.t; out.push(m2.p); }
+          }
+          out.push(pts[pts.length - 1]);
+          const changed = out.length !== pts.length;
+          pts = out;
+          return changed;
+        };
+        const fire = () => cb(pts.map((q) => [...q]));
         const line = L.polyline(pts.map((p) => [p[1], p[0]] as [number, number]),
           { color: "#f0b429", weight: 5, opacity: 0.85 });
         g.addLayer(line);
+        const dot = (kind: "free" | "pivot" | "canal") => {
+          const bg = kind === "pivot" ? "#0d3b26" : kind === "canal" ? "#2f6fd0" : "#f0b429";
+          const shape = kind === "canal" ? "border-radius:3px" : "border-radius:50%";
+          return '<div style="width:14px;height:14px;' + shape + ';background:' + bg +
+            ';border:2px solid #fff;box-shadow:0 0 0 2px rgba(13,59,38,.55);cursor:grab"></div>';
+        };
         pts.forEach((pt, i) => {
+          const k0 = kindOf(pt);
           const m = L.marker([pt[1], pt[0]], {
             draggable: true, zIndexOffset: 1200,
-            icon: L.divIcon({ className: "", iconSize: [14, 14], iconAnchor: [7, 7],
-              html: '<div style="width:14px;height:14px;border-radius:50%;background:#f0b429;border:2px solid #b23b1e;box-shadow:0 0 0 2px #fff;cursor:grab"></div>' }),
+            icon: L.divIcon({ className: "", iconSize: [14, 14], iconAnchor: [7, 7], html: dot(k0) }),
           });
+          const lab = labels || { pivot: "Agganciato al centro del pivot", canal: "Agganciato al canale", free: "Punto libero" };
+          m.bindTooltip(k0 === "pivot" ? lab.pivot : k0 === "canal" ? lab.canal : lab.free,
+            { direction: "top", offset: [0, -10] });
           m.on("drag", (e) => {
             const ll = (e.target as L.Marker).getLatLng();
-            pts[i] = snapTo(ll.lng, ll.lat);
+            pts[i] = snapTo(ll.lng, ll.lat).p;
             line.setLatLngs(pts.map((q) => [q[1], q[0]] as [number, number]));
           });
           m.on("dragend", (e) => {
             const ll = (e.target as L.Marker).getLatLng();
-            pts[i] = snapTo(ll.lng, ll.lat);
-            (e.target as L.Marker).setLatLng([pts[i][1], pts[i][0]]);   // scatta sul centro
-            line.setLatLngs(pts.map((q) => [q[1], q[0]] as [number, number]));
-            fire();
+            const r = snapTo(ll.lng, ll.lat);
+            pts[i] = r.p;
+            (e.target as L.Marker).setLatLng([r.p[1], r.p[0]]);
+            addJoints(); fire(); redraw();
           });
-          m.on("dblclick", (e) => {
+          // Doppio clic o tasto destro: elimina il punto (restano almeno 2 punti).
+          const kill = (e: L.LeafletMouseEvent) => {
             L.DomEvent.stop(e);
-            if (pts.length <= 2) return;                 // servono almeno 2 punti
+            if (pts.length <= 2) return;
             pts.splice(i, 1); fire(); redraw();
-          });
+          };
+          m.on("dblclick", kill);
+          m.on("contextmenu", kill);
           g.addLayer(m);
         });
         line.on("click", (ev: L.LeafletMouseEvent) => {
@@ -888,8 +968,10 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             const d = (cl.lng - (ax + tt * dx)) ** 2 + (cl.lat - (ay + tt * dy)) ** 2;
             if (d < bd) { bd = d; best = i; }
           }
-          pts.splice(best + 1, 0, snapTo(cl.lng, cl.lat)); fire(); redraw();
+          pts.splice(best + 1, 0, snapTo(cl.lng, cl.lat).p); fire(); redraw();
         });
+        // All'apertura: crea subito i vertici sugli agganci già esistenti.
+        if (addJoints()) { fire(); redraw(); }
       },
       endPipeEdit() { canalEditRef.current?.clearLayers(); },
       drawCanalManual(cb) {

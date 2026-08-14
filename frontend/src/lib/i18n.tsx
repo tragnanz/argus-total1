@@ -41,6 +41,10 @@ export const LOCALES: Record<Lang, string> = {
 type Dict = Record<string, string>;
 
 const EN: Dict = {
+  "Agganciato al canale": "Snapped to canal",
+  "Agganciato al centro del pivot": "Snapped to pivot centre",
+  "Punto libero": "Free point",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Drag the points: they snap to pivot centres and to the canal. Click on the line to add a point, double-click (or right-click) a point to delete it.",
   "Annulla l'ultima operazione": "Undo last action",
   "Avvisi": "Alerts",
   "Cancella misure": "Clear measurements",
@@ -453,6 +457,10 @@ const EN: Dict = {
 };
 
 const FR: Dict = {
+  "Agganciato al canale": "Accroché au canal",
+  "Agganciato al centro del pivot": "Accroché au centre du pivot",
+  "Punto libero": "Point libre",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Faites glisser les points : ils s'accrochent aux centres des pivots et au canal. Cliquez sur la ligne pour ajouter un point, double-cliquez (ou clic droit) sur un point pour le supprimer.",
   "Annulla l'ultima operazione": "Annuler la dernière opération",
   "Avvisi": "Alertes",
   "Cancella misure": "Effacer les mesures",
@@ -865,6 +873,10 @@ const FR: Dict = {
 };
 
 const ES: Dict = {
+  "Agganciato al canale": "Enganchado al canal",
+  "Agganciato al centro del pivot": "Enganchado al centro del pivot",
+  "Punto libero": "Punto libre",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Arrastra los puntos: se enganchan a los centros de los pivots y al canal. Haz clic en la línea para añadir un punto, doble clic (o clic derecho) en un punto para eliminarlo.",
   "Annulla l'ultima operazione": "Deshacer la última operación",
   "Avvisi": "Avisos",
   "Cancella misure": "Borrar medidas",
@@ -1277,6 +1289,10 @@ const ES: Dict = {
 };
 
 const PT: Dict = {
+  "Agganciato al canale": "Fixado ao canal",
+  "Agganciato al centro del pivot": "Fixado ao centro do pivô",
+  "Punto libero": "Ponto livre",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Arraste os pontos: eles encaixam-se nos centros dos pivôs e no canal. Clique na linha para adicionar um ponto, duplo clique (ou botão direito) num ponto para o eliminar.",
   "Annulla l'ultima operazione": "Desfazer a última operação",
   "Avvisi": "Avisos",
   "Cancella misure": "Apagar medições",
@@ -1689,6 +1705,10 @@ const PT: Dict = {
 };
 
 const RO: Dict = {
+  "Agganciato al canale": "Ancorat la canal",
+  "Agganciato al centro del pivot": "Ancorat la centrul pivotului",
+  "Punto libero": "Punct liber",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Trage punctele: se ancorează la centrele pivoților și la canal. Clic pe linie pentru a adăuga un punct, dublu clic (sau clic dreapta) pe un punct pentru a-l șterge.",
   "Annulla l'ultima operazione": "Anulează ultima operațiune",
   "Avvisi": "Alerte",
   "Cancella misure": "Șterge măsurătorile",
@@ -2103,6 +2123,10 @@ const RO: Dict = {
 };
 
 const KK: Dict = {
+  "Agganciato al canale": "Каналға бекітілген",
+  "Agganciato al centro del pivot": "Пивот орталығына бекітілген",
+  "Punto libero": "Еркін нүкте",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Нүктелерді сүйреңіз: олар пивоттардың орталықтарына және каналға бекітіледі. Нүкте қосу үшін сызықты басыңыз, нүктені жою үшін оны екі рет басыңыз (немесе тінтуірдің оң жақ түймесін басыңыз).",
   "Annulla l'ultima operazione": "Соңғы әрекетті болдырмау",
   "Avvisi": "Ескертулер",
   "Cancella misure": "Өлшемдерді өшіру",
@@ -2517,6 +2541,10 @@ const KK: Dict = {
 };
 
 const AR: Dict = {
+  "Agganciato al canale": "مثبَّت على القناة",
+  "Agganciato al centro del pivot": "مثبَّت على مركز البيفوت",
+  "Punto libero": "نقطة حرة",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "اسحب النقاط: تلتصق بمراكز البيفوت وبالقناة. انقر على الخط لإضافة نقطة، وانقر نقرًا مزدوجًا (أو بالزر الأيمن) على نقطة لحذفها.",
   "Annulla l'ultima operazione": "التراجع عن آخر عملية",
   "Avvisi": "التنبيهات",
   "Cancella misure": "مسح القياسات",
@@ -2929,6 +2957,10 @@ const AR: Dict = {
 };
 
 const ZH: Dict = {
+  "Agganciato al canale": "已吸附到渠道",
+  "Agganciato al centro del pivot": "已吸附到中心支轴机中心",
+  "Punto libero": "自由点",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "拖动节点：节点会吸附到各中心支轴机的中心和渠道上。点击线段可添加节点，双击（或右键点击）节点可将其删除。",
   "Annulla l'ultima operazione": "撤销上一步操作",
   "Avvisi": "提醒",
   "Cancella misure": "清除测量",
@@ -3343,6 +3375,10 @@ const ZH: Dict = {
 };
 
 const HU: Dict = {
+  "Agganciato al canale": "Csatornához illesztve",
+  "Agganciato al centro del pivot": "Pivot középpontjához illesztve",
+  "Punto libero": "Szabad pont",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Húzza a pontokat: a pivotok középpontjához és a csatornához illeszkednek. Kattintson a vonalra pont hozzáadásához, kattintson duplán (vagy jobb gombbal) egy pontra a törléséhez.",
   "Annulla l'ultima operazione": "Utolsó művelet visszavonása",
   "Avvisi": "Értesítések",
   "Cancella misure": "Mérések törlése",
@@ -3757,6 +3793,10 @@ const HU: Dict = {
 };
 
 const ID: Dict = {
+  "Agganciato al canale": "Terkunci ke kanal",
+  "Agganciato al centro del pivot": "Terkunci ke pusat pivot",
+  "Punto libero": "Titik bebas",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Seret titik: titik akan menempel ke pusat pivot dan ke kanal. Klik pada garis untuk menambah titik, klik dua kali (atau klik kanan) pada titik untuk menghapusnya.",
   "Annulla l'ultima operazione": "Urungkan tindakan terakhir",
   "Avvisi": "Notifikasi",
   "Cancella misure": "Hapus pengukuran",
@@ -4171,6 +4211,10 @@ const ID: Dict = {
 };
 
 const DE: Dict = {
+  "Agganciato al canale": "Am Kanal eingerastet",
+  "Agganciato al centro del pivot": "Am Pivot-Zentrum eingerastet",
+  "Punto libero": "Freier Punkt",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Ziehen Sie die Punkte: Sie rasten an den Pivot-Zentren und am Kanal ein. Klicken Sie auf die Linie, um einen Punkt hinzuzufügen, Doppelklick (oder Rechtsklick) auf einen Punkt, um ihn zu löschen.",
   "Annulla l'ultima operazione": "Letzten Vorgang rückgängig machen",
   "Avvisi": "Meldungen",
   "Cancella misure": "Messungen löschen",
@@ -4579,6 +4623,10 @@ const DE: Dict = {
 };
 
 const PL: Dict = {
+  "Agganciato al canale": "Przypięty do kanału",
+  "Agganciato al centro del pivot": "Przypięty do środka pivota",
+  "Punto libero": "Punkt swobodny",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Przeciągaj punkty: przyciągają się do środków pivotów i do kanału. Kliknij linię, aby dodać punkt, kliknij dwukrotnie (lub prawym przyciskiem) punkt, aby go usunąć.",
   "Annulla l'ultima operazione": "Cofnij ostatnią operację",
   "Avvisi": "Powiadomienia",
   "Cancella misure": "Usuń pomiary",
@@ -4989,6 +5037,10 @@ const PL: Dict = {
 };
 
 const BG: Dict = {
+  "Agganciato al canale": "Закачено за канала",
+  "Agganciato al centro del pivot": "Закачено за центъра на пивота",
+  "Punto libero": "Свободна точка",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Влачете точките: те се захващат за центровете на пивотите и за канала. Щракнете върху линията, за да добавите точка, щракнете двукратно (или с десния бутон) върху точка, за да я изтриете.",
   "Annulla l'ultima operazione": "Отмени последното действие",
   "Avvisi": "Известия",
   "Cancella misure": "Изчисти измерванията",
@@ -5399,6 +5451,10 @@ const BG: Dict = {
 };
 
 const RU: Dict = {
+  "Agganciato al canale": "Привязано к каналу",
+  "Agganciato al centro del pivot": "Привязано к центру пивота",
+  "Punto libero": "Свободная точка",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Перетаскивайте точки: они привязываются к центрам пивотов и к каналу. Щёлкните по линии, чтобы добавить точку, дважды щёлкните (или щёлкните правой кнопкой) по точке, чтобы удалить её.",
   "Annulla l'ultima operazione": "Отменить последнее действие",
   "Avvisi": "Уведомления",
   "Cancella misure": "Очистить измерения",
@@ -5809,6 +5865,10 @@ const RU: Dict = {
 };
 
 const AF: Dict = {
+  "Agganciato al canale": "Vasgeklik aan die kanaal",
+  "Agganciato al centro del pivot": "Vasgeklik aan die pivot se middelpunt",
+  "Punto libero": "Vrye punt",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Sleep die punte: hulle klik vas aan die pivots se middelpunte en aan die kanaal. Klik op die lyn om 'n punt by te voeg, dubbelklik (of regskliek) op 'n punt om dit te verwyder.",
   "Annulla l'ultima operazione": "Ontdoen laaste handeling",
   "Avvisi": "Kennisgewings",
   "Cancella misure": "Vee metings uit",
@@ -6219,6 +6279,10 @@ const AF: Dict = {
 };
 
 const MS: Dict = {
+  "Agganciato al canale": "Terkunci pada saluran",
+  "Agganciato al centro del pivot": "Terkunci pada pusat pivot",
+  "Punto libero": "Titik bebas",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Seret titik: ia akan terkunci pada pusat pivot dan pada saluran. Klik pada garisan untuk menambah titik, klik dua kali (atau klik kanan) pada titik untuk memadamkannya.",
   "Annulla l'ultima operazione": "Buat asal tindakan terakhir",
   "Avvisi": "Makluman",
   "Cancella misure": "Padam ukuran",
@@ -6629,6 +6693,10 @@ const MS: Dict = {
 };
 
 const VI: Dict = {
+  "Agganciato al canale": "Đã bám vào kênh",
+  "Agganciato al centro del pivot": "Đã bám vào tâm pivot",
+  "Punto libero": "Điểm tự do",
+  "Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo.": "Kéo các điểm: chúng sẽ bám vào tâm của các pivot và vào kênh. Nhấp vào đường để thêm một điểm, nhấp đúp (hoặc nhấp chuột phải) vào một điểm để xóa nó.",
   "Annulla l'ultima operazione": "Hoàn tác thao tác cuối",
   "Avvisi": "Thông báo",
   "Cancella misure": "Xóa phép đo",

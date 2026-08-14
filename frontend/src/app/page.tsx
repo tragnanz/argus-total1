@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.121";
+const REV = "v0.6.122";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1853,18 +1853,23 @@ export default function Page() {
         const target = pivotLines.indexOf(visL[li]);   // indice reale nel modello
         if (target < 0) return;
         editPipeRef.current = target;
-        setMsg(t("Trascina i punti per modificare la tubazione; clic sulla linea per aggiungerne uno, doppio clic su un punto per toglierlo."));
+        setMsg(t("Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo."));
         api2.editPipe?.(pivotLines[target].coords, (coords) => {
           setPivotLines((ls) => {
             const arr = ls.map((l, k) => (k === target ? { ...l, coords } : l));
             setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, arr) } : gp));
             return arr;
           });
-        }, pivots.map((pv) => [pv.lng, pv.lat]));   // aggancio ai centri dei pivot
+        },
+        pivots.map((pv) => [pv.lng, pv.lat]),                       // aggancio ai centri dei pivot
+        [...canals.filter((c) => !c.hidden).map((c) => c.geojson.coordinates as number[][]),
+         ...watercourses.filter((w) => !w.hidden && w.geojson?.type === "LineString")
+           .map((w) => w.geojson.coordinates as unknown as number[][])],   // aggancio al canale / fiume
+        { pivot: t("Agganciato al centro del pivot"), canal: t("Agganciato al canale"), free: t("Punto libero") });
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pivots, pivotLines, pivotSel, hiddenPivotFields, hiddenPipeFields]);
+  }, [pivots, pivotLines, pivotSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses]);
 
   // Operazioni sul singolo pivot selezionato.
   const selPivot = pivotSel.mode === "single" && pivotSel.idx >= 0 ? pivots[pivotSel.idx] : null;
