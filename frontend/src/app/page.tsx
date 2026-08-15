@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.138";
+const REV = "v0.6.139";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -44,6 +44,7 @@ const TABS: { key: string; label: string }[] = [
   { key: "rilievo", label: "Rilievo" },
   { key: "impianti", label: "Impianti" },
   { key: "accessori", label: "Accessori" },
+  { key: "irrigazione", label: "Irrigazione" },
   { key: "export", label: "Esporta" },
 ];
 
@@ -805,9 +806,10 @@ const IcoNavRilievo = () => (<svg {...navProps}><path d="m3 20 6-9 4 5 3-4 5 8z"
 const IcoNavImpianti = () => (<svg {...navProps}><circle cx="12" cy="12" r="8" /><path d="M12 12h8" /><circle cx="12" cy="12" r="1.6" /></svg>);
 const IcoNavAccessori = () => (<svg {...navProps}><path d="M4 7h16M4 12h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="12" r="2" /><circle cx="8" cy="17" r="2" /></svg>);
 const IcoNavExport = () => (<svg {...navProps}><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M4 20h16" /></svg>);
+const IcoNavIrrigazione = () => (<svg {...navProps}><path d="M12 3s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z" /><path d="M10 13a2 2 0 0 0 4 0" /></svg>);
 const TAB_ICONS = {
   analisi: IcoNavAnalisi, rilievo: IcoNavRilievo, impianti: IcoNavImpianti,
-  accessori: IcoNavAccessori, export: IcoNavExport,
+  accessori: IcoNavAccessori, irrigazione: IcoNavIrrigazione, export: IcoNavExport,
 };
 
 // Intestazione di sezione con testo-guida apribile/chiudibile da "?"
@@ -1013,8 +1015,18 @@ export default function Page() {
   const [pivots, setPivots] = useState<PivotItem[]>([]);
   const [pivotLines, setPivotLines] = useState<PipeLine[]>([]);
   // Parametri idraulici di progetto (il singolo pivot può avere i suoi).
-  const [pivQ, setPivQ] = useState(60);      // portata richiesta da un pivot (l/s)
-  const [pivP, setPivP] = useState(2.5);     // pressione richiesta al pivot (bar)
+  // ---- Irrigazione: il fabbisogno decide la portata di OGNI pivot ----
+  const [cropKey, setCropKey] = useState("canna");   // coltura → coefficiente Kc
+  const [mm24, setMm24] = useState(8);               // fabbisogno lordo (mm/24h)
+  const [rainMm, setRainMm] = useState(0);           // piovosità utile (mm/24h)
+  const [effPct, setEffPct] = useState(85);          // efficienza dell'impianto (%)
+  const [hoursDay, setHoursDay] = useState(20);      // ore di esercizio al giorno
+  const [soakMmH, setSoakMmH] = useState(12);        // assorbimento del terreno (mm/h)
+  const [wetW, setWetW] = useState(20);              // larghezza bagnata degli irrigatori (m)
+  const [turnsDay, setTurnsDay] = useState(1);       // giri del pivot al giorno
+  const [sprinkBar, setSprinkBar] = useState(1.4);   // pressione richiesta agli irrigatori
+  const [latDN, setLatDN] = useState(168);           // diametro della condotta del pivot (mm)
+  const [pivP, setPivP] = useState(2.5);     // pressione richiesta al pivot (bar) — solo come ripiego
   const [vMax, setVMax] = useState(1.8);     // velocità massima in tubazione (m/s)
   const [hwC, setHwC] = useState(140);       // coefficiente di Hazen-Williams (PE/PVC ≈ 140)
   const [dragOverField, setDragOverField] = useState<number | "root" | null>(null);   // evidenzia il bersaglio del trascinamento
@@ -2471,12 +2483,41 @@ export default function Page() {
   // con un RAMO dedicato: un tratto nuovo dal centro del pivot fino alla
   // tubazione esistente, che resta com'è. Non si deforma la linea esistente
   // facendola passare per il pivot.
+  // Coefficienti colturali (Kc di punta) e assorbimento tipico per suolo.
+  const CROPS: Record<string, number> = { canna: 1.25, mais: 1.2, medica: 1.15, cereali: 1.15, ortive: 1.05, altro: 1.1 };
+  const SOAK: Record<string, number> = { sabbioso: 25, "franco-sabbioso": 18, franco: 12, "franco-argilloso": 8, argilloso: 5 };
+  // Fabbisogno consigliato: ET₀ di punta × Kc, meno la pioggia utile, diviso
+  // l'efficienza dell'impianto.
+  const mm24Suggested = Math.max(0, (et0Peak * (CROPS[cropKey] ?? 1.1) - rainMm)) / Math.max(0.3, effPct / 100);
+  // Portata di UN pivot: 1 mm su 1 m² = 1 litro, quindi basta l'area del cerchio.
+  const pivotFlow = (pv: { r: number; q?: number }) => {
+    if (pv.q && pv.q > 0) return pv.q;                       // valore imposto a mano
+    const area = Math.PI * pv.r * pv.r;                      // m²
+    return (area * mm24) / (Math.max(1, hoursDay) * 3600);   // l/s (mm24 è già lordo)
+  };
+  // Intensità di pioggia al bordo esterno: è lì che il pivot bagna più in fretta
+  // e dove il terreno rischia di non assorbire.
+  const rimRate = (r: number) => {
+    const depthPerTurn = mm24 / Math.max(1, turnsDay);       // mm per giro
+    const tTurn = Math.max(0.1, hoursDay / Math.max(1, turnsDay));   // ore per giro
+    return (2 * Math.PI * r * depthPerTurn) / (Math.max(1, wetW) * tTurn);   // mm/h
+  };
+  // Pressione richiesta al centro del pivot: irrigatori + perdita nella condotta
+  // del pivot (Hazen-Williams con fattore 0,36 per le uscite multiple).
+  const pivotPressure = (pv: { r: number; q?: number; p?: number }) => {
+    if (pv.p && pv.p > 0) return pv.p;
+    const Q = pivotFlow(pv) / 1000;                          // m³/s
+    const D = latDN / 1000;
+    const hf = 0.36 * (10.67 * pv.r * Math.pow(Q, 1.852)) / (Math.pow(130, 1.852) * Math.pow(D, 4.87));
+    return sprinkBar + hf / 10.2;                            // bar
+  };
+
   // ---- IDRAULICA: diametri delle tubazioni --------------------------------
   // Ogni pivot chiede una portata; la portata di un tratto è la somma di quelle
   // dei pivot che stanno a valle. Dal diametro minimo che rispetta la velocità
   // massima si sale al primo diametro commerciale disponibile.
   const DN_LIST = [110, 125, 140, 160, 180, 200, 225, 250, 280, 315, 355, 400, 450, 500, 560, 630, 710, 800, 900, 1000];
-  function computeHydraulics(apply: boolean) {
+  function computeHydraulics(apply: boolean, elev?: Map<string, number> | null) {
     const pipes = pivotLines.map((l, i) => ({ l, i })).filter((x) => x.l.kind === "pipe");
     if (!pipes.length) { setMsg(t("Nessuna tubazione da dimensionare.")); return null; }
     const lat0 = pipes[0].l.coords[0]?.[1] ?? 0;
@@ -2505,7 +2546,7 @@ export default function Page() {
     for (const pv of pivots) {
       const k = key([pv.lng, pv.lat]);
       if (!posOf.has(k)) { unserved++; continue; }
-      demand.set(k, (demand.get(k) || 0) + (pv.q && pv.q > 0 ? pv.q : pivQ));
+      demand.set(k, (demand.get(k) || 0) + pivotFlow(pv));
     }
     // sorgenti: nodi che stanno sull'acqua
     const W = waterLinesLL().map((ln) => ln.map((q) => [q[0] * mLng, q[1] * mLat] as [number, number]));
@@ -2565,6 +2606,33 @@ export default function Page() {
       const qa = qsOf.get(e.pipe) ?? []; qa[e.seg] = Math.round(Q * 10) / 10; qsOf.set(e.pipe, qa);
       byDn.set(dn, (byDn.get(dn) || 0) + e.len);
     }
+    // Prevalenza richiesta a ogni presa: si risale dal pivot più esigente
+    // sommando perdite di carico e dislivello fino alla sua presa.
+    const headAt = new Map<string, number>();     // metri d'acqua richiesti a un nodo
+    const lossOf = new Map<number, number>();     // perdita di ogni arco
+    for (let ei = 0; ei < edges.length; ei++) {
+      const e = edges[ei]; const Q = flow[ei];
+      const dn = (dnOf.get(e.pipe) ?? [])[e.seg] ?? DN_LIST[0];
+      lossOf.set(ei, Q > 0 ? (10.67 * e.len * Math.pow(Q / 1000, 1.852)) / (Math.pow(hwC, 1.852) * Math.pow(dn / 1000, 4.87)) : 0);
+    }
+    const zOf = (k: string) => (elev ? (elev.get(k) ?? 0) : 0);
+    const needAt = new Map<string, number>();
+    for (const pv of pivots) {
+      const k = key([pv.lng, pv.lat]);
+      if (!posOf.has(k)) continue;
+      needAt.set(k, Math.max(needAt.get(k) ?? 0, pivotPressure(pv) * 10.2 + zOf(k)));   // m d'acqua + quota
+    }
+    // dai nodi verso la sorgente: ogni arco aggiunge la sua perdita
+    for (let i = order.length - 1; i >= 0; i--) {
+      const u = order[i];
+      const pe = parentEdge.get(u); if (pe == null) continue;
+      const need = needAt.get(u); if (need == null) continue;
+      const e = edges[pe]; const par = e.a === u ? e.b : e.a;
+      const up = need + (lossOf.get(pe) ?? 0);
+      needAt.set(par, Math.max(needAt.get(par) ?? 0, up));
+    }
+    for (const k of sources) headAt.set(k, Math.max(0, (needAt.get(k) ?? 0) - zOf(k)));
+    const headMax = sources.reduce((m2, k) => Math.max(m2, headAt.get(k) ?? 0), 0);
     const totalQ = sources.reduce((s2, k) => {
       let q = 0;
       for (const ei of adj.get(k) ?? []) { const e = edges[ei]; if (parentEdge.get(e.a === k ? e.b : e.a) === ei) q += flow[ei]; }
@@ -2575,11 +2643,27 @@ export default function Page() {
       setPivotLines(next);
       setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, next) } : gp));
     }
-    return { byDn: [...byDn.entries()].sort((a, b) => a[0] - b[0]), totalQ, hlMax, unserved, isolated, nSources: sources.length };
+    return { byDn: [...byDn.entries()].sort((a, b) => a[0] - b[0]), totalQ, hlMax, unserved, isolated, nSources: sources.length,
+      headMax, withElev: !!elev };
   }
-  const [hydra, setHydra] = useState<null | { byDn: [number, number][]; totalQ: number; hlMax: number; unserved: number; isolated: number; nSources: number }>(null);
-  function runHydraulics() {
-    const r = computeHydraulics(true);
+  const [hydra, setHydra] = useState<null | { byDn: [number, number][]; totalQ: number; hlMax: number; unserved: number; isolated: number; nSources: number; headMax: number; withElev: boolean }>(null);
+  async function runHydraulics() {
+    // Quote del terreno: servono per la prevalenza vera alla presa (un pivot in
+    // quota costa metri d'acqua tanto quanto le perdite di carico).
+    let elev: Map<string, number> | null = null;
+    const pts: number[][] = pivots.map((p) => [p.lng, p.lat]);
+    const taps: number[][] = [];
+    for (const l of pivotLines) if (l.kind === "pipe" && l.coords.length) taps.push(l.coords[0]);
+    try {
+      setBusy("hydra");
+      const res = await api.fetchElevation([...pts, ...taps]);
+      elev = new Map();
+      res.points.forEach((q, i) => {
+        const src = i < pts.length ? pts[i] : taps[i - pts.length];
+        if (q.elev_m != null) elev!.set(`${src[0].toFixed(5)},${src[1].toFixed(5)}`, q.elev_m);
+      });
+    } catch { elev = null; } finally { setBusy(""); }
+    const r = computeHydraulics(true, elev);
     setHydra(r);
     if (r) setMsg(t("Diametri calcolati ✓ portata totale {q} l/s su {n} prese", { q: Math.round(r.totalQ), n: r.nSources }));
   }
@@ -3383,15 +3467,15 @@ export default function Page() {
                   </div>
                   <div className="flex gap-2 mt-2">
                     <label className="text-[11px] text-sage-dark flex-1">{t("Portata (l/s)")}
-                      <input type="number" min={0} step={1} value={selPivot.q ?? ""} placeholder={String(pivQ)}
+                      <input type="number" min={0} step={1} value={selPivot.q ?? ""} placeholder={String(Math.round(pivotFlow({ r: selPivot.r })))}
                         onChange={(e) => updateSelPivot({ q: e.target.value === "" ? undefined : Math.max(0, Number(e.target.value)) })}
                         className="field-input mt-1" /></label>
                     <label className="text-[11px] text-sage-dark flex-1">{t("Pressione (bar)")}
-                      <input type="number" min={0} step={0.1} value={selPivot.p ?? ""} placeholder={String(pivP)}
+                      <input type="number" min={0} step={0.1} value={selPivot.p ?? ""} placeholder={pivotPressure({ r: selPivot.r }).toFixed(1)}
                         onChange={(e) => updateSelPivot({ p: e.target.value === "" ? undefined : Math.max(0, Number(e.target.value)) })}
                         className="field-input mt-1" /></label>
                   </div>
-                  <div className="text-[10px] text-sage-dark mt-1">{t("Vuoto = valore di progetto ({q} l/s · {p} bar).", { q: pivQ, p: pivP })}</div>
+                  <div className="text-[10px] text-sage-dark mt-1">{t("Vuoto = calcolato da superficie e fabbisogno.")}</div>
                   <div className="text-[11px] text-sage-dark mt-1">{t("Area")}: <b>{uHa(Math.PI * selPivot.r * selPivot.r / 10000, 1)}</b></div>
                   <button className="btn-ghost w-full text-danger mt-2" onClick={deleteSelPivot}>{t("Elimina pivot")}</button>
                 </div>
@@ -4028,9 +4112,6 @@ export default function Page() {
 
             <div className="bg-panel rounded-lg p-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Tubazioni di adduzione dal canale")}</div>
-              <p className="text-[10px] text-sage-dark leading-snug mb-2">
-                {t("Linee dritte e perpendicolari al canale: ogni tubazione parte dal canale ed entra nel campo servendo la fila di pivot che ha davanti.")}
-              </p>
 
               {canals.length > 1 && (
                 <label className="block mb-2">
@@ -4048,10 +4129,9 @@ export default function Page() {
                   onChange={(e) => setPipeMaxPerLine(Math.max(1, Number(e.target.value)))} className="field-input px-2 py-1.5 text-sm" />
               </div>
 
-              <div className="text-[10px] text-sage-dark bg-white/40 rounded-md p-1.5 mt-2 leading-relaxed">
-                {t("Partono dal canale, inclinate fino a ±20° dalla perpendicolare: il sistema sceglie la soluzione con la rete PIÙ CORTA. Ogni linea serve al massimo {n} pivot e passa per i loro centri.", { n: pipeMaxPerLine })}
-                {nPipes > 0 && <> · {t("Tubazioni attive")}: <b>{nPipes}</b></>}
-              </div>
+              {nPipes > 0 && (
+                <div className="text-[11px] text-sage-dark mt-2">{t("Tubazioni attive")}: <b>{nPipes}</b></div>
+              )}
 
               <div className="flex gap-2 mt-2">
                 <button className="btn-primary flex-1 basis-0" disabled={!active || !canals.length}
@@ -4066,23 +4146,12 @@ export default function Page() {
                   {t("Elimina la tubazione selezionata")}
                 </button>
               </div>
-              <div className="text-[10px] text-sage-dark mt-1 leading-relaxed">
-                {t("Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.")}
-              </div>
               {!canals.length && <p className="text-[10px] text-danger mt-1">{t("Traccia prima un canale nella pagina Rilievo.")}</p>}
             </div>
 
             <div className="border-t border-black/5 mt-3 pt-3">
               <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Idraulica")}</div>
               <div className="grid grid-cols-2 gap-2 mt-2">
-                <label className="text-[11px] text-sage-dark">{t("Portata per pivot (l/s)")}
-                  <input type="number" min={1} step={1} value={pivQ}
-                    onChange={(e) => setPivQ(Math.max(1, Number(e.target.value)))} className="field-input px-2 py-1.5 text-sm mt-0.5" />
-                </label>
-                <label className="text-[11px] text-sage-dark">{t("Pressione al pivot (bar)")}
-                  <input type="number" min={0} step={0.1} value={pivP}
-                    onChange={(e) => setPivP(Math.max(0, Number(e.target.value)))} className="field-input px-2 py-1.5 text-sm mt-0.5" />
-                </label>
                 <label className="text-[11px] text-sage-dark">{t("Velocità max (m/s)")}
                   <input type="number" min={0.3} step={0.1} value={vMax}
                     onChange={(e) => setVMax(Math.max(0.3, Number(e.target.value)))} className="field-input px-2 py-1.5 text-sm mt-0.5" />
@@ -4098,6 +4167,8 @@ export default function Page() {
               {hydra && (
                 <div className="mt-2 text-[11px] text-brand-darker bg-panel rounded-lg p-2 leading-relaxed">
                   <div><b>{t("Portata totale")}</b>: {fmt(Math.round(hydra.totalQ))} l/s · {t("prese")}: {hydra.nSources}</div>
+                  <div>{t("Prevalenza richiesta alla presa")}: <b>{fmt(hydra.headMax / 10.2, { maximumFractionDigits: 1 })} bar</b> ({fmt(Math.round(hydra.headMax))} m)
+                    {!hydra.withElev && ` · ${t("senza dislivelli")}`}</div>
                   <div>{t("Perdita di carico massima su un tratto")}: {fmt(hydra.hlMax, { maximumFractionDigits: 2 })} m</div>
                   <div className="mt-1"><b>{t("Metri per diametro")}</b></div>
                   <table className="w-full tabular-nums">
@@ -4112,12 +4183,93 @@ export default function Page() {
                   )}
                 </div>
               )}
-              <p className="text-[10px] text-sage-dark mt-1 leading-relaxed">
-                {t("Il diametro di ogni tratto nasce dalla portata dei pivot a valle e dalla velocità massima; si sale al primo diametro commerciale. Le perdite usano Hazen-Williams e non tengono conto dei dislivelli.")}
-              </p>
             </div>
 
-            <p className="hint mt-3">{t("Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.")}</p>
+          </section>
+
+          <section className={secShow("irrigazione")}>
+            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Fabbisogno e portate")}</h3>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-[11px] text-sage-dark">{t("Coltura")}
+                <select className="field-input mt-0.5 px-2 py-1.5 text-sm" value={cropKey} onChange={(e) => setCropKey(e.target.value)}>
+                  <option value="canna">{t("Canna da zucchero")}</option>
+                  <option value="mais">{t("Mais")}</option>
+                  <option value="medica">{t("Erba medica")}</option>
+                  <option value="cereali">{t("Cereali")}</option>
+                  <option value="ortive">{t("Ortive")}</option>
+                  <option value="altro">{t("Altro")}</option>
+                </select></label>
+              <label className="text-[11px] text-sage-dark">{t("Tipo di suolo")}
+                <select className="field-input mt-0.5 px-2 py-1.5 text-sm" value={soilKey}
+                  onChange={(e) => { setSoilKey(e.target.value); const v = SOAK[e.target.value]; if (v) setSoakMmH(v); }}>
+                  <option value="sabbioso">{t("Sabbioso")}</option>
+                  <option value="franco-sabbioso">{t("Franco-sabbioso")}</option>
+                  <option value="franco">{t("Franco")}</option>
+                  <option value="franco-argilloso">{t("Franco-argilloso")}</option>
+                  <option value="argilloso">{t("Argilloso")}</option>
+                </select></label>
+              <label className="text-[11px] text-sage-dark">{t("ET₀ di punta (mm/g)")}
+                <input type="number" min={1} step={0.5} value={et0Peak}
+                  onChange={(e) => setEt0Peak(Math.max(1, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+              <label className="text-[11px] text-sage-dark">{t("Piovosità utile (mm/24h)")}
+                <input type="number" min={0} step={0.5} value={rainMm}
+                  onChange={(e) => setRainMm(Math.max(0, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+              <label className="text-[11px] text-sage-dark">{t("Efficienza impianto (%)")}
+                <input type="number" min={40} max={100} step={1} value={effPct}
+                  onChange={(e) => setEffPct(Math.max(40, Math.min(100, Number(e.target.value))))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+              <label className="text-[11px] text-sage-dark">{t("Ore di esercizio al giorno")}
+                <input type="number" min={1} max={24} step={1} value={hoursDay}
+                  onChange={(e) => setHoursDay(Math.max(1, Math.min(24, Number(e.target.value))))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+            </div>
+
+            <div className="flex items-end gap-2 mt-2">
+              <label className="text-[11px] text-sage-dark flex-1">{t("Fabbisogno (mm/24h)")}
+                <input type="number" min={0} step={0.5} value={mm24}
+                  onChange={(e) => setMm24(Math.max(0, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+              <button className="btn-ghost whitespace-nowrap" onClick={() => setMm24(Math.round(mm24Suggested * 10) / 10)}>
+                {t("Consigliato")}: {fmt(mm24Suggested, { maximumFractionDigits: 1 })}
+              </button>
+            </div>
+
+            <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2">{t("Assorbimento del terreno")}</h3>
+            <div className="grid grid-cols-3 gap-2">
+              <label className="text-[11px] text-sage-dark">{t("Assorbimento (mm/h)")}
+                <input type="number" min={1} step={1} value={soakMmH}
+                  onChange={(e) => setSoakMmH(Math.max(1, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+              <label className="text-[11px] text-sage-dark">{t("Larghezza bagnata (m)")}
+                <input type="number" min={3} step={1} value={wetW}
+                  onChange={(e) => setWetW(Math.max(3, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+              <label className="text-[11px] text-sage-dark">{t("Giri al giorno")}
+                <input type="number" min={1} step={1} value={turnsDay}
+                  onChange={(e) => setTurnsDay(Math.max(1, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+            </div>
+
+            <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2">{t("Pressione del pivot")}</h3>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-[11px] text-sage-dark">{t("Pressione agli irrigatori (bar)")}
+                <input type="number" min={0.5} step={0.1} value={sprinkBar}
+                  onChange={(e) => setSprinkBar(Math.max(0.5, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+              <label className="text-[11px] text-sage-dark">{t("Condotta del pivot (mm)")}
+                <input type="number" min={100} step={1} value={latDN}
+                  onChange={(e) => setLatDN(Math.max(100, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+            </div>
+
+            {pivots.length > 0 && (() => {
+              const rMax = Math.max(...pivots.map((p) => p.r));
+              const rate = rimRate(rMax);
+              const tot = pivots.reduce((a, p) => a + pivotFlow(p), 0);
+              const big = pivots.reduce((a, p) => (p.r > a.r ? p : a), pivots[0]);
+              return (
+                <div className="mt-3 text-[11px] bg-panel rounded-lg p-2 leading-relaxed text-brand-darker">
+                  <div>{t("Pivot più grande")}: {Math.round(big.r)} m · {fmt(Math.round(pivotFlow(big)))} l/s · {pivotPressure(big).toFixed(1)} bar</div>
+                  <div>{t("Portata totale dei pivot")}: <b>{fmt(Math.round(tot))} l/s</b></div>
+                  <div className={rate > soakMmH ? "text-danger font-semibold" : ""}>
+                    {t("Intensità al bordo")}: {fmt(rate, { maximumFractionDigits: 1 })} mm/h — {t("assorbimento")} {soakMmH} mm/h
+                    {rate > soakMmH ? ` · ${t("rischio ruscellamento: aumenta i giri o la larghezza bagnata")}` : " ✓"}
+                  </div>
+                </div>
+              );
+            })()}
           </section>
 
           <section className={secShow("export")}>
