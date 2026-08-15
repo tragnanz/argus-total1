@@ -52,7 +52,8 @@ def project_report(body: ReportIn, client=Depends(get_client)):
     info = {"project_name": body.project_name, "client_name": body.client_name, "notes": body.notes}
     lang = body.lang or "it"
     try:
-        png = layout_schematic_png(lay["geojson"], lay["meta"], lat0, lang=lang)
+        png = layout_schematic_png(lay["geojson"], lay["meta"], lat0, lang=lang,
+                                   field_geom=geom)
         pdf = build_pdf(info, lay["meta"].get("field_ha", 0.0), suit_meta, lay["meta"], png, f"v{REV}", lang=lang)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, f"Errore generazione PDF: {e}")

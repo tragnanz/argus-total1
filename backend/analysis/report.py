@@ -86,8 +86,122 @@ def _find_cjk() -> str | None:
     return None
 
 
-def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it") -> bytes:
-    """Disegno schematico del layout dai feature GeoJSON (lon/lat)."""
+# ---------------------------------------------------------------------------
+# Sfondo satellitare della planimetria
+#
+# La scheda mostra il campo sull'ortofoto, con la stessa fonte usata dalla
+# mappa del sito (Esri World Imagery), così il PDF e la schermata coincidono.
+# Le tessere sono in Web Mercator: per sovrapporre la geometria senza
+# deformazioni si proietta tutto in metri Mercator invece di disegnare in
+# gradi. Se la rete non risponde si torna allo schema su sfondo bianco.
+# ---------------------------------------------------------------------------
+_TILE_URL = ("https://server.arcgisonline.com/ArcGIS/rest/services/"
+             "World_Imagery/MapServer/tile/{z}/{y}/{x}")
+_TILE_PX = 256
+_R_MERC = 6378137.0
+_WORLD = 2.0 * math.pi * _R_MERC
+_SAT_CREDIT = "Esri · Maxar · Earthstar Geographics"
+
+
+def _merc(lon: float, lat: float) -> tuple[float, float]:
+    """lon/lat (gradi) → Web Mercator (metri)."""
+    lat = max(-85.05112878, min(85.05112878, lat))
+    x = math.radians(lon) * _R_MERC
+    y = math.log(math.tan(math.pi / 4.0 + math.radians(lat) / 2.0)) * _R_MERC
+    return x, y
+
+
+def _merc_ring(ring):
+    return [_merc(p[0], p[1]) for p in ring]
+
+
+def _tile_of(lon: float, lat: float, z: int) -> tuple[float, float]:
+    """Coordinate (frazionarie) di tessera per lon/lat allo zoom z."""
+    n = 2 ** z
+    x, y = _merc(lon, lat)
+    return (x + _WORLD / 2) / _WORLD * n, (_WORLD / 2 - y) / _WORLD * n
+
+
+def _fetch_tile(z: int, x: int, y: int, timeout: float):
+    import requests
+    from PIL import Image
+    r = requests.get(_TILE_URL.format(z=z, x=x, y=y), timeout=timeout,
+                     headers={"User-Agent": "ArgusTotal/1.0 (scheda PDF)"})
+    r.raise_for_status()
+    return Image.open(io.BytesIO(r.content)).convert("RGB")
+
+
+def _satellite_bg(lon_min: float, lat_min: float, lon_max: float, lat_max: float,
+                  max_tiles: int = 64, max_zoom: int = 18, timeout: float = 4.0,
+                  budget_s: float = 15.0):
+    """Mosaico di ortofoto che copre il riquadro. Ritorna (immagine, estensione
+    in metri Mercator) oppure (None, None) se le tessere non arrivano."""
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        from PIL import Image
+    except Exception:  # noqa: BLE001
+        return None, None
+
+    chosen = None
+    for z in range(max_zoom, 2, -1):
+        x0f, y0f = _tile_of(lon_min, lat_max, z)     # angolo alto-sinistra
+        x1f, y1f = _tile_of(lon_max, lat_min, z)     # angolo basso-destra
+        tx0, ty0, tx1, ty1 = int(x0f), int(y0f), int(x1f), int(y1f)
+        if (tx1 - tx0 + 1) * (ty1 - ty0 + 1) <= max_tiles:
+            chosen = (z, tx0, ty0, tx1, ty1)
+            break
+    if chosen is None:
+        return None, None
+    z, tx0, ty0, tx1, ty1 = chosen
+    nx, ny = tx1 - tx0 + 1, ty1 - ty0 + 1
+
+    # Tetto complessivo: se la rete e' lenta si rinuncia allo sfondo invece di
+    # tenere in sospeso la generazione della scheda.
+    import time
+    deadline = time.monotonic() + budget_s
+
+    def grab(t):
+        if time.monotonic() > deadline:
+            return None
+        return _safe_tile(z, t[0], t[1], timeout)
+
+    jobs = [(tx0 + i, ty0 + j) for j in range(ny) for i in range(nx)]
+    try:
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            tiles = list(pool.map(grab, jobs))
+    except Exception:  # noqa: BLE001
+        return None, None
+    if sum(1 for t in tiles if t is None) > len(tiles) // 4:
+        return None, None      # troppe tessere mancanti: meglio lo schema pulito
+
+    canvas = Image.new("RGB", (nx * _TILE_PX, ny * _TILE_PX), (18, 53, 36))
+    for (tx, ty), img in zip(jobs, tiles):
+        if img is not None:
+            canvas.paste(img, ((tx - tx0) * _TILE_PX, (ty - ty0) * _TILE_PX))
+
+    n = 2 ** z
+    left = -_WORLD / 2 + tx0 * _WORLD / n
+    right = -_WORLD / 2 + (tx1 + 1) * _WORLD / n
+    top = _WORLD / 2 - ty0 * _WORLD / n
+    bottom = _WORLD / 2 - (ty1 + 1) * _WORLD / n
+    return canvas, (left, right, bottom, top)
+
+
+def _safe_tile(z: int, x: int, y: int, timeout: float):
+    try:
+        return _fetch_tile(z, x, y, timeout)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it",
+                         field_geom: dict | None = None, satellite: bool = True) -> bytes:
+    """Planimetria del layout sull'ortofoto (come la mappa del sito).
+
+    Il disegno avviene in metri Web Mercator, gli stessi delle tessere: la
+    sovrapposizione è quindi esatta e non serve correggere l'aspetto con il
+    coseno della latitudine. Senza rete si ricade sullo schema su bianco.
+    """
     import matplotlib.font_manager as fm
     prop = None
     if lang == "zh":
@@ -101,35 +215,99 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
         return _shape(lang, s)
 
     feats = geojson.get("features", [])
-    fig, ax = plt.subplots(figsize=(9, 5.2), dpi=150)
+    fig, ax = plt.subplots(figsize=(9, 5.2), dpi=200)
     n_ph = max(1, int(meta.get("n_phases", 1)))
+
+    # Riquadro dei dati in lon/lat: serve a scegliere zoom e tessere.
+    lons: list[float] = []
+    lats: list[float] = []
+
+    def note(coords) -> None:
+        for p in coords:
+            lons.append(p[0]); lats.append(p[1])
+
+    field_ring = None
+    if field_geom and field_geom.get("coordinates"):
+        field_ring = field_geom["coordinates"][0]
+        note(field_ring)
+    for f in feats:
+        g = f.get("geometry") or {}
+        k = f.get("properties", {}).get("kind")
+        c = g.get("coordinates")
+        if c is None:
+            continue
+        if k == "pivot":
+            note(c[0])
+        elif k == "pump":
+            lons.append(c[0]); lats.append(c[1])
+        else:
+            note(c)
+    if not lons:
+        lons, lats = [0.0], [0.0]
+    lon_min, lon_max = min(lons), max(lons)
+    lat_min, lat_max = min(lats), max(lats)
+
+    # --- sfondo satellitare ---
+    bg = None
+    if satellite:
+        try:
+            bg, extent = _satellite_bg(lon_min, lat_min, lon_max, lat_max)
+        except Exception:  # noqa: BLE001 — la scheda esce comunque
+            bg, extent = None, None
+        if bg is not None:
+            ax.imshow(bg, extent=extent, origin="upper", zorder=0, interpolation="bilinear")
+
+    on_sat = bg is not None
+    # Su ortofoto servono tratti chiari e pieni piu' trasparenti per leggere il
+    # terreno sotto; su bianco si tiene lo schema originale.
+    edge = "#ffffff" if on_sat else "#0d3b26"
+    fill_alpha = 0.22 if on_sat else 0.35
+
+    if field_ring:
+        ax.add_patch(MplPoly(_merc_ring(field_ring), closed=True, facecolor="none",
+                             edgecolor="#f0b429" if on_sat else BRAND,
+                             linewidth=1.8, zorder=2))
 
     for f in feats:
         k = f["properties"].get("kind")
         g = f["geometry"]
         if k == "pivot":
-            ring = g["coordinates"][0]
+            ring = _merc_ring(g["coordinates"][0])
             ph = int(f["properties"].get("phase", 1))
             col = PHASE_COLORS[(ph - 1) % len(PHASE_COLORS)]
-            ax.add_patch(MplPoly(ring, closed=True, facecolor=col, edgecolor="#0d3b26",
-                                 linewidth=0.5, alpha=0.35))
+            ax.add_patch(MplPoly(ring, closed=True, facecolor=col, edgecolor=edge,
+                                 linewidth=0.7, alpha=fill_alpha, zorder=3))
+            ax.add_patch(MplPoly(ring, closed=True, facecolor="none", edgecolor=edge,
+                                 linewidth=0.7, zorder=4))
         elif k == "pipe":
-            (x1, y1), (x2, y2) = g["coordinates"]
-            ax.plot([x1, x2], [y1, y2], color=ACCENT, linewidth=0.7, zorder=3)
+            (p1, p2) = g["coordinates"]
+            (x1, y1), (x2, y2) = _merc(*p1), _merc(*p2)
+            ax.plot([x1, x2], [y1, y2], color=ACCENT, linewidth=0.9, zorder=5)
         elif k == "header":
-            xs = [c[0] for c in g["coordinates"]]; ys = [c[1] for c in g["coordinates"]]
-            ax.plot(xs, ys, color="#b23b1e", linewidth=1.6, zorder=3)
+            pts = _merc_ring(g["coordinates"])
+            ax.plot([p[0] for p in pts], [p[1] for p in pts], color="#b23b1e",
+                    linewidth=1.8, zorder=5)
         elif k == "canal":
-            xs = [c[0] for c in g["coordinates"]]; ys = [c[1] for c in g["coordinates"]]
-            ax.plot(xs, ys, color="#0284c7", linewidth=2.2, linestyle=(0, (6, 4)), zorder=2)
+            pts = _merc_ring(g["coordinates"])
+            ax.plot([p[0] for p in pts], [p[1] for p in pts], color="#0284c7",
+                    linewidth=2.4, linestyle=(0, (6, 4)), zorder=5)
         elif k == "pump":
-            x, y = g["coordinates"]
-            ax.plot(x, y, marker="s", color="#08341c", markersize=3.5, zorder=4)
+            x, y = _merc(*g["coordinates"])
+            ax.plot(x, y, marker="s", color="#08341c", markeredgecolor="#ffffff",
+                    markeredgewidth=0.6, markersize=4, zorder=6)
 
-    ax.set_aspect(1.0 / max(0.2, math.cos(math.radians(lat0))))
+    # Inquadratura sui dati (le tessere coprono di piu': si ritaglia).
+    x0, y0 = _merc(lon_min, lat_min)
+    x1, y1 = _merc(lon_max, lat_max)
+    padx = max((x1 - x0) * 0.04, 30.0)
+    pady = max((y1 - y0) * 0.04, 30.0)
+    ax.set_xlim(x0 - padx, x1 + padx)
+    ax.set_ylim(y0 - pady, y1 + pady)
+    ax.set_aspect(1.0)
     ax.set_xticks([]); ax.set_yticks([])
     for s in ax.spines.values():
         s.set_visible(False)
+
     cfg = tr(lang, "cfg_" + str(meta.get("config", "")))
     title = LB(f"{cfg} · {fmt_num(lang, meta.get('n_pivots', 0))} {tr(lang, 'pivots_word')} · "
               f"{tr(lang, 'packing')} {fmt_num(lang, meta.get('packing_pct', 0), 1)}%")
@@ -141,6 +319,10 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
                    for i in range(n_ph)]
         ax.legend(handles=handles, loc="upper right", fontsize=7, framealpha=0.9,
                   prop=prop)
+    if on_sat:
+        ax.text(0.995, 0.008, _SAT_CREDIT, transform=ax.transAxes, ha="right", va="bottom",
+                fontsize=5.5, color="#ffffff",
+                bbox=dict(facecolor="#00000055", edgecolor="none", pad=1.5), zorder=7)
     fig.tight_layout()
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight")
@@ -301,7 +483,9 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
 
     # --- schema layout ---
     story.append(Paragraph(T("sec_schema"), h))
-    story.append(RLImage(io.BytesIO(schematic_png), width=170 * mm, height=98 * mm, kind="proportional"))
+    # Planimetria: si lascia respirare in altezza, altrimenti un campo quadrato
+    # verrebbe rimpicciolito a meta' pagina.
+    story.append(RLImage(io.BytesIO(schematic_png), width=170 * mm, height=150 * mm, kind="proportional"))
 
     story.append(Spacer(1, 6))
     import datetime as _dt
