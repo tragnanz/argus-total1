@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.155";
+const REV = "v0.6.156";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -26,15 +26,20 @@ const INDICES: { id: string; label: string }[] = [
   { id: "rgb", label: "Colore reale (RGB)" },
 ];
 
-// Tipi di suolo → infiltrazione tipica (mm/h). L'utente può correggere il valore.
-const SOILS: { key: string; label: string; inf: number }[] = [
-  { key: "sabbioso", label: "Sabbioso", inf: 30 },
-  { key: "franco_sabbioso", label: "Franco-sabbioso", inf: 20 },
-  { key: "franco", label: "Franco", inf: 12 },
-  { key: "franco_limoso", label: "Franco-limoso", inf: 8 },
-  { key: "franco_argilloso", label: "Franco-argilloso", inf: 4 },
-  { key: "argilloso", label: "Argilloso", inf: 2 },
+// Tabella agronomica UNICA: tipo di suolo → velocità di infiltrazione di base
+// (mm/h) e intervallo tipico di letteratura. È la fonte da cui la piattaforma
+// propone il valore; l'utente può comunque correggerlo.
+// Prima esistevano due tabelle scollegate con chiavi diverse ("franco_sabbioso"
+// e "franco-sabbioso"): cambiando suolo in una pagina l'altra non seguiva.
+const SOILS: { key: string; label: string; inf: number; lo: number; hi: number }[] = [
+  { key: "sabbioso", label: "Sabbioso", inf: 30, lo: 20, hi: 50 },
+  { key: "franco_sabbioso", label: "Franco-sabbioso", inf: 20, lo: 15, hi: 25 },
+  { key: "franco", label: "Franco", inf: 12, lo: 8, hi: 15 },
+  { key: "franco_limoso", label: "Franco-limoso", inf: 8, lo: 6, hi: 12 },
+  { key: "franco_argilloso", label: "Franco-argilloso", inf: 4, lo: 3, hi: 8 },
+  { key: "argilloso", label: "Argilloso", inf: 2, lo: 1, hi: 5 },
 ];
+const soilOf = (k: string) => SOILS.find((x) => x.key === k) ?? SOILS[2];
 const PIVOT_WET_W = 40;   // larghezza bagnata del pacchetto irriguo (m), assunzione
 
 // Schede del pannello destro, in ordine progressivo del flusso di progetto.
@@ -46,6 +51,7 @@ const TABS: { key: string; label: string }[] = [
   { key: "accessori", label: "Accessori" },
   { key: "irrigazione", label: "Irrigazione" },
   { key: "export", label: "Esporta" },
+  { key: "informazioni", label: "Informazioni" },
 ];
 
 // Impostazioni tecniche di un campo (idoneità + layout). Possono essere globali
@@ -807,9 +813,11 @@ const IcoNavImpianti = () => (<svg {...navProps}><circle cx="12" cy="12" r="8" /
 const IcoNavAccessori = () => (<svg {...navProps}><path d="M4 7h16M4 12h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="12" r="2" /><circle cx="8" cy="17" r="2" /></svg>);
 const IcoNavExport = () => (<svg {...navProps}><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M4 20h16" /></svg>);
 const IcoNavIrrigazione = () => (<svg {...navProps}><path d="M12 3s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z" /><path d="M10 13a2 2 0 0 0 4 0" /></svg>);
+const IcoNavInfo = () => (<svg {...navProps}><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 7.6v.6" /></svg>);
 const TAB_ICONS = {
   analisi: IcoNavAnalisi, rilievo: IcoNavRilievo, impianti: IcoNavImpianti,
   accessori: IcoNavAccessori, irrigazione: IcoNavIrrigazione, export: IcoNavExport,
+  informazioni: IcoNavInfo,
 };
 
 // Intestazione di sezione con testo-guida apribile/chiudibile da "?"
@@ -1021,7 +1029,6 @@ export default function Page() {
   const [rainMm, setRainMm] = useState(0);           // piovosità utile (mm/24h)
   const [effPct, setEffPct] = useState(85);          // efficienza dell'impianto (%)
   const [hoursDay, setHoursDay] = useState(20);      // ore di esercizio al giorno
-  const [soakMmH, setSoakMmH] = useState(12);        // assorbimento del terreno (mm/h)
   const [wetW, setWetW] = useState(20);              // larghezza bagnata degli irrigatori (m)
   const [pattern, setPattern] = useState("ellittica");  // forma del profilo di bagnatura
   const [surfStore, setSurfStore] = useState(2);     // invaso superficiale del terreno (mm)
@@ -1087,7 +1094,11 @@ export default function Page() {
 
   const [excludeWater, setExcludeWater] = useState(true);  // niente pivot su acqua/paludi (NDWI)
   const [soilKey, setSoilKey] = useState("franco");
-  const [infiltration, setInfiltration] = useState(12);   // mm/h
+  // Infiltrazione di base del suolo (mm/h). Un solo valore per tutta l'app:
+  // «infiltrazione» negli impianti e «assorbimento» in irrigazione sono la
+  // stessa grandezza, tenerli separati li faceva divergere.
+  const [infiltration, setInfiltration] = useState(SOILS[2].inf);
+  const infTouched = useRef(false);      // true se l'utente lo ha corretto a mano
   const [et0Peak, setEt0Peak] = useState(7);               // mm/g
   // raggio consigliato: intensità di pioggia di punta al bordo ≤ infiltrazione del suolo.
   // I_picco = 2π·R·Dg /(H·w) ≤ infiltrazione → R ≤ infiltrazione·H·w /(2π·Dg).
@@ -2496,7 +2507,6 @@ export default function Page() {
   // facendola passare per il pivot.
   // Coefficienti colturali (Kc di punta) e assorbimento tipico per suolo.
   const CROPS: Record<string, number> = { canna: 1.25, mais: 1.2, medica: 1.15, cereali: 1.15, ortive: 1.05, altro: 1.1 };
-  const SOAK: Record<string, number> = { sabbioso: 25, "franco-sabbioso": 18, franco: 12, "franco-argilloso": 8, argilloso: 5 };
   // Fabbisogno consigliato: ET₀ di punta × Kc, meno la pioggia utile, diviso
   // l'efficienza dell'impianto.
   const mm24Suggested = Math.max(0, (et0Peak * (CROPS[cropKey] ?? 1.1) - rainMm)) / Math.max(0.3, effPct / 100);
@@ -2523,13 +2533,13 @@ export default function Page() {
   // Ruscellamento: durante il passaggio il terreno assorbe soak×t e la superficie
   // ne trattiene un po' (invaso superficiale). Se l'acqua del giro supera i due,
   // il resto scorre via.
-  const runoffMm = (r: number) => Math.max(0, depthPass() - (soakMmH * wetHours(r) + surfStore));
+  const runoffMm = (r: number) => Math.max(0, depthPass() - (infiltration * wetHours(r) + surfStore));
   // Giri/giorno minimi perché non ci sia ruscellamento al bordo esterno.
   const turnsNeeded = (r: number) => {
     for (let n = 1; n <= 24; n++) {
       const d = mm24 / n, th = Math.max(0.05, hoursDay / n);
       const tw = (Math.max(1, wetW) * th) / (2 * Math.PI * Math.max(1, r));
-      if (d <= soakMmH * tw + surfStore) return n;
+      if (d <= infiltration * tw + surfStore) return n;
     }
     return 0;
   };
@@ -3121,6 +3131,88 @@ export default function Page() {
     );
   }
 
+  // ---- Riepilogo di progetto (pagina «Informazioni») -----------------------
+  // Numeri d'insieme su tutto ciò che è disegnato: macchine, acqua, rete.
+  const projectStats = useMemo(() => {
+    const pvs = pivots;
+    const rs = pvs.map((p) => p.r).sort((a, b) => a - b);
+    const med = rs.length ? (rs.length % 2 ? rs[(rs.length - 1) / 2] : (rs[rs.length / 2 - 1] + rs[rs.length / 2]) / 2) : 0;
+    const pivHa = pvs.reduce((a, p) => a + (Math.PI * p.r * p.r) / 10000, 0);
+    const qLs = pvs.reduce((a, p) => a + pivotFlow(p), 0);
+
+    const pipes = pivotLines.filter((l) => l.kind === "pipe");
+    const pipeM = pipes.reduce((a, l) => a + lineLenKm(l.coords), 0) * 1000;
+
+    // Stazioni di pompaggio = prese sull'acqua: vertici di tubazione a contatto
+    // con canale o corso d'acqua. Stessa soglia (15 m) e stesso criterio del
+    // calcolo idraulico, così i due numeri non si contraddicono.
+    const water = waterLinesLL();
+    const latRef = pvs[0]?.lat ?? fields[0]?.geom.coordinates[0][0][1] ?? 45;
+    const mLng = 111320 * Math.cos((latRef * Math.PI) / 180), mLat = 110540;
+    const W = water.map((ln) => ln.map((q) => [q[0] * mLng, q[1] * mLat] as [number, number]));
+    const dSeg = (p: [number, number], a: [number, number], b: [number, number]) => {
+      const vx = b[0] - a[0], vy = b[1] - a[1]; const l2 = vx * vx + vy * vy || 1e-9;
+      let tt = ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / l2; tt = Math.max(0, Math.min(1, tt));
+      return Math.hypot(p[0] - (a[0] + vx * tt), p[1] - (a[1] + vy * tt));
+    };
+    const taps: [number, number][] = [];
+    for (const l of pipes) {
+      for (const c of l.coords) {
+        const m2: [number, number] = [c[0] * mLng, c[1] * mLat];
+        let on = false;
+        for (const w of W) { for (let i = 0; i < w.length - 1; i++) if (dSeg(m2, w[i], w[i + 1]) < 15) { on = true; break; } if (on) break; }
+        // Due prese a meno di 40 m sono la stessa opera: si contano una volta.
+        if (on && !taps.some((tp) => Math.hypot(tp[0] - m2[0], tp[1] - m2[1]) < 40)) taps.push(m2);
+      }
+    }
+
+    // Ettari irrigati: unione dei cerchi ritagliata sui poligoni. Sommare le
+    // aree conterebbe due volte le sovrapposizioni e le parti fuori campo.
+    const rings = fields.map((f) => f.geom.coordinates[0]).filter((r) => r?.length >= 4);
+    const grossHa = fields.reduce((a, f) => a + ringAreaHa(f.geom.coordinates), 0);
+    let irrHa = 0;
+    if (rings.length && pvs.length) {
+      let mnx = 180, mny = 90, mxx = -180, mxy = -90;
+      for (const rg of rings) for (const q of rg) {
+        if (q[0] < mnx) mnx = q[0]; if (q[0] > mxx) mxx = q[0];
+        if (q[1] < mny) mny = q[1]; if (q[1] > mxy) mxy = q[1];
+      }
+      const N = 320;
+      const inPoly = (x: number, y: number, rg: number[][]) => {
+        let inside = false;
+        for (let i = 0, j = rg.length - 1; i < rg.length; j = i++) {
+          const xi = rg[i][0], yi = rg[i][1], xj = rg[j][0], yj = rg[j][1];
+          if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+        }
+        return inside;
+      };
+      const pc = pvs.map((p) => [p.lng * mLng, p.lat * mLat, p.r * p.r] as [number, number, number]);
+      let tot = 0, cov = 0;
+      for (let iy = 0; iy < N; iy++) {
+        const y = mny + ((mxy - mny) * (iy + 0.5)) / N;
+        for (let ix = 0; ix < N; ix++) {
+          const x = mnx + ((mxx - mnx) * (ix + 0.5)) / N;
+          if (!rings.some((rg) => inPoly(x, y, rg))) continue;
+          tot++;
+          const px = x * mLng, py = y * mLat;
+          for (const [cx, cy, r2] of pc) {
+            const dx = px - cx, dy = py - cy;
+            if (dx * dx + dy * dy <= r2) { cov++; break; }
+          }
+        }
+      }
+      if (tot) irrHa = (grossHa * cov) / tot;
+    }
+
+    return {
+      n: pvs.length, medR: med, minR: rs[0] ?? 0, maxR: rs[rs.length - 1] ?? 0,
+      medHa: (Math.PI * med * med) / 10000, pivHa,
+      qLs, qM3h: qLs * 3.6, pumps: taps.length,
+      pipeM, pipeN: pipes.length,
+      grossHa, irrHa, todoHa: Math.max(0, grossHa - irrHa),
+    };
+  }, [pivots, pivotLines, fields, canals, watercourses, mm24, hoursDay]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   // Campi che finiranno nell'esportazione (tutti tranne quelli tolti a mano).
   const pdfPick = fields.filter((f) => !pdfSkip.has(f.id));
 
@@ -3693,14 +3785,13 @@ export default function Page() {
 
         {/* Finestra degli strumenti: si apre a sinistra del menu verticale */}
         {!rightMin && (
-        <div className="absolute top-[4.5rem] right-[7rem] w-[440px] max-w-[calc(100vw_-_9rem)] max-h-[78vh] widget flex flex-col overflow-hidden">
-          {/* Intestazione minima: la pagina attiva è già indicata dal menu
-              verticale, qui resta solo il comando per chiudere la finestra. */}
-          <div className="flex items-center justify-end px-2 pt-2 shrink-0">
-            <button onClick={() => setRightMin(true)} title={t("Chiudi")}
-              className="text-sage-dark hover:text-brand p-1 rounded hover:bg-black/5"><IcoMinimize /></button>
-          </div>
-          <div className="overflow-auto scroll-soft p-4 pt-2 space-y-4">
+        <div className="absolute top-[4.5rem] right-[7rem] w-[440px] max-w-[calc(100vw_-_9rem)] max-h-[78vh] widget flex flex-col overflow-hidden relative">
+          {/* Il comando di chiusura galleggia nell'angolo invece di occupare una
+              riga propria: la riga dedicata lasciava una fascia vuota sopra il
+              primo titolo. */}
+          <button onClick={() => setRightMin(true)} title={t("Chiudi")}
+            className="absolute top-1.5 right-1.5 z-10 text-sage-dark hover:text-brand p-1 rounded hover:bg-black/5"><IcoMinimize /></button>
+          <div className="overflow-auto scroll-soft p-4 pt-3 space-y-4">
           {!sameRules && active && (
             <div className="text-[11px] text-brand-mid bg-brand/10 rounded-lg px-2 py-1">
               {t("Stai modificando: {name}", { name: active.name })}
@@ -3753,12 +3844,29 @@ export default function Page() {
               </button>
               <button className="btn-ghost flex-1 basis-0" onClick={clearDem}>{t("Rimuovi DEM")}</button>
             </div>
+            <div className="flex gap-2 items-end mt-2">
+              <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Isoipse ogni")}
+                <select className="field-input mt-1 w-full" value={isoInterval} onChange={(e) => setIsoInterval(Number(e.target.value))}>
+                  <option value={0}>{t("Automatico")}</option>
+                  {[0.5, 1, 2, 2.5, 5, 10, 20, 25, 50].map((v) => <option key={v} value={v}>{v} m</option>)}
+                </select>
+              </label>
+              <button className="btn-primary flex-1 basis-0 whitespace-nowrap" disabled={busy === "terrain" || !activeGeom} onClick={showTerrain}>
+                {busy === "terrain" ? t("Ricompongo…") : t("Rilievo + isoipse")}
+              </button>
+            </div>
             {demInfo && (
               <div className="mt-2">
                 <ScaleBar scale={demInfo.scale} unit=" m" />
                 <p className="text-xs text-sage-dark mt-1">
                   {t("min")} {uM(demInfo.min)} · {t("max")} {uM(demInfo.max)}
                 </p>
+              </div>
+            )}
+            {terrainInfo && (
+              <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
+                {t("Isoipse ogni")} <b>{uM(terrainInfo.interval, 1)}</b> · {t("quota")} {uM(terrainInfo.min)}–{uM(terrainInfo.max)}<br />
+                {t("Le linee marcate riportano la quota; più sono fitte, più il versante è ripido.")}
               </div>
             )}
           </section>
@@ -3918,16 +4026,33 @@ export default function Page() {
             <div className="flex gap-2 items-end">
               <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Tipo di suolo")}
                 <select className="field-input mt-1 w-full px-2" value={soilKey}
-                  onChange={(e) => { const so = SOILS.find((x) => x.key === e.target.value); setSoilKey(e.target.value); if (so) setInfiltration(so.inf); }}>
+                  onChange={(e) => { setSoilKey(e.target.value); infTouched.current = false; setInfiltration(soilOf(e.target.value).inf); }}>
                   {SOILS.map((so) => <option key={so.key} value={so.key}>{t(so.label)}</option>)}
                 </select>
               </label>
               <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Infiltrazione (mm/h)")}
                 <input type="number" min={0.5} max={200} step={0.5} value={infiltration}
+                  onFocus={() => { infTouched.current = true; }}
                   onChange={(e) => setInfiltration(Number(e.target.value))} className="field-input mt-1 w-full px-2" /></label>
               <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("ET₀ di punta (mm/g)")}
                 <input type="number" min={1} max={20} step={0.5} value={et0Peak}
                   onChange={(e) => setEt0Peak(Number(e.target.value))} className="field-input mt-1 w-full px-2" /></label>
+            </div>
+            {/* Il valore agronomico proposto resta visibile anche dopo una
+                correzione a mano: così si vede subito di quanto ci si discosta
+                e si può tornare indietro con un clic. */}
+            <div className="flex items-center gap-2 mt-1 text-[11px] text-sage-dark">
+              <span>
+                {t("Infiltrazione tipica per «{s}»", { s: t(soilOf(soilKey).label) })}:{" "}
+                <b className="text-brand-darker tabular-nums">{soilOf(soilKey).inf} mm/h</b>{" "}
+                <span className="opacity-80">({soilOf(soilKey).lo}–{soilOf(soilKey).hi})</span>
+              </span>
+              {Math.abs(infiltration - soilOf(soilKey).inf) > 0.05 && (
+                <button className="text-brand-mid underline shrink-0"
+                  onClick={() => { infTouched.current = false; setInfiltration(soilOf(soilKey).inf); }}>
+                  {t("Usa il valore consigliato")}
+                </button>
+              )}
             </div>
             <div className="flex items-center justify-between mt-2 text-xs">
               <span>{t("Raggio consigliato")}: <b>{recRadius} m</b></span>
@@ -4293,12 +4418,8 @@ export default function Page() {
                 </select></label>
               <label className="text-[11px] text-sage-dark">{t("Tipo di suolo")}
                 <select className="field-input mt-0.5 px-2 py-1.5 text-sm" value={soilKey}
-                  onChange={(e) => { setSoilKey(e.target.value); const v = SOAK[e.target.value]; if (v) setSoakMmH(v); }}>
-                  <option value="sabbioso">{t("Sabbioso")}</option>
-                  <option value="franco-sabbioso">{t("Franco-sabbioso")}</option>
-                  <option value="franco">{t("Franco")}</option>
-                  <option value="franco-argilloso">{t("Franco-argilloso")}</option>
-                  <option value="argilloso">{t("Argilloso")}</option>
+                  onChange={(e) => { setSoilKey(e.target.value); infTouched.current = false; setInfiltration(soilOf(e.target.value).inf); }}>
+                  {SOILS.map((so) => <option key={so.key} value={so.key}>{t(so.label)}</option>)}
                 </select></label>
               <label className="text-[11px] text-sage-dark">{t("ET₀ di punta (mm/g)")}
                 <input type="number" min={1} step={0.5} value={et0Peak}
@@ -4326,8 +4447,13 @@ export default function Page() {
             <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2">{t("Assorbimento del terreno")}</h3>
             <div className="grid grid-cols-3 gap-2">
               <label className="text-[11px] text-sage-dark">{t("Assorbimento (mm/h)")}
-                <input type="number" min={1} step={1} value={soakMmH}
-                  onChange={(e) => setSoakMmH(Math.max(1, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+                <input type="number" min={0.5} step={0.5} value={infiltration}
+                  onFocus={() => { infTouched.current = true; }}
+                  onChange={(e) => setInfiltration(Math.max(0.5, Number(e.target.value)))}
+                  className="field-input mt-0.5 px-2 py-1.5 text-sm" />
+                <span className="block text-[10px] text-sage-dark mt-0.5 leading-tight">
+                  {t("tipico")} {soilOf(soilKey).inf} mm/h
+                </span></label>
               <label className="text-[11px] text-sage-dark">{t("Larghezza bagnata (m)")}
                 <input type="number" min={3} step={1} value={wetW}
                   onChange={(e) => setWetW(Math.max(3, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
@@ -4367,9 +4493,9 @@ export default function Page() {
                   <div className="mt-1">
                     {t("All'estremità del pivot")} ({Math.round(rMax)} m): {t("bagnatura")} {fmt(wetHours(rMax) * 60, { maximumFractionDigits: 1 })} min · {fmt(depthPass(), { maximumFractionDigits: 1 })} mm {t("a giro")}
                   </div>
-                  <div className={rate > soakMmH ? "text-danger font-semibold" : ""}>
-                    {t("Intensità istantanea di picco")}: {fmt(rate, { maximumFractionDigits: 1 })} mm/h — {t("assorbimento")} {soakMmH} mm/h
-                    {rate > soakMmH ? " ⚠" : " ✓"}
+                  <div className={rate > infiltration ? "text-danger font-semibold" : ""}>
+                    {t("Intensità istantanea di picco")}: {fmt(rate, { maximumFractionDigits: 1 })} mm/h — {t("assorbimento")} {fmt(infiltration, { maximumFractionDigits: 1 })} mm/h
+                    {rate > infiltration ? " ⚠" : " ✓"}
                   </div>
                   {(() => {
                     const ro = runoffMm(rMax); const need = turnsNeeded(rMax);
@@ -4528,6 +4654,74 @@ export default function Page() {
                 </ul>
               )}
             </div>
+          </section>
+
+          {/* ---------------- Informazioni: riepilogo del progetto ------------- */}
+          <section className={secShow("informazioni")}>
+            <SectionHead title={t("Informazioni")} help={t("Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.")} />
+            {!pivots.length && !fields.length ? (
+              <p className="text-[11px] text-sage-dark">{t("Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.")}</p>
+            ) : (() => {
+              const st = projectStats;
+              const tile = (label: string, value: React.ReactNode, sub?: React.ReactNode) => (
+                <div className="bg-panel rounded-lg px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-wide text-sage-dark">{label}</div>
+                  <div className="text-[15px] font-semibold text-brand-darker tabular-nums leading-tight">{value}</div>
+                  {sub && <div className="text-[11px] text-sage-dark leading-tight mt-0.5">{sub}</div>}
+                </div>
+              );
+              const pct = st.grossHa > 0 ? (st.irrHa / st.grossHa) * 100 : 0;
+              return (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    {tile(t("Pivot"), st.n,
+                      st.n ? <>{t("mediana")} {uM(st.medR)} · {uHa(st.medHa, 1)}<br />{t("da {min} a {max}", { min: uM(st.minR), max: uM(st.maxR) })}</> : null)}
+                    {tile(t("Portata complessiva"), `${fmt(st.qM3h, { maximumFractionDigits: 0 })} m³/h`,
+                      `${fmt(st.qLs, { maximumFractionDigits: 0 })} l/s`)}
+                    {tile(t("Stazioni di pompaggio"), st.pumps,
+                      st.pumps ? t("prese sul canale o corso d'acqua") : t("nessuna presa sull'acqua"))}
+                    {tile(t("Tubazioni"), uM(st.pipeM), `${st.pipeN} ${t("rami")}`)}
+                  </div>
+
+                  <div className="bg-panel rounded-lg px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-sage-dark mb-1">{t("Superfici")}</div>
+                    <div className="h-2 rounded-full bg-white overflow-hidden">
+                      <div className="h-full bg-brand-light" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+                    </div>
+                    <div className="flex justify-between text-[12px] mt-1.5">
+                      <span className="text-brand-darker"><b className="tabular-nums">{uHa(st.irrHa)}</b> {t("irrigati")}</span>
+                      <span className="text-sage-dark"><b className="tabular-nums">{uHa(st.todoHa)}</b> {t("da irrigare")}</span>
+                    </div>
+                    <div className="text-[11px] text-sage-dark mt-1">
+                      {t("Superficie lorda")}: <b className="tabular-nums">{uHa(st.grossHa)}</b> · {fmt(pct, { maximumFractionDigits: 1 })}%
+                    </div>
+                  </div>
+
+                  {fields.length > 1 && (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wide text-sage-dark mb-1">{t("Per campo")}</div>
+                      <ul className="space-y-0.5 max-h-48 overflow-auto scroll-soft">
+                        {fields.map((f) => {
+                          const fs = fieldStats(f.id);
+                          return (
+                            <li key={f.id} className="flex items-baseline gap-2 text-[11px] bg-panel rounded px-1.5 py-1">
+                              <span className="truncate flex-1 text-brand-darker">{f.name}</span>
+                              <span className="text-sage-dark tabular-nums shrink-0">{fs.n} pivot</span>
+                              <span className="text-sage-dark tabular-nums shrink-0">{uHa(fs.irrHa)}</span>
+                              <span className="text-sage-dark tabular-nums shrink-0">{uM(fs.pipeM)}</span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-sage-dark leading-tight">
+                    {t("Gli ettari irrigati misurano l'unione dei cerchi ritagliata sui poligoni: le sovrapposizioni non si contano due volte.")}
+                  </p>
+                </div>
+              );
+            })()}
           </section>
 
           {/* Resta solo l'avviso sui dati demo: senza quello il riquadro
