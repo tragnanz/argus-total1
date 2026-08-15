@@ -41,6 +41,10 @@ export const LOCALES: Record<Lang, string> = {
 type Dict = Record<string, string>;
 
 const EN: Dict = {
+  "lorda": "gross",
+  "irrigata": "irrigated",
+  "media": "avg",
+  "rami": "branches",
   "All'estremità del pivot": "At the pivot end",
   "Applica": "Apply",
   "Ellittica (×1,27)": "Elliptical (×1.27)",
@@ -538,6 +542,10 @@ const EN: Dict = {
 };
 
 const FR: Dict = {
+  "lorda": "brute",
+  "irrigata": "irriguée",
+  "media": "moy.",
+  "rami": "branches",
   "All'estremità del pivot": "À l'extrémité du pivot",
   "Applica": "Appliquer",
   "Ellittica (×1,27)": "Elliptique (×1,27)",
@@ -1035,6 +1043,10 @@ const FR: Dict = {
 };
 
 const ES: Dict = {
+  "lorda": "bruta",
+  "irrigata": "regada",
+  "media": "media",
+  "rami": "ramales",
   "All'estremità del pivot": "En el extremo del pivote",
   "Applica": "Aplicar",
   "Ellittica (×1,27)": "Elíptica (×1,27)",
@@ -1532,6 +1544,10 @@ const ES: Dict = {
 };
 
 const PT: Dict = {
+  "lorda": "bruta",
+  "irrigata": "irrigada",
+  "media": "média",
+  "rami": "ramais",
   "All'estremità del pivot": "Na extremidade do pivô",
   "Applica": "Aplicar",
   "Ellittica (×1,27)": "Elíptica (×1,27)",
@@ -2029,6 +2045,10 @@ const PT: Dict = {
 };
 
 const RO: Dict = {
+  "lorda": "brută",
+  "irrigata": "irigată",
+  "media": "medie",
+  "rami": "ramuri",
   "All'estremità del pivot": "La capătul pivotului",
   "Applica": "Aplică",
   "Ellittica (×1,27)": "Eliptic (×1,27)",
@@ -2528,6 +2548,10 @@ const RO: Dict = {
 };
 
 const KK: Dict = {
+  "lorda": "жалпы",
+  "irrigata": "суарылған",
+  "media": "орташа",
+  "rami": "тармақ",
   "All'estremità del pivot": "Пивоттың шеткі нүктесінде",
   "Applica": "Қолдану",
   "Ellittica (×1,27)": "Эллипстік (×1,27)",
@@ -3027,6 +3051,10 @@ const KK: Dict = {
 };
 
 const AR: Dict = {
+  "lorda": "إجمالية",
+  "irrigata": "مروية",
+  "media": "متوسط",
+  "rami": "فروع",
   "All'estremità del pivot": "عند طرف المحور",
   "Applica": "تطبيق",
   "Ellittica (×1,27)": "بيضاوي (×1٫27)",
@@ -3524,6 +3552,10 @@ const AR: Dict = {
 };
 
 const ZH: Dict = {
+  "lorda": "总面积",
+  "irrigata": "灌溉",
+  "media": "平均",
+  "rami": "支管",
   "All'estremità del pivot": "圆形喷灌机末端",
   "Applica": "应用",
   "Ellittica (×1,27)": "椭圆形 (×1.27)",
@@ -4023,6 +4055,10 @@ const ZH: Dict = {
 };
 
 const HU: Dict = {
+  "lorda": "bruttó",
+  "irrigata": "öntözött",
+  "media": "átlag",
+  "rami": "ág",
   "All'estremità del pivot": "A pivot végén",
   "Applica": "Alkalmaz",
   "Ellittica (×1,27)": "Elliptikus (×1,27)",
@@ -4522,6 +4558,10 @@ const HU: Dict = {
 };
 
 const ID: Dict = {
+  "lorda": "bruto",
+  "irrigata": "terairi",
+  "media": "rata-rata",
+  "rami": "cabang",
   "All'estremità del pivot": "Di ujung pivot",
   "Applica": "Terapkan",
   "Ellittica (×1,27)": "Elips (×1,27)",
@@ -5021,6 +5061,10 @@ const ID: Dict = {
 };
 
 const DE: Dict = {
+  "lorda": "brutto",
+  "irrigata": "bewässert",
+  "media": "Ø",
+  "rami": "Stränge",
   "All'estremità del pivot": "Am Ende des Pivots",
   "Applica": "Übernehmen",
   "Ellittica (×1,27)": "Elliptisch (×1,27)",
@@ -5514,6 +5558,10 @@ const DE: Dict = {
 };
 
 const PL: Dict = {
+  "lorda": "brutto",
+  "irrigata": "nawadniana",
+  "media": "średnio",
+  "rami": "odgałęzień",
   "All'estremità del pivot": "Na końcu pivota",
   "Applica": "Zastosuj",
   "Ellittica (×1,27)": "Eliptyczny (×1,27)",
@@ -6009,6 +6057,10 @@ const PL: Dict = {
 };
 
 const BG: Dict = {
+  "lorda": "бруто",
+  "irrigata": "напоявана",
+  "media": "средно",
+  "rami": "клона",
   "All'estremità del pivot": "В края на пивота",
   "Applica": "Приложи",
   "Ellittica (×1,27)": "Елиптичен (×1,27)",
@@ -6504,6 +6556,10 @@ const BG: Dict = {
 };
 
 const RU: Dict = {
+  "lorda": "общая",
+  "irrigata": "орошаемая",
+  "media": "средн.",
+  "rami": "ветвей",
   "All'estremità del pivot": "На конце пивота",
   "Applica": "Применить",
   "Ellittica (×1,27)": "Эллиптический (×1,27)",
@@ -6999,6 +7055,10 @@ const RU: Dict = {
 };
 
 const AF: Dict = {
+  "lorda": "bruto",
+  "irrigata": "besproei",
+  "media": "gem.",
+  "rami": "takke",
   "All'estremità del pivot": "Aan die punt van die spilpunt",
   "Applica": "Pas toe",
   "Ellittica (×1,27)": "Ellipties (×1,27)",
@@ -7494,6 +7554,10 @@ const AF: Dict = {
 };
 
 const MS: Dict = {
+  "lorda": "kasar",
+  "irrigata": "diairi",
+  "media": "purata",
+  "rami": "cabang",
   "All'estremità del pivot": "Di hujung pivot",
   "Applica": "Guna",
   "Ellittica (×1,27)": "Elips (×1.27)",
@@ -7989,6 +8053,10 @@ const MS: Dict = {
 };
 
 const VI: Dict = {
+  "lorda": "tổng",
+  "irrigata": "được tưới",
+  "media": "trung bình",
+  "rami": "nhánh",
   "All'estremità del pivot": "Ở đầu mút pivot",
   "Applica": "Áp dụng",
   "Ellittica (×1,27)": "Elip (×1.27)",

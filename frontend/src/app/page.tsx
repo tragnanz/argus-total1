@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.140";
+const REV = "v0.6.141";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3043,7 +3043,7 @@ export default function Page() {
         onDragEnd={() => { dragRef.current = null; setDragOverField(null); }}
         className="flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5 cursor-move">
         <button className="text-brand-mid w-4" title={t("Mostra/Nascondi")} onClick={onToggle}>{hidden ? "○" : "◉"}</button>
-        <button className="flex-1 truncate text-left" title={t("Zoom · trascina su un campo per assegnarlo")} onClick={onZoom}>{label}</button>
+        <button className="flex-1 text-left leading-tight" title={t("Zoom · trascina su un campo per assegnarlo")} onClick={onZoom}>{label}</button>
         <button className="text-danger w-4" title={t("Rimuovi")} onClick={onRemove}>✕</button>
       </li>
     );
@@ -3065,9 +3065,29 @@ export default function Page() {
     );
   }
 
+  // Statistiche di un poligono per il pannello Livelli: superficie irrigata
+  // (somma dei cerchi dei pivot che gli appartengono), medie per macchina e
+  // sviluppo complessivo delle tubazioni del gruppo.
+  function fieldStats(fid: number) {
+    const pv = pivots.filter((p) => p.field === fid);
+    const irrHa = pv.reduce((s, p) => s + (Math.PI * p.r * p.r) / 10000, 0);
+    const pipes = pivotLines.filter((l) => l.kind === "pipe" && l.field === fid);
+    const canalKm = canals.filter((c) => c.owner === fid).reduce((s, c) => s + (c.length_m || 0) / 1000, 0);
+    return {
+      n: pv.length,
+      irrHa,
+      avgHa: pv.length ? irrHa / pv.length : 0,
+      avgR: pv.length ? pv.reduce((s, p) => s + p.r, 0) / pv.length : 0,
+      pipeN: pipes.length,
+      pipeKm: pipes.reduce((s, l) => s + lineLenKm(l.coords), 0),
+      canalKm,
+    };
+  }
+
   // Riga dell'elenco Campi come albero: un campo con, annidati, i suoi
   // poligoni figli (famiglia) e le eventuali sotto-aree (macro).
   function renderFieldNode(f: Field, depth: number) {
+    const st = fieldStats(f.id);
     const kids = fields.filter((x) => x.parentId === f.id);
     const ownedCanals = canals.map((c, i) => ({ c, i })).filter((x) => x.c.owner === f.id);
     const ownedRoads = roads.map((r, i) => ({ r, i })).filter((x) => x.r.owner === f.id);
@@ -3089,11 +3109,11 @@ export default function Page() {
             {depth > 0 && <span className="text-brand-light">↳ </span>}
             <span className="text-[9px] uppercase font-semibold mr-1 px-1 py-0.5 rounded" style={{ background: (f.level === "campo" ? "#e4f4ea" : "#fdefe0"), color: (f.level === "campo" ? "#03683a" : "#b5651a") }}>{f.level === "campo" ? t("Campo") : t("Area")}</span>
             <span className={f.id === activeId ? "font-semibold text-brand" : ""}>{f.name}</span>
-            <span className="text-sage"> · {uHa(ringAreaHa(f.geom.coordinates))}</span>
+            <span className="text-sage"> · {t("lorda")} {uHa(ringAreaHa(f.geom.coordinates))}</span>
+            {st.irrHa > 0 && <span className="text-brand-light"> · {t("irrigata")} {uHa(st.irrHa)}</span>}
             {f.level === "campo" && f.score != null && <span className="text-brand-light"> · {t("Idoneità")} {fmt(f.score)}</span>}
             {!!kids.length && <span className="text-brand-light"> · {kids.length} {t("figli")}</span>}
             {!!f.macros?.length && <span className="text-brand-light"> · {f.macros.length} {t("sotto-aree")}</span>}
-            {ownedPivN > 0 && <span className="text-brand-light"> · {ownedPivN} pivot</span>}
           </button>
           <span className="flex gap-1 shrink-0 items-center">
             <button className="text-sm text-brand w-4 font-semibold" title={t("Aggiungi poligono figlio")} onClick={() => addChild(f.id)}>＋</button>
@@ -3119,8 +3139,12 @@ export default function Page() {
             {ownedCanals.map(({ c, i }) => objRow("canal", i, `c${i}`, !!c.hidden, () => toggleCanalHidden(i), <>{t("Canale")} {i + 1} · {uM(c.length_m)}</>, () => zoomToCoords(c.geojson.coordinates), () => removeCanal(i)))}
             {ownedRoads.map(({ r, i }) => objRow("road", r.id, `r${r.id}`, !!r.hidden, () => toggleRoadHidden(i), <>{t("Strada")} {i + 1} · {uM(r.width_m)}</>, () => zoomToCoords(r.coords), () => removeRoad(i)))}
             {ownedWater.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{w.kind} {i + 1}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
-            {ownedPivN > 0 && objRow("pivot", f.id, `pv${f.id}`, hiddenPivotFields.has(f.id), () => togglePivotFieldHidden(f.id), <>{t("Pivot")} · {ownedPivN}</>, () => zoomToCoords(f.geom.coordinates[0]), () => removePivotsOfField(f.id))}
-            {ownedPipeN > 0 && objRow("pipe", f.id, `pi${f.id}`, hiddenPipeFields.has(f.id), () => togglePipeFieldHidden(f.id), <>{t("Tubazioni")} · {ownedPipeN}</>, () => zoomToPipesOfField(f.id), () => removePipesOfField(f.id))}
+            {ownedPivN > 0 && objRow("pivot", f.id, `pv${f.id}`, hiddenPivotFields.has(f.id), () => togglePivotFieldHidden(f.id),
+              <>{t("Pivot")} · {ownedPivN} · {uHa(st.irrHa)}<span className="text-sage-dark"> · {t("media")} {uHa(st.avgHa, 1)} / {uM(st.avgR)}</span></>,
+              () => zoomToCoords(f.geom.coordinates[0]), () => removePivotsOfField(f.id))}
+            {ownedPipeN > 0 && objRow("pipe", f.id, `pi${f.id}`, hiddenPipeFields.has(f.id), () => togglePipeFieldHidden(f.id),
+              <>{t("Tubazioni")} · {ownedPipeN} {t("rami")} · {uKm(st.pipeKm, 1)}</>,
+              () => zoomToPipesOfField(f.id), () => removePipesOfField(f.id))}
           </ul>
         ) : null}
       </li>
