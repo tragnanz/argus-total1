@@ -174,9 +174,15 @@ def _fetch_tile(z: int, x: int, y: int, timeout: float):
 
 def _satellite_bg(lon_min: float, lat_min: float, lon_max: float, lat_max: float,
                   max_tiles: int = 80, max_zoom: int = 18, timeout: float = 6.0,
-                  budget_s: float = 25.0, max_px: int = 2600):
+                  budget_s: float = 25.0, max_px: int = 2200):
     """Mosaico di ortofoto che copre il riquadro. Ritorna (immagine, estensione
-    in metri Mercator) oppure (None, None) se le tessere non arrivano."""
+    in metri Mercator) oppure (None, None) se le tessere non arrivano.
+
+    Lo zoom si sceglie sulla LARGHEZZA UTILE (`max_px`), non sul massimo che sta
+    nel tetto di tessere: scaricare un mosaico da 4000 px per poi ridurlo a 2200
+    costa banda e, soprattutto, memoria — su un'istanza piccola e' la differenza
+    fra una scheda e un riavvio del servizio.
+    """
     try:
         from concurrent.futures import ThreadPoolExecutor
         from PIL import Image
@@ -188,7 +194,8 @@ def _satellite_bg(lon_min: float, lat_min: float, lon_max: float, lat_max: float
         x0f, y0f = _tile_of(lon_min, lat_max, z)     # angolo alto-sinistra
         x1f, y1f = _tile_of(lon_max, lat_min, z)     # angolo basso-destra
         tx0, ty0, tx1, ty1 = int(x0f), int(y0f), int(x1f), int(y1f)
-        if (tx1 - tx0 + 1) * (ty1 - ty0 + 1) <= max_tiles:
+        nx_, ny_ = tx1 - tx0 + 1, ty1 - ty0 + 1
+        if nx_ * ny_ <= max_tiles and nx_ * _TILE_PX <= max_px * 1.35:
             chosen = (z, tx0, ty0, tx1, ty1)
             break
     if chosen is None:
@@ -207,27 +214,32 @@ def _satellite_bg(lon_min: float, lat_min: float, lon_max: float, lat_max: float
         return _safe_tile(z, t[0], t[1], timeout)
 
     jobs = [(tx0 + i, ty0 + j) for j in range(ny) for i in range(nx)]
+    canvas = Image.new("RGB", (nx * _TILE_PX, ny * _TILE_PX), (18, 53, 36))
+    got = 0
     try:
+        # Le tessere si incollano man mano che arrivano e si liberano subito:
+        # tenerle tutte in una lista significa una copia in piu' del mosaico.
         with ThreadPoolExecutor(max_workers=12) as pool:
-            tiles = list(pool.map(grab, jobs))
+            for (tx, ty), img in zip(jobs, pool.map(grab, jobs)):
+                if img is None:
+                    continue
+                canvas.paste(img, ((tx - tx0) * _TILE_PX, (ty - ty0) * _TILE_PX))
+                img.close()
+                got += 1
     except Exception:  # noqa: BLE001
+        canvas.close()
         return None, None
-    got = sum(1 for t in tiles if t is not None)
-    if got < max(1, len(tiles) // 2):
+    if got < max(1, len(jobs) // 2):
+        canvas.close()
         return None, None      # quasi nulla e' arrivato: meglio lo schema pulito
     # Con qualche buco si procede comunque: un'ortofoto parziale e' piu' utile
     # di una tavola bianca.
 
-    canvas = Image.new("RGB", (nx * _TILE_PX, ny * _TILE_PX), (18, 53, 36))
-    for (tx, ty), img in zip(jobs, tiles):
-        if img is not None:
-            canvas.paste(img, ((tx - tx0) * _TILE_PX, (ty - ty0) * _TILE_PX))
-
-    # Il mosaico puo' superare di molto i pixel del disegno: si ridimensiona
-    # subito, altrimenti si tiene in memoria un'immagine inutilmente grande.
     if canvas.width > max_px:
         h = max(1, round(canvas.height * max_px / canvas.width))
-        canvas = canvas.resize((max_px, h), Image.LANCZOS)
+        small = canvas.resize((max_px, h), Image.BILINEAR)
+        canvas.close()
+        canvas = small
 
     n = 2 ** z
     left = -_WORLD / 2 + tx0 * _WORLD / n
@@ -722,7 +734,7 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
 # ---------------------------------------------------------------------------
 def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
                  pipes: list[list[list[float]]], canals: list[list[list[float]]],
-                 lang: str = "it", px_w: int = 2010, px_h: int = 1440,
+                 lang: str = "it", px_w: int = 1810, px_h: int = 1296,
                  status: dict | None = None) -> tuple[bytes, float]:
     """Ritorna (png, denominatore della scala) per il riquadro mappa.
 
@@ -779,7 +791,7 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
     lo1, la1 = _unmerc(mx1, my1)
     bg = None
     try:
-        bg, extent = _satellite_bg(lo0, la0, lo1, la1, max_tiles=110)
+        bg, extent = _satellite_bg(lo0, la0, lo1, la1, max_tiles=110, max_px=px_w)
         if status is not None:
             status["basemap"] = "ok" if bg is not None else "failed"
     except Exception as e:  # noqa: BLE001
@@ -787,11 +799,22 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
         if status is not None:
             status["basemap"] = "failed"
             status["error"] = f"{type(e).__name__}: {e}"[:200]
+
+    # L'ortofoto NON passa da imshow: matplotlib la convertirebbe in RGBA a
+    # virgola mobile, decine di MB per una tavola grande. Si disegna invece il
+    # solo vettoriale su fondo trasparente e si compone con PIL, in uint8.
+    base_img = None
     if bg is not None:
-        ax.imshow(bg, extent=extent, origin="upper", zorder=0, interpolation="bilinear")
-    else:
-        ax.add_patch(MplPoly([(mx0, my0), (mx1, my0), (mx1, my1), (mx0, my1)],
-                             closed=True, facecolor="#dde6df", edgecolor="none", zorder=0))
+        from PIL import Image
+        left, right, bottom, top = extent
+        sx = bg.width / (right - left)
+        sy = bg.height / (top - bottom)
+        box = (int(round((mx0 - left) * sx)), int(round((top - my1) * sy)),
+               int(round((mx1 - left) * sx)), int(round((top - my0) * sy)))
+        box = (max(0, box[0]), max(0, box[1]),
+               min(bg.width, max(box[0] + 1, box[2])), min(bg.height, max(box[1] + 1, box[3])))
+        base_img = bg.resize((px_w, px_h), Image.BILINEAR, box=box)
+        bg.close()
 
     # --- canali e tubazioni ---
     for cc in canals:
@@ -811,29 +834,47 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
         ax.plot([p[0] for p in pts], [p[1] for p in pts], color=_CYAN,
                 linewidth=2.2, zorder=5, solid_capstyle="round")
         uniq = pts[:-1] if len(pts) > 2 and pts[0] == pts[-1] else pts
+        # Oltre un centinaio di vertici le sigle si accavallano: restano i punti.
+        show_labels = len(uniq) <= 120
         for (vx, vy) in uniq:
             vn += 1
             ax.plot(vx, vy, marker="o", color=_CYAN, markersize=3.4,
                     markeredgecolor="#ffffff", markeredgewidth=0.5, zorder=6)
-            ax.text(vx + w * 0.004, vy + hgt * 0.004, f"V{vn}", fontsize=5.2,
-                    color="#ffffff", fontproperties=prop, zorder=7,
-                    path_effects=_halo())
+            if show_labels:
+                ax.text(vx + w * 0.004, vy + hgt * 0.004, f"V{vn}", fontsize=5.2,
+                        color="#ffffff", fontproperties=prop, zorder=7,
+                        path_effects=_halo())
 
     # --- pivot ---
+    # Quanto e' grande un pivot sul foglio decide cosa vale la pena disegnare:
+    # a scale piccole la trama dei getti diventa una macchia grigia e le
+    # etichette complete si sovrappongono, quindi si degrada con eleganza.
+    # E' anche la voce piu' pesante del disegno: con oltre cento macchine i
+    # cerchi tratteggiati generano milioni di segmenti.
+    px_per_unit = px_w / (mx1 - mx0)
     for pv in pivots:
         pc = _merc(pv["lon"], pv["lat"])
         # il raggio va convertito nelle unita' della mappa (Mercator dilata)
         ru = pv["r"] / max(0.05, math.cos(math.radians(pv["lat"])))
+        r_px = ru * px_per_unit
         ax.add_patch(Circle(pc, ru, facecolor="none", edgecolor=_GREEN,
                             linewidth=1.6, zorder=8))
-        # Texture della bagnatura: molti archi tratteggiati concentrici, come
-        # la trama dei getti nelle tavole di settore.
-        for j in range(1, 15):
-            ax.add_patch(Circle(pc, ru * j / 15.0, facecolor="none", edgecolor="#ffffff",
-                                linewidth=0.4, alpha=0.5, linestyle=(0, (1.6, 3.2)),
-                                zorder=8))
+        if r_px >= 26:
+            rings = max(3, min(14, int(r_px / 9)))
+            for j in range(1, rings + 1):
+                ax.add_patch(Circle(pc, ru * j / (rings + 1.0), facecolor="none",
+                                    edgecolor="#ffffff", linewidth=0.4, alpha=0.5,
+                                    linestyle=(0, (1.6, 3.2)), zorder=8))
         ax.plot(pc[0], pc[1], marker="o", color="#ffffff", markersize=3.2,
                 markeredgecolor=_INK, markeredgewidth=0.7, zorder=9)
+
+        if r_px < 46:
+            # Troppo piccolo per una targhetta: resta il numero, i dettagli
+            # sono nella barra laterale.
+            ax.text(pc[0], pc[1] + ru * 0.42, str(pv["n"]), fontsize=6.0,
+                    fontweight="bold", color="#ffffff", ha="center", va="center",
+                    fontproperties=prop, zorder=11, path_effects=_halo())
+            continue
 
         head = f"{pv['n']} · {fmt_num(lang, pv['r'])}m · {fmt_num(lang, pv['ha'], 1)}ha"
         sub = []
@@ -903,7 +944,22 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
                 arrowprops=dict(facecolor="#ffffff", edgecolor="none", width=1.8,
                                 headwidth=6.5, headlength=6.5), zorder=13)
 
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=200)
+    from PIL import Image
+    over = io.BytesIO()
+    fig.savefig(over, format="png", dpi=200, transparent=True)
     plt.close(fig)
+    over.seek(0)
+    layer = Image.open(over).convert("RGBA")
+    if base_img is None:
+        base_img = Image.new("RGB", layer.size, (221, 230, 223))
+    elif base_img.size != layer.size:
+        base_img = base_img.resize(layer.size, Image.BILINEAR)
+    base_img.paste(layer, (0, 0), layer)
+    layer.close(); over.close()
+
+    # JPEG e non PNG: e' una fotografia. Il PNG senza perdite pesa 3-4 volte
+    # tanto e reportlab lo deve comunque ricodificare in RGB grezzo.
+    buf = io.BytesIO()
+    base_img.save(buf, format="JPEG", quality=88, optimize=False, progressive=False)
+    base_img.close()
     return buf.getvalue(), denom
