@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.141";
+const REV = "v0.6.142";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3073,13 +3073,17 @@ export default function Page() {
     const irrHa = pv.reduce((s, p) => s + (Math.PI * p.r * p.r) / 10000, 0);
     const pipes = pivotLines.filter((l) => l.kind === "pipe" && l.field === fid);
     const canalKm = canals.filter((c) => c.owner === fid).reduce((s, c) => s + (c.length_m || 0) / 1000, 0);
+    // Mediana dei raggi: piu' rappresentativa della media quando il gruppo ha
+    // alcuni pivot ridotti sui bordi che abbasserebbero il valore medio.
+    const rs = pv.map((p) => p.r).sort((a, b) => a - b);
+    const medR = rs.length ? (rs.length % 2 ? rs[(rs.length - 1) / 2] : (rs[rs.length / 2 - 1] + rs[rs.length / 2]) / 2) : 0;
     return {
       n: pv.length,
       irrHa,
-      avgHa: pv.length ? irrHa / pv.length : 0,
-      avgR: pv.length ? pv.reduce((s, p) => s + p.r, 0) / pv.length : 0,
+      medHa: (Math.PI * medR * medR) / 10000,
+      medR,
       pipeN: pipes.length,
-      pipeKm: pipes.reduce((s, l) => s + lineLenKm(l.coords), 0),
+      pipeM: pipes.reduce((s, l) => s + lineLenKm(l.coords), 0) * 1000,
       canalKm,
     };
   }
@@ -3140,10 +3144,10 @@ export default function Page() {
             {ownedRoads.map(({ r, i }) => objRow("road", r.id, `r${r.id}`, !!r.hidden, () => toggleRoadHidden(i), <>{t("Strada")} {i + 1} · {uM(r.width_m)}</>, () => zoomToCoords(r.coords), () => removeRoad(i)))}
             {ownedWater.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{w.kind} {i + 1}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
             {ownedPivN > 0 && objRow("pivot", f.id, `pv${f.id}`, hiddenPivotFields.has(f.id), () => togglePivotFieldHidden(f.id),
-              <>{t("Pivot")} · {ownedPivN} · {uHa(st.irrHa)}<span className="text-sage-dark"> · {t("media")} {uHa(st.avgHa, 1)} / {uM(st.avgR)}</span></>,
+              <>{t("Pivot")} · {ownedPivN} · {uHa(st.irrHa)}<span className="text-sage-dark"> · {t("mediana")} {uHa(st.medHa, 1)} / {uM(st.medR)}</span></>,
               () => zoomToCoords(f.geom.coordinates[0]), () => removePivotsOfField(f.id))}
             {ownedPipeN > 0 && objRow("pipe", f.id, `pi${f.id}`, hiddenPipeFields.has(f.id), () => togglePipeFieldHidden(f.id),
-              <>{t("Tubazioni")} · {ownedPipeN} {t("rami")} · {uKm(st.pipeKm, 1)}</>,
+              <>{t("Tubazioni")} · {ownedPipeN} {t("rami")} · {uM(st.pipeM)}</>,
               () => zoomToPipesOfField(f.id), () => removePipesOfField(f.id))}
           </ul>
         ) : null}
