@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.160";
+const REV = "v0.6.161";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -4202,41 +4202,42 @@ export default function Page() {
 
             <div className="bg-panel rounded-lg p-2 mt-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Raggio e distanze di rispetto (m)")}</div>
-              {designMode === "standard" ? (
-                <div className="mb-2">
-                  <div className="text-[10px] leading-tight text-sage-dark mb-1">{t("Raggio pivot")}</div>
-                  <input type="number" min={30} max={1000} step={10} value={pivotR}
-                    onChange={(e) => setPivotR(Number(e.target.value))} className="field-input px-2 py-1.5 text-sm" />
-                </div>
-              ) : (
-                <div className="flex gap-2 mb-2">
+              {/* Raggio e distanze su un'unica riga: in standard sono quattro
+                  campi, in avanzata cinque (min e max al posto del raggio). I
+                  campi stretti tengono l'unita' fuori dall'etichetta. */}
+              <div className="flex gap-1.5">
+                {designMode === "standard" ? (
                   <div className="flex-1 min-w-0">
-                    <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Raggio min")}</div>
+                    <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Raggio pivot")}>{t("Raggio pivot")}</div>
+                    <input type="number" min={30} max={1000} step={10} value={pivotR}
+                      onChange={(e) => setPivotR(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
+                  </div>
+                ) : (<>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Raggio min")}>{t("Raggio min")}</div>
                     <input type="number" min={30} max={1000} step={10} value={advMinR}
-                      onChange={(e) => setAdvMinR(Number(e.target.value))} className="field-input px-2 py-1.5 text-sm" />
+                      onChange={(e) => setAdvMinR(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Raggio max")}</div>
+                    <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Raggio max")}>{t("Raggio max")}</div>
                     <input type="number" min={30} max={1000} step={10} value={advMaxR}
-                      onChange={(e) => setAdvMaxR(Number(e.target.value))} className="field-input px-2 py-1.5 text-sm" />
+                      onChange={(e) => setAdvMaxR(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
                   </div>
-                </div>
-              )}
-              <div className="flex gap-2">
+                </>)}
                 <div className="flex-1 min-w-0">
-                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Tra i pivot")}</div>
+                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Tra i pivot")}>{t("Tra i pivot")}</div>
                   <input type="number" min={0} max={500} step={5} value={safetyM}
-                    onChange={(e) => setSafetyM(Number(e.target.value))} className="field-input px-2 py-1.5 text-sm" />
+                    onChange={(e) => setSafetyM(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Da strade")}</div>
+                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Da strade")}>{t("Da strade")}</div>
                   <input type="number" min={0} max={500} step={5} value={pivClearRoad}
-                    onChange={(e) => setPivClearRoad(Number(e.target.value))} className="field-input px-2 py-1.5 text-sm" />
+                    onChange={(e) => setPivClearRoad(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Da canali/invasi")}</div>
+                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Da canali/invasi")}>{t("Da canali/invasi")}</div>
                   <input type="number" min={0} max={500} step={5} value={pivClearWater}
-                    onChange={(e) => setPivClearWater(Number(e.target.value))} className="field-input px-2 py-1.5 text-sm" />
+                    onChange={(e) => setPivClearWater(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
                 </div>
               </div>
             </div>
