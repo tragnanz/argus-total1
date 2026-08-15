@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.137";
+const REV = "v0.6.138";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -194,9 +194,12 @@ function circleRing(lat: number, lng: number, r: number, n = 32): number[][] {
 }
 // Estrae i pivot (centro + raggio) e le linee (canale/tubi) dal FeatureCollection.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function pivotsFromFC(fc: any, defR: number): { pivots: PivotItem[]; lines: { kind: string; coords: number[][]; field?: number }[] } {
+// Una tubazione: tracciato + (dopo il calcolo idraulico) diametro e portata di
+// ogni tratto.
+type PipeLine = { kind: string; coords: number[][]; field?: number; dn?: number[]; qs?: number[] };
+function pivotsFromFC(fc: any, defR: number): { pivots: PivotItem[]; lines: PipeLine[] } {
   const pivots: PivotItem[] = [];
-  const lines: { kind: string; coords: number[][]; field?: number }[] = [];
+  const lines: PipeLine[] = [];
   for (const f of fc?.features ?? []) {
     const k = f?.properties?.kind;
     const g = f?.geometry;
@@ -214,23 +217,26 @@ function pivotsFromFC(fc: any, defR: number): { pivots: PivotItem[]; lines: { ki
         sr += Math.hypot(dx, dy);
       }
       const r = ring.length ? sr / ring.length : defR;
-      pivots.push({ lat, lng, r: Math.round(r), conn: f?.properties?.connection, field: f?.properties?.field });
+      pivots.push({ lat, lng, r: Math.round(r), conn: f?.properties?.connection, field: f?.properties?.field,
+        q: f?.properties?.q, p: f?.properties?.p });
     } else if (g?.type === "LineString") {
-      lines.push({ kind: k, coords: g.coordinates, field: f?.properties?.field });
+      lines.push({ kind: k, coords: g.coordinates, field: f?.properties?.field, dn: f?.properties?.dn, qs: f?.properties?.qs });
     }
   }
   return { pivots, lines };
 }
 // Ricostruisce il FeatureCollection dal modello (per salvataggio/esporto/statistiche).
-function fcFromModel(pivots: PivotItem[], lines: { kind: string; coords: number[][]; field?: number }[]) {
+function fcFromModel(pivots: PivotItem[], lines: { kind: string; coords: number[][]; field?: number; dn?: number[]; qs?: number[] }[]) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const feats: any[] = pivots.map((pv) => ({
     type: "Feature",
-    properties: { kind: "pivot", connection: pv.conn ?? "canal", phase: pv.conn === "pipe" ? 2 : 1, field: pv.field },
+    properties: { kind: "pivot", connection: pv.conn ?? "canal", phase: pv.conn === "pipe" ? 2 : 1, field: pv.field,
+      ...(pv.q != null ? { q: pv.q } : {}), ...(pv.p != null ? { p: pv.p } : {}) },
     geometry: { type: "Polygon", coordinates: [circleRing(pv.lat, pv.lng, pv.r)] },
   }));
   for (const ln of lines) {
-    feats.push({ type: "Feature", properties: { kind: ln.kind, field: ln.field }, geometry: { type: "LineString", coordinates: ln.coords } });
+    feats.push({ type: "Feature", geometry: { type: "LineString", coordinates: ln.coords },
+      properties: { kind: ln.kind, field: ln.field, ...(ln.dn ? { dn: ln.dn } : {}), ...(ln.qs ? { qs: ln.qs } : {}) } });
   }
   return { type: "FeatureCollection" as const, features: feats };
 }
@@ -1005,7 +1011,12 @@ export default function Page() {
   const [pipeMaxPerLine, setPipeMaxPerLine] = useState(8); // max pivot collegati sulla stessa tubazione
   // Gerarchia pivot: modello modificabile (gruppo → singolo) derivato dal risultato.
   const [pivots, setPivots] = useState<PivotItem[]>([]);
-  const [pivotLines, setPivotLines] = useState<{ kind: string; coords: number[][]; field?: number }[]>([]);
+  const [pivotLines, setPivotLines] = useState<PipeLine[]>([]);
+  // Parametri idraulici di progetto (il singolo pivot può avere i suoi).
+  const [pivQ, setPivQ] = useState(60);      // portata richiesta da un pivot (l/s)
+  const [pivP, setPivP] = useState(2.5);     // pressione richiesta al pivot (bar)
+  const [vMax, setVMax] = useState(1.8);     // velocità massima in tubazione (m/s)
+  const [hwC, setHwC] = useState(140);       // coefficiente di Hazen-Williams (PE/PVC ≈ 140)
   const [dragOverField, setDragOverField] = useState<number | "root" | null>(null);   // evidenzia il bersaglio del trascinamento
   const [hiddenPivotFields, setHiddenPivotFields] = useState<Set<number>>(new Set()); // gruppi pivot (per campo) nascosti
   const [hiddenPipeFields, setHiddenPipeFields] = useState<Set<number>>(new Set());   // gruppi tubazioni (per campo) nascosti
@@ -2460,6 +2471,119 @@ export default function Page() {
   // con un RAMO dedicato: un tratto nuovo dal centro del pivot fino alla
   // tubazione esistente, che resta com'è. Non si deforma la linea esistente
   // facendola passare per il pivot.
+  // ---- IDRAULICA: diametri delle tubazioni --------------------------------
+  // Ogni pivot chiede una portata; la portata di un tratto è la somma di quelle
+  // dei pivot che stanno a valle. Dal diametro minimo che rispetta la velocità
+  // massima si sale al primo diametro commerciale disponibile.
+  const DN_LIST = [110, 125, 140, 160, 180, 200, 225, 250, 280, 315, 355, 400, 450, 500, 560, 630, 710, 800, 900, 1000];
+  function computeHydraulics(apply: boolean) {
+    const pipes = pivotLines.map((l, i) => ({ l, i })).filter((x) => x.l.kind === "pipe");
+    if (!pipes.length) { setMsg(t("Nessuna tubazione da dimensionare.")); return null; }
+    const lat0 = pipes[0].l.coords[0]?.[1] ?? 0;
+    const mLat = 111320, mLng = 111320 * Math.cos((lat0 * Math.PI) / 180) || 1e-9;
+    const key = (q: number[]) => `${q[0].toFixed(5)},${q[1].toFixed(5)}`;
+    // grafo: nodi = vertici delle tubazioni, archi = tratti
+    type Edge = { a: string; b: string; pipe: number; seg: number; len: number };
+    const edges: Edge[] = [];
+    const adj = new Map<string, number[]>();
+    const posOf = new Map<string, number[]>();
+    for (const { l, i } of pipes) {
+      for (let k = 0; k < l.coords.length - 1; k++) {
+        const A = l.coords[k], B = l.coords[k + 1];
+        const ka = key(A), kb = key(B);
+        posOf.set(ka, A); posOf.set(kb, B);
+        const len = Math.hypot((B[0] - A[0]) * mLng, (B[1] - A[1]) * mLat);
+        const e = edges.length;
+        edges.push({ a: ka, b: kb, pipe: i, seg: k, len });
+        (adj.get(ka) ?? adj.set(ka, []).get(ka))!.push(e);
+        (adj.get(kb) ?? adj.set(kb, []).get(kb))!.push(e);
+      }
+    }
+    // domande: la portata di ogni pivot cade sul nodo del suo centro
+    const demand = new Map<string, number>();
+    let unserved = 0;
+    for (const pv of pivots) {
+      const k = key([pv.lng, pv.lat]);
+      if (!posOf.has(k)) { unserved++; continue; }
+      demand.set(k, (demand.get(k) || 0) + (pv.q && pv.q > 0 ? pv.q : pivQ));
+    }
+    // sorgenti: nodi che stanno sull'acqua
+    const W = waterLinesLL().map((ln) => ln.map((q) => [q[0] * mLng, q[1] * mLat] as [number, number]));
+    const dSeg = (p: [number, number], a: [number, number], b: [number, number]) => {
+      const vx = b[0] - a[0], vy = b[1] - a[1]; const l2 = vx * vx + vy * vy || 1e-9;
+      let tt = ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / l2; tt = Math.max(0, Math.min(1, tt));
+      return Math.hypot(p[0] - (a[0] + vx * tt), p[1] - (a[1] + vy * tt));
+    };
+    const sources: string[] = [];
+    for (const [k, q] of posOf) {
+      const m2: [number, number] = [q[0] * mLng, q[1] * mLat];
+      let on = false;
+      for (const w of W) { for (let i = 0; i < w.length - 1; i++) if (dSeg(m2, w[i], w[i + 1]) < 15) { on = true; break; } if (on) break; }
+      if (on) sources.push(k);
+    }
+    if (!sources.length) { setMsg(t("Nessuna presa sul canale: collega almeno una tubazione all'acqua.")); return null; }
+    // albero di percorrenza dalle sorgenti (BFS): ogni arco viene orientato
+    const parentEdge = new Map<string, number>();
+    const order: string[] = [];
+    const seen = new Set<string>(sources);
+    const queue = [...sources];
+    while (queue.length) {
+      const u = queue.shift() as string; order.push(u);
+      for (const ei of adj.get(u) ?? []) {
+        const e = edges[ei]; const v = e.a === u ? e.b : e.a;
+        if (seen.has(v)) continue;
+        seen.add(v); parentEdge.set(v, ei); queue.push(v);
+      }
+    }
+    // portata di ogni arco = somma delle domande a valle (dalle foglie a monte)
+    const flow = new Array(edges.length).fill(0);
+    const acc = new Map<string, number>();
+    for (let i = order.length - 1; i >= 0; i--) {
+      const u = order[i];
+      const own = (demand.get(u) || 0) + (acc.get(u) || 0);
+      const pe = parentEdge.get(u);
+      if (pe != null) {
+        flow[pe] += own;
+        const e = edges[pe]; const par = e.a === u ? e.b : e.a;
+        acc.set(par, (acc.get(par) || 0) + own);
+      }
+    }
+    // diametro commerciale + perdite di carico (Hazen-Williams)
+    const dnOf = new Map<number, number[]>(), qsOf = new Map<number, number[]>();
+    const byDn = new Map<number, number>();
+    let hlMax = 0, isolated = 0;
+    for (let ei = 0; ei < edges.length; ei++) {
+      const e = edges[ei];
+      const Q = flow[ei];                       // l/s
+      if (Q <= 0) isolated++;
+      const need = Math.sqrt((4 * (Q / 1000)) / (Math.PI * vMax)) * 1000;   // mm
+      const dn = DN_LIST.find((d) => d >= need) ?? DN_LIST[DN_LIST.length - 1];
+      const D = dn / 1000;
+      const hf = Q > 0 ? (10.67 * e.len * Math.pow(Q / 1000, 1.852)) / (Math.pow(hwC, 1.852) * Math.pow(D, 4.87)) : 0;
+      hlMax = Math.max(hlMax, hf);
+      const da = dnOf.get(e.pipe) ?? []; da[e.seg] = dn; dnOf.set(e.pipe, da);
+      const qa = qsOf.get(e.pipe) ?? []; qa[e.seg] = Math.round(Q * 10) / 10; qsOf.set(e.pipe, qa);
+      byDn.set(dn, (byDn.get(dn) || 0) + e.len);
+    }
+    const totalQ = sources.reduce((s2, k) => {
+      let q = 0;
+      for (const ei of adj.get(k) ?? []) { const e = edges[ei]; if (parentEdge.get(e.a === k ? e.b : e.a) === ei) q += flow[ei]; }
+      return s2 + q;
+    }, 0);
+    if (apply) {
+      const next = pivotLines.map((l, i) => (l.kind === "pipe" ? { ...l, dn: dnOf.get(i), qs: qsOf.get(i) } : l));
+      setPivotLines(next);
+      setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, next) } : gp));
+    }
+    return { byDn: [...byDn.entries()].sort((a, b) => a[0] - b[0]), totalQ, hlMax, unserved, isolated, nSources: sources.length };
+  }
+  const [hydra, setHydra] = useState<null | { byDn: [number, number][]; totalQ: number; hlMax: number; unserved: number; isolated: number; nSources: number }>(null);
+  function runHydraulics() {
+    const r = computeHydraulics(true);
+    setHydra(r);
+    if (r) setMsg(t("Diametri calcolati ✓ portata totale {q} l/s su {n} prese", { q: Math.round(r.totalQ), n: r.nSources }));
+  }
+
   // Quale pivot collegare: quello selezionato se c'è, altrimenti il pivot NON
   // alimentato più vicino al centro della vista — così il comando è a portata di
   // mano anche mentre stai lavorando su una tubazione, senza cambiare selezione.
@@ -3257,6 +3381,17 @@ export default function Page() {
                         <option value="pipe">{t("Tubazione (pressione)")}</option>
                       </select></label>
                   </div>
+                  <div className="flex gap-2 mt-2">
+                    <label className="text-[11px] text-sage-dark flex-1">{t("Portata (l/s)")}
+                      <input type="number" min={0} step={1} value={selPivot.q ?? ""} placeholder={String(pivQ)}
+                        onChange={(e) => updateSelPivot({ q: e.target.value === "" ? undefined : Math.max(0, Number(e.target.value)) })}
+                        className="field-input mt-1" /></label>
+                    <label className="text-[11px] text-sage-dark flex-1">{t("Pressione (bar)")}
+                      <input type="number" min={0} step={0.1} value={selPivot.p ?? ""} placeholder={String(pivP)}
+                        onChange={(e) => updateSelPivot({ p: e.target.value === "" ? undefined : Math.max(0, Number(e.target.value)) })}
+                        className="field-input mt-1" /></label>
+                  </div>
+                  <div className="text-[10px] text-sage-dark mt-1">{t("Vuoto = valore di progetto ({q} l/s · {p} bar).", { q: pivQ, p: pivP })}</div>
                   <div className="text-[11px] text-sage-dark mt-1">{t("Area")}: <b>{uHa(Math.PI * selPivot.r * selPivot.r / 10000, 1)}</b></div>
                   <button className="btn-ghost w-full text-danger mt-2" onClick={deleteSelPivot}>{t("Elimina pivot")}</button>
                 </div>
@@ -3935,6 +4070,51 @@ export default function Page() {
                 {t("Per correggere a mano: primo clic su una tubazione seleziona il gruppo, il secondo la singola — poi trascina o elimina i suoi punti, oppure premi Canc per toglierla tutta.")}
               </div>
               {!canals.length && <p className="text-[10px] text-danger mt-1">{t("Traccia prima un canale nella pagina Rilievo.")}</p>}
+            </div>
+
+            <div className="border-t border-black/5 mt-3 pt-3">
+              <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Idraulica")}</div>
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <label className="text-[11px] text-sage-dark">{t("Portata per pivot (l/s)")}
+                  <input type="number" min={1} step={1} value={pivQ}
+                    onChange={(e) => setPivQ(Math.max(1, Number(e.target.value)))} className="field-input px-2 py-1.5 text-sm mt-0.5" />
+                </label>
+                <label className="text-[11px] text-sage-dark">{t("Pressione al pivot (bar)")}
+                  <input type="number" min={0} step={0.1} value={pivP}
+                    onChange={(e) => setPivP(Math.max(0, Number(e.target.value)))} className="field-input px-2 py-1.5 text-sm mt-0.5" />
+                </label>
+                <label className="text-[11px] text-sage-dark">{t("Velocità max (m/s)")}
+                  <input type="number" min={0.3} step={0.1} value={vMax}
+                    onChange={(e) => setVMax(Math.max(0.3, Number(e.target.value)))} className="field-input px-2 py-1.5 text-sm mt-0.5" />
+                </label>
+                <label className="text-[11px] text-sage-dark">{t("Scabrezza (C Hazen-Williams)")}
+                  <input type="number" min={80} max={160} step={5} value={hwC}
+                    onChange={(e) => setHwC(Math.max(80, Math.min(160, Number(e.target.value))))} className="field-input px-2 py-1.5 text-sm mt-0.5" />
+                </label>
+              </div>
+              <button className="btn-primary w-full mt-2" disabled={!nPipes} onClick={runHydraulics}>
+                {t("Calcola diametri")}
+              </button>
+              {hydra && (
+                <div className="mt-2 text-[11px] text-brand-darker bg-panel rounded-lg p-2 leading-relaxed">
+                  <div><b>{t("Portata totale")}</b>: {fmt(Math.round(hydra.totalQ))} l/s · {t("prese")}: {hydra.nSources}</div>
+                  <div>{t("Perdita di carico massima su un tratto")}: {fmt(hydra.hlMax, { maximumFractionDigits: 2 })} m</div>
+                  <div className="mt-1"><b>{t("Metri per diametro")}</b></div>
+                  <table className="w-full tabular-nums">
+                    <tbody>
+                      {hydra.byDn.map(([dn, m]) => (
+                        <tr key={dn}><td className="pr-2">DN {dn}</td><td className="text-right">{fmt(Math.round(m))} m</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {hydra.unserved > 0 && (
+                    <div className="text-danger mt-1">{t("{n} pivot non sono su nessuna tubazione: la loro portata non è conteggiata.", { n: hydra.unserved })}</div>
+                  )}
+                </div>
+              )}
+              <p className="text-[10px] text-sage-dark mt-1 leading-relaxed">
+                {t("Il diametro di ogni tratto nasce dalla portata dei pivot a valle e dalla velocità massima; si sale al primo diametro commerciale. Le perdite usano Hazen-Williams e non tengono conto dei dislivelli.")}
+              </p>
             </div>
 
             <p className="hint mt-3">{t("Altre infrastrutture accessorie (invasi, stazioni di pompaggio, dati elettrici…) in arrivo.")}</p>

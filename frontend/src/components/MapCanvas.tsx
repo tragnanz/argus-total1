@@ -8,8 +8,9 @@ export type OverlayKey = "index" | "dem" | "suitability";
 export type FieldStyle = { color?: string; fillColor?: string; fillOpacity?: number; weight?: number };
 export type FieldGeom = { id: number; name: string; geom: Polygon; style?: FieldStyle; level?: "area" | "campo" };
 // Modello pivot interattivo (gerarchia gruppo → singolo)
-export type PivotItem = { lat: number; lng: number; r: number; conn?: string; field?: number; unconn?: boolean };
-export type PivotModel = { pivots: PivotItem[]; lines: { kind: string; coords: number[][] }[] };
+export type PivotItem = { lat: number; lng: number; r: number; conn?: string; field?: number; unconn?: boolean;
+  q?: number; p?: number };   // portata (l/s) e pressione (bar) richieste dal pivot
+export type PivotModel = { pivots: PivotItem[]; lines: { kind: string; coords: number[][]; dn?: number[]; qs?: number[] }[] };
 export type PivotSel = { mode: "none" | "group" | "single"; idx: number };
 export type PivotCbs = {
   onClick: (idx: number) => void;
@@ -582,7 +583,12 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             // clic viene raccolto entro ~9 px per lato, così non serve centrarlo.
             const hit = L.polyline(latlngs, { color: "#000", weight: 18, opacity: 0, interactive: true });
             hit.on("click", (e) => { L.DomEvent.stop(e); cbs.onLineClick?.(li); });
-            hit.bindTooltip(String(li + 1), { direction: "top", sticky: true });
+            const dnMax = ln.dn && ln.dn.length ? Math.max(...ln.dn.filter((x) => x)) : 0;
+            const qMax = ln.qs && ln.qs.length ? Math.max(...ln.qs.filter((x) => x)) : 0;
+            hit.bindTooltip(dnMax ? `${li + 1} · DN ${dnMax}${qMax ? ` · ${qMax} l/s` : ""}` : String(li + 1),
+              { direction: "top", sticky: true });
+            // con i diametri calcolati lo spessore del tratto li rispecchia
+            if (dnMax) pl.setStyle({ weight: Math.max(2, Math.min(9, 1 + dnMax / 90)) });
             g.addLayer(hit);
             // Simbolo della PRESA: si mette dove la tubazione TOCCA DAVVERO il
             // canale, non sul primo punto per convenzione. Se sposti l'attacco
