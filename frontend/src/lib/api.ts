@@ -331,6 +331,9 @@ export type ReportInfo = {
   include_suitability: boolean; lang?: string;
   include_sheet?: boolean;   // stampa le sezioni con i dati di progetto
   include_plan?: boolean;    // stampa la tavola della planimetria
+  // Progetto realmente disegnato: pivot e tubazioni come stanno sulla mappa.
+  plan_fc?: GeoJSONFC;
+  plan_canals?: number[][][];
 };
 export async function downloadReport(geom: Polygon, p: LayoutParams, info: ReportInfo): Promise<Blob> {
   // Come req(): il token va spedito, altrimenti il middleware di login risponde

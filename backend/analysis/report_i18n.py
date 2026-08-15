@@ -6,6 +6,7 @@ Fallback: inglese, poi italiano, poi la chiave stessa.
 from __future__ import annotations
 
 _IT = {
+    "leg_no_sat": "Ortofoto non disponibile",
     "leg_titolo": "Legenda",
     "leg_confine": "Confine area",
     "leg_pivot": "Pivot",
@@ -39,6 +40,7 @@ _IT = {
 }
 
 _EN = {
+    "leg_no_sat": "Orthophoto unavailable",
     "leg_titolo": "Legend",
     "leg_confine": "Area boundary",
     "leg_pivot": "Pivot",
@@ -72,6 +74,7 @@ _EN = {
 }
 
 _FR = {
+    "leg_no_sat": "Orthophoto indisponible",
     "leg_titolo": "Légende",
     "leg_confine": "Limite de zone",
     "leg_pivot": "Pivot",
@@ -105,6 +108,7 @@ _FR = {
 }
 
 _ES = {
+    "leg_no_sat": "Ortofoto no disponible",
     "leg_titolo": "Leyenda",
     "leg_confine": "Límite del área",
     "leg_pivot": "Pivote",
@@ -138,6 +142,7 @@ _ES = {
 }
 
 _PT = {
+    "leg_no_sat": "Ortofoto indisponível",
     "leg_titolo": "Legenda",
     "leg_confine": "Limite da área",
     "leg_pivot": "Pivô",
@@ -171,6 +176,7 @@ _PT = {
 }
 
 _RO = {
+    "leg_no_sat": "Ortofotoplan indisponibil",
     "leg_titolo": "Legendă",
     "leg_confine": "Limita zonei",
     "leg_pivot": "Pivot",
@@ -204,6 +210,7 @@ _RO = {
 }
 
 _KK = {
+    "leg_no_sat": "Ортофото қолжетімсіз",
     "leg_titolo": "Шартты белгілер",
     "leg_confine": "Аумақ шекарасы",
     "leg_pivot": "Пивот",
@@ -237,6 +244,7 @@ _KK = {
 }
 
 _AR = {
+    "leg_no_sat": "الصورة الجوية غير متاحة",
     "leg_titolo": "مفتاح الخريطة",
     "leg_confine": "حدود المنطقة",
     "leg_pivot": "محور مركزي",
@@ -270,6 +278,7 @@ _AR = {
 }
 
 _ZH = {
+    "leg_no_sat": "正射影像不可用",
     "leg_titolo": "图例",
     "leg_confine": "区域边界",
     "leg_pivot": "中心支轴喷灌机",
@@ -303,6 +312,7 @@ _ZH = {
 }
 
 _HU = {
+    "leg_no_sat": "Ortofotó nem érhető el",
     "leg_titolo": "Jelmagyarázat",
     "leg_confine": "Terület határa",
     "leg_pivot": "Pivot",
@@ -336,6 +346,7 @@ _HU = {
 }
 
 _ID = {
+    "leg_no_sat": "Ortofoto tidak tersedia",
     "leg_titolo": "Legenda",
     "leg_confine": "Batas area",
     "leg_pivot": "Pivot",
@@ -369,6 +380,7 @@ _ID = {
 }
 
 _DE = {
+    "leg_no_sat": "Orthofoto nicht verfügbar",
     "leg_titolo": "Legende",
     "leg_confine": "Flächengrenze",
     "leg_pivot": "Pivot",
@@ -402,6 +414,7 @@ _DE = {
 }
 
 _PL = {
+    "leg_no_sat": "Ortofotomapa niedostępna",
     "leg_titolo": "Legenda",
     "leg_confine": "Granica obszaru",
     "leg_pivot": "Pivot",
@@ -435,6 +448,7 @@ _PL = {
 }
 
 _BG = {
+    "leg_no_sat": "Ортофото недостъпно",
     "leg_titolo": "Легенда",
     "leg_confine": "Граница на площта",
     "leg_pivot": "Пивот",
@@ -468,6 +482,7 @@ _BG = {
 }
 
 _RU = {
+    "leg_no_sat": "Ортофото недоступно",
     "leg_titolo": "Условные обозначения",
     "leg_confine": "Граница участка",
     "leg_pivot": "Пивот",
@@ -501,6 +516,7 @@ _RU = {
 }
 
 _AF = {
+    "leg_no_sat": "Ortofoto nie beskikbaar nie",
     "leg_titolo": "Legende",
     "leg_confine": "Areagrens",
     "leg_pivot": "Spilpunt",
@@ -534,6 +550,7 @@ _AF = {
 }
 
 _MS = {
+    "leg_no_sat": "Ortofoto tidak tersedia",
     "leg_titolo": "Petunjuk",
     "leg_confine": "Sempadan kawasan",
     "leg_pivot": "Pivot",
@@ -567,6 +584,7 @@ _MS = {
 }
 
 _VI = {
+    "leg_no_sat": "Không có ảnh trực giao",
     "leg_titolo": "Chú giải",
     "leg_confine": "Ranh giới khu vực",
     "leg_pivot": "Pivot",

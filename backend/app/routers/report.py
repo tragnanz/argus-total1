@@ -1,6 +1,8 @@
 """Export scheda progetto in PDF brandizzato (Milestone 4)."""
 from __future__ import annotations
 
+import math
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
@@ -12,6 +14,63 @@ from analysis.suitability import compute_suitability
 from analysis.report import layout_schematic_png, build_pdf
 
 router = APIRouter(prefix="/api/project", tags=["report"])
+
+def _ring_area_ha(ring: list[list[float]]) -> float:
+    """Area di un anello lon/lat in ettari (proiezione locale equivalente)."""
+    if len(ring) < 4:
+        return 0.0
+    lat0 = sum(p[1] for p in ring) / len(ring)
+    kx = 111320.0 * math.cos(math.radians(lat0))
+    a = 0.0
+    for i in range(len(ring) - 1):
+        x1, y1 = ring[i][0] * kx, ring[i][1] * 110540.0
+        x2, y2 = ring[i + 1][0] * kx, ring[i + 1][1] * 110540.0
+        a += x1 * y2 - x2 * y1
+    return abs(a) / 2.0 / 10000.0
+
+
+def _real_plan(body, lay) -> tuple[dict, dict]:
+    """Sostituisce layout e conteggi con il progetto realmente disegnato.
+
+    Ritorna (geojson da disegnare, meta per scheda e titolo). Senza `plan_fc`
+    restituisce il layout ricalcolato, come prima.
+    """
+    fc = body.plan_fc or {}
+    feats = list(fc.get("features") or [])
+    if not feats:
+        return lay["geojson"], lay["meta"]
+
+    # I canali arrivano a parte (sono livelli di rilievo, non del layout).
+    for coords in (body.plan_canals or []):
+        if coords and len(coords) >= 2:
+            feats.append({"type": "Feature", "properties": {"kind": "canal"},
+                          "geometry": {"type": "LineString", "coordinates": coords}})
+
+    meta = dict(lay["meta"])
+    pivots = [f for f in feats if (f.get("properties") or {}).get("kind") == "pivot"]
+    net_ha = sum(_ring_area_ha((f.get("geometry") or {}).get("coordinates", [[]])[0]) for f in pivots)
+    field_ha = meta.get("field_ha", 0.0) or 0.0
+
+    old_net = meta.get("net_ha") or 0.0
+    meta["n_pivots"] = len(pivots)
+    meta["net_ha"] = net_ha
+    if field_ha > 0:
+        meta["packing_pct"] = net_ha / field_ha * 100.0
+        meta["coverage_pct"] = net_ha / field_ha * 100.0
+    # Il fabbisogno segue la superficie irrigata: si riscalano i totali, non i
+    # valori unitari (che restano quelli del dimensionamento).
+    if old_net > 0 and net_ha > 0:
+        k = net_ha / old_net
+        w = dict(meta.get("water") or {})
+        for key in ("q_total_ls", "q_total_m3h", "vol_total_day_m3"):
+            if w.get(key):
+                w[key] = w[key] * k
+        meta["water"] = w
+    # Il progetto reale non ha fasi: una sola classe in legenda.
+    meta["n_phases"] = 1
+    meta["phases"] = []
+    return {"type": "FeatureCollection", "features": feats}, meta
+
 
 
 @router.post("/report")
@@ -56,11 +115,17 @@ def project_report(body: ReportIn, client=Depends(get_client)):
     want_plan = bool(body.include_plan)
     if not want_sheet and not want_plan:
         raise HTTPException(400, "Seleziona almeno una sezione da stampare.")
+    # Se il client manda il progetto reale (pivot e tubazioni disegnati a mano),
+    # e' quello a fare testo: la tavola e i conteggi devono corrispondere a cio'
+    # che l'utente vede sulla mappa, non a un layout ricalcolato.
+    plan_gj, meta = _real_plan(body, lay)
+
+    status: dict = {}
     try:
         # Senza planimetria si evita anche lo scaricamento delle tessere.
-        png = layout_schematic_png(lay["geojson"], lay["meta"], lat0, lang=lang,
-                                   field_geom=geom) if want_plan else b""
-        pdf = build_pdf(info, lay["meta"].get("field_ha", 0.0), suit_meta, lay["meta"], png,
+        png = layout_schematic_png(plan_gj, meta, lat0, lang=lang,
+                                   field_geom=geom, status=status) if want_plan else b""
+        pdf = build_pdf(info, meta.get("field_ha", 0.0), suit_meta, meta, png,
                         f"v{REV}", lang=lang, with_sheet=want_sheet, with_plan=want_plan)
     except HTTPException:
         raise
@@ -69,4 +134,8 @@ def project_report(body: ReportIn, client=Depends(get_client)):
 
     fname = "".join(c if c.isalnum() or c in "-_" else "_" for c in body.project_name)[:40] or "scheda"
     return Response(content=pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="scheda_{fname}.pdf"'})
+                    headers={"Content-Disposition": f'attachment; filename="scheda_{fname}.pdf"',
+                             # Diagnostica: dice se l'ortofoto e' stata scaricata.
+                             "X-Argus-Basemap": str(status.get("basemap", "none")),
+                             "X-Argus-Basemap-Error": str(status.get("error", ""))[:180],
+                             "Access-Control-Expose-Headers": "X-Argus-Basemap, X-Argus-Basemap-Error"})

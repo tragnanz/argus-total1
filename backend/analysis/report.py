@@ -129,18 +129,41 @@ def _tile_of(lon: float, lat: float, z: int) -> tuple[float, float]:
     return (x + _WORLD / 2) / _WORLD * n, (_WORLD / 2 - y) / _WORLD * n
 
 
+_SESSION = None
+
+
+def _session():
+    """Sessione HTTP riusata fra le tessere.
+
+    Con una GET indipendente per tessera si paga handshake TLS e risoluzione
+    DNS decine di volte: su un'istanza che si sta risvegliando basta questo a
+    far scadere i tempi e a lasciare la tavola senza ortofoto.
+    """
+    global _SESSION
+    if _SESSION is None:
+        import requests
+        from requests.adapters import HTTPAdapter
+        se = requests.Session()
+        se.headers.update({"User-Agent": "ArgusTotal/1.0 (scheda PDF)"})
+        ad = HTTPAdapter(pool_connections=4, pool_maxsize=16, max_retries=1)
+        se.mount("https://", ad)
+        se.mount("http://", ad)
+        _SESSION = se
+    return _SESSION
+
+
 def _fetch_tile(z: int, x: int, y: int, timeout: float):
-    import requests
     from PIL import Image
-    r = requests.get(_TILE_URL.format(z=z, x=x, y=y), timeout=timeout,
-                     headers={"User-Agent": "ArgusTotal/1.0 (scheda PDF)"})
+    # (connessione, lettura): la connessione deve essere rapida, il download
+    # di una tessera puo' invece prendersi qualche secondo in piu'.
+    r = _session().get(_TILE_URL.format(z=z, x=x, y=y), timeout=(timeout, timeout * 2))
     r.raise_for_status()
     return Image.open(io.BytesIO(r.content)).convert("RGB")
 
 
 def _satellite_bg(lon_min: float, lat_min: float, lon_max: float, lat_max: float,
-                  max_tiles: int = 80, max_zoom: int = 18, timeout: float = 4.0,
-                  budget_s: float = 15.0, max_px: int = 2600):
+                  max_tiles: int = 80, max_zoom: int = 18, timeout: float = 6.0,
+                  budget_s: float = 25.0, max_px: int = 2600):
     """Mosaico di ortofoto che copre il riquadro. Ritorna (immagine, estensione
     in metri Mercator) oppure (None, None) se le tessere non arrivano."""
     try:
@@ -178,8 +201,11 @@ def _satellite_bg(lon_min: float, lat_min: float, lon_max: float, lat_max: float
             tiles = list(pool.map(grab, jobs))
     except Exception:  # noqa: BLE001
         return None, None
-    if sum(1 for t in tiles if t is None) > len(tiles) // 4:
-        return None, None      # troppe tessere mancanti: meglio lo schema pulito
+    got = sum(1 for t in tiles if t is not None)
+    if got < max(1, len(tiles) // 2):
+        return None, None      # quasi nulla e' arrivato: meglio lo schema pulito
+    # Con qualche buco si procede comunque: un'ortofoto parziale e' piu' utile
+    # di una tavola bianca.
 
     canvas = Image.new("RGB", (nx * _TILE_PX, ny * _TILE_PX), (18, 53, 36))
     for (tx, ty), img in zip(jobs, tiles):
@@ -209,7 +235,7 @@ def _safe_tile(z: int, x: int, y: int, timeout: float):
 
 def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it",
                          field_geom: dict | None = None, satellite: bool = True,
-                         aspect: float = 261.0 / 170.0) -> bytes:
+                         aspect: float = 261.0 / 170.0, status: dict | None = None) -> bytes:
     """Planimetria del layout sull'ortofoto (come la mappa del sito).
 
     Il disegno avviene in metri Web Mercator, gli stessi delle tessere: la
@@ -256,6 +282,8 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
             note(c[0])
         elif k == "pump":
             lons.append(c[0]); lats.append(c[1])
+        elif k == "canal" and field_ring:
+            pass          # il canale puo' correre lontano: non allarga la tavola
         else:
             note(c)
     if not lons:
@@ -283,14 +311,23 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
     lon_max, lat_max = _unmerc(mx1, my1)
 
     # --- sfondo satellitare ---
+    # `status` riporta l'esito al chiamante: senza, un fallimento di rete
+    # resterebbe invisibile e la tavola uscirebbe su bianco senza spiegazione.
     bg = None
     if satellite:
         try:
             bg, extent = _satellite_bg(lon_min, lat_min, lon_max, lat_max)
-        except Exception:  # noqa: BLE001 — la scheda esce comunque
+            if status is not None:
+                status["basemap"] = "ok" if bg is not None else "failed"
+        except Exception as e:  # noqa: BLE001 — la scheda esce comunque
             bg, extent = None, None
+            if status is not None:
+                status["basemap"] = "failed"
+                status["error"] = f"{type(e).__name__}: {e}"[:200]
         if bg is not None:
             ax.imshow(bg, extent=extent, origin="upper", zorder=0, interpolation="bilinear")
+    elif status is not None:
+        status["basemap"] = "off"
 
     on_sat = bg is not None
     # Su ortofoto servono tratti chiari e pieni piu' trasparenti per leggere il
@@ -317,9 +354,12 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
             ax.add_patch(MplPoly(ring, closed=True, facecolor="none", edgecolor=edge,
                                  linewidth=0.7, zorder=4))
         elif k == "pipe":
-            (p1, p2) = g["coordinates"]
-            (x1, y1), (x2, y2) = _merc(*p1), _merc(*p2)
-            ax.plot([x1, x2], [y1, y2], color=ACCENT, linewidth=0.9, zorder=5)
+            # Il layout automatico produce segmenti a due punti, il progetto
+            # disegnato a mano polilinee con piu' vertici: si gestiscono uguale.
+            pts = _merc_ring(g["coordinates"])
+            if len(pts) >= 2:
+                ax.plot([q[0] for q in pts], [q[1] for q in pts], color=ACCENT,
+                        linewidth=1.1, zorder=5)
         elif k == "header":
             pts = _merc_ring(g["coordinates"])
             ax.plot([p[0] for p in pts], [p[1] for p in pts], color="#b23b1e",
@@ -421,6 +461,10 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
             bbox=dict(facecolor="#00000055" if on_sat else "#ffffffcc", edgecolor="none", pad=1.2),
             zorder=8)
 
+    if not on_sat and satellite:
+        ax.text(0.995, 0.008, LB(tr(lang, "leg_no_sat")), transform=ax.transAxes,
+                ha="right", va="bottom", fontsize=5.5, color="#8a9a90",
+                fontproperties=prop, zorder=7)
     if on_sat:
         ax.text(0.995, 0.008, _SAT_CREDIT, transform=ax.transAxes, ha="right", va="bottom",
                 fontsize=5.5, color="#ffffff",

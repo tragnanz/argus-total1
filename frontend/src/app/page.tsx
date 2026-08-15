@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.148";
+const REV = "v0.6.149";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2897,12 +2897,22 @@ export default function Page() {
     try {
       const pname = projects.find((p) => p.id === projectId)?.name || "Progetto";
       const cname = clients.find((c) => c.id === clientId)?.name;
+      // La planimetria deve mostrare il progetto REALE: pivot e tubazioni come
+      // sono sulla mappa, non un layout ricalcolato dal poligono.
+      const canalLines = canals.filter((c) => !c.hidden && c.geojson?.coordinates?.length >= 2)
+        .map((c) => c.geojson.coordinates);
+      const planOf = (fid: number) => {
+        const pvs = pivots.filter((p) => p.field === fid);
+        const pls = pivotLines.filter((l) => l.kind === "pipe" && l.field === fid);
+        if (!pvs.length) return {};    // niente disegnato: resta il layout automatico
+        return { plan_fc: fcFromModel(pvs, pls), plan_canals: canalLines };
+      };
       if (sel.length === 1) {
         const f = sel[0];
         const blob = await api.downloadReport(f.geom, paramsFrom(effSettings(f)),
           { project_name: fields.length > 1 ? `${pname} — ${f.name}` : pname,
             client_name: cname, notes, include_suitability: pdfSheet,
-            lang: pdfLang, include_sheet: pdfSheet, include_plan: pdfPlan });
+            lang: pdfLang, include_sheet: pdfSheet, include_plan: pdfPlan, ...planOf(f.id) });
         saveBlob(blob, `scheda_${safe(fields.length > 1 ? f.name : pname)}.pdf`);
       } else {
         const zip = new JSZip();
@@ -2911,7 +2921,7 @@ export default function Page() {
           setMsg(t("Genero campo {i}/{n}…", { i: i + 1, n: sel.length }));
           const blob = await api.downloadReport(f.geom, paramsFrom(effSettings(f)),
             { project_name: `${pname} — ${f.name}`, client_name: cname, notes, include_suitability: pdfSheet,
-              lang: pdfLang, include_sheet: pdfSheet, include_plan: pdfPlan });
+              lang: pdfLang, include_sheet: pdfSheet, include_plan: pdfPlan, ...planOf(f.id) });
           zip.file(`scheda_${safe(f.name)}.pdf`, blob);
         }
         const zblob = await zip.generateAsync({ type: "blob" });

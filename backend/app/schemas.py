@@ -357,6 +357,11 @@ class ReportIn(LayoutIn):
     # Cosa stampare: la scheda con i dati, la tavola della planimetria, o entrambe.
     include_sheet: bool = True
     include_plan: bool = True
+    # Progetto REALE disegnato dall'utente (pivot e tubazioni come stanno sulla
+    # mappa). Se arriva, la planimetria disegna questo invece del layout
+    # ricalcolato dal poligono.
+    plan_fc: dict | None = None
+    plan_canals: list[list[list[float]]] | None = None
 
 
 class HealthOut(BaseModel):
