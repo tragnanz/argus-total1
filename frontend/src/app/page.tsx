@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.154";
+const REV = "v0.6.155";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -4547,10 +4547,13 @@ export default function Page() {
             </div>
           </section>
 
-          <p className={"hint " + secShow("export")}>
-            {t("Fonte: Sentinel-2 L2A / DEM Copernicus.")}
-            {providerMode === "synthetic" && <><br />{t("Dati sintetici (demo) — nessun credito Copernicus consumato.")}</>}
-          </p>
+          {/* Resta solo l'avviso sui dati demo: senza quello il riquadro
+              sarebbe una nota informativa vuota. */}
+          {providerMode === "synthetic" && (
+            <p className={"hint " + secShow("export")}>
+              {t("Dati sintetici (demo) — nessun credito Copernicus consumato.")}
+            </p>
+          )}
           </div>
         </div>
         )}
