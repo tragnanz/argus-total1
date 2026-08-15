@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.159";
+const REV = "v0.6.160";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1038,6 +1038,9 @@ export default function Page() {
   // Parametri idraulici di progetto (il singolo pivot può avere i suoi).
   // ---- Irrigazione: il fabbisogno decide la portata di OGNI pivot ----
   const [cropKey, setCropKey] = useState("canna");   // coltura → coefficiente Kc
+  // Pagina Impianti: sistema irriguo scelto. Per ora è implementato il pivot;
+  // gli altri sono predisposti e restano vuoti finché non arrivano.
+  const [irrigSys, setIrrigSys] = useState<"pivot" | "lineari" | "rotoloni" | "goccia">("pivot");
   const [mm24, setMm24] = useState(8);               // fabbisogno lordo (mm/24h)
   const [rainMm, setRainMm] = useState(0);           // piovosità utile (mm/24h)
   const [effPct, setEffPct] = useState(85);          // efficienza dell'impianto (%)
@@ -4166,6 +4169,24 @@ export default function Page() {
           <section hidden={tab !== "impianti"}>
             <SectionHead title={t("Impianti")} help={t("«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.")} />
 
+            {/* Sistemi irrigui: pagine interne del widget. Oggi solo il pivot ha
+                contenuti, gli altri sono segnaposto dichiarati. */}
+            <div className="flex gap-1 mb-3">
+              {([["pivot", "Pivot"], ["lineari", "Lineari"], ["rotoloni", "Rotoloni"], ["goccia", "Goccia"]] as const).map(([k, lab]) => (
+                <button key={k} onClick={() => setIrrigSys(k)}
+                  className={"flex-1 basis-0 text-[12px] font-medium rounded-lg py-1.5 transition " +
+                    (irrigSys === k ? "bg-brand text-white" : "bg-panel text-sage-dark hover:bg-brand-mint/20")}>
+                  {t(lab)}
+                </button>
+              ))}
+            </div>
+
+            {irrigSys !== "pivot" ? (
+              <div className="text-[12px] text-sage-dark bg-panel rounded-lg px-3 py-6 text-center">
+                {t("Sistema non ancora disponibile: per ora si progettano i pivot.")}
+              </div>
+            ) : (<>
+
             <label className="text-xs text-sage-dark block mb-1">{t("Disposizione")}</label>
             <div className="seg mb-1">
               <div className="seg-item" data-active={cur.layoutCfg === "square"} onClick={() => patch({ layoutCfg: "square" })}>{t("A quadrato")}</div>
@@ -4294,6 +4315,7 @@ export default function Page() {
                 </div>
               </div>
             )}
+            </>)}
           </section>
 
 

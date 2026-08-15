@@ -41,6 +41,10 @@ export const LOCALES: Record<Lang, string> = {
 type Dict = Record<string, string>;
 
 const EN: Dict = {
+  "Lineari": "Linears",
+  "Rotoloni": "Hose reels",
+  "Goccia": "Drip",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "System not available yet: for now only pivots can be designed.",
   "Piano irriguo consigliato": "Recommended irrigation plan",
   "Kc": "Kc",
   "pioggia": "rainfall",
@@ -580,6 +584,10 @@ const EN: Dict = {
 };
 
 const FR: Dict = {
+  "Lineari": "Linéaires",
+  "Rotoloni": "Enrouleurs",
+  "Goccia": "Goutte-à-goutte",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "Système pas encore disponible : pour l'instant, seuls les pivots sont conçus.",
   "Piano irriguo consigliato": "Plan d'irrigation conseillé",
   "Kc": "Kc",
   "pioggia": "pluie",
@@ -1119,6 +1127,10 @@ const FR: Dict = {
 };
 
 const ES: Dict = {
+  "Lineari": "Laterales",
+  "Rotoloni": "Enrolladores",
+  "Goccia": "Goteo",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "Sistema aún no disponible: por ahora solo se diseñan pivotes.",
   "Piano irriguo consigliato": "Plan de riego recomendado",
   "Kc": "Kc",
   "pioggia": "lluvia",
@@ -1658,6 +1670,10 @@ const ES: Dict = {
 };
 
 const PT: Dict = {
+  "Lineari": "Lineares",
+  "Rotoloni": "Enroladores",
+  "Goccia": "Gotejamento",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "Sistema ainda não disponível: por enquanto só se projetam pivôs.",
   "Piano irriguo consigliato": "Plano de irrigação recomendado",
   "Kc": "Kc",
   "pioggia": "chuva",
@@ -2197,6 +2213,10 @@ const PT: Dict = {
 };
 
 const RO: Dict = {
+  "Lineari": "Liniare",
+  "Rotoloni": "Tamburi",
+  "Goccia": "Picurare",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "Sistem încă indisponibil: deocamdată se proiectează doar pivoții.",
   "Piano irriguo consigliato": "Plan de irigare recomandat",
   "Kc": "Kc",
   "pioggia": "ploaie",
@@ -2738,6 +2758,10 @@ const RO: Dict = {
 };
 
 const KK: Dict = {
+  "Lineari": "Сызықтық",
+  "Rotoloni": "Барабандар",
+  "Goccia": "Тамшылы",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "Жүйе әзірге қолжетімсіз: қазірше тек пивоттар жобаланады.",
   "Piano irriguo consigliato": "Ұсынылған суару жоспары",
   "Kc": "Kc",
   "pioggia": "жаңбыр",
@@ -3279,6 +3303,10 @@ const KK: Dict = {
 };
 
 const AR: Dict = {
+  "Lineari": "خطية",
+  "Rotoloni": "بكرات",
+  "Goccia": "التنقيط",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "النظام غير متاح بعد: في الوقت الحالي يتم تصميم أنظمة الري المحوري فقط.",
   "Piano irriguo consigliato": "خطة الري الموصى بها",
   "Kc": "Kc",
   "pioggia": "المطر",
@@ -3818,6 +3846,10 @@ const AR: Dict = {
 };
 
 const ZH: Dict = {
+  "Lineari": "平移机",
+  "Rotoloni": "卷盘机",
+  "Goccia": "滴灌",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "该系统尚不可用：目前仅支持设计中心支轴喷灌机。",
   "Piano irriguo consigliato": "推荐灌溉计划",
   "Kc": "Kc",
   "pioggia": "降雨",
@@ -4359,6 +4391,10 @@ const ZH: Dict = {
 };
 
 const HU: Dict = {
+  "Lineari": "Lineárok",
+  "Rotoloni": "Dobos gépek",
+  "Goccia": "Csepegtető",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "A rendszer még nem érhető el: egyelőre csak körforgó öntözőket lehet tervezni.",
   "Piano irriguo consigliato": "Javasolt öntözési terv",
   "Kc": "Kc",
   "pioggia": "csapadék",
@@ -4900,6 +4936,10 @@ const HU: Dict = {
 };
 
 const ID: Dict = {
+  "Lineari": "Linear",
+  "Rotoloni": "Gulungan selang",
+  "Goccia": "Tetes",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "Sistem belum tersedia: untuk saat ini hanya pivot yang dapat dirancang.",
   "Piano irriguo consigliato": "Rencana irigasi disarankan",
   "Kc": "Kc",
   "pioggia": "hujan",
@@ -5441,6 +5481,10 @@ const ID: Dict = {
 };
 
 const DE: Dict = {
+  "Lineari": "Linear",
+  "Rotoloni": "Trommelberegner",
+  "Goccia": "Tropf",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "System noch nicht verfügbar: vorerst werden nur Pivots geplant.",
   "Piano irriguo consigliato": "Empfohlener Bewässerungsplan",
   "Kc": "Kc",
   "pioggia": "Niederschlag",
@@ -5976,6 +6020,10 @@ const DE: Dict = {
 };
 
 const PL: Dict = {
+  "Lineari": "Liniowe",
+  "Rotoloni": "Zwijadła",
+  "Goccia": "Kropelkowe",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "System jeszcze niedostępny: na razie projektowane są tylko pivoty.",
   "Piano irriguo consigliato": "Zalecany plan nawadniania",
   "Kc": "Kc",
   "pioggia": "opad",
@@ -6513,6 +6561,10 @@ const PL: Dict = {
 };
 
 const BG: Dict = {
+  "Lineari": "Линейни",
+  "Rotoloni": "Барабанни",
+  "Goccia": "Капково",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "Системата все още не е налична: засега се проектират само пивоти.",
   "Piano irriguo consigliato": "Препоръчан поливен план",
   "Kc": "Kc",
   "pioggia": "дъжд",
@@ -7050,6 +7102,10 @@ const BG: Dict = {
 };
 
 const RU: Dict = {
+  "Lineari": "Линейные",
+  "Rotoloni": "Барабанные",
+  "Goccia": "Капельное",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "Система пока недоступна: сейчас проектируются только пивоты.",
   "Piano irriguo consigliato": "Рекомендуемый план полива",
   "Kc": "Kc",
   "pioggia": "осадки",
@@ -7587,6 +7643,10 @@ const RU: Dict = {
 };
 
 const AF: Dict = {
+  "Lineari": "Lineêre",
+  "Rotoloni": "Haspels",
+  "Goccia": "Drup",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "Stelsel nog nie beskikbaar nie: vir eers word net spilpunte ontwerp.",
   "Piano irriguo consigliato": "Aanbevole besproeiingsplan",
   "Kc": "Kc",
   "pioggia": "reën",
@@ -8124,6 +8184,10 @@ const AF: Dict = {
 };
 
 const MS: Dict = {
+  "Lineari": "Linear",
+  "Rotoloni": "Gulungan hos",
+  "Goccia": "Titisan",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "Sistem belum tersedia: buat masa ini hanya pivot yang direka bentuk.",
   "Piano irriguo consigliato": "Pelan pengairan disyorkan",
   "Kc": "Kc",
   "pioggia": "hujan",
@@ -8661,6 +8725,10 @@ const MS: Dict = {
 };
 
 const VI: Dict = {
+  "Lineari": "Tịnh tiến",
+  "Rotoloni": "Cuộn ống",
+  "Goccia": "Nhỏ giọt",
+  "Sistema non ancora disponibile: per ora si progettano i pivot.": "Hệ thống chưa khả dụng: hiện tại chỉ thiết kế được hệ thống tưới xoay (pivot).",
   "Piano irriguo consigliato": "Kế hoạch tưới đề xuất",
   "Kc": "Kc",
   "pioggia": "mưa",
