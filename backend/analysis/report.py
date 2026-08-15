@@ -115,6 +115,13 @@ def _merc_ring(ring):
     return [_merc(p[0], p[1]) for p in ring]
 
 
+def _unmerc(x: float, y: float) -> tuple[float, float]:
+    """Web Mercator (metri) → lon/lat (gradi)."""
+    lon = math.degrees(x / _R_MERC)
+    lat = math.degrees(2.0 * math.atan(math.exp(y / _R_MERC)) - math.pi / 2.0)
+    return lon, lat
+
+
 def _tile_of(lon: float, lat: float, z: int) -> tuple[float, float]:
     """Coordinate (frazionarie) di tessera per lon/lat allo zoom z."""
     n = 2 ** z
@@ -132,8 +139,8 @@ def _fetch_tile(z: int, x: int, y: int, timeout: float):
 
 
 def _satellite_bg(lon_min: float, lat_min: float, lon_max: float, lat_max: float,
-                  max_tiles: int = 64, max_zoom: int = 18, timeout: float = 4.0,
-                  budget_s: float = 15.0):
+                  max_tiles: int = 80, max_zoom: int = 18, timeout: float = 4.0,
+                  budget_s: float = 15.0, max_px: int = 2600):
     """Mosaico di ortofoto che copre il riquadro. Ritorna (immagine, estensione
     in metri Mercator) oppure (None, None) se le tessere non arrivano."""
     try:
@@ -179,6 +186,12 @@ def _satellite_bg(lon_min: float, lat_min: float, lon_max: float, lat_max: float
         if img is not None:
             canvas.paste(img, ((tx - tx0) * _TILE_PX, (ty - ty0) * _TILE_PX))
 
+    # Il mosaico puo' superare di molto i pixel del disegno: si ridimensiona
+    # subito, altrimenti si tiene in memoria un'immagine inutilmente grande.
+    if canvas.width > max_px:
+        h = max(1, round(canvas.height * max_px / canvas.width))
+        canvas = canvas.resize((max_px, h), Image.LANCZOS)
+
     n = 2 ** z
     left = -_WORLD / 2 + tx0 * _WORLD / n
     right = -_WORLD / 2 + (tx1 + 1) * _WORLD / n
@@ -195,7 +208,8 @@ def _safe_tile(z: int, x: int, y: int, timeout: float):
 
 
 def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it",
-                         field_geom: dict | None = None, satellite: bool = True) -> bytes:
+                         field_geom: dict | None = None, satellite: bool = True,
+                         aspect: float = 261.0 / 170.0) -> bytes:
     """Planimetria del layout sull'ortofoto (come la mappa del sito).
 
     Il disegno avviene in metri Web Mercator, gli stessi delle tessere: la
@@ -215,7 +229,9 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
         return _shape(lang, s)
 
     feats = geojson.get("features", [])
-    fig, ax = plt.subplots(figsize=(9, 5.2), dpi=200)
+    # Foglio orizzontale: la figura ha lo stesso rapporto della cornice in cui
+    # verra' impaginata, così la planimetria riempie la pagina.
+    fig, ax = plt.subplots(figsize=(10.4, 10.4 / max(0.5, aspect)), dpi=200)
     n_ph = max(1, int(meta.get("n_phases", 1)))
 
     # Riquadro dei dati in lon/lat: serve a scegliere zoom e tessere.
@@ -247,6 +263,25 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
     lon_min, lon_max = min(lons), max(lons)
     lat_min, lat_max = min(lats), max(lats)
 
+    # Inquadratura: si parte dai dati, si aggiunge un margine e si allarga il
+    # lato corto fino al rapporto del foglio. Va fatto PRIMA di scegliere le
+    # tessere, altrimenti l'ortofoto non copre le fasce laterali.
+    mx0, my0 = _merc(lon_min, lat_min)
+    mx1, my1 = _merc(lon_max, lat_max)
+    padx = max((mx1 - mx0) * 0.05, 40.0)
+    pady = max((my1 - my0) * 0.05, 40.0)
+    mx0 -= padx; mx1 += padx; my0 -= pady; my1 += pady
+    w, hgt = mx1 - mx0, my1 - my0
+    cx, cy = (mx0 + mx1) / 2.0, (my0 + my1) / 2.0
+    if w / hgt < aspect:
+        w = hgt * aspect
+    else:
+        hgt = w / aspect
+    mx0, mx1 = cx - w / 2.0, cx + w / 2.0
+    my0, my1 = cy - hgt / 2.0, cy + hgt / 2.0
+    lon_min, lat_min = _unmerc(mx0, my0)
+    lon_max, lat_max = _unmerc(mx1, my1)
+
     # --- sfondo satellitare ---
     bg = None
     if satellite:
@@ -268,9 +303,11 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
                              edgecolor="#f0b429" if on_sat else BRAND,
                              linewidth=1.8, zorder=2))
 
+    kinds: dict[str, bool] = {}
     for f in feats:
         k = f["properties"].get("kind")
         g = f["geometry"]
+        kinds[k] = True
         if k == "pivot":
             ring = _merc_ring(g["coordinates"][0])
             ph = int(f["properties"].get("phase", 1))
@@ -296,13 +333,8 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
             ax.plot(x, y, marker="s", color="#08341c", markeredgecolor="#ffffff",
                     markeredgewidth=0.6, markersize=4, zorder=6)
 
-    # Inquadratura sui dati (le tessere coprono di piu': si ritaglia).
-    x0, y0 = _merc(lon_min, lat_min)
-    x1, y1 = _merc(lon_max, lat_max)
-    padx = max((x1 - x0) * 0.04, 30.0)
-    pady = max((y1 - y0) * 0.04, 30.0)
-    ax.set_xlim(x0 - padx, x1 + padx)
-    ax.set_ylim(y0 - pady, y1 + pady)
+    ax.set_xlim(mx0, mx1)
+    ax.set_ylim(my0, my1)
     ax.set_aspect(1.0)
     ax.set_xticks([]); ax.set_yticks([])
     for s in ax.spines.values():
@@ -312,13 +344,83 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
     title = LB(f"{cfg} · {fmt_num(lang, meta.get('n_pivots', 0))} {tr(lang, 'pivots_word')} · "
               f"{tr(lang, 'packing')} {fmt_num(lang, meta.get('packing_pct', 0), 1)}%")
     ax.set_title(title, fontsize=10, color="#0d3b26", fontproperties=prop)
-    if n_ph > 1:
-        handles = [plt.Line2D([0], [0], marker="o", linestyle="", markersize=7,
-                              markerfacecolor=PHASE_COLORS[i % len(PHASE_COLORS)],
-                              markeredgecolor="#0d3b26", label=LB(f"{tr(lang, 'fase')} {i + 1}"))
-                   for i in range(n_ph)]
-        ax.legend(handles=handles, loc="upper right", fontsize=7, framealpha=0.9,
-                  prop=prop)
+
+    # --- legenda: solo le voci effettivamente disegnate ---
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    handles = []
+    if field_ring:
+        handles.append(Line2D([0], [0], color="#f0b429" if on_sat else BRAND, linewidth=1.8,
+                              label=LB(tr(lang, "leg_confine"))))
+    if kinds.get("pivot"):
+        if n_ph > 1:
+            for i in range(n_ph):
+                handles.append(Patch(facecolor=PHASE_COLORS[i % len(PHASE_COLORS)], edgecolor=edge,
+                                     alpha=max(0.45, fill_alpha), label=LB(f"{tr(lang, 'fase')} {i + 1}")))
+        else:
+            handles.append(Patch(facecolor=PHASE_COLORS[0], edgecolor=edge, alpha=max(0.45, fill_alpha),
+                                 label=LB(tr(lang, "leg_pivot"))))
+    if kinds.get("pipe"):
+        handles.append(Line2D([0], [0], color=ACCENT, linewidth=1.4, label=LB(tr(lang, "leg_tubazione"))))
+    if kinds.get("header"):
+        handles.append(Line2D([0], [0], color="#b23b1e", linewidth=1.8, label=LB(tr(lang, "leg_collettore"))))
+    if kinds.get("canal"):
+        handles.append(Line2D([0], [0], color="#0284c7", linewidth=2.2, linestyle=(0, (5, 3)),
+                              label=LB(tr(lang, "leg_canale"))))
+    if kinds.get("pump"):
+        handles.append(Line2D([0], [0], color="#08341c", marker="s", linestyle="", markersize=6,
+                              markeredgecolor="#ffffff", label=LB(tr(lang, "leg_pompa"))))
+    if handles:
+        leg = ax.legend(handles=handles, loc="lower left", fontsize=7.5, framealpha=0.92,
+                        facecolor="#ffffff", edgecolor="#0d3b26", borderpad=0.7,
+                        labelspacing=0.55, prop=prop,
+                        title=LB(tr(lang, "leg_titolo")))
+        if leg.get_title() is not None:
+            leg.get_title().set_fontsize(8)
+            leg.get_title().set_color("#0d3b26")
+            if prop is not None:
+                leg.get_title().set_fontproperties(prop)
+        leg.set_zorder(8)
+
+    # --- scala grafica ---
+    # In Web Mercator le distanze sono dilatate di 1/cos(lat): per una barra in
+    # metri reali si riporta la lunghezza nelle unita' della mappa.
+    lat_mid = _unmerc(0.0, (my0 + my1) / 2.0)[1]
+    k = max(0.05, math.cos(math.radians(lat_mid)))     # metri veri per unita' mappa
+    span_m = (mx1 - mx0) * k
+    raw = span_m / 5.0
+    step = 10.0 ** math.floor(math.log10(max(1.0, raw)))
+    bar_m = next((step * f for f in (5, 2, 1) if step * f <= raw), step)
+    bar_u = bar_m / k
+    # In basso al centro: la legenda occupa l'angolo sinistro e la rosa dei
+    # venti quello destro.
+    bx = (mx0 + mx1) / 2.0 - bar_u / 2.0
+    by = my0 + (my1 - my0) * 0.045
+    hbar = (my1 - my0) * 0.008
+    for i in range(4):     # barra a scacchi, come nelle tavole tecniche
+        ax.add_patch(MplPoly([(bx + i * bar_u / 4, by), (bx + (i + 1) * bar_u / 4, by),
+                              (bx + (i + 1) * bar_u / 4, by + hbar), (bx + i * bar_u / 4, by + hbar)],
+                             closed=True, facecolor="#ffffff" if i % 2 else "#0d3b26",
+                             edgecolor="#0d3b26", linewidth=0.6, zorder=8))
+    lab = f"{fmt_num(lang, bar_m / 1000.0, 1)} km" if bar_m >= 1000 else f"{fmt_num(lang, bar_m)} m"
+    ax.text(bx + bar_u / 2, by + hbar * 1.5, LB(lab), ha="center", va="bottom", fontsize=7,
+            color="#ffffff" if on_sat else "#0d3b26", fontproperties=prop,
+            bbox=dict(facecolor="#00000055" if on_sat else "#ffffffcc", edgecolor="none", pad=1.2),
+            zorder=8)
+
+    # --- freccia del nord (in Mercator il nord e' sempre verso l'alto) ---
+    nx = mx1 - (mx1 - mx0) * 0.035
+    ny = my0 + (my1 - my0) * 0.045
+    nl = (my1 - my0) * 0.075
+    ax.annotate("", xy=(nx, ny + nl), xytext=(nx, ny),
+                arrowprops=dict(facecolor="#ffffff" if on_sat else "#0d3b26",
+                                edgecolor="#0d3b26", width=2.2, headwidth=8, headlength=8),
+                zorder=8)
+    ax.text(nx, ny + nl * 1.12, "N", ha="center", va="bottom", fontsize=9, fontweight="bold",
+            color="#ffffff" if on_sat else "#0d3b26",
+            bbox=dict(facecolor="#00000055" if on_sat else "#ffffffcc", edgecolor="none", pad=1.2),
+            zorder=8)
+
     if on_sat:
         ax.text(0.995, 0.008, _SAT_CREDIT, transform=ax.transAxes, ha="right", va="bottom",
                 fontsize=5.5, color="#ffffff",
@@ -333,12 +435,13 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
 def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
               layout_meta: dict, schematic_png: bytes, rev: str, lang: str = "it") -> bytes:
     _ensure_fonts()
-    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import mm
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_RIGHT, TA_LEFT
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
+    from reportlab.platypus import (BaseDocTemplate, PageTemplate, Frame, NextPageTemplate,
+                                    PageBreak, Paragraph, Spacer, Table,
                                     TableStyle, Image as RLImage)
 
     FONT, FONTB = _fonts(lang)
@@ -352,9 +455,21 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
         return _shape(lang, str(s))
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
-                            topMargin=15 * mm, bottomMargin=15 * mm,
-                            title=f"{tr(lang, 'sheet_title')} — {info.get('project_name','')}")
+    # Due formati nello stesso documento: i dati in verticale, la planimetria su
+    # una pagina ORIZZONTALE dedicata (come le tavole dei software di settore).
+    doc = BaseDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
+                          topMargin=15 * mm, bottomMargin=15 * mm,
+                          title=f"{tr(lang, 'sheet_title')} — {info.get('project_name','')}")
+    _pw, _ph = A4
+    _lw, _lh = landscape(A4)
+    doc.addPageTemplates([
+        PageTemplate(id="ritratto", pagesize=A4, frames=[
+            Frame(18 * mm, 15 * mm, _pw - 36 * mm, _ph - 30 * mm, id="fp")]),
+        PageTemplate(id="orizzontale", pagesize=landscape(A4), frames=[
+            Frame(14 * mm, 12 * mm, _lw - 28 * mm, _lh - 24 * mm, id="fl")]),
+    ])
+    PLAN_W = _lw - 28 * mm
+    PLAN_H = _lh - 24 * mm - 26 * mm     # spazio per titolo, spaziatura e piè di pagina
     ss = getSampleStyleSheet()
     h = ParagraphStyle("h", parent=ss["Heading2"], fontName=FONTB, textColor=colors.HexColor(BRAND),
                        spaceBefore=8, spaceAfter=4, alignment=align)
@@ -481,11 +596,11 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
                [[N(p["phase"]), N(p["n_pivots"]), N(p["net_ha"]), N(p["q_ls"])] for p in phases]
         story.append(data_table(rows, ACCENT, [20 * mm, 25 * mm, 30 * mm, 35 * mm]))
 
-    # --- schema layout ---
+    # --- planimetria: pagina orizzontale dedicata ---
+    story.append(NextPageTemplate("orizzontale"))
+    story.append(PageBreak())
     story.append(Paragraph(T("sec_schema"), h))
-    # Planimetria: si lascia respirare in altezza, altrimenti un campo quadrato
-    # verrebbe rimpicciolito a meta' pagina.
-    story.append(RLImage(io.BytesIO(schematic_png), width=170 * mm, height=150 * mm, kind="proportional"))
+    story.append(RLImage(io.BytesIO(schematic_png), width=PLAN_W, height=PLAN_H, kind="proportional"))
 
     story.append(Spacer(1, 6))
     import datetime as _dt

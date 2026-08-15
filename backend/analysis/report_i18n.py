@@ -6,6 +6,13 @@ Fallback: inglese, poi italiano, poi la chiave stessa.
 from __future__ import annotations
 
 _IT = {
+    "leg_titolo": "Legenda",
+    "leg_confine": "Confine area",
+    "leg_pivot": "Pivot",
+    "leg_tubazione": "Tubazione",
+    "leg_collettore": "Collettore",
+    "leg_canale": "Canale",
+    "leg_pompa": "Pompa",
     "sheet_title": "Scheda progetto", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Dati progetto", "progetto": "Progetto", "cliente": "Cliente",
     "superficie_area": "Superficie area", "note": "Note",
@@ -32,6 +39,13 @@ _IT = {
 }
 
 _EN = {
+    "leg_titolo": "Legend",
+    "leg_confine": "Area boundary",
+    "leg_pivot": "Pivot",
+    "leg_tubazione": "Pipeline",
+    "leg_collettore": "Manifold",
+    "leg_canale": "Canal",
+    "leg_pompa": "Pump",
     "sheet_title": "Project sheet", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Project data", "progetto": "Project", "cliente": "Client",
     "superficie_area": "Area size", "note": "Notes",
@@ -58,6 +72,13 @@ _EN = {
 }
 
 _FR = {
+    "leg_titolo": "Légende",
+    "leg_confine": "Limite de zone",
+    "leg_pivot": "Pivot",
+    "leg_tubazione": "Canalisation",
+    "leg_collettore": "Collecteur",
+    "leg_canale": "Canal",
+    "leg_pompa": "Pompe",
     "sheet_title": "Fiche projet", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Données du projet", "progetto": "Projet", "cliente": "Client",
     "superficie_area": "Superficie de la zone", "note": "Notes",
@@ -84,6 +105,13 @@ _FR = {
 }
 
 _ES = {
+    "leg_titolo": "Leyenda",
+    "leg_confine": "Límite del área",
+    "leg_pivot": "Pivote",
+    "leg_tubazione": "Tubería",
+    "leg_collettore": "Colector",
+    "leg_canale": "Canal",
+    "leg_pompa": "Bomba",
     "sheet_title": "Ficha de proyecto", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Datos del proyecto", "progetto": "Proyecto", "cliente": "Cliente",
     "superficie_area": "Superficie del área", "note": "Notas",
@@ -110,6 +138,13 @@ _ES = {
 }
 
 _PT = {
+    "leg_titolo": "Legenda",
+    "leg_confine": "Limite da área",
+    "leg_pivot": "Pivô",
+    "leg_tubazione": "Tubulação",
+    "leg_collettore": "Coletor",
+    "leg_canale": "Canal",
+    "leg_pompa": "Bomba",
     "sheet_title": "Ficha de projeto", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Dados do projeto", "progetto": "Projeto", "cliente": "Cliente",
     "superficie_area": "Área da zona", "note": "Notas",
@@ -136,6 +171,13 @@ _PT = {
 }
 
 _RO = {
+    "leg_titolo": "Legendă",
+    "leg_confine": "Limita zonei",
+    "leg_pivot": "Pivot",
+    "leg_tubazione": "Conductă",
+    "leg_collettore": "Colector",
+    "leg_canale": "Canal",
+    "leg_pompa": "Pompă",
     "sheet_title": "Fișă proiect", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Date proiect", "progetto": "Proiect", "cliente": "Client",
     "superficie_area": "Suprafața zonei", "note": "Note",
@@ -162,6 +204,13 @@ _RO = {
 }
 
 _KK = {
+    "leg_titolo": "Шартты белгілер",
+    "leg_confine": "Аумақ шекарасы",
+    "leg_pivot": "Пивот",
+    "leg_tubazione": "Құбыр",
+    "leg_collettore": "Коллектор",
+    "leg_canale": "Канал",
+    "leg_pompa": "Сорап",
     "sheet_title": "Жоба парағы", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Жоба деректері", "progetto": "Жоба", "cliente": "Клиент",
     "superficie_area": "Аумақ ауданы", "note": "Ескертпелер",
@@ -188,6 +237,13 @@ _KK = {
 }
 
 _AR = {
+    "leg_titolo": "مفتاح الخريطة",
+    "leg_confine": "حدود المنطقة",
+    "leg_pivot": "محور مركزي",
+    "leg_tubazione": "أنبوب",
+    "leg_collettore": "مجمّع",
+    "leg_canale": "قناة",
+    "leg_pompa": "مضخة",
     "sheet_title": "بطاقة المشروع", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "بيانات المشروع", "progetto": "المشروع", "cliente": "العميل",
     "superficie_area": "مساحة المنطقة", "note": "ملاحظات",
@@ -214,6 +270,13 @@ _AR = {
 }
 
 _ZH = {
+    "leg_titolo": "图例",
+    "leg_confine": "区域边界",
+    "leg_pivot": "中心支轴喷灌机",
+    "leg_tubazione": "管道",
+    "leg_collettore": "总管",
+    "leg_canale": "渠道",
+    "leg_pompa": "水泵",
     "sheet_title": "项目表", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "项目数据", "progetto": "项目", "cliente": "客户",
     "superficie_area": "区域面积", "note": "备注",
@@ -240,6 +303,13 @@ _ZH = {
 }
 
 _HU = {
+    "leg_titolo": "Jelmagyarázat",
+    "leg_confine": "Terület határa",
+    "leg_pivot": "Pivot",
+    "leg_tubazione": "Csővezeték",
+    "leg_collettore": "Gyűjtővezeték",
+    "leg_canale": "Csatorna",
+    "leg_pompa": "Szivattyú",
     "sheet_title": "Projektlap", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Projektadatok", "progetto": "Projekt", "cliente": "Ügyfél",
     "superficie_area": "Terület nagysága", "note": "Megjegyzések",
@@ -266,6 +336,13 @@ _HU = {
 }
 
 _ID = {
+    "leg_titolo": "Legenda",
+    "leg_confine": "Batas area",
+    "leg_pivot": "Pivot",
+    "leg_tubazione": "Pipa",
+    "leg_collettore": "Manifold",
+    "leg_canale": "Saluran",
+    "leg_pompa": "Pompa",
     "sheet_title": "Lembar proyek", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Data proyek", "progetto": "Proyek", "cliente": "Klien",
     "superficie_area": "Luas area", "note": "Catatan",
@@ -292,6 +369,13 @@ _ID = {
 }
 
 _DE = {
+    "leg_titolo": "Legende",
+    "leg_confine": "Flächengrenze",
+    "leg_pivot": "Pivot",
+    "leg_tubazione": "Rohrleitung",
+    "leg_collettore": "Sammelleitung",
+    "leg_canale": "Kanal",
+    "leg_pompa": "Pumpe",
     "sheet_title": "Projektdatenblatt", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Projektdaten", "progetto": "Projekt", "cliente": "Kunde",
     "superficie_area": "Gebietsfläche", "note": "Notizen",
@@ -318,6 +402,13 @@ _DE = {
 }
 
 _PL = {
+    "leg_titolo": "Legenda",
+    "leg_confine": "Granica obszaru",
+    "leg_pivot": "Pivot",
+    "leg_tubazione": "Rurociąg",
+    "leg_collettore": "Kolektor",
+    "leg_canale": "Kanał",
+    "leg_pompa": "Pompa",
     "sheet_title": "Karta projektu", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Dane projektu", "progetto": "Projekt", "cliente": "Klient",
     "superficie_area": "Powierzchnia obszaru", "note": "Uwagi",
@@ -344,6 +435,13 @@ _PL = {
 }
 
 _BG = {
+    "leg_titolo": "Легенда",
+    "leg_confine": "Граница на площта",
+    "leg_pivot": "Пивот",
+    "leg_tubazione": "Тръбопровод",
+    "leg_collettore": "Колектор",
+    "leg_canale": "Канал",
+    "leg_pompa": "Помпа",
     "sheet_title": "Карта на проекта", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Данни за проекта", "progetto": "Проект", "cliente": "Клиент",
     "superficie_area": "Площ на областта", "note": "Бележки",
@@ -370,6 +468,13 @@ _BG = {
 }
 
 _RU = {
+    "leg_titolo": "Условные обозначения",
+    "leg_confine": "Граница участка",
+    "leg_pivot": "Пивот",
+    "leg_tubazione": "Трубопровод",
+    "leg_collettore": "Коллектор",
+    "leg_canale": "Канал",
+    "leg_pompa": "Насос",
     "sheet_title": "Карта проекта", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Данные проекта", "progetto": "Проект", "cliente": "Клиент",
     "superficie_area": "Площадь области", "note": "Примечания",
@@ -396,6 +501,13 @@ _RU = {
 }
 
 _AF = {
+    "leg_titolo": "Legende",
+    "leg_confine": "Areagrens",
+    "leg_pivot": "Spilpunt",
+    "leg_tubazione": "Pyplyn",
+    "leg_collettore": "Hoofleiding",
+    "leg_canale": "Kanaal",
+    "leg_pompa": "Pomp",
     "sheet_title": "Projekblad", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Projekdata", "progetto": "Projek", "cliente": "Kliënt",
     "superficie_area": "Gebiedsoppervlakte", "note": "Notas",
@@ -422,6 +534,13 @@ _AF = {
 }
 
 _MS = {
+    "leg_titolo": "Petunjuk",
+    "leg_confine": "Sempadan kawasan",
+    "leg_pivot": "Pivot",
+    "leg_tubazione": "Paip",
+    "leg_collettore": "Manifold",
+    "leg_canale": "Terusan",
+    "leg_pompa": "Pam",
     "sheet_title": "Helaian projek", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Data projek", "progetto": "Projek", "cliente": "Pelanggan",
     "superficie_area": "Luas kawasan", "note": "Nota",
@@ -448,6 +567,13 @@ _MS = {
 }
 
 _VI = {
+    "leg_titolo": "Chú giải",
+    "leg_confine": "Ranh giới khu vực",
+    "leg_pivot": "Pivot",
+    "leg_tubazione": "Đường ống",
+    "leg_collettore": "Ống góp",
+    "leg_canale": "Kênh",
+    "leg_pompa": "Máy bơm",
     "sheet_title": "Phiếu dự án", "subtitle": "Argus Total — Nabu",
     "dati_progetto": "Dữ liệu dự án", "progetto": "Dự án", "cliente": "Khách hàng",
     "superficie_area": "Diện tích khu vực", "note": "Ghi chú",
