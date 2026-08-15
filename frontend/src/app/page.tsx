@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.139";
+const REV = "v0.6.140";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1023,6 +1023,8 @@ export default function Page() {
   const [hoursDay, setHoursDay] = useState(20);      // ore di esercizio al giorno
   const [soakMmH, setSoakMmH] = useState(12);        // assorbimento del terreno (mm/h)
   const [wetW, setWetW] = useState(20);              // larghezza bagnata degli irrigatori (m)
+  const [pattern, setPattern] = useState("ellittica");  // forma del profilo di bagnatura
+  const [surfStore, setSurfStore] = useState(2);     // invaso superficiale del terreno (mm)
   const [turnsDay, setTurnsDay] = useState(1);       // giri del pivot al giorno
   const [sprinkBar, setSprinkBar] = useState(1.4);   // pressione richiesta agli irrigatori
   const [latDN, setLatDN] = useState(168);           // diametro della condotta del pivot (mm)
@@ -2495,12 +2497,32 @@ export default function Page() {
     const area = Math.PI * pv.r * pv.r;                      // m²
     return (area * mm24) / (Math.max(1, hoursDay) * 3600);   // l/s (mm24 è già lordo)
   };
-  // Intensità di pioggia al bordo esterno: è lì che il pivot bagna più in fretta
-  // e dove il terreno rischia di non assorbire.
-  const rimRate = (r: number) => {
-    const depthPerTurn = mm24 / Math.max(1, turnsDay);       // mm per giro
-    const tTurn = Math.max(0.1, hoursDay / Math.max(1, turnsDay));   // ore per giro
-    return (2 * Math.PI * r * depthPerTurn) / (Math.max(1, wetW) * tTurn);   // mm/h
+  // ---- Intensità all'ESTREMITÀ del pivot -----------------------------------
+  // È lì che si decide il ruscellamento: l'ultima torre percorre 2πR a ogni
+  // giro, quindi la striscia bagnata passa velocissima e tutta l'acqua del giro
+  // cade in pochi minuti. Non conta la media sulle 24 h ma l'INTENSITÀ
+  // ISTANTANEA DI PICCO, che dipende dalla forma del profilo di bagnatura:
+  // rettangolare 1,00 · ellittica 4/π ≈ 1,27 · triangolare 2,00.
+  const PATTERN: Record<string, number> = { rettangolare: 1, ellittica: 4 / Math.PI, triangolare: 2 };
+  const depthPass = (): number => mm24 / Math.max(1, turnsDay);                    // mm distribuiti in un giro
+  const turnHours = (): number => Math.max(0.05, hoursDay / Math.max(1, turnsDay));  // durata di un giro (h)
+  // Tempo di bagnatura di un punto al raggio r: la striscia larga wetW passa
+  // mentre la torre percorre l'arco 2πr nel tempo di un giro.
+  const wetHours = (r: number) => (Math.max(1, wetW) * turnHours()) / (2 * Math.PI * Math.max(1, r));
+  const rimAvg = (r: number) => depthPass() / wetHours(r);                 // mm/h medi sulla striscia
+  const rimPeak = (r: number) => rimAvg(r) * (PATTERN[pattern] ?? 1.27);   // mm/h di picco
+  // Ruscellamento: durante il passaggio il terreno assorbe soak×t e la superficie
+  // ne trattiene un po' (invaso superficiale). Se l'acqua del giro supera i due,
+  // il resto scorre via.
+  const runoffMm = (r: number) => Math.max(0, depthPass() - (soakMmH * wetHours(r) + surfStore));
+  // Giri/giorno minimi perché non ci sia ruscellamento al bordo esterno.
+  const turnsNeeded = (r: number) => {
+    for (let n = 1; n <= 24; n++) {
+      const d = mm24 / n, th = Math.max(0.05, hoursDay / n);
+      const tw = (Math.max(1, wetW) * th) / (2 * Math.PI * Math.max(1, r));
+      if (d <= soakMmH * tw + surfStore) return n;
+    }
+    return 0;
   };
   // Pressione richiesta al centro del pivot: irrigatori + perdita nella condotta
   // del pivot (Hazen-Williams con fattore 0,36 per le uscite multiple).
@@ -4242,6 +4264,15 @@ export default function Page() {
               <label className="text-[11px] text-sage-dark">{t("Giri al giorno")}
                 <input type="number" min={1} step={1} value={turnsDay}
                   onChange={(e) => setTurnsDay(Math.max(1, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+              <label className="text-[11px] text-sage-dark col-span-2">{t("Profilo di bagnatura")}
+                <select className="field-input mt-0.5 px-2 py-1.5 text-sm" value={pattern} onChange={(e) => setPattern(e.target.value)}>
+                  <option value="rettangolare">{t("Rettangolare (×1,00)")}</option>
+                  <option value="ellittica">{t("Ellittica (×1,27)")}</option>
+                  <option value="triangolare">{t("Triangolare (×2,00)")}</option>
+                </select></label>
+              <label className="text-[11px] text-sage-dark">{t("Invaso superficiale (mm)")}
+                <input type="number" min={0} step={0.5} value={surfStore}
+                  onChange={(e) => setSurfStore(Math.max(0, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
             </div>
 
             <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2">{t("Pressione del pivot")}</h3>
@@ -4256,17 +4287,30 @@ export default function Page() {
 
             {pivots.length > 0 && (() => {
               const rMax = Math.max(...pivots.map((p) => p.r));
-              const rate = rimRate(rMax);
+              const rate = rimPeak(rMax);
               const tot = pivots.reduce((a, p) => a + pivotFlow(p), 0);
               const big = pivots.reduce((a, p) => (p.r > a.r ? p : a), pivots[0]);
               return (
                 <div className="mt-3 text-[11px] bg-panel rounded-lg p-2 leading-relaxed text-brand-darker">
                   <div>{t("Pivot più grande")}: {Math.round(big.r)} m · {fmt(Math.round(pivotFlow(big)))} l/s · {pivotPressure(big).toFixed(1)} bar</div>
                   <div>{t("Portata totale dei pivot")}: <b>{fmt(Math.round(tot))} l/s</b></div>
-                  <div className={rate > soakMmH ? "text-danger font-semibold" : ""}>
-                    {t("Intensità al bordo")}: {fmt(rate, { maximumFractionDigits: 1 })} mm/h — {t("assorbimento")} {soakMmH} mm/h
-                    {rate > soakMmH ? ` · ${t("rischio ruscellamento: aumenta i giri o la larghezza bagnata")}` : " ✓"}
+                  <div className="mt-1">
+                    {t("All'estremità del pivot")} ({Math.round(rMax)} m): {t("bagnatura")} {fmt(wetHours(rMax) * 60, { maximumFractionDigits: 1 })} min · {fmt(depthPass(), { maximumFractionDigits: 1 })} mm {t("a giro")}
                   </div>
+                  <div className={rate > soakMmH ? "text-danger font-semibold" : ""}>
+                    {t("Intensità istantanea di picco")}: {fmt(rate, { maximumFractionDigits: 1 })} mm/h — {t("assorbimento")} {soakMmH} mm/h
+                    {rate > soakMmH ? " ⚠" : " ✓"}
+                  </div>
+                  {(() => {
+                    const ro = runoffMm(rMax); const need = turnsNeeded(rMax);
+                    return ro > 0 ? (
+                      <div className="text-danger font-semibold">
+                        {t("Ruscellamento")}: {fmt(ro, { maximumFractionDigits: 1 })} mm {t("a giro")}
+                        {need ? ` · ${t("servono {n} giri/giorno", { n: need })}` : ` · ${t("aumenta la larghezza bagnata")}`}
+                        {need ? <button className="btn-ghost ml-2 py-0.5" onClick={() => setTurnsDay(need)}>{t("Applica")}</button> : null}
+                      </div>
+                    ) : <div>{t("Nessun ruscellamento previsto")} ✓</div>;
+                  })()}
                 </div>
               );
             })()}
