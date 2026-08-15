@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.152";
+const REV = "v0.6.153";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1115,6 +1115,7 @@ export default function Page() {
   const [pdfSheet, setPdfSheet] = useState(true);
   const [pdfPlan, setPdfPlan] = useState(true);
   const [pdfLang, setPdfLang] = useState<Lang>("it");
+  const [pdfFormat, setPdfFormat] = useState<"a3" | "a4">("a3");   // formato della tavola
   // Si memorizzano i campi ESCLUSI, non quelli scelti: un poligono aggiunto
   // dopo entra automaticamente nell'esportazione invece di restare fuori.
   const [pdfSkip, setPdfSkip] = useState<Set<number>>(new Set());
@@ -2922,7 +2923,7 @@ export default function Page() {
         // Poligoni figli del campo: entrano nel disegno della tavola.
         const kidRings = fields.filter((x) => x.parentId === fid)
           .map((x) => x.geom.coordinates[0]).filter((r) => r?.length >= 3);
-        return { plan_fc: fc, plan_canals: canalLines, plan_rings: kidRings };
+        return { plan_fc: fc, plan_canals: canalLines, plan_rings: kidRings, plan_format: pdfFormat };
       };
       if (sel.length === 1) {
         const f = sel[0];
@@ -4447,6 +4448,17 @@ export default function Page() {
                 <input type="checkbox" checked={pdfPlan} onChange={(e) => setPdfPlan(e.target.checked)} />
                 {t("Planimetria su ortofoto")}
               </label>
+              {pdfPlan && (
+                <div className="pt-1">
+                  <div className="text-xs text-sage-dark mb-1">{t("Formato della tavola")}</div>
+                  <div className="seg">
+                    <button className="seg-item" data-active={pdfFormat === "a3"} onClick={() => setPdfFormat("a3")}
+                      title={t("Foglio grande: tratti sottili e più dettagli sul disegno.")}>A3</button>
+                    <button className="seg-item" data-active={pdfFormat === "a4"} onClick={() => setPdfFormat("a4")}
+                      title={t("Foglio da ufficio: tratti più marcati, meno etichette.")}>A4</button>
+                  </div>
+                </div>
+              )}
               <label className="block text-xs text-sage-dark pt-1">{t("Lingua della stampa")}
                 <select className="field-input mt-1 text-sm" value={pdfLang} onChange={(e) => { pdfLangTouched.current = true; setPdfLang(e.target.value as Lang); }}>
                   {LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}

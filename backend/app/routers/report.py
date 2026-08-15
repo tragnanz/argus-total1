@@ -142,7 +142,18 @@ def _sheet_kit(body, geom: dict, plan_gj: dict, meta: dict, lang: str, rev: str,
     canals = list(body.plan_canals or [])
 
     from analysis.report import plan_map_png
-    png, denom = plan_map_png(rings, cards, pipes, canals, lang=lang, status=status)
+    from analysis.plan_sheet import geometry
+
+    # La mappa si disegna alla proporzione del riquadro del formato scelto, con
+    # tratti e corpi coerenti: in A3 piu' sottili, cosi' ci sta piu' roba.
+    g = geometry(body.plan_format)
+    mx0, my0, mx1, my1 = g["map"]
+    box_w, box_h = mx1 - mx0, my1 - my0
+    px_w = 1810 if g["fmt"] == "a3" else 1420
+    px_h = max(400, int(round(px_w * box_h / box_w)))
+    png, denom = plan_map_png(rings, cards, pipes, canals, lang=lang, status=status,
+                              px_w=px_w, px_h=px_h, lk=g["lk"] * 1.18, fk=g["fk"] * 1.08,
+                              detail=g["detail"], printed_pt=box_w)
 
     all_lat = [c["lat"] for c in cards] or [0.0]
     all_lon = [c["lon"] for c in cards] or [0.0]
@@ -162,7 +173,7 @@ def _sheet_kit(body, geom: dict, plan_gj: dict, meta: dict, lang: str, rev: str,
         (tr(lang, "ps_data"), f"{fmt_date(lang, now.date())} {now:%H:%M}"),
     ]
     return {"map_png": png, "pivots": cards, "centre": centre, "cells": cells,
-            "rev": f"{rev} · {now:%Y-%m-%d}"}
+            "rev": f"{rev} · {now:%Y-%m-%d}", "fmt": g["fmt"]}
 
 
 def _real_plan(body, lay) -> tuple[dict, dict]:

@@ -335,6 +335,7 @@ export type ReportInfo = {
   plan_fc?: GeoJSONFC;
   plan_canals?: number[][][];
   plan_rings?: number[][][];
+  plan_format?: "a3" | "a4";   // formato della tavola
 };
 export async function downloadReport(geom: Polygon, p: LayoutParams, info: ReportInfo): Promise<Blob> {
   // Come req(): il token va spedito, altrimenti il middleware di login risponde

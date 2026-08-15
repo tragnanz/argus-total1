@@ -541,14 +541,16 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
     # ha una cornice minima e tutto il contenuto arriva da onPage.
     kit = sheet_kit if (with_plan and sheet_kit) else None
     if kit:
-        from .plan_sheet import draw_sheet, A3_W, A3_H
+        from .plan_sheet import draw_sheet, geometry
+
+        _g = geometry(kit.get("fmt", "a3"))
 
         def _paint(cv, _doc):
             draw_sheet(cv, kit.get("map_png", b""), kit.get("pivots", []),
                        kit.get("centre", (0.0, 0.0)), kit.get("cells", []),
-                       lang, kit.get("rev", rev))
+                       lang, kit.get("rev", rev), kit.get("fmt", "a3"))
 
-        tavola = PageTemplate(id="tavola", pagesize=(A3_W, A3_H),
+        tavola = PageTemplate(id="tavola", pagesize=(_g["W"], _g["H"]),
                               frames=[Frame(20, 20, 40, 40, id="ft")], onPage=_paint)
     _tpl = {
         "ritratto": PageTemplate(id="ritratto", pagesize=A4, frames=[
@@ -735,7 +737,8 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
 def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
                  pipes: list[list[list[float]]], canals: list[list[list[float]]],
                  lang: str = "it", px_w: int = 1810, px_h: int = 1296,
-                 status: dict | None = None) -> tuple[bytes, float]:
+                 status: dict | None = None, lk: float = 1.0, fk: float = 1.0,
+                 detail: float = 1.0, printed_pt: float = 1006.0) -> tuple[bytes, float]:
     """Ritorna (png, denominatore della scala) per il riquadro mappa.
 
     `pivots` = [{lat, lon, r, ha, q_m3h, p_bar, n}], `rings` gli anelli dei
@@ -820,28 +823,28 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
     for cc in canals:
         pts = _merc_ring(cc)
         ax.plot([p[0] for p in pts], [p[1] for p in pts], color="#0b74b8",
-                linewidth=3.4, zorder=3, solid_capstyle="round", solid_joinstyle="round")
+                linewidth=3.4 * lk, zorder=3, solid_capstyle="round", solid_joinstyle="round")
     for pl in pipes:
         pts = _merc_ring(pl)
         if len(pts) >= 2:
             ax.plot([p[0] for p in pts], [p[1] for p in pts], color=_CYAN,
-                    linewidth=1.6, zorder=4, solid_capstyle="round")
+                    linewidth=1.6 * lk, zorder=4, solid_capstyle="round")
 
     # --- poligoni con vertici numerati ---
     vn = 0
     for rg in rings:
         pts = _merc_ring(rg)
         ax.plot([p[0] for p in pts], [p[1] for p in pts], color=_CYAN,
-                linewidth=2.2, zorder=5, solid_capstyle="round")
+                linewidth=2.2 * lk, zorder=5, solid_capstyle="round")
         uniq = pts[:-1] if len(pts) > 2 and pts[0] == pts[-1] else pts
         # Oltre un centinaio di vertici le sigle si accavallano: restano i punti.
-        show_labels = len(uniq) <= 120
+        show_labels = len(uniq) <= int(120 * detail)
         for (vx, vy) in uniq:
             vn += 1
-            ax.plot(vx, vy, marker="o", color=_CYAN, markersize=3.4,
+            ax.plot(vx, vy, marker="o", color=_CYAN, markersize=3.4 * lk,
                     markeredgecolor="#ffffff", markeredgewidth=0.5, zorder=6)
             if show_labels:
-                ax.text(vx + w * 0.004, vy + hgt * 0.004, f"V{vn}", fontsize=5.2,
+                ax.text(vx + w * 0.004, vy + hgt * 0.004, f"V{vn}", fontsize=5.2 * fk,
                         color="#ffffff", fontproperties=prop, zorder=7,
                         path_effects=_halo())
 
@@ -858,20 +861,20 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
         ru = pv["r"] / max(0.05, math.cos(math.radians(pv["lat"])))
         r_px = ru * px_per_unit
         ax.add_patch(Circle(pc, ru, facecolor="none", edgecolor=_GREEN,
-                            linewidth=1.6, zorder=8))
-        if r_px >= 26:
+                            linewidth=1.6 * lk, zorder=8))
+        if r_px >= 26 / detail:
             rings = max(3, min(14, int(r_px / 9)))
             for j in range(1, rings + 1):
                 ax.add_patch(Circle(pc, ru * j / (rings + 1.0), facecolor="none",
-                                    edgecolor="#ffffff", linewidth=0.4, alpha=0.5,
+                                    edgecolor="#ffffff", linewidth=0.4 * lk, alpha=0.5,
                                     linestyle=(0, (1.6, 3.2)), zorder=8))
-        ax.plot(pc[0], pc[1], marker="o", color="#ffffff", markersize=3.2,
-                markeredgecolor=_INK, markeredgewidth=0.7, zorder=9)
+        ax.plot(pc[0], pc[1], marker="o", color="#ffffff", markersize=3.2 * lk,
+                markeredgecolor=_INK, markeredgewidth=0.7 * lk, zorder=9)
 
-        if r_px < 46:
+        if r_px < 46 / detail:
             # Troppo piccolo per una targhetta: resta il numero, i dettagli
             # sono nella barra laterale.
-            ax.text(pc[0], pc[1] + ru * 0.42, str(pv["n"]), fontsize=6.0,
+            ax.text(pc[0], pc[1] + ru * 0.42, str(pv["n"]), fontsize=6.0 * fk,
                     fontweight="bold", color="#ffffff", ha="center", va="center",
                     fontproperties=prop, zorder=11, path_effects=_halo())
             continue
@@ -883,11 +886,11 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
         if pv.get("p_bar"):
             sub.append(f"P {fmt_num(lang, pv['p_bar'], 2)} bar")
         ty = pc[1] + ru * 0.52
-        ax.text(pc[0], ty, LB(head), fontsize=7.0, fontweight="bold", color="#ffffff",
+        ax.text(pc[0], ty, LB(head), fontsize=7.0 * fk, fontweight="bold", color="#ffffff",
                 ha="center", va="center", fontproperties=prop, zorder=11,
                 bbox=dict(boxstyle="round,pad=0.45", facecolor=_INK + "e0", edgecolor="none"))
         if sub:
-            ax.text(pc[0], ty - hgt * 0.021, LB(" · ".join(sub)), fontsize=6.0,
+            ax.text(pc[0], ty - hgt * 0.021, LB(" · ".join(sub)), fontsize=6.0 * fk,
                     color="#dfeee7", ha="center", va="center", fontproperties=prop, zorder=11,
                     bbox=dict(boxstyle="round,pad=0.35", facecolor=_INK + "e0", edgecolor="none"))
 
@@ -901,7 +904,7 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
     lat_mid = _unmerc(0.0, cy)[1]
     k = max(0.05, math.cos(math.radians(lat_mid)))     # metri veri per unita' mappa
     span_m = (mx1 - mx0) * k
-    printed_m = 1006.0 / 72.0 * 0.0254                 # larghezza del riquadro in metri
+    printed_m = printed_pt / 72.0 * 0.0254             # larghezza del riquadro in metri
     denom = span_m / printed_m
     raw = span_m / 4.5
     step = 10.0 ** math.floor(math.log10(max(1.0, raw)))
@@ -920,13 +923,13 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
                               (bx + (i + 1) * bar_u / 4, by + hb), (bx + i * bar_u / 4, by + hb)],
                              closed=True, facecolor="#ffffff" if i % 2 else _INK,
                              edgecolor="#ffffff", linewidth=0.6, zorder=13))
-    ax.text(bx, by - hb * 0.7, "0", fontsize=5.6, color="#ffffff", ha="left", va="top",
+    ax.text(bx, by - hb * 0.7, "0", fontsize=5.6 * fk, color="#ffffff", ha="left", va="top",
             fontproperties=prop, zorder=13)
     lab = f"{fmt_num(lang, bar_m / 1000.0, 1)} km" if bar_m >= 1000 else f"{fmt_num(lang, bar_m)} m"
-    ax.text(bx + bar_u, by - hb * 0.7, LB(lab), fontsize=5.6, color="#ffffff",
+    ax.text(bx + bar_u, by - hb * 0.7, LB(lab), fontsize=5.6 * fk, color="#ffffff",
             ha="right", va="top", fontproperties=prop, zorder=13)
     ax.text(bx + bar_u * 1.12, by + hb * 0.4, f"1:{round(denom / 500) * 500:d}",
-            fontsize=8.0, fontweight="bold", color="#ffffff", ha="left", va="center",
+            fontsize=8.0 * fk, fontweight="bold", color="#ffffff", ha="left", va="center",
             fontproperties=prop, zorder=13)
 
     # --- badge del nord, in alto a destra dentro la mappa ---
@@ -938,7 +941,7 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
     ax.add_patch(FancyBboxPatch((nx - nbw / 2, nby), nbw, nbh,
                                 boxstyle="round,pad=0.0,rounding_size=" + str(nbw * 0.18),
                                 facecolor=_INK + "c8", edgecolor="none", zorder=12))
-    ax.text(nx, nby + nbh * 0.80, "N", fontsize=8.0, fontweight="bold", color="#ffffff",
+    ax.text(nx, nby + nbh * 0.80, "N", fontsize=8.0 * fk, fontweight="bold", color="#ffffff",
             ha="center", va="center", zorder=13)
     ax.annotate("", xy=(nx, nby + nbh * 0.62), xytext=(nx, nby + nbh * 0.10),
                 arrowprops=dict(facecolor="#ffffff", edgecolor="none", width=1.8,
