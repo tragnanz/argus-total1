@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.146";
+const REV = "v0.6.147";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1111,6 +1111,10 @@ export default function Page() {
   const [notes, setNotes] = useState("");
   const [shares, setShares] = useState<api.ShareView[]>([]);   // link di sola lettura del progetto
   const [shareName, setShareName] = useState("");              // nome del prossimo link da creare
+  // Stampa: cosa includere nel PDF e in che lingua (indipendente dall'interfaccia).
+  const [pdfSheet, setPdfSheet] = useState(true);
+  const [pdfPlan, setPdfPlan] = useState(true);
+  const [pdfLang, setPdfLang] = useState<Lang>("it");
   const [autosave, setAutosave] = useState<"" | "saving" | "saved" | "error">("");   // stato salvataggio automatico
   const [drawing, setDrawing] = useState(false);   // disegno/tracciatura in corso → pannellino di controllo
   const [elevStats, setElevStats] = useState<{ id: number; loading?: boolean; err?: boolean; s?: api.ElevationStats } | null>(null);  // quota del campo attivo
@@ -2878,8 +2882,12 @@ export default function Page() {
     a.href = url; a.download = filename; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+  const pdfLangTouched = useRef(false);
+  useEffect(() => { if (!pdfLangTouched.current) setPdfLang(lang); }, [lang]);
+
   async function downloadPdf() {
     if (!fields.length) return needField();
+    if (!pdfSheet && !pdfPlan) { setMsg(t("Seleziona almeno una sezione da stampare.")); return; }
     setBusy("pdf"); setMsg("");
     try {
       const pname = projects.find((p) => p.id === projectId)?.name || "Progetto";
@@ -2887,7 +2895,8 @@ export default function Page() {
       if (fields.length === 1) {
         const f = fields[0];
         const blob = await api.downloadReport(f.geom, paramsFrom(effSettings(f)),
-          { project_name: pname, client_name: cname, notes, include_suitability: true, lang });
+          { project_name: pname, client_name: cname, notes, include_suitability: pdfSheet,
+            lang: pdfLang, include_sheet: pdfSheet, include_plan: pdfPlan });
         saveBlob(blob, `scheda_${safe(pname)}.pdf`);
       } else {
         const zip = new JSZip();
@@ -2895,7 +2904,8 @@ export default function Page() {
           const f = fields[i];
           setMsg(t("Genero campo {i}/{n}…", { i: i + 1, n: fields.length }));
           const blob = await api.downloadReport(f.geom, paramsFrom(effSettings(f)),
-            { project_name: `${pname} — ${f.name}`, client_name: cname, notes, include_suitability: true, lang });
+            { project_name: `${pname} — ${f.name}`, client_name: cname, notes, include_suitability: pdfSheet,
+              lang: pdfLang, include_sheet: pdfSheet, include_plan: pdfPlan });
           zip.file(`scheda_${safe(f.name)}.pdf`, blob);
         }
         const zblob = await zip.generateAsync({ type: "blob" });
@@ -4350,9 +4360,31 @@ export default function Page() {
               <input className="field-input mt-1" value={notes} onChange={(e) => setNotes(e.target.value)}
                 placeholder={t("es. coltura, cliente, fase")} />
             </label>
+            {/* Cosa stampare: la scheda con i dati, la tavola della planimetria, o
+                entrambe. La lingua della stampa e' indipendente da quella
+                dell'interfaccia: si esporta per il cliente, non per se'. */}
+            <div className="mt-2 bg-panel rounded-lg p-2 space-y-1.5">
+              <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Cosa stampare")}</div>
+              <label className="flex items-center gap-2 text-sm text-brand-darker cursor-pointer">
+                <input type="checkbox" checked={pdfSheet} onChange={(e) => setPdfSheet(e.target.checked)} />
+                {t("Scheda progetto")}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-brand-darker cursor-pointer">
+                <input type="checkbox" checked={pdfPlan} onChange={(e) => setPdfPlan(e.target.checked)} />
+                {t("Planimetria su ortofoto")}
+              </label>
+              <label className="block text-xs text-sage-dark pt-1">{t("Lingua della stampa")}
+                <select className="field-input mt-1 text-sm" value={pdfLang} onChange={(e) => { pdfLangTouched.current = true; setPdfLang(e.target.value as Lang); }}>
+                  {LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+                </select>
+              </label>
+            </div>
             <div className="flex gap-2 mt-2">
-              <button className="btn-primary flex-1 basis-0" disabled={busy === "pdf" || !hasFields} onClick={downloadPdf}>
-                {busy === "pdf" ? t("Preparo…") : (fields.length > 1 ? t("Scarica schede PDF (ZIP)") : t("Scarica scheda PDF"))}
+              <button className="btn-primary flex-1 basis-0"
+                disabled={busy === "pdf" || !hasFields || (!pdfSheet && !pdfPlan)}
+                title={!pdfSheet && !pdfPlan ? t("Seleziona almeno una sezione da stampare.") : undefined}
+                onClick={downloadPdf}>
+                {busy === "pdf" ? t("Preparo…") : (fields.length > 1 ? t("Scarica PDF (ZIP)") : t("Scarica PDF"))}
               </button>
               <button className="btn-ghost flex-1 basis-0" disabled={!laid.length} onClick={downloadGeoJSON}>{t("Layout GeoJSON")}</button>
             </div>

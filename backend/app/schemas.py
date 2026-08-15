@@ -354,6 +354,9 @@ class ReportIn(LayoutIn):
     include_suitability: bool = True
     suit_weights: SuitWeights = Field(default_factory=SuitWeights)
     lang: str = "it"                                              # lingua della scheda PDF
+    # Cosa stampare: la scheda con i dati, la tavola della planimetria, o entrambe.
+    include_sheet: bool = True
+    include_plan: bool = True
 
 
 class HealthOut(BaseModel):

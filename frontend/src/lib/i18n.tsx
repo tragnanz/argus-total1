@@ -41,6 +41,13 @@ export const LOCALES: Record<Lang, string> = {
 type Dict = Record<string, string>;
 
 const EN: Dict = {
+  "Cosa stampare": "What to print",
+  "Scheda progetto": "Project data sheet",
+  "Planimetria su ortofoto": "Site plan on orthophoto",
+  "Scarica PDF": "Download PDF",
+  "Scarica PDF (ZIP)": "Download PDF (ZIP)",
+  "Lingua della stampa": "Print language",
+  "Seleziona almeno una sezione da stampare.": "Select at least one section to print.",
   "lorda": "gross",
   "irrigata": "irrigated",
   "media": "avg",
@@ -542,6 +549,13 @@ const EN: Dict = {
 };
 
 const FR: Dict = {
+  "Cosa stampare": "Éléments à imprimer",
+  "Scheda progetto": "Fiche projet",
+  "Planimetria su ortofoto": "Plan de masse sur orthophoto",
+  "Scarica PDF": "Télécharger le PDF",
+  "Scarica PDF (ZIP)": "Télécharger le PDF (ZIP)",
+  "Lingua della stampa": "Langue d'impression",
+  "Seleziona almeno una sezione da stampare.": "Sélectionnez au moins une section à imprimer.",
   "lorda": "brute",
   "irrigata": "irriguée",
   "media": "moy.",
@@ -1043,6 +1057,13 @@ const FR: Dict = {
 };
 
 const ES: Dict = {
+  "Cosa stampare": "Qué imprimir",
+  "Scheda progetto": "Ficha del proyecto",
+  "Planimetria su ortofoto": "Planimetría sobre ortofoto",
+  "Scarica PDF": "Descargar PDF",
+  "Scarica PDF (ZIP)": "Descargar PDF (ZIP)",
+  "Lingua della stampa": "Idioma de impresión",
+  "Seleziona almeno una sezione da stampare.": "Seleccione al menos una sección para imprimir.",
   "lorda": "bruta",
   "irrigata": "regada",
   "media": "media",
@@ -1544,6 +1565,13 @@ const ES: Dict = {
 };
 
 const PT: Dict = {
+  "Cosa stampare": "O que imprimir",
+  "Scheda progetto": "Ficha do projeto",
+  "Planimetria su ortofoto": "Planta sobre ortofoto",
+  "Scarica PDF": "Baixar PDF",
+  "Scarica PDF (ZIP)": "Baixar PDF (ZIP)",
+  "Lingua della stampa": "Idioma de impressão",
+  "Seleziona almeno una sezione da stampare.": "Selecione pelo menos uma seção para imprimir.",
   "lorda": "bruta",
   "irrigata": "irrigada",
   "media": "média",
@@ -2045,6 +2073,13 @@ const PT: Dict = {
 };
 
 const RO: Dict = {
+  "Cosa stampare": "Ce se tipărește",
+  "Scheda progetto": "Fișa proiectului",
+  "Planimetria su ortofoto": "Plan de situație pe ortofoto",
+  "Scarica PDF": "Descarcă PDF",
+  "Scarica PDF (ZIP)": "Descarcă PDF (ZIP)",
+  "Lingua della stampa": "Limba tipăririi",
+  "Seleziona almeno una sezione da stampare.": "Selectați cel puțin o secțiune de tipărit.",
   "lorda": "brută",
   "irrigata": "irigată",
   "media": "medie",
@@ -2548,6 +2583,13 @@ const RO: Dict = {
 };
 
 const KK: Dict = {
+  "Cosa stampare": "Не басып шығару керек",
+  "Scheda progetto": "Жоба парағы",
+  "Planimetria su ortofoto": "Ортофотодағы жоспар",
+  "Scarica PDF": "PDF жүктеп алу",
+  "Scarica PDF (ZIP)": "PDF жүктеп алу (ZIP)",
+  "Lingua della stampa": "Басып шығару тілі",
+  "Seleziona almeno una sezione da stampare.": "Басып шығару үшін кемінде бір бөлімді таңдаңыз.",
   "lorda": "жалпы",
   "irrigata": "суарылған",
   "media": "орташа",
@@ -3051,6 +3093,13 @@ const KK: Dict = {
 };
 
 const AR: Dict = {
+  "Cosa stampare": "ما المراد طباعته",
+  "Scheda progetto": "بطاقة المشروع",
+  "Planimetria su ortofoto": "المخطط العام على الصورة الجوية",
+  "Scarica PDF": "تنزيل PDF",
+  "Scarica PDF (ZIP)": "تنزيل PDF (ZIP)",
+  "Lingua della stampa": "لغة الطباعة",
+  "Seleziona almeno una sezione da stampare.": "حدد قسمًا واحدًا على الأقل للطباعة.",
   "lorda": "إجمالية",
   "irrigata": "مروية",
   "media": "متوسط",
@@ -3552,6 +3601,13 @@ const AR: Dict = {
 };
 
 const ZH: Dict = {
+  "Cosa stampare": "打印内容",
+  "Scheda progetto": "项目数据表",
+  "Planimetria su ortofoto": "正射影像上的平面图",
+  "Scarica PDF": "下载 PDF",
+  "Scarica PDF (ZIP)": "下载 PDF (ZIP)",
+  "Lingua della stampa": "打印语言",
+  "Seleziona almeno una sezione da stampare.": "请至少选择一个要打印的部分。",
   "lorda": "总面积",
   "irrigata": "灌溉",
   "media": "平均",
@@ -4055,6 +4111,13 @@ const ZH: Dict = {
 };
 
 const HU: Dict = {
+  "Cosa stampare": "Nyomtatandó elemek",
+  "Scheda progetto": "Projektadatlap",
+  "Planimetria su ortofoto": "Helyszínrajz ortofotón",
+  "Scarica PDF": "PDF letöltése",
+  "Scarica PDF (ZIP)": "PDF letöltése (ZIP)",
+  "Lingua della stampa": "Nyomtatás nyelve",
+  "Seleziona almeno una sezione da stampare.": "Válasszon ki legalább egy nyomtatandó szakaszt.",
   "lorda": "bruttó",
   "irrigata": "öntözött",
   "media": "átlag",
@@ -4558,6 +4621,13 @@ const HU: Dict = {
 };
 
 const ID: Dict = {
+  "Cosa stampare": "Yang akan dicetak",
+  "Scheda progetto": "Lembar data proyek",
+  "Planimetria su ortofoto": "Denah di atas ortofoto",
+  "Scarica PDF": "Unduh PDF",
+  "Scarica PDF (ZIP)": "Unduh PDF (ZIP)",
+  "Lingua della stampa": "Bahasa cetak",
+  "Seleziona almeno una sezione da stampare.": "Pilih minimal satu bagian untuk dicetak.",
   "lorda": "bruto",
   "irrigata": "terairi",
   "media": "rata-rata",
@@ -5061,6 +5131,13 @@ const ID: Dict = {
 };
 
 const DE: Dict = {
+  "Cosa stampare": "Druckinhalt",
+  "Scheda progetto": "Projektdatenblatt",
+  "Planimetria su ortofoto": "Lageplan auf Orthofoto",
+  "Scarica PDF": "PDF herunterladen",
+  "Scarica PDF (ZIP)": "PDF herunterladen (ZIP)",
+  "Lingua della stampa": "Drucksprache",
+  "Seleziona almeno una sezione da stampare.": "Wählen Sie mindestens einen Abschnitt zum Drucken aus.",
   "lorda": "brutto",
   "irrigata": "bewässert",
   "media": "Ø",
@@ -5558,6 +5635,13 @@ const DE: Dict = {
 };
 
 const PL: Dict = {
+  "Cosa stampare": "Co wydrukować",
+  "Scheda progetto": "Karta projektu",
+  "Planimetria su ortofoto": "Plan sytuacyjny na ortofotomapie",
+  "Scarica PDF": "Pobierz PDF",
+  "Scarica PDF (ZIP)": "Pobierz PDF (ZIP)",
+  "Lingua della stampa": "Język wydruku",
+  "Seleziona almeno una sezione da stampare.": "Wybierz co najmniej jedną sekcję do wydruku.",
   "lorda": "brutto",
   "irrigata": "nawadniana",
   "media": "średnio",
@@ -6057,6 +6141,13 @@ const PL: Dict = {
 };
 
 const BG: Dict = {
+  "Cosa stampare": "Какво да се отпечата",
+  "Scheda progetto": "Данни за проекта",
+  "Planimetria su ortofoto": "План върху ортофото",
+  "Scarica PDF": "Изтегли PDF",
+  "Scarica PDF (ZIP)": "Изтегли PDF (ZIP)",
+  "Lingua della stampa": "Език на печата",
+  "Seleziona almeno una sezione da stampare.": "Изберете поне един раздел за отпечатване.",
   "lorda": "бруто",
   "irrigata": "напоявана",
   "media": "средно",
@@ -6556,6 +6647,13 @@ const BG: Dict = {
 };
 
 const RU: Dict = {
+  "Cosa stampare": "Что печатать",
+  "Scheda progetto": "Карточка проекта",
+  "Planimetria su ortofoto": "План на ортофотоплане",
+  "Scarica PDF": "Скачать PDF",
+  "Scarica PDF (ZIP)": "Скачать PDF (ZIP)",
+  "Lingua della stampa": "Язык печати",
+  "Seleziona almeno una sezione da stampare.": "Выберите хотя бы один раздел для печати.",
   "lorda": "общая",
   "irrigata": "орошаемая",
   "media": "средн.",
@@ -7055,6 +7153,13 @@ const RU: Dict = {
 };
 
 const AF: Dict = {
+  "Cosa stampare": "Wat om te druk",
+  "Scheda progetto": "Projekdatablad",
+  "Planimetria su ortofoto": "Terreinplan op ortofoto",
+  "Scarica PDF": "Laai PDF af",
+  "Scarica PDF (ZIP)": "Laai PDF af (ZIP)",
+  "Lingua della stampa": "Druktaal",
+  "Seleziona almeno una sezione da stampare.": "Kies ten minste een gedeelte om te druk.",
   "lorda": "bruto",
   "irrigata": "besproei",
   "media": "gem.",
@@ -7554,6 +7659,13 @@ const AF: Dict = {
 };
 
 const MS: Dict = {
+  "Cosa stampare": "Apa yang hendak dicetak",
+  "Scheda progetto": "Lembaran data projek",
+  "Planimetria su ortofoto": "Pelan tapak atas ortofoto",
+  "Scarica PDF": "Muat turun PDF",
+  "Scarica PDF (ZIP)": "Muat turun PDF (ZIP)",
+  "Lingua della stampa": "Bahasa cetakan",
+  "Seleziona almeno una sezione da stampare.": "Pilih sekurang-kurangnya satu bahagian untuk dicetak.",
   "lorda": "kasar",
   "irrigata": "diairi",
   "media": "purata",
@@ -8053,6 +8165,13 @@ const MS: Dict = {
 };
 
 const VI: Dict = {
+  "Cosa stampare": "Nội dung in",
+  "Scheda progetto": "Bảng dữ liệu dự án",
+  "Planimetria su ortofoto": "Mặt bằng trên ảnh trực giao",
+  "Scarica PDF": "Tải PDF",
+  "Scarica PDF (ZIP)": "Tải PDF (ZIP)",
+  "Lingua della stampa": "Ngôn ngữ in",
+  "Seleziona almeno una sezione da stampare.": "Chọn ít nhất một mục để in.",
   "lorda": "tổng",
   "irrigata": "được tưới",
   "media": "trung bình",

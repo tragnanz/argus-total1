@@ -326,7 +326,12 @@ export const fetchLayout = (geom: Polygon, p: LayoutParams) =>
   req<LayoutResult>("/api/layout", { method: "POST", body: JSON.stringify({ geom, ...p }) });
 
 // ---- Scheda progetto PDF (M4) ----
-export type ReportInfo = { project_name: string; client_name?: string; notes?: string; include_suitability: boolean; lang?: string };
+export type ReportInfo = {
+  project_name: string; client_name?: string; notes?: string;
+  include_suitability: boolean; lang?: string;
+  include_sheet?: boolean;   // stampa le sezioni con i dati di progetto
+  include_plan?: boolean;    // stampa la tavola della planimetria
+};
 export async function downloadReport(geom: Polygon, p: LayoutParams, info: ReportInfo): Promise<Blob> {
   // Come req(): il token va spedito, altrimenti il middleware di login risponde
   // 401 e il browser mostra solo un generico «Failed to fetch».

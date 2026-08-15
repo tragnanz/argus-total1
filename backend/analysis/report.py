@@ -433,7 +433,10 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
 
 
 def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
-              layout_meta: dict, schematic_png: bytes, rev: str, lang: str = "it") -> bytes:
+              layout_meta: dict, schematic_png: bytes, rev: str, lang: str = "it",
+              with_sheet: bool = True, with_plan: bool = True) -> bytes:
+    """Compone il PDF. `with_sheet` stampa i dati di progetto, `with_plan` la
+    tavola della planimetria: si possono chiedere separatamente o insieme."""
     _ensure_fonts()
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import mm
@@ -462,14 +465,20 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
                           title=f"{tr(lang, 'sheet_title')} — {info.get('project_name','')}")
     _pw, _ph = A4
     _lw, _lh = landscape(A4)
-    doc.addPageTemplates([
-        PageTemplate(id="ritratto", pagesize=A4, frames=[
+    _tpl = {
+        "ritratto": PageTemplate(id="ritratto", pagesize=A4, frames=[
             Frame(18 * mm, 15 * mm, _pw - 36 * mm, _ph - 30 * mm, id="fp")]),
-        PageTemplate(id="orizzontale", pagesize=landscape(A4), frames=[
+        "orizzontale": PageTemplate(id="orizzontale", pagesize=landscape(A4), frames=[
             Frame(14 * mm, 12 * mm, _lw - 28 * mm, _lh - 24 * mm, id="fl")]),
-    ])
+    }
+    # Il primo modello dell'elenco vale per la pagina 1: stampando la sola
+    # planimetria si parte direttamente in orizzontale, senza pagina vuota.
+    _first = "ritratto" if with_sheet else "orizzontale"
+    doc.addPageTemplates([_tpl[_first], _tpl["ritratto" if _first == "orizzontale" else "orizzontale"]])
     PLAN_W = _lw - 28 * mm
-    PLAN_H = _lh - 24 * mm - 26 * mm     # spazio per titolo, spaziatura e piè di pagina
+    # Spazio da lasciare a titolo, spaziatura e piè di pagina; senza la scheda
+    # sulla tavola c'e' anche l'intestazione con il marchio.
+    PLAN_H = _lh - 24 * mm - (26 * mm if with_sheet else 48 * mm)
     ss = getSampleStyleSheet()
     h = ParagraphStyle("h", parent=ss["Heading2"], fontName=FONTB, textColor=colors.HexColor(BRAND),
                        spaceBefore=8, spaceAfter=4, alignment=align)
@@ -528,9 +537,12 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
     def N(v, dec=0):
         return fmt_num(lang, v, dec)
 
+    # Le sezioni di dati si accumulano a parte: la scheda e la tavola sono
+    # stampabili separatamente (selezione lato interfaccia).
+    sheet: list = []
     # --- dati progetto ---
-    story.append(Paragraph(T("dati_progetto"), h))
-    story.append(kv_table([
+    sheet.append(Paragraph(T("dati_progetto"), h))
+    sheet.append(kv_table([
         (T("progetto"), info.get("project_name", "—")),
         (T("cliente"), info.get("client_name") or "—"),
         (T("superficie_area"), f"{N(field_ha)} ha"),
@@ -539,14 +551,14 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
 
     # --- idoneità ---
     if suit_meta:
-        story.append(Paragraph(T("sec_idoneita"), h))
+        sheet.append(Paragraph(T("sec_idoneita"), h))
         rows = [[T("classe"), T("ettari"), "%"]] + \
                [[tr(lang, "cls_" + c["key"]), N(c["ha"]), f"{N(c['pct'], 1)}%"] for c in suit_meta.get("classes", [])]
-        story.append(data_table(rows, BRAND, [50 * mm, 30 * mm, 20 * mm]))
+        sheet.append(data_table(rows, BRAND, [50 * mm, 30 * mm, 20 * mm]))
         cm = suit_meta.get("climate", {})
         ai = cm.get("aridity_index")
-        story.append(Spacer(1, 3))
-        story.append(kv_table([
+        sheet.append(Spacer(1, 3))
+        sheet.append(kv_table([
             (T("superficie_idonea"), f"{N(suit_meta.get('suitable_ha', 0))} ha"),
             (T("idoneita_media"), f"{N(suit_meta.get('mean_score', 0), 1)}/100"),
             (T("et0_pioggia"), f"{N(cm.get('eto_year_mm', 0))} mm · {N(cm.get('rain_year_mm', 0))} mm"),
@@ -555,9 +567,9 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
 
     # --- layout ---
     lm = layout_meta
-    story.append(Paragraph(T("sec_layout"), h))
+    sheet.append(Paragraph(T("sec_layout"), h))
     orient = f"{N(lm.get('orientation_deg', 0), 1)}°" + (f" ({tr(lang,'auto')})" if lm.get("auto_orient") else "")
-    story.append(kv_table([
+    sheet.append(kv_table([
         (T("configurazione"), tr(lang, "cfg_" + str(lm.get("config", "")))),
         (T("orientamento"), orient),
         (T("npivot_raggio"), f"{N(lm.get('n_pivots', 0))} · {N(lm.get('radius_m', 0))} m"),
@@ -569,8 +581,8 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
     ]))
 
     # --- rete idraulica ---
-    story.append(Paragraph(T("sec_rete"), h))
-    story.append(kv_table([
+    sheet.append(Paragraph(T("sec_rete"), h))
+    sheet.append(kv_table([
         (T("pompe"), N(lm.get("n_pumps", 0))),
         (T("tubaz_spine"), f"{N(lm.get('pipe_total_m', 0) / 1000, 1)} km ({tr(lang,'maxw')} {N(lm.get('pipe_max_m', 0))} m)"),
         (T("collettore"), f"{N(lm.get('header_m', 0) / 1000, 1)} km"),
@@ -579,8 +591,8 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
 
     # --- dimensionamento idrico ---
     w = lm.get("water", {})
-    story.append(Paragraph(T("sec_dim"), h))
-    story.append(kv_table([
+    sheet.append(Paragraph(T("sec_dim"), h))
+    sheet.append(kv_table([
         (T("et0_etc"), f"{N(w.get('et0_peak_mm', 0), 2)} {u_mm} · ETc {N(w.get('etc_peak_mm', 0), 2)} {u_mm}"),
         (T("fabbisogno"), f"{N(w.get('gross_mm_day', 0), 2)} {u_mm} ({tr(lang,'effw')} {N(w.get('efficiency', 0), 2)}, {N(w.get('hours_day', 0))} {u_h})"),
         (T("portata_pivot"), f"{N(w.get('q_pivot_ls', 0), 1)} l/s ({N(w.get('q_pivot_m3h', 0), 1)} m³/h)"),
@@ -591,16 +603,21 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
     # --- fasi ---
     phases = lm.get("phases", [])
     if len(phases) > 1:
-        story.append(Paragraph(T("sec_fasi"), h))
+        sheet.append(Paragraph(T("sec_fasi"), h))
         rows = [[T("fase"), T("pivot_h"), T("ettari"), T("portata_ls")]] + \
                [[N(p["phase"]), N(p["n_pivots"]), N(p["net_ha"]), N(p["q_ls"])] for p in phases]
-        story.append(data_table(rows, ACCENT, [20 * mm, 25 * mm, 30 * mm, 35 * mm]))
+        sheet.append(data_table(rows, ACCENT, [20 * mm, 25 * mm, 30 * mm, 35 * mm]))
+
+    if with_sheet:
+        story.extend(sheet)
 
     # --- planimetria: pagina orizzontale dedicata ---
-    story.append(NextPageTemplate("orizzontale"))
-    story.append(PageBreak())
-    story.append(Paragraph(T("sec_schema"), h))
-    story.append(RLImage(io.BytesIO(schematic_png), width=PLAN_W, height=PLAN_H, kind="proportional"))
+    if with_plan and schematic_png:
+        if with_sheet:      # la tavola segue la scheda, su una pagina propria
+            story.append(NextPageTemplate("orizzontale"))
+            story.append(PageBreak())
+        story.append(Paragraph(T("sec_schema"), h))
+        story.append(RLImage(io.BytesIO(schematic_png), width=PLAN_W, height=PLAN_H, kind="proportional"))
 
     story.append(Spacer(1, 6))
     import datetime as _dt
