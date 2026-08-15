@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.157";
+const REV = "v0.6.158";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3849,29 +3849,12 @@ export default function Page() {
               </button>
               <button className="btn-ghost flex-1 basis-0" onClick={clearDem}>{t("Rimuovi DEM")}</button>
             </div>
-            <div className="flex gap-2 items-end mt-2">
-              <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Isoipse ogni")}
-                <select className="field-input mt-1 w-full" value={isoInterval} onChange={(e) => setIsoInterval(Number(e.target.value))}>
-                  <option value={0}>{t("Automatico")}</option>
-                  {[0.5, 1, 2, 2.5, 5, 10, 20, 25, 50].map((v) => <option key={v} value={v}>{v} m</option>)}
-                </select>
-              </label>
-              <button className="btn-primary flex-1 basis-0 whitespace-nowrap" disabled={busy === "terrain" || !activeGeom} onClick={showTerrain}>
-                {busy === "terrain" ? t("Ricompongo…") : t("Rilievo + isoipse")}
-              </button>
-            </div>
             {demInfo && (
               <div className="mt-2">
                 <ScaleBar scale={demInfo.scale} unit=" m" />
                 <p className="text-xs text-sage-dark mt-1">
                   {t("min")} {uM(demInfo.min)} · {t("max")} {uM(demInfo.max)}
                 </p>
-              </div>
-            )}
-            {terrainInfo && (
-              <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
-                {t("Isoipse ogni")} <b>{uM(terrainInfo.interval, 1)}</b> · {t("quota")} {uM(terrainInfo.min)}–{uM(terrainInfo.max)}<br />
-                {t("Le linee marcate riportano la quota; più sono fitte, più il versante è ripido.")}
               </div>
             )}
           </section>
