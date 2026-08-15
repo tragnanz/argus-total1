@@ -11,7 +11,7 @@ from ..schemas import ReportIn
 
 from analysis.layout import compute_layout, TRANSPORT_SLOPE
 from analysis.suitability import compute_suitability
-from analysis.report import layout_schematic_png, build_pdf
+from analysis.report import layout_schematic_png, plan_map_png, build_pdf
 
 router = APIRouter(prefix="/api/project", tags=["report"])
 
@@ -27,6 +27,110 @@ def _ring_area_ha(ring: list[list[float]]) -> float:
         x2, y2 = ring[i + 1][0] * kx, ring[i + 1][1] * 110540.0
         a += x1 * y2 - x2 * y1
     return abs(a) / 2.0 / 10000.0
+
+
+def _covered_ha(ring: list[list[float]], pivots: list[dict], field_ha: float) -> float:
+    """Superficie del campo effettivamente coperta dai pivot, in ettari.
+
+    Sommare le aree dei cerchi sbaglia due volte: conta due volte le
+    sovrapposizioni e include le parti che escono dal poligono. Si campiona
+    quindi una griglia e si misura l'unione dei cerchi intersecata col campo.
+    """
+    import numpy as np
+
+    if not ring or not pivots or field_ha <= 0:
+        return 0.0
+    lons = np.array([p[0] for p in ring]); lats = np.array([p[1] for p in ring])
+    lat0 = float(lats.mean())
+    kx = 111320.0 * math.cos(math.radians(lat0)); ky = 110540.0
+    px, py = lons * kx, lats * ky
+
+    n = 700
+    gx = np.linspace(px.min(), px.max(), n)
+    gy = np.linspace(py.min(), py.max(), n)
+    X, Y = np.meshgrid(gx, gy)
+
+    inside = np.zeros(X.shape, dtype=bool)      # ray casting vettorizzato
+    for i in range(len(px) - 1):
+        x1, y1, x2, y2 = px[i], py[i], px[i + 1], py[i + 1]
+        if y1 == y2:
+            continue
+        cross = ((y1 > Y) != (y2 > Y)) & (X < (x2 - x1) * (Y - y1) / (y2 - y1) + x1)
+        inside ^= cross
+    tot = int(inside.sum())
+    if not tot:
+        return 0.0
+
+    cov = np.zeros(X.shape, dtype=bool)
+    for pv in pivots:
+        cx, cy = pv["lon"] * kx, pv["lat"] * ky
+        cov |= ((X - cx) ** 2 + (Y - cy) ** 2) <= (pv["r"] ** 2)
+    return field_ha * float((inside & cov).sum()) / tot
+
+
+def _sheet_kit(body, geom: dict, plan_gj: dict, meta: dict, lang: str, rev: str,
+               status: dict) -> dict | None:
+    """Prepara la TAVOLA A3: mappa, schede dei pivot e celle del cartiglio.
+
+    Serve il progetto reale: senza pivot disegnati non c'e' nulla da mettere
+    nelle schede laterali e si resta sulla tavola semplice.
+    """
+    import datetime as _dt
+    from analysis.report_i18n import tr, fmt_num, fmt_date
+
+    feats = plan_gj.get("features") or []
+    pivs = [f for f in feats if (f.get("properties") or {}).get("kind") == "pivot"]
+    if not pivs:
+        return None
+
+    field_ha = meta.get("field_ha", 0.0) or 0.0
+    cards, ring_of = [], []
+    for i, f in enumerate(pivs, 1):
+        pr = f.get("properties") or {}
+        ring = (f.get("geometry") or {}).get("coordinates", [[]])[0]
+        if not ring:
+            continue
+        lons = [p[0] for p in ring]; lats = [p[1] for p in ring]
+        lat = (min(lats) + max(lats)) / 2.0
+        lon = (min(lons) + max(lons)) / 2.0
+        r = pr.get("r")
+        if not r:      # ricavato dal raggio del cerchio, se non arriva dal client
+            r = (max(lats) - min(lats)) / 2.0 * 110540.0
+        ha = _ring_area_ha(ring)
+        cards.append({
+            "n": i, "lat": pr.get("lat", lat), "lon": pr.get("lng", lon),
+            "r": round(r), "ha": ha,
+            "pct": (ha / field_ha * 100.0) if field_ha else None,
+            "q_m3h": pr.get("q_m3h"), "p_bar": pr.get("p_bar"), "elev": pr.get("z"),
+        })
+        ring_of.append(ring)
+
+    rings = [geom["coordinates"][0]] + [r for r in (body.plan_rings or [])]
+    pipes = [(f.get("geometry") or {}).get("coordinates", [])
+             for f in feats if (f.get("properties") or {}).get("kind") == "pipe"]
+    canals = list(body.plan_canals or [])
+
+    png, denom = plan_map_png(rings, cards, pipes, canals, lang=lang, status=status)
+
+    all_lat = [c["lat"] for c in cards] or [0.0]
+    all_lon = [c["lon"] for c in cards] or [0.0]
+    centre = (sum(all_lat) / len(all_lat), sum(all_lon) / len(all_lon))
+
+    net = _covered_ha(geom["coordinates"][0], cards, field_ha)
+    non = max(0.0, field_ha - net)
+    scale = f"1:{round(denom / 500) * 500:d}"
+    now = _dt.datetime.now()
+    cells = [
+        (tr(lang, "ps_cliente"), body.client_name or "—"),
+        (tr(lang, "ps_riferimento"), body.project_name or "—"),
+        (tr(lang, "ps_sup_campo"), f"{fmt_num(lang, field_ha, 2)} ha"),
+        (tr(lang, "ps_copertura"), f"{fmt_num(lang, (net / field_ha * 100.0) if field_ha else 0, 1)} %"),
+        (tr(lang, "ps_cop_non"), f"{fmt_num(lang, net, 1)} / {fmt_num(lang, non, 1)} ha"),
+        (tr(lang, "ps_macchine"), f"{len(cards)} · {scale}"),
+        (tr(lang, "ps_data"), f"{fmt_date(lang, now.date())} {now:%H:%M}"),
+    ]
+    return {"map_png": png, "pivots": cards, "centre": centre, "cells": cells,
+            "rev": f"{rev} · {now:%Y-%m-%d}"}
 
 
 def _real_plan(body, lay) -> tuple[dict, dict]:
@@ -122,11 +226,18 @@ def project_report(body: ReportIn, client=Depends(get_client)):
 
     status: dict = {}
     try:
-        # Senza planimetria si evita anche lo scaricamento delle tessere.
-        png = layout_schematic_png(plan_gj, meta, lat0, lang=lang,
-                                   field_geom=geom, status=status) if want_plan else b""
+        kit = None
+        png = b""
+        if want_plan:
+            # Con il progetto reale si stampa la TAVOLA A3; altrimenti si resta
+            # sulla tavola A4 generata dal layout ricalcolato.
+            kit = _sheet_kit(body, geom, plan_gj, meta, lang, f"v{REV}", status)
+            if kit is None:
+                png = layout_schematic_png(plan_gj, meta, lat0, lang=lang,
+                                           field_geom=geom, status=status)
         pdf = build_pdf(info, meta.get("field_ha", 0.0), suit_meta, meta, png,
-                        f"v{REV}", lang=lang, with_sheet=want_sheet, with_plan=want_plan)
+                        f"v{REV}", lang=lang, with_sheet=want_sheet, with_plan=want_plan,
+                        sheet_kit=kit)
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001

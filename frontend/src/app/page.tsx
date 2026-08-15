@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.149";
+const REV = "v0.6.150";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2905,7 +2905,24 @@ export default function Page() {
         const pvs = pivots.filter((p) => p.field === fid);
         const pls = pivotLines.filter((l) => l.kind === "pipe" && l.field === fid);
         if (!pvs.length) return {};    // niente disegnato: resta il layout automatico
-        return { plan_fc: fcFromModel(pvs, pls), plan_canals: canalLines };
+        const fc = fcFromModel(pvs, pls);
+        // Alla tavola servono i dati di macchina: centro, raggio, portata e
+        // pressione d'esercizio calcolate dal modulo Irrigazione.
+        let k = 0;
+        for (const ft of fc.features) {
+          if (ft.properties?.kind !== "pivot") continue;
+          const pv = pvs[k++];
+          if (!pv) continue;
+          ft.properties.lat = pv.lat;
+          ft.properties.lng = pv.lng;
+          ft.properties.r = pv.r;
+          ft.properties.q_m3h = Math.round(pivotFlow(pv) * 3.6);
+          ft.properties.p_bar = Math.round(pivotPressure(pv) * 100) / 100;
+        }
+        // Poligoni figli del campo: entrano nel disegno della tavola.
+        const kidRings = fields.filter((x) => x.parentId === fid)
+          .map((x) => x.geom.coordinates[0]).filter((r) => r?.length >= 3);
+        return { plan_fc: fc, plan_canals: canalLines, plan_rings: kidRings };
       };
       if (sel.length === 1) {
         const f = sel[0];

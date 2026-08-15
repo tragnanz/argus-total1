@@ -21,6 +21,17 @@ from matplotlib.patches import Polygon as MplPoly
 from .report_i18n import tr, RTL, fmt_num, fmt_date
 
 BRAND = "#038037"
+# Palette della tavola tecnica (misurata sulle tavole di settore).
+_CYAN = "#00d1ff"        # confini dei poligoni e tubazioni
+_GREEN = "#2ee0a1"       # cerchi dei pivot
+_INK = "#123524"         # riquadri scuri e cornice
+
+
+def _halo():
+    """Contorno scuro attorno al testo bianco: lo rende leggibile sull'ortofoto."""
+    import matplotlib.patheffects as pe
+    return [pe.withStroke(linewidth=1.6, foreground="#0b2318")]
+
 ACCENT = "#20aae2"
 PHASE_COLORS = ["#038037", "#20aae2", "#87bf59", "#f0b429", "#b23b1e", "#6b21a8"]
 
@@ -478,9 +489,14 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
 
 def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
               layout_meta: dict, schematic_png: bytes, rev: str, lang: str = "it",
-              with_sheet: bool = True, with_plan: bool = True) -> bytes:
+              with_sheet: bool = True, with_plan: bool = True,
+              sheet_kit: dict | None = None) -> bytes:
     """Compone il PDF. `with_sheet` stampa i dati di progetto, `with_plan` la
-    tavola della planimetria: si possono chiedere separatamente o insieme."""
+    tavola della planimetria: si possono chiedere separatamente o insieme.
+
+    Con `sheet_kit` la planimetria diventa la TAVOLA A3 in stile tecnico
+    (cornice, cartiglio, barra laterale); senza, resta la tavola A4 semplice.
+    """
     _ensure_fonts()
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import mm
@@ -509,16 +525,32 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
                           title=f"{tr(lang, 'sheet_title')} — {info.get('project_name','')}")
     _pw, _ph = A4
     _lw, _lh = landscape(A4)
+    # La TAVOLA A3 si disegna interamente sul canvas della pagina: il modello
+    # ha una cornice minima e tutto il contenuto arriva da onPage.
+    kit = sheet_kit if (with_plan and sheet_kit) else None
+    if kit:
+        from .plan_sheet import draw_sheet, A3_W, A3_H
+
+        def _paint(cv, _doc):
+            draw_sheet(cv, kit.get("map_png", b""), kit.get("pivots", []),
+                       kit.get("centre", (0.0, 0.0)), kit.get("cells", []),
+                       lang, kit.get("rev", rev))
+
+        tavola = PageTemplate(id="tavola", pagesize=(A3_W, A3_H),
+                              frames=[Frame(20, 20, 40, 40, id="ft")], onPage=_paint)
     _tpl = {
         "ritratto": PageTemplate(id="ritratto", pagesize=A4, frames=[
             Frame(18 * mm, 15 * mm, _pw - 36 * mm, _ph - 30 * mm, id="fp")]),
         "orizzontale": PageTemplate(id="orizzontale", pagesize=landscape(A4), frames=[
             Frame(14 * mm, 12 * mm, _lw - 28 * mm, _lh - 24 * mm, id="fl")]),
     }
+    if kit:
+        _tpl["tavola"] = tavola
     # Il primo modello dell'elenco vale per la pagina 1: stampando la sola
-    # planimetria si parte direttamente in orizzontale, senza pagina vuota.
-    _first = "ritratto" if with_sheet else "orizzontale"
-    doc.addPageTemplates([_tpl[_first], _tpl["ritratto" if _first == "orizzontale" else "orizzontale"]])
+    # planimetria si parte direttamente dalla tavola, senza pagina vuota.
+    _first = "ritratto" if with_sheet else ("tavola" if kit else "orizzontale")
+    _order = [_first] + [k for k in _tpl if k != _first]
+    doc.addPageTemplates([_tpl[k] for k in _order])
     PLAN_W = _lw - 28 * mm
     # Spazio da lasciare a titolo, spaziatura e piè di pagina; senza la scheda
     # sulla tavola c'e' anche l'intestazione con il marchio.
@@ -534,14 +566,17 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
     title = Paragraph(f"<b>{T('sheet_title')}</b><br/><font size=11 color='#20aae2'>{L('Argus Total — Nabu')}</font>",
                       ParagraphStyle("t", parent=ss["Title"], fontName=FONTB, fontSize=17, leading=20,
                                      textColor=colors.HexColor(BRAND), alignment=align))
-    if os.path.exists(logo):
-        cells = [RLImage(logo, width=30 * mm, height=30 * mm, kind="proportional"), title]
-        head = Table([cells[::-1] if rtl else cells], colWidths=[34 * mm, None] if not rtl else [None, 34 * mm])
-        head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
-        story.append(head)
-    else:
-        story.append(title)
-    story.append(Spacer(1, 6))
+    # Sulla TAVOLA A3 il marchio sta nel cartiglio: l'intestazione serve solo
+    # quando il documento comincia con la scheda.
+    if with_sheet or not kit:
+        if os.path.exists(logo):
+            cells = [RLImage(logo, width=30 * mm, height=30 * mm, kind="proportional"), title]
+            head = Table([cells[::-1] if rtl else cells], colWidths=[34 * mm, None] if not rtl else [None, 34 * mm])
+            head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+            story.append(head)
+        else:
+            story.append(title)
+        story.append(Spacer(1, 6))
 
     p_lab = ParagraphStyle("kvl", fontName=FONT, fontSize=9.5, leading=12,
                            textColor=colors.HexColor("#3b5654"), alignment=align)
@@ -655,18 +690,220 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
     if with_sheet:
         story.extend(sheet)
 
-    # --- planimetria: pagina orizzontale dedicata ---
-    if with_plan and schematic_png:
+    # --- planimetria ---
+    if with_plan and kit:
+        # Tavola A3: il contenuto lo disegna onPage, alla pagina basta un
+        # segnaposto per essere emessa.
+        if with_sheet:
+            story.append(NextPageTemplate("tavola"))
+            story.append(PageBreak())
+        story.append(Spacer(1, 1))
+    elif with_plan and schematic_png:
         if with_sheet:      # la tavola segue la scheda, su una pagina propria
             story.append(NextPageTemplate("orizzontale"))
             story.append(PageBreak())
         story.append(Paragraph(T("sec_schema"), h))
         story.append(RLImage(io.BytesIO(schematic_png), width=PLAN_W, height=PLAN_H, kind="proportional"))
 
-    story.append(Spacer(1, 6))
-    import datetime as _dt
-    foot = tr(lang, "footer", rev=rev) + " · " + fmt_date(lang, _dt.date.today())
-    story.append(Paragraph(_shape(lang, foot), small))
+    if not (with_plan and kit):
+        story.append(Spacer(1, 6))
+        import datetime as _dt
+        foot = tr(lang, "footer", rev=rev) + " · " + fmt_date(lang, _dt.date.today())
+        story.append(Paragraph(_shape(lang, foot), small))
 
     doc.build(story)
     return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Mappa della TAVOLA (stile tecnico): ortofoto a tutta area, poligoni ciano con
+# vertici numerati, pivot verdi con etichetta, badge del nord e barra di scala
+# con il rapporto. Le proporzioni sono quelle del riquadro mappa della tavola.
+# ---------------------------------------------------------------------------
+def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
+                 pipes: list[list[list[float]]], canals: list[list[list[float]]],
+                 lang: str = "it", px_w: int = 2010, px_h: int = 1440,
+                 status: dict | None = None) -> tuple[bytes, float]:
+    """Ritorna (png, denominatore della scala) per il riquadro mappa.
+
+    `pivots` = [{lat, lon, r, ha, q_m3h, p_bar, n}], `rings` gli anelli dei
+    poligoni in lon/lat. La scala e' calcolata sulla larghezza stampata del
+    riquadro (1006 pt = 354,9 mm).
+    """
+    import matplotlib.font_manager as fm
+    from matplotlib.patches import Circle, FancyBboxPatch
+
+    prop = None
+    if lang == "zh":
+        cjk = _find_cjk()
+        if cjk:
+            prop = fm.FontProperties(fname=cjk)
+        else:
+            lang = "en"
+
+    def LB(s: str) -> str:
+        return _shape(lang, s)
+
+    aspect = px_w / float(px_h)
+    fig = plt.figure(figsize=(px_w / 200.0, px_h / 200.0), dpi=200)
+    ax = fig.add_axes([0, 0, 1, 1])          # la mappa riempie tutto il riquadro
+
+    lons: list[float] = []
+    lats: list[float] = []
+    for rg in rings:
+        for p in rg:
+            lons.append(p[0]); lats.append(p[1])
+    for pv in pivots:
+        dlat = pv["r"] / 110540.0
+        dlon = pv["r"] / (111320.0 * max(0.1, math.cos(math.radians(pv["lat"]))))
+        lons += [pv["lon"] - dlon, pv["lon"] + dlon]
+        lats += [pv["lat"] - dlat, pv["lat"] + dlat]
+    if not lons:
+        lons, lats = [0.0], [0.0]
+
+    mx0, my0 = _merc(min(lons), min(lats))
+    mx1, my1 = _merc(max(lons), max(lats))
+    padx = max((mx1 - mx0) * 0.06, 60.0)
+    pady = max((my1 - my0) * 0.06, 60.0)
+    mx0 -= padx; mx1 += padx; my0 -= pady; my1 += pady
+    w, hgt = mx1 - mx0, my1 - my0
+    cx, cy = (mx0 + mx1) / 2.0, (my0 + my1) / 2.0
+    if w / hgt < aspect:
+        w = hgt * aspect
+    else:
+        hgt = w / aspect
+    mx0, mx1 = cx - w / 2.0, cx + w / 2.0
+    my0, my1 = cy - hgt / 2.0, cy + hgt / 2.0
+
+    lo0, la0 = _unmerc(mx0, my0)
+    lo1, la1 = _unmerc(mx1, my1)
+    bg = None
+    try:
+        bg, extent = _satellite_bg(lo0, la0, lo1, la1, max_tiles=110)
+        if status is not None:
+            status["basemap"] = "ok" if bg is not None else "failed"
+    except Exception as e:  # noqa: BLE001
+        bg, extent = None, None
+        if status is not None:
+            status["basemap"] = "failed"
+            status["error"] = f"{type(e).__name__}: {e}"[:200]
+    if bg is not None:
+        ax.imshow(bg, extent=extent, origin="upper", zorder=0, interpolation="bilinear")
+    else:
+        ax.add_patch(MplPoly([(mx0, my0), (mx1, my0), (mx1, my1), (mx0, my1)],
+                             closed=True, facecolor="#dde6df", edgecolor="none", zorder=0))
+
+    # --- canali e tubazioni ---
+    for cc in canals:
+        pts = _merc_ring(cc)
+        ax.plot([p[0] for p in pts], [p[1] for p in pts], color="#0284c7",
+                linewidth=2.0, linestyle=(0, (6, 4)), zorder=3, solid_capstyle="round")
+    for pl in pipes:
+        pts = _merc_ring(pl)
+        if len(pts) >= 2:
+            ax.plot([p[0] for p in pts], [p[1] for p in pts], color=_CYAN,
+                    linewidth=1.6, zorder=4, solid_capstyle="round")
+
+    # --- poligoni con vertici numerati ---
+    vn = 0
+    for rg in rings:
+        pts = _merc_ring(rg)
+        ax.plot([p[0] for p in pts], [p[1] for p in pts], color=_CYAN,
+                linewidth=2.2, zorder=5, solid_capstyle="round")
+        uniq = pts[:-1] if len(pts) > 2 and pts[0] == pts[-1] else pts
+        for (vx, vy) in uniq:
+            vn += 1
+            ax.plot(vx, vy, marker="o", color=_CYAN, markersize=3.4,
+                    markeredgecolor="#ffffff", markeredgewidth=0.5, zorder=6)
+            ax.text(vx + w * 0.004, vy + hgt * 0.004, f"V{vn}", fontsize=5.2,
+                    color="#ffffff", fontproperties=prop, zorder=7,
+                    path_effects=_halo())
+
+    # --- pivot ---
+    for pv in pivots:
+        pc = _merc(pv["lon"], pv["lat"])
+        # il raggio va convertito nelle unita' della mappa (Mercator dilata)
+        ru = pv["r"] / max(0.05, math.cos(math.radians(pv["lat"])))
+        ax.add_patch(Circle(pc, ru, facecolor="none", edgecolor=_GREEN,
+                            linewidth=1.6, zorder=8))
+        # Texture della bagnatura: molti archi tratteggiati concentrici, come
+        # la trama dei getti nelle tavole di settore.
+        for j in range(1, 15):
+            ax.add_patch(Circle(pc, ru * j / 15.0, facecolor="none", edgecolor="#ffffff",
+                                linewidth=0.4, alpha=0.5, linestyle=(0, (1.6, 3.2)),
+                                zorder=8))
+        ax.plot(pc[0], pc[1], marker="o", color="#ffffff", markersize=3.2,
+                markeredgecolor=_INK, markeredgewidth=0.7, zorder=9)
+
+        head = f"{pv['n']} · {fmt_num(lang, pv['r'])}m · {fmt_num(lang, pv['ha'], 1)}ha"
+        sub = []
+        if pv.get("q_m3h"):
+            sub.append(f"Q {fmt_num(lang, pv['q_m3h'])} m³/h")
+        if pv.get("p_bar"):
+            sub.append(f"P {fmt_num(lang, pv['p_bar'], 2)} bar")
+        ty = pc[1] + ru * 0.52
+        ax.text(pc[0], ty, LB(head), fontsize=7.0, fontweight="bold", color="#ffffff",
+                ha="center", va="center", fontproperties=prop, zorder=11,
+                bbox=dict(boxstyle="round,pad=0.45", facecolor=_INK + "e0", edgecolor="none"))
+        if sub:
+            ax.text(pc[0], ty - hgt * 0.021, LB(" · ".join(sub)), fontsize=6.0,
+                    color="#dfeee7", ha="center", va="center", fontproperties=prop, zorder=11,
+                    bbox=dict(boxstyle="round,pad=0.35", facecolor=_INK + "e0", edgecolor="none"))
+
+    ax.set_xlim(mx0, mx1); ax.set_ylim(my0, my1)
+    ax.set_aspect(1.0)
+    ax.set_xticks([]); ax.set_yticks([])
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+
+    # --- scala: rapporto reale sulla larghezza stampata (1006 pt) ---
+    lat_mid = _unmerc(0.0, cy)[1]
+    k = max(0.05, math.cos(math.radians(lat_mid)))     # metri veri per unita' mappa
+    span_m = (mx1 - mx0) * k
+    printed_m = 1006.0 / 72.0 * 0.0254                 # larghezza del riquadro in metri
+    denom = span_m / printed_m
+    raw = span_m / 4.5
+    step = 10.0 ** math.floor(math.log10(max(1.0, raw)))
+    bar_m = next((step * f for f in (5, 2, 1) if step * f <= raw), step)
+    bar_u = bar_m / k
+
+    bx = mx0 + (mx1 - mx0) * 0.030
+    by = my0 + (my1 - my0) * 0.045
+    hb = (my1 - my0) * 0.010
+    ax.add_patch(FancyBboxPatch((bx - bar_u * 0.06, by - hb * 2.2),
+                                bar_u * 1.55, hb * 5.2,
+                                boxstyle="round,pad=0.0,rounding_size=" + str(hb),
+                                facecolor=_INK + "c8", edgecolor="none", zorder=12))
+    for i in range(4):
+        ax.add_patch(MplPoly([(bx + i * bar_u / 4, by), (bx + (i + 1) * bar_u / 4, by),
+                              (bx + (i + 1) * bar_u / 4, by + hb), (bx + i * bar_u / 4, by + hb)],
+                             closed=True, facecolor="#ffffff" if i % 2 else _INK,
+                             edgecolor="#ffffff", linewidth=0.6, zorder=13))
+    ax.text(bx, by - hb * 0.7, "0", fontsize=5.6, color="#ffffff", ha="left", va="top",
+            fontproperties=prop, zorder=13)
+    lab = f"{fmt_num(lang, bar_m / 1000.0, 1)} km" if bar_m >= 1000 else f"{fmt_num(lang, bar_m)} m"
+    ax.text(bx + bar_u, by - hb * 0.7, LB(lab), fontsize=5.6, color="#ffffff",
+            ha="right", va="top", fontproperties=prop, zorder=13)
+    ax.text(bx + bar_u * 1.12, by + hb * 0.4, f"1:{round(denom / 500) * 500:d}",
+            fontsize=8.0, fontweight="bold", color="#ffffff", ha="left", va="center",
+            fontproperties=prop, zorder=13)
+
+    # --- badge del nord, in alto a destra dentro la mappa ---
+    W = mx1 - mx0
+    H = my1 - my0
+    nx = mx1 - W * 0.030
+    nbw, nbh = W * 0.026, H * 0.075          # riquadro del badge
+    nby = my1 - H * 0.020 - nbh
+    ax.add_patch(FancyBboxPatch((nx - nbw / 2, nby), nbw, nbh,
+                                boxstyle="round,pad=0.0,rounding_size=" + str(nbw * 0.18),
+                                facecolor=_INK + "c8", edgecolor="none", zorder=12))
+    ax.text(nx, nby + nbh * 0.80, "N", fontsize=8.0, fontweight="bold", color="#ffffff",
+            ha="center", va="center", zorder=13)
+    ax.annotate("", xy=(nx, nby + nbh * 0.62), xytext=(nx, nby + nbh * 0.10),
+                arrowprops=dict(facecolor="#ffffff", edgecolor="none", width=1.8,
+                                headwidth=6.5, headlength=6.5), zorder=13)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=200)
+    plt.close(fig)
+    return buf.getvalue(), denom

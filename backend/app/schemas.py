@@ -362,6 +362,7 @@ class ReportIn(LayoutIn):
     # ricalcolato dal poligono.
     plan_fc: dict | None = None
     plan_canals: list[list[list[float]]] | None = None
+    plan_rings: list[list[list[float]]] | None = None   # poligoni figli da disegnare
 
 
 class HealthOut(BaseModel):
