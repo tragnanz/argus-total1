@@ -336,7 +336,19 @@ export type ReportInfo = {
   plan_canals?: number[][][];
   plan_rings?: number[][][];
   plan_format?: "a3" | "a4";   // formato della tavola
+  project_id?: number | null;  // per numerare le revisioni
+  area_id?: number | null;
 };
+// ---- Revisioni degli export (numerazione automatica, storico per campo) ----
+export type ExportRevision = {
+  n: number; area_id: number | null; label: string; fmt: string; lang: string;
+  sections: string; summary: { pivots?: number; cells?: Record<string, string> };
+  created_at: string | null;
+};
+export const listRevisions = (project_id: number, area_id?: number | null) =>
+  req<ExportRevision[]>(`/api/project/revisions?project_id=${project_id}` +
+    (area_id != null ? `&area_id=${area_id}` : ""));
+
 export async function downloadReport(geom: Polygon, p: LayoutParams, info: ReportInfo): Promise<Blob> {
   // Come req(): il token va spedito, altrimenti il middleware di login risponde
   // 401 e il browser mostra solo un generico «Failed to fetch».

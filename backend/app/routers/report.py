@@ -6,7 +6,9 @@ import threading
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from sqlalchemy.orm import Session
 
+from ..db import get_db
 from ..deps import get_client
 from ..schemas import ReportIn
 
@@ -97,6 +99,52 @@ def _covered_ha(ring: list[list[float]], pivots: list[dict], field_ha: float) ->
         np.add(dx, dy, out=dx)
         cov |= dx <= np.float32(pv["r"] ** 2)
     return field_ha * float((inside & cov).sum()) / tot
+
+
+def tr_rev(lang: str, n: int) -> str:
+    """Etichetta della revisione per il cartiglio (es. «Rev. 5»)."""
+    from analysis.report_i18n import tr
+    return tr(lang, "ps_rev", n=n)
+
+
+def _next_revision(db, body, kit: dict | None, want_sheet: bool, want_plan: bool) -> int | None:
+    """Registra l'export e ritorna il numero di revisione.
+
+    La numerazione e' per progetto e per campo: ogni tavola ha la sua storia,
+    così due campi dello stesso progetto non si rubano i numeri a vicenda.
+    """
+    import json
+    from sqlalchemy import select, func as sqlfunc
+    from ..models import ExportRevision
+
+    if not body.project_id:
+        return None                      # export non legato a un progetto salvato
+    try:
+        last = db.scalar(
+            select(sqlfunc.max(ExportRevision.n)).where(
+                ExportRevision.project_id == body.project_id,
+                ExportRevision.area_id.is_(body.area_id) if body.area_id is None
+                else ExportRevision.area_id == body.area_id,
+            )
+        ) or 0
+        n = int(last) + 1
+        summary = {}
+        if kit:
+            summary = {"pivots": len(kit.get("pivots") or []),
+                       "cells": {k: v for k, v in (kit.get("cells") or [])}}
+        db.add(ExportRevision(
+            project_id=body.project_id, area_id=body.area_id, n=n,
+            label=(body.project_name or "")[:200],
+            fmt=(body.plan_format or "a3").lower()[:8], lang=(body.lang or "it")[:8],
+            sections=("scheda+tavola" if want_sheet and want_plan
+                      else "scheda" if want_sheet else "tavola"),
+            summary=json.dumps(summary, ensure_ascii=False)[:4000],
+        ))
+        db.commit()
+        return n
+    except Exception:  # noqa: BLE001 — la numerazione non deve bloccare l'export
+        db.rollback()
+        return None
 
 
 def _sheet_kit(body, geom: dict, plan_gj: dict, meta: dict, lang: str, rev: str,
@@ -221,7 +269,7 @@ def _real_plan(body, lay) -> tuple[dict, dict]:
 
 
 @router.post("/report")
-def project_report(body: ReportIn, client=Depends(get_client)):
+def project_report(body: ReportIn, client=Depends(get_client), db: Session = Depends(get_db)):
     geom = body.geom.model_dump()
     transport = body.transport
     slope_max = body.slope_max_pct if body.slope_max_pct is not None \
@@ -243,7 +291,7 @@ def project_report(body: ReportIn, client=Depends(get_client)):
                "meta": {"field_ha": _ring_area_ha(ring), "n_phases": 1, "phases": [],
                         "config": body.config, "radius_m": body.radius_m,
                         "net_ha": 0.0, "water": {}}}
-        return _finish(body, geom, ring, lay, None, want_sheet, want_plan)
+        return _finish(body, geom, ring, lay, None, want_sheet, want_plan, db)
 
     layout_params = {
         "config": body.config, "radius_m": body.radius_m, "gap_m": body.gap_m,
@@ -273,11 +321,11 @@ def project_report(body: ReportIn, client=Depends(get_client)):
         except Exception:  # noqa: BLE001 — la scheda si genera comunque senza idoneità
             suit_meta = None
 
-    return _finish(body, geom, ring, lay, suit_meta, want_sheet, want_plan)
+    return _finish(body, geom, ring, lay, suit_meta, want_sheet, want_plan, db)
 
 
 def _finish(body, geom: dict, ring: list, lay: dict, suit_meta, want_sheet: bool,
-            want_plan: bool):
+            want_plan: bool, db=None):
     """Dal layout (vero o minimo) al PDF: disegno, composizione, risposta."""
     import gc
     from ..main import REV
@@ -301,6 +349,18 @@ def _finish(body, geom: dict, ring: list, lay: dict, suit_meta, want_sheet: bool
             # Con il progetto reale si stampa la TAVOLA A3; altrimenti si resta
             # sulla tavola A4 generata dal layout ricalcolato.
             kit = _sheet_kit(body, geom, plan_gj, meta, lang, f"v{REV}", status)
+            if kit is not None and db is not None:
+                # Il numero si assegna qui: la cella DATA · REV. del cartiglio
+                # deve portarlo, quindi prima di comporre il PDF.
+                from analysis.report_i18n import tr
+                rev_n = _next_revision(db, body, kit, want_sheet, want_plan)
+                if rev_n:
+                    kit["cells"] = [
+                        (lab, f"{val} · {tr_rev(lang, rev_n)}") if i == len(kit["cells"]) - 1
+                        else (lab, val)
+                        for i, (lab, val) in enumerate(kit["cells"])
+                    ]
+                    status["revision"] = rev_n
             if kit is None:
                 png = layout_schematic_png(plan_gj, meta, lat0, lang=lang,
                                            field_geom=geom, status=status)
@@ -325,6 +385,30 @@ def _finish(body, geom: dict, ring: list, lay: dict, suit_meta, want_sheet: bool
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="scheda_{fname}.pdf"',
                              # Diagnostica: dice se l'ortofoto e' stata scaricata.
+                             "X-Argus-Revision": str(status.get("revision", "")),
                              "X-Argus-Basemap": str(status.get("basemap", "none")),
                              "X-Argus-Basemap-Error": str(status.get("error", ""))[:180],
-                             "Access-Control-Expose-Headers": "X-Argus-Basemap, X-Argus-Basemap-Error"})
+                             "Access-Control-Expose-Headers": "X-Argus-Revision, X-Argus-Basemap, X-Argus-Basemap-Error"})
+
+@router.get("/revisions")
+def list_revisions(project_id: int, area_id: int | None = None, limit: int = 50,
+                   db: Session = Depends(get_db)):
+    """Storico delle revisioni esportate, dalla piu' recente."""
+    import json
+    from sqlalchemy import select
+    from ..models import ExportRevision
+
+    q = select(ExportRevision).where(ExportRevision.project_id == project_id)
+    if area_id is not None:
+        q = q.where(ExportRevision.area_id == area_id)
+    rows = db.scalars(q.order_by(ExportRevision.n.desc()).limit(max(1, min(200, limit)))).all()
+    out = []
+    for r in rows:
+        try:
+            summary = json.loads(r.summary or "{}")
+        except Exception:  # noqa: BLE001
+            summary = {}
+        out.append({"n": r.n, "area_id": r.area_id, "label": r.label, "fmt": r.fmt,
+                    "lang": r.lang, "sections": r.sections, "summary": summary,
+                    "created_at": r.created_at.isoformat() if r.created_at else None})
+    return out

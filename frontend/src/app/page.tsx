@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import JSZip from "jszip";
@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.153";
+const REV = "v0.6.154";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1116,6 +1116,7 @@ export default function Page() {
   const [pdfPlan, setPdfPlan] = useState(true);
   const [pdfLang, setPdfLang] = useState<Lang>("it");
   const [pdfFormat, setPdfFormat] = useState<"a3" | "a4">("a3");   // formato della tavola
+  const [revs, setRevs] = useState<api.ExportRevision[]>([]);      // storico delle revisioni
   // Si memorizzano i campi ESCLUSI, non quelli scelti: un poligono aggiunto
   // dopo entra automaticamente nell'esportazione invece di restare fuori.
   const [pdfSkip, setPdfSkip] = useState<Set<number>>(new Set());
@@ -2889,6 +2890,14 @@ export default function Page() {
   const pdfLangTouched = useRef(false);
   useEffect(() => { if (!pdfLangTouched.current) setPdfLang(lang); }, [lang]);
 
+  // Storico delle revisioni: vive sul server, quindi resta anche cambiando
+  // computer o browser. Si ricarica quando cambia il progetto.
+  const loadRevs = useCallback(async () => {
+    if (!projectId) { setRevs([]); return; }
+    try { setRevs(await api.listRevisions(projectId)); } catch { setRevs([]); }
+  }, [projectId]);
+  useEffect(() => { loadRevs(); }, [loadRevs]);
+
   async function downloadPdf() {
     if (!fields.length) return needField();
     if (!pdfSheet && !pdfPlan) { setMsg(t("Seleziona almeno una sezione da stampare.")); return; }
@@ -2930,7 +2939,8 @@ export default function Page() {
         const blob = await api.downloadReport(f.geom, paramsFrom(effSettings(f)),
           { project_name: fields.length > 1 ? `${pname} — ${f.name}` : pname,
             client_name: cname, notes, include_suitability: pdfSheet,
-            lang: pdfLang, include_sheet: pdfSheet, include_plan: pdfPlan, ...planOf(f.id) });
+            lang: pdfLang, include_sheet: pdfSheet, include_plan: pdfPlan,
+            project_id: projectId, area_id: f.savedId ?? null, ...planOf(f.id) });
         saveBlob(blob, `scheda_${safe(fields.length > 1 ? f.name : pname)}.pdf`);
       } else {
         const zip = new JSZip();
@@ -2939,13 +2949,15 @@ export default function Page() {
           setMsg(t("Genero campo {i}/{n}…", { i: i + 1, n: sel.length }));
           const blob = await api.downloadReport(f.geom, paramsFrom(effSettings(f)),
             { project_name: `${pname} — ${f.name}`, client_name: cname, notes, include_suitability: pdfSheet,
-              lang: pdfLang, include_sheet: pdfSheet, include_plan: pdfPlan, ...planOf(f.id) });
+              lang: pdfLang, include_sheet: pdfSheet, include_plan: pdfPlan,
+              project_id: projectId, area_id: f.savedId ?? null, ...planOf(f.id) });
           zip.file(`scheda_${safe(f.name)}.pdf`, blob);
         }
         const zblob = await zip.generateAsync({ type: "blob" });
         saveBlob(zblob, `schede_${safe(pname)}.zip`);
         setMsg("");
       }
+      loadRevs();
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   function downloadGeoJSON() {
@@ -4475,6 +4487,37 @@ export default function Page() {
               </button>
               <button className="btn-ghost flex-1 basis-0" disabled={!laid.length} onClick={downloadGeoJSON}>{t("Layout GeoJSON")}</button>
             </div>
+
+            {/* Storico delle revisioni: ogni export prende il numero successivo
+                e la tavola lo porta stampato nel cartiglio. Vive sul server,
+                quindi resta anche cambiando computer. */}
+            {!!revs.length && (
+              <div className="mt-3">
+                <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide mb-1">
+                  {t("Revisioni esportate")} <span className="tabular-nums normal-case">({revs.length})</span>
+                </div>
+                <ul className="max-h-40 overflow-auto scroll-soft space-y-0.5">
+                  {revs.map((r) => {
+                    const f = r.area_id != null ? fields.find((x) => x.savedId === r.area_id) : null;
+                    const when = r.created_at ? new Date(r.created_at) : null;
+                    return (
+                      <li key={`${r.area_id ?? "p"}-${r.n}`}
+                        className="flex items-baseline gap-2 text-[11px] bg-panel rounded px-1.5 py-1">
+                        <b className="text-brand-darker tabular-nums shrink-0">{t("Rev. {n}", { n: r.n })}</b>
+                        <span className="truncate flex-1 text-sage-dark">
+                          {f?.name ?? r.label}
+                          {r.summary?.pivots ? ` · ${r.summary.pivots} pivot` : ""}
+                        </span>
+                        <span className="text-sage-dark shrink-0 uppercase">{r.fmt}</span>
+                        <span className="text-sage-dark shrink-0 tabular-nums">
+                          {when ? when.toLocaleDateString() : ""}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
 
             {/* Link pubblici di sola lettura: uno per vista/cliente */}
             <div className="mt-4 border-t border-brand/15 pt-3">

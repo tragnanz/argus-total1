@@ -6,6 +6,7 @@ Fallback: inglese, poi italiano, poi la chiave stessa.
 from __future__ import annotations
 
 _IT = {
+    "ps_rev": "Rev. {n}",
     "ps_coord": "COORDINATE GPS (WGS84)",
     "ps_centro": "Centro campo",
     "ps_impianto": "Impianto",
@@ -54,6 +55,7 @@ _IT = {
 }
 
 _EN = {
+    "ps_rev": "Rev. {n}",
     "ps_coord": "GPS COORDINATES (WGS84)",
     "ps_centro": "Field centre",
     "ps_impianto": "System",
@@ -102,6 +104,7 @@ _EN = {
 }
 
 _FR = {
+    "ps_rev": "Rév. {n}",
     "ps_coord": "COORDONNÉES GPS (WGS84)",
     "ps_centro": "Centre du champ",
     "ps_impianto": "Installation",
@@ -150,6 +153,7 @@ _FR = {
 }
 
 _ES = {
+    "ps_rev": "Rev. {n}",
     "ps_coord": "COORDENADAS GPS (WGS84)",
     "ps_centro": "Centro del campo",
     "ps_impianto": "Instalación",
@@ -198,6 +202,7 @@ _ES = {
 }
 
 _PT = {
+    "ps_rev": "Rev. {n}",
     "ps_coord": "COORDENADAS GPS (WGS84)",
     "ps_centro": "Centro do campo",
     "ps_impianto": "Instalação",
@@ -246,6 +251,7 @@ _PT = {
 }
 
 _RO = {
+    "ps_rev": "Rev. {n}",
     "ps_coord": "COORDONATE GPS (WGS84)",
     "ps_centro": "Centrul parcelei",
     "ps_impianto": "Instalație",
@@ -294,6 +300,7 @@ _RO = {
 }
 
 _KK = {
+    "ps_rev": "Түз. {n}",
     "ps_coord": "GPS КООРДИНАТТАРЫ (WGS84)",
     "ps_centro": "Алқап орталығы",
     "ps_impianto": "Қондырғы",
@@ -342,6 +349,7 @@ _KK = {
 }
 
 _AR = {
+    "ps_rev": "مراجعة {n}",
     "ps_coord": "إحداثيات GPS (WGS84)",
     "ps_centro": "مركز الحقل",
     "ps_impianto": "المنظومة",
@@ -390,6 +398,7 @@ _AR = {
 }
 
 _ZH = {
+    "ps_rev": "第 {n} 版",
     "ps_coord": "GPS 坐标 (WGS84)",
     "ps_centro": "地块中心",
     "ps_impianto": "灌溉系统",
@@ -438,6 +447,7 @@ _ZH = {
 }
 
 _HU = {
+    "ps_rev": "{n}. változat",
     "ps_coord": "GPS-KOORDINÁTÁK (WGS84)",
     "ps_centro": "Tábla középpontja",
     "ps_impianto": "Berendezés",
@@ -486,6 +496,7 @@ _HU = {
 }
 
 _ID = {
+    "ps_rev": "Rev. {n}",
     "ps_coord": "KOORDINAT GPS (WGS84)",
     "ps_centro": "Pusat lahan",
     "ps_impianto": "Instalasi",
@@ -534,6 +545,7 @@ _ID = {
 }
 
 _DE = {
+    "ps_rev": "Rev. {n}",
     "ps_coord": "GPS-KOORDINATEN (WGS84)",
     "ps_centro": "Feldmittelpunkt",
     "ps_impianto": "Anlage",
@@ -582,6 +594,7 @@ _DE = {
 }
 
 _PL = {
+    "ps_rev": "Rew. {n}",
     "ps_coord": "WSPÓŁRZĘDNE GPS (WGS84)",
     "ps_centro": "Środek pola",
     "ps_impianto": "Instalacja",
@@ -630,6 +643,7 @@ _PL = {
 }
 
 _BG = {
+    "ps_rev": "Рев. {n}",
     "ps_coord": "GPS КООРДИНАТИ (WGS84)",
     "ps_centro": "Център на полето",
     "ps_impianto": "Инсталация",
@@ -678,6 +692,7 @@ _BG = {
 }
 
 _RU = {
+    "ps_rev": "Ред. {n}",
     "ps_coord": "КООРДИНАТЫ GPS (WGS84)",
     "ps_centro": "Центр поля",
     "ps_impianto": "Установка",
@@ -726,6 +741,7 @@ _RU = {
 }
 
 _AF = {
+    "ps_rev": "Hers. {n}",
     "ps_coord": "GPS-KOÖRDINATE (WGS84)",
     "ps_centro": "Middelpunt van land",
     "ps_impianto": "Installasie",
@@ -774,6 +790,7 @@ _AF = {
 }
 
 _MS = {
+    "ps_rev": "Sem. {n}",
     "ps_coord": "KOORDINAT GPS (WGS84)",
     "ps_centro": "Pusat ladang",
     "ps_impianto": "Sistem",
@@ -822,6 +839,7 @@ _MS = {
 }
 
 _VI = {
+    "ps_rev": "Bản {n}",
     "ps_coord": "TỌA ĐỘ GPS (WGS84)",
     "ps_centro": "Tâm khu ruộng",
     "ps_impianto": "Hệ thống",

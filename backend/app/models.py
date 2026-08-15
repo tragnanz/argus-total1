@@ -136,3 +136,27 @@ class ShareView(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False, default="Vista")
     config: Mapped[str] = mapped_column(Text, nullable=False, default="{}")   # JSON: visibilità del link
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ExportRevision(Base):
+    """Revisione di una tavola esportata.
+
+    Ogni export incrementa il numero della revisione del progetto (o del singolo
+    campo), così la tavola stampata porta un «Rev. N» verificabile e in Argus
+    resta la cronologia di cosa è stato consegnato e quando.
+    Tabella nuova → create_all la crea senza migrazioni.
+    """
+    __tablename__ = "export_revisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    # NULL = export dell'intero progetto; valorizzato = tavola di un campo.
+    area_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    n: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    label: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    fmt: Mapped[str] = mapped_column(String(8), nullable=False, default="a3")
+    lang: Mapped[str] = mapped_column(String(8), nullable=False, default="it")
+    sections: Mapped[str] = mapped_column(String(24), nullable=False, default="")
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="{}")   # JSON: pivot, ha, scala
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())

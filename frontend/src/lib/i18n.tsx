@@ -41,6 +41,8 @@ export const LOCALES: Record<Lang, string> = {
 type Dict = Record<string, string>;
 
 const EN: Dict = {
+  "Revisioni esportate": "Exported revisions",
+  "Rev. {n}": "Rev. {n}",
   "Formato della tavola": "Sheet size",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Large sheet: thin line weights and more detail on the drawing.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Office-size sheet: heavier line weights, fewer labels.",
@@ -556,6 +558,8 @@ const EN: Dict = {
 };
 
 const FR: Dict = {
+  "Revisioni esportate": "Révisions exportées",
+  "Rev. {n}": "Rév. {n}",
   "Formato della tavola": "Format de la planche",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Grand format : traits fins et plus de détails sur le dessin.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Format bureau : traits plus épais, moins d'étiquettes.",
@@ -1071,6 +1075,8 @@ const FR: Dict = {
 };
 
 const ES: Dict = {
+  "Revisioni esportate": "Revisiones exportadas",
+  "Rev. {n}": "Rev. {n}",
   "Formato della tavola": "Formato del plano",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Hoja grande: trazos finos y más detalle en el dibujo.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Hoja de oficina: trazos más gruesos, menos etiquetas.",
@@ -1586,6 +1592,8 @@ const ES: Dict = {
 };
 
 const PT: Dict = {
+  "Revisioni esportate": "Revisões exportadas",
+  "Rev. {n}": "Rev. {n}",
   "Formato della tavola": "Formato da prancha",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Folha grande: traços finos e mais detalhe no desenho.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Folha de escritório: traços mais grossos, menos etiquetas.",
@@ -2101,6 +2109,8 @@ const PT: Dict = {
 };
 
 const RO: Dict = {
+  "Revisioni esportate": "Revizii exportate",
+  "Rev. {n}": "Rev. {n}",
   "Formato della tavola": "Formatul planșei",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Coală mare: linii subțiri și mai multe detalii pe desen.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Coală de birou: linii mai groase, mai puține etichete.",
@@ -2618,6 +2628,8 @@ const RO: Dict = {
 };
 
 const KK: Dict = {
+  "Revisioni esportate": "Экспортталған нұсқалар",
+  "Rev. {n}": "Нұс. {n}",
   "Formato della tavola": "Сызба парағының форматы",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Үлкен парақ: жіңішке сызықтар және сызбада көбірек егжей-тегжей.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Кеңсе парағы: қалыңырақ сызықтар, аз белгілер.",
@@ -3135,6 +3147,8 @@ const KK: Dict = {
 };
 
 const AR: Dict = {
+  "Revisioni esportate": "المراجعات المصدَّرة",
+  "Rev. {n}": "مرا. {n}",
   "Formato della tavola": "مقاس لوحة الرسم",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "ورقة كبيرة: خطوط رفيعة وتفاصيل أكثر في الرسم.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "ورقة مكتبية: خطوط أسمك وتسميات أقل.",
@@ -3650,6 +3664,8 @@ const AR: Dict = {
 };
 
 const ZH: Dict = {
+  "Revisioni esportate": "已导出版本",
+  "Rev. {n}": "第 {n} 版",
   "Formato della tavola": "图纸幅面",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "大幅图纸：线宽较细，图面细节更多。",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "办公幅面：线宽较粗，标注较少。",
@@ -4167,6 +4183,8 @@ const ZH: Dict = {
 };
 
 const HU: Dict = {
+  "Revisioni esportate": "Exportált revíziók",
+  "Rev. {n}": "Rev. {n}",
   "Formato della tavola": "Rajzlap mérete",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Nagy lap: vékonyabb vonalvastagság és több részlet a rajzon.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Irodai lap: vastagabb vonalak, kevesebb felirat.",
@@ -4684,6 +4702,8 @@ const HU: Dict = {
 };
 
 const ID: Dict = {
+  "Revisioni esportate": "Revisi terekspor",
+  "Rev. {n}": "Rev. {n}",
   "Formato della tavola": "Ukuran lembar gambar",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Lembar besar: ketebalan garis tipis dan lebih banyak detail pada gambar.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Lembar ukuran kantor: garis lebih tebal, label lebih sedikit.",
@@ -5201,6 +5221,8 @@ const ID: Dict = {
 };
 
 const DE: Dict = {
+  "Revisioni esportate": "Exportierte Revisionen",
+  "Rev. {n}": "Rev. {n}",
   "Formato della tavola": "Blattformat des Plans",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Großes Blatt: dünne Strichstärken und mehr Details in der Zeichnung.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Büroformat: kräftigere Strichstärken, weniger Beschriftungen.",
@@ -5712,6 +5734,8 @@ const DE: Dict = {
 };
 
 const PL: Dict = {
+  "Revisioni esportate": "Wyeksportowane rewizje",
+  "Rev. {n}": "Rew. {n}",
   "Formato della tavola": "Format arkusza rysunku",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Duży arkusz: cienkie linie i więcej szczegółów na rysunku.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Arkusz biurowy: grubsze linie, mniej etykiet.",
@@ -6225,6 +6249,8 @@ const PL: Dict = {
 };
 
 const BG: Dict = {
+  "Revisioni esportate": "Експортирани ревизии",
+  "Rev. {n}": "Рев. {n}",
   "Formato della tavola": "Формат на чертожния лист",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Голям лист: тънки линии и повече детайли в чертежа.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Офисен лист: по-дебели линии, по-малко надписи.",
@@ -6738,6 +6764,8 @@ const BG: Dict = {
 };
 
 const RU: Dict = {
+  "Revisioni esportate": "Экспортированные редакции",
+  "Rev. {n}": "Ред. {n}",
   "Formato della tavola": "Формат чертёжного листа",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Большой лист: тонкие линии и больше деталей на чертеже.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Офисный лист: более толстые линии, меньше подписей.",
@@ -7251,6 +7279,8 @@ const RU: Dict = {
 };
 
 const AF: Dict = {
+  "Revisioni esportate": "Uitgevoerde hersienings",
+  "Rev. {n}": "Hers. {n}",
   "Formato della tavola": "Tekenblad-formaat",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Groot blad: fyn lyne en meer besonderhede op die tekening.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Kantoorblad: dikker lyne, minder etikette.",
@@ -7764,6 +7794,8 @@ const AF: Dict = {
 };
 
 const MS: Dict = {
+  "Revisioni esportate": "Semakan dieksport",
+  "Rev. {n}": "Sem. {n}",
   "Formato della tavola": "Saiz helaian lukisan",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Helaian besar: garisan halus dan lebih banyak perincian pada lukisan.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Helaian saiz pejabat: garisan lebih tebal, kurang label.",
@@ -8277,6 +8309,8 @@ const MS: Dict = {
 };
 
 const VI: Dict = {
+  "Revisioni esportate": "Bản sửa đã xuất",
+  "Rev. {n}": "Bản {n}",
   "Formato della tavola": "Khổ bản vẽ",
   "Foglio grande: tratti sottili e più dettagli sul disegno.": "Khổ lớn: nét mảnh và nhiều chi tiết hơn trên bản vẽ.",
   "Foglio da ufficio: tratti più marcati, meno etichette.": "Khổ văn phòng: nét đậm hơn, ít nhãn hơn.",
