@@ -72,8 +72,34 @@ export default function ViewPage({ params }: { params: { token: string } }) {
           m.showLayouts([{ id: 1, fc: { type: "FeatureCollection", features: feats } }], { measures: true });
         }
 
-        setTimeout(() => m.fitAll(), 250);
-      } catch { /* ignora errori di disegno */ }
+        // Rilievo: canali, corsi d'acqua/invasi e strade. Vengono salvati come
+        // layer di progetto ("canals" / "waters" / "roads") e finora il link
+        // pubblico li ignorava: il cliente vedeva i pivot senza l'adduzione.
+        // Ogni oggetto porta il proprio flag «hidden»: va rispettato.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const itemsOf = (kind: string): any[] =>
+          layers.filter((x) => x.kind === kind).flatMap((x) => x.data?.items ?? []);
+
+        const cans = itemsOf("canals").filter((c) => !c.hidden && c?.geojson?.coordinates?.length);
+        if (cans.length) {
+          m.showCanals(
+            cans.map((c) => {
+              const cs: number[][] = c.geojson.coordinates;
+              // I canali tracciati a mano possono non avere presa/sbocco:
+              // ripiego sui capi del tracciato invece di far fallire il disegno.
+              return { coords: cs, start: c.start ?? cs[0], end: c.end ?? cs[cs.length - 1], width_m: 6 };
+            }),
+            t("Presa"), t("Sbocco"),
+          );
+        }
+
+        const wats = itemsOf("waters").filter((w) => !w.hidden && w?.geojson);
+        if (wats.length) m.showWater(wats.map((w) => ({ geom: w.geojson, kind: w.kind })));
+
+        const rds = itemsOf("roads").filter((r) => !r.hidden && r?.coords?.length);
+        if (rds.length) m.showRoads?.(rds.map((r) => ({ coords: r.coords, width_m: r.width_m })));
+      } catch { /* un livello malformato non deve far sparire tutti gli altri */ }
+      try { setTimeout(() => m.fitAll(), 250); } catch { /* */ }
     }, 120);
     return () => clearInterval(iv);
   }, [data]);
