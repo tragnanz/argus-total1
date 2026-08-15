@@ -575,10 +575,14 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             : ln.kind === "header" ? { color: "#b23b1e", weight: 3 }
               : { color: "#0284c7", weight: 3, dashArray: "6,4" };
           if (ln.kind === "pipe" && cbs.onLineClick) {
-            const pl = L.polyline(latlngs, { ...st, interactive: true, weight: (st.weight ?? 2) + 1 });
-            pl.on("click", (e) => { L.DomEvent.stop(e); cbs.onLineClick?.(li); });
-            pl.bindTooltip(String(li + 1), { direction: "top", sticky: true });
+            const pl = L.polyline(latlngs, { ...st, interactive: false, weight: (st.weight ?? 2) + 1 });
             g.addLayer(pl);
+            // Fascia di presa INVISIBILE sopra la linea: il tubo è sottile, ma il
+            // clic viene raccolto entro ~9 px per lato, così non serve centrarlo.
+            const hit = L.polyline(latlngs, { color: "#000", weight: 18, opacity: 0, interactive: true });
+            hit.on("click", (e) => { L.DomEvent.stop(e); cbs.onLineClick?.(li); });
+            hit.bindTooltip(String(li + 1), { direction: "top", sticky: true });
+            g.addLayer(hit);
             // Simbolo della PRESA: si mette dove la tubazione TOCCA DAVVERO il
             // canale, non sul primo punto per convenzione. Se sposti l'attacco
             // su un pivot, il quadratino si sposta o sparisce di conseguenza.
