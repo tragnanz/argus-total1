@@ -18,17 +18,9 @@ from .schemas import HealthOut
 from .security import decode_token
 
 # Revisione backend: allineala alla REV del frontend a ogni versione.
-REV = "0.6.107"
+REV = "0.6.143"
 
 app = FastAPI(title=settings.app_name, version=REV)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origin_list(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Percorsi pubblici (nessun login): health, registrazione/login e i link di sola
 # lettura per i clienti. Tutto il resto di /api richiede un token valido.
@@ -46,6 +38,20 @@ async def require_login(request: Request, call_next):
     if not token or decode_token(token) is None:
         return JSONResponse({"detail": "Autenticazione richiesta"}, status_code=401)
     return await call_next(request)
+
+
+# ATTENZIONE all'ordine: Starlette esegue per primo l'ultimo middleware
+# aggiunto. Il CORS va quindi registrato DOPO il controllo del login, così
+# resta il piu' esterno e aggiunge le sue intestazioni anche alle risposte
+# 401/500. Altrimenti il browser scarta la risposta e mostra un opaco
+# «Failed to fetch» al posto del vero messaggio d'errore.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origin_list(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # Crea le tabelle all'avvio (idempotente). In produzione strutturata si

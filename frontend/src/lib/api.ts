@@ -328,14 +328,25 @@ export const fetchLayout = (geom: Polygon, p: LayoutParams) =>
 // ---- Scheda progetto PDF (M4) ----
 export type ReportInfo = { project_name: string; client_name?: string; notes?: string; include_suitability: boolean; lang?: string };
 export async function downloadReport(geom: Polygon, p: LayoutParams, info: ReportInfo): Promise<Blob> {
+  // Come req(): il token va spedito, altrimenti il middleware di login risponde
+  // 401 e il browser mostra solo un generico «Failed to fetch».
+  const tok = getToken();
   const res = await fetch(`${API_BASE}/api/project/report`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
+    },
     body: JSON.stringify({ geom, ...p, ...info }),
   });
   if (!res.ok) {
     let detail = res.statusText;
     try { detail = (await res.json())?.detail ?? detail; } catch { /* */ }
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    if (res.status === 401 && typeof window !== "undefined") {
+      clearToken();
+      if (!location.pathname.startsWith("/login") && !location.pathname.startsWith("/view")) location.href = "/login";
+    }
+    throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
   }
   return res.blob();
 }
