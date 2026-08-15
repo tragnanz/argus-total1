@@ -72,6 +72,7 @@ export type MapHandle = {
   drawCancel: () => void;    // annulla e chiude la modalità disegno
   armPick: (cb: (lon: number, lat: number) => void) => void;
   disarmPick: () => void;
+  getCenter: () => [number, number] | null;                  // centro vista [lng, lat]
   setBasemap: (kind: "sat" | "street" | "topo") => void;   // mappa di base
   setMapLabels: (on: boolean) => void;                      // etichette (confini e nomi)
 };
@@ -1131,6 +1132,10 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
       disarmPick() {
         pickCbRef.current = null;
         try { if (mapRef.current) mapRef.current.getContainer().style.cursor = ""; } catch { /* */ }
+      },
+      getCenter() {
+        const map = mapRef.current; if (!map) return null;
+        const c = map.getCenter(); return [c.lng, c.lat];
       },
       setBasemap(kind) {
         const map = mapRef.current; if (!map) return;

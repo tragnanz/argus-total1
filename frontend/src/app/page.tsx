@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.136";
+const REV = "v0.6.137";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2460,9 +2460,25 @@ export default function Page() {
   // con un RAMO dedicato: un tratto nuovo dal centro del pivot fino alla
   // tubazione esistente, che resta com'è. Non si deforma la linea esistente
   // facendola passare per il pivot.
+  // Quale pivot collegare: quello selezionato se c'è, altrimenti il pivot NON
+  // alimentato più vicino al centro della vista — così il comando è a portata di
+  // mano anche mentre stai lavorando su una tubazione, senza cambiare selezione.
+  function pivotToConnect(): { pv: PivotItem; idx: number } | null {
+    if (pivotSel.mode === "single" && pivots[pivotSel.idx]) return { pv: pivots[pivotSel.idx], idx: pivotSel.idx };
+    const c = mapApi.current?.getCenter?.(); if (!c) return null;
+    const fed = fedPivotKeys(pivotLines);
+    let best: { pv: PivotItem; idx: number } | null = null, bd = Infinity;
+    pivots.forEach((p, i) => {
+      if (fed.has(pKey(p))) return;
+      if (hiddenPivotFields.has(p.field ?? -1)) return;
+      const d = Math.hypot(p.lng - c[0], p.lat - c[1]);
+      if (d < bd) { bd = d; best = { pv: p, idx: i }; }
+    });
+    return best;
+  }
   function connectSelPivot(side: "left" | "right") {
-    if (pivotSel.mode !== "single") return;
-    const pv = pivots[pivotSel.idx]; if (!pv) return;
+    const target = pivotToConnect(); if (!target) return;
+    const pv = target.pv;
     const mLat = 111320, mLng = 111320 * Math.cos((pv.lat * Math.PI) / 180) || 1e-9;
     const M = (q: number[]): [number, number] => [q[0] * mLng, q[1] * mLat];
     const A = M([pv.lng, pv.lat]);
@@ -3990,9 +4006,11 @@ export default function Page() {
             <span className="w-px h-6 bg-black/10" />
             <button className="tool-btn" title={t("Elimina la tubazione selezionata")} aria-label={t("Elimina")}
               disabled={pipeSel.mode !== "single"} onClick={deleteSelectedPipe}><IcoTrash /></button>
-            {pivotSel.mode === "single" && (<>
+            {(pivotSel.mode === "single" || (nPipes > 0 && pivots.some((p) => !fedPivotKeys(pivotLines).has(pKey(p))))) && (<>
               <span className="w-px h-6 bg-black/10" />
-              <span className="text-[11px] text-sage-dark px-1 select-none">{t("Collega il pivot")}</span>
+              <span className="text-[11px] text-sage-dark px-1 select-none">
+                {t("Collega il pivot")}{(() => { const x = pivotToConnect(); return x ? ` #${x.idx + 1}` : ""; })()}
+              </span>
               <button className="tool-btn" title={t("Collega il pivot alla tubazione a sinistra")} aria-label={t("A sinistra")}
                 onClick={() => connectSelPivot("left")}><IcoArrowLeft /></button>
               <button className="tool-btn" title={t("Collega il pivot alla tubazione a destra")} aria-label={t("A destra")}
