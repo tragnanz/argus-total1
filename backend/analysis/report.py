@@ -389,8 +389,8 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
                     linewidth=1.8, zorder=5)
         elif k == "canal":
             pts = _merc_ring(g["coordinates"])
-            ax.plot([p[0] for p in pts], [p[1] for p in pts], color="#0284c7",
-                    linewidth=2.4, linestyle=(0, (6, 4)), zorder=5)
+            ax.plot([p[0] for p in pts], [p[1] for p in pts], color="#0b74b8",
+                    linewidth=3.0, zorder=5, solid_capstyle="round")
         elif k == "pump":
             x, y = _merc(*g["coordinates"])
             ax.plot(x, y, marker="s", color="#08341c", markeredgecolor="#ffffff",
@@ -428,7 +428,7 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
     if kinds.get("header"):
         handles.append(Line2D([0], [0], color="#b23b1e", linewidth=1.8, label=LB(tr(lang, "leg_collettore"))))
     if kinds.get("canal"):
-        handles.append(Line2D([0], [0], color="#0284c7", linewidth=2.2, linestyle=(0, (5, 3)),
+        handles.append(Line2D([0], [0], color="#0b74b8", linewidth=3.0,
                               label=LB(tr(lang, "leg_canale"))))
     if kinds.get("pump"):
         handles.append(Line2D([0], [0], color="#08341c", marker="s", linestyle="", markersize=6,
@@ -819,8 +819,8 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
     # --- canali e tubazioni ---
     for cc in canals:
         pts = _merc_ring(cc)
-        ax.plot([p[0] for p in pts], [p[1] for p in pts], color="#0284c7",
-                linewidth=2.0, linestyle=(0, (6, 4)), zorder=3, solid_capstyle="round")
+        ax.plot([p[0] for p in pts], [p[1] for p in pts], color="#0b74b8",
+                linewidth=3.4, zorder=3, solid_capstyle="round", solid_joinstyle="round")
     for pl in pipes:
         pts = _merc_ring(pl)
         if len(pts) >= 2:
