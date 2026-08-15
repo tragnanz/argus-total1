@@ -41,6 +41,11 @@ export const LOCALES: Record<Lang, string> = {
 type Dict = Record<string, string>;
 
 const EN: Dict = {
+  "Piano irriguo consigliato": "Recommended irrigation plan",
+  "Kc": "Kc",
+  "pioggia": "rainfall",
+  "efficienza": "efficiency",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Choose the crop: from its peak Kc, the area's ET₀ and the effective rainfall, the platform proposes the irrigation plan for the pivots. System efficiency and operating hours are set on the Irrigation page.",
   "Informazioni": "Overview",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Overall figures for everything drawn: machines, water, network and areas. They update automatically with every change.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Nothing to summarize: draw or import an area and add the machines.",
@@ -575,6 +580,11 @@ const EN: Dict = {
 };
 
 const FR: Dict = {
+  "Piano irriguo consigliato": "Plan d'irrigation conseillé",
+  "Kc": "Kc",
+  "pioggia": "pluie",
+  "efficienza": "efficience",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Choisissez la culture : à partir de son Kc de pointe, de l'ET₀ de la zone et de la pluie efficace, la plateforme propose le plan d'irrigation des pivots. L'efficience de l'installation et les heures de fonctionnement se règlent dans la page Irrigation.",
   "Informazioni": "Informations",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Chiffres d'ensemble de tout ce qui est dessiné : machines, eau, réseau et surfaces. Ils se mettent à jour automatiquement à chaque modification.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Rien à récapituler : dessinez ou importez une zone et ajoutez les machines.",
@@ -1109,6 +1119,11 @@ const FR: Dict = {
 };
 
 const ES: Dict = {
+  "Piano irriguo consigliato": "Plan de riego recomendado",
+  "Kc": "Kc",
+  "pioggia": "lluvia",
+  "efficienza": "eficiencia",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Elija el cultivo: a partir de su Kc punta, de la ET₀ de la zona y de la lluvia efectiva, la plataforma propone el plan de riego de los pivots. La eficiencia de la instalación y las horas de funcionamiento se ajustan en la página Riego.",
   "Informazioni": "Información",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Cifras globales de todo lo dibujado: máquinas, agua, red y superficies. Se actualizan solas con cada cambio.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Nada que resumir: dibuja o importa un área e introduce los equipos.",
@@ -1643,6 +1658,11 @@ const ES: Dict = {
 };
 
 const PT: Dict = {
+  "Piano irriguo consigliato": "Plano de irrigação recomendado",
+  "Kc": "Kc",
+  "pioggia": "chuva",
+  "efficienza": "eficiência",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Escolha a cultura: a partir do seu Kc de pico, da ET₀ da zona e da chuva efetiva, a plataforma propõe o plano de irrigação dos pivôs. A eficiência da instalação e as horas de funcionamento são definidas na página Irrigação.",
   "Informazioni": "Informações",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Números gerais de tudo o que está desenhado: máquinas, água, rede e áreas. Atualizam-se automaticamente a cada alteração.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Nada a resumir: desenhe ou importe uma área e insira os equipamentos.",
@@ -2177,6 +2197,11 @@ const PT: Dict = {
 };
 
 const RO: Dict = {
+  "Piano irriguo consigliato": "Plan de irigare recomandat",
+  "Kc": "Kc",
+  "pioggia": "ploaie",
+  "efficienza": "eficiență",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Alegeți cultura: pornind de la Kc-ul său maxim, de la ET₀ a zonei și de la ploaia efectivă, platforma propune planul de irigare al pivoților. Eficiența instalației și orele de funcționare se reglează în pagina Irigare.",
   "Informazioni": "Informații",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Cifre de ansamblu pentru tot ce este desenat: mașini, apă, rețea și suprafețe. Se actualizează singure la fiecare modificare.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Nimic de rezumat: desenează sau importă o suprafață și adaugă instalațiile.",
@@ -2713,6 +2738,11 @@ const RO: Dict = {
 };
 
 const KK: Dict = {
+  "Piano irriguo consigliato": "Ұсынылған суару жоспары",
+  "Kc": "Kc",
+  "pioggia": "жаңбыр",
+  "efficienza": "тиімділік",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Дақылды таңдаңыз: оның ең жоғары Kc мәні, аймақтың ET₀ көрсеткіші және пайдалы жаңбыр мөлшері бойынша платформа пивоттардың суару жоспарын ұсынады. Жүйенің тиімділігі мен жұмыс сағаттары «Суару» бетінде реттеледі.",
   "Informazioni": "Ақпарат",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Сызылған барлық нәрсенің жиынтық сандары: машиналар, су, желі және алаңдар. Әр өзгеріс сайын өздігінен жаңарады.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Қорытындылайтын ештеңе жоқ: алаң сызыңыз немесе импорттаңыз және қондырғыларды қосыңыз.",
@@ -3249,6 +3279,11 @@ const KK: Dict = {
 };
 
 const AR: Dict = {
+  "Piano irriguo consigliato": "خطة الري الموصى بها",
+  "Kc": "Kc",
+  "pioggia": "المطر",
+  "efficienza": "الكفاءة",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "اختر المحصول: انطلاقًا من قيمة Kc القصوى له، ومن ET₀ المنطقة ومن المطر الفعّال، تقترح المنصة خطة ري أجهزة الري المحوري. تُضبط كفاءة المنظومة وساعات التشغيل في صفحة الري.",
   "Informazioni": "معلومات",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "أرقام إجمالية لكل ما هو مرسوم: الآلات والمياه والشبكة والمساحات. تُحدَّث تلقائيًا مع كل تعديل.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "لا شيء لتلخيصه: ارسم أو استورد مساحة وأضف الآلات.",
@@ -3783,6 +3818,11 @@ const AR: Dict = {
 };
 
 const ZH: Dict = {
+  "Piano irriguo consigliato": "推荐灌溉计划",
+  "Kc": "Kc",
+  "pioggia": "降雨",
+  "efficienza": "效率",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "选择作物：平台会根据其峰值 Kc、当地 ET₀ 和有效降雨量，提出中心支轴喷灌机的灌溉计划。系统效率和运行小时数可在“灌溉”页面中设置。",
   "Informazioni": "信息",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "所绘制内容的整体数据：机组、水量、管网和面积。每次修改后自动更新。",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "暂无可汇总的内容：请绘制或导入地块并添加机组。",
@@ -4319,6 +4359,11 @@ const ZH: Dict = {
 };
 
 const HU: Dict = {
+  "Piano irriguo consigliato": "Javasolt öntözési terv",
+  "Kc": "Kc",
+  "pioggia": "csapadék",
+  "efficienza": "hatékonyság",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Válassza ki a kultúrát: annak csúcs Kc értéke, a terület ET₀ értéke és a hasznos csapadék alapján a platform javaslatot tesz a pivotok öntözési tervére. A rendszer hatékonysága és az üzemórák az Öntözés oldalon állíthatók be.",
   "Informazioni": "Információk",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Összesített adatok mindenről, ami fel van rajzolva: gépek, víz, hálózat és területek. Minden módosításnál automatikusan frissülnek.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Nincs mit összegezni: rajzolj vagy importálj egy területet, és helyezd el a gépeket.",
@@ -4855,6 +4900,11 @@ const HU: Dict = {
 };
 
 const ID: Dict = {
+  "Piano irriguo consigliato": "Rencana irigasi disarankan",
+  "Kc": "Kc",
+  "pioggia": "hujan",
+  "efficienza": "efisiensi",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Pilih tanaman: dari nilai Kc puncaknya, ET₀ wilayah, dan hujan efektif, platform mengusulkan rencana irigasi untuk pivot. Efisiensi sistem dan jam operasi diatur di halaman Irigasi.",
   "Informazioni": "Informasi",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Angka keseluruhan dari semua yang digambar: mesin, air, jaringan, dan luas lahan. Diperbarui otomatis setiap ada perubahan.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Tidak ada yang bisa dirangkum: gambar atau impor area lalu tambahkan mesinnya.",
@@ -5391,6 +5441,11 @@ const ID: Dict = {
 };
 
 const DE: Dict = {
+  "Piano irriguo consigliato": "Empfohlener Bewässerungsplan",
+  "Kc": "Kc",
+  "pioggia": "Niederschlag",
+  "efficienza": "Effizienz",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Wählen Sie die Kultur: Aus deren Spitzen-Kc, der ET₀ des Gebiets und dem nutzbaren Niederschlag schlägt die Plattform den Bewässerungsplan der Pivots vor. Anlageneffizienz und Betriebsstunden werden auf der Seite Bewässerung eingestellt.",
   "Informazioni": "Informationen",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Gesamtzahlen zu allem, was gezeichnet ist: Maschinen, Wasser, Netz und Flächen. Sie aktualisieren sich bei jeder Änderung automatisch.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Nichts zusammenzufassen: Zeichnen oder importieren Sie eine Fläche und fügen Sie die Maschinen hinzu.",
@@ -5921,6 +5976,11 @@ const DE: Dict = {
 };
 
 const PL: Dict = {
+  "Piano irriguo consigliato": "Zalecany plan nawadniania",
+  "Kc": "Kc",
+  "pioggia": "opad",
+  "efficienza": "sprawność",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Wybierz uprawę: na podstawie jej szczytowego Kc, ET₀ obszaru i opadu efektywnego platforma proponuje plan nawadniania pivotów. Sprawność instalacji i godziny pracy ustawia się na stronie Nawadnianie.",
   "Informazioni": "Informacje",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Zbiorcze dane o wszystkim, co narysowano: maszyny, woda, sieć i powierzchnie. Aktualizują się same przy każdej zmianie.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Nie ma czego podsumować: narysuj lub zaimportuj obszar i dodaj maszyny.",
@@ -6453,6 +6513,11 @@ const PL: Dict = {
 };
 
 const BG: Dict = {
+  "Piano irriguo consigliato": "Препоръчан поливен план",
+  "Kc": "Kc",
+  "pioggia": "дъжд",
+  "efficienza": "ефективност",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Изберете културата: въз основа на пиковия й Kc, на ET₀ на района и на полезния дъжд платформата предлага поливния план на пивотите. Ефективността на инсталацията и работните часове се задават в страница Напояване.",
   "Informazioni": "Информация",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Обобщени числа за всичко начертано: машини, вода, мрежа и площи. Обновяват се сами при всяка промяна.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Няма какво да се обобщи: начертайте или импортирайте площ и добавете машините.",
@@ -6985,6 +7050,11 @@ const BG: Dict = {
 };
 
 const RU: Dict = {
+  "Piano irriguo consigliato": "Рекомендуемый план полива",
+  "Kc": "Kc",
+  "pioggia": "осадки",
+  "efficienza": "эффективность",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Выберите культуру: по её пиковому Kc, ET₀ зоны и полезным осадкам платформа предлагает план полива круговых машин (пивотов). Эффективность системы и часы работы задаются на странице «Орошение».",
   "Informazioni": "Информация",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Сводные показатели по всему, что нарисовано: машины, вода, сеть и площади. Обновляются автоматически при каждом изменении.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Нечего обобщать: начертите или импортируйте участок и добавьте машины.",
@@ -7517,6 +7587,11 @@ const RU: Dict = {
 };
 
 const AF: Dict = {
+  "Piano irriguo consigliato": "Aanbevole besproeiingsplan",
+  "Kc": "Kc",
+  "pioggia": "reën",
+  "efficienza": "doeltreffendheid",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Kies die gewas: uit sy piek-Kc, die ET₀ van die gebied en die nuttige reën stel die platform die besproeiingsplan van die spilpunte voor. Stelseldoeltreffendheid en bedryfsure word op die Besproeiing-bladsy gestel.",
   "Informazioni": "Inligting",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Algehele syfers van alles wat geteken is: masjiene, water, netwerk en oppervlaktes. Hulle werk self by met elke verandering.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Niks om op te som nie: teken of voer 'n gebied in en plaas die masjiene.",
@@ -8049,6 +8124,11 @@ const AF: Dict = {
 };
 
 const MS: Dict = {
+  "Piano irriguo consigliato": "Pelan pengairan disyorkan",
+  "Kc": "Kc",
+  "pioggia": "hujan",
+  "efficienza": "kecekapan",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Pilih tanaman: daripada nilai Kc puncaknya, ET₀ kawasan dan hujan berkesan, platform mencadangkan pelan pengairan pivot. Kecekapan sistem dan jam operasi ditetapkan di halaman Pengairan.",
   "Informazioni": "Maklumat",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Angka keseluruhan bagi semua yang dilukis: mesin, air, rangkaian dan luas kawasan. Ia dikemas kini secara automatik pada setiap perubahan.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Tiada apa untuk dirumuskan: lukis atau import kawasan dan tambah mesin.",
@@ -8581,6 +8661,11 @@ const MS: Dict = {
 };
 
 const VI: Dict = {
+  "Piano irriguo consigliato": "Kế hoạch tưới đề xuất",
+  "Kc": "Kc",
+  "pioggia": "mưa",
+  "efficienza": "hiệu suất",
+  "Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.": "Chọn cây trồng: từ hệ số Kc cao nhất của cây, ET₀ của khu vực và lượng mưa hữu hiệu, nền tảng đề xuất kế hoạch tưới cho các máy tưới pivot. Hiệu suất hệ thống và số giờ vận hành được thiết lập trong trang Tưới tiêu.",
   "Informazioni": "Thông tin",
   "Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.": "Số liệu tổng thể của mọi thứ đã vẽ: máy tưới, nước, mạng lưới và diện tích. Tự động cập nhật sau mỗi thay đổi.",
   "Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.": "Chưa có gì để tổng hợp: hãy vẽ hoặc nhập một khu vực và thêm máy tưới.",

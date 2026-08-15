@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.158";
+const REV = "v0.6.159";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -40,6 +40,19 @@ const SOILS: { key: string; label: string; inf: number; lo: number; hi: number }
   { key: "argilloso", label: "Argilloso", inf: 2, lo: 1, hi: 5 },
 ];
 const soilOf = (k: string) => SOILS.find((x) => x.key === k) ?? SOILS[2];
+
+// Colture → Kc di punta. Anche qui una tabella sola: i due menu «Coltura»
+// avevano elenchi diversi e la scelta fatta in una pagina non si ritrovava
+// nell'altra.
+const CROP_LIST: { key: string; label: string; kc: number }[] = [
+  { key: "canna", label: "Canna da zucchero", kc: 1.25 },
+  { key: "mais", label: "Mais", kc: 1.2 },
+  { key: "medica", label: "Erba medica", kc: 1.15 },
+  { key: "cereali", label: "Cereali", kc: 1.15 },
+  { key: "ortive", label: "Ortive", kc: 1.05 },
+  { key: "altro", label: "Altro", kc: 1.1 },
+];
+const cropOf = (k: string) => CROP_LIST.find((x) => x.key === k) ?? CROP_LIST[5];
 const PIVOT_WET_W = 40;   // larghezza bagnata del pacchetto irriguo (m), assunzione
 
 // Schede del pannello destro, in ordine progressivo del flusso di progetto.
@@ -1110,7 +1123,6 @@ export default function Page() {
   }, [et0Peak, infiltration, cur.kc, cur.eff, cur.hours, cur.radius]);
 
   const [tab, setTab] = useState("analisi");
-  const secShow = (k: string) => (tab === k ? "" : "hidden");
   // Menu verticale: clic su una voce apre la sua finestra; ri-clic sulla voce
   // attiva la chiude (mappa libera). Usato anche dai salti automatici di pagina.
   function goTab(k: string) { setTab(k); setRightMin(false); }
@@ -2506,7 +2518,7 @@ export default function Page() {
   // tubazione esistente, che resta com'è. Non si deforma la linea esistente
   // facendola passare per il pivot.
   // Coefficienti colturali (Kc di punta) e assorbimento tipico per suolo.
-  const CROPS: Record<string, number> = { canna: 1.25, mais: 1.2, medica: 1.15, cereali: 1.15, ortive: 1.05, altro: 1.1 };
+  const CROPS: Record<string, number> = Object.fromEntries(CROP_LIST.map((c) => [c.key, c.kc]));
   // Fabbisogno consigliato: ET₀ di punta × Kc, meno la pioggia utile, diviso
   // l'efficienza dell'impianto.
   const mm24Suggested = Math.max(0, (et0Peak * (CROPS[cropKey] ?? 1.1) - rainMm)) / Math.max(0.3, effPct / 100);
@@ -3796,14 +3808,14 @@ export default function Page() {
               primo titolo. */}
           <button onClick={() => setRightMin(true)} title={t("Chiudi")}
             className="absolute top-1.5 right-1.5 z-10 text-sage-dark hover:text-brand p-1 rounded hover:bg-black/5"><IcoMinimize /></button>
-          <div className="overflow-auto scroll-soft p-4 pt-3 space-y-4">
+          <div className="overflow-auto scroll-soft p-4 pt-2.5 space-y-4">
           {!sameRules && active && (
             <div className="text-[11px] text-brand-mid bg-brand/10 rounded-lg px-2 py-1">
               {t("Stai modificando: {name}", { name: active.name })}
             </div>
           )}
 
-          <section className={secShow("analisi")}>
+          <section hidden={tab !== "analisi"}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Anteprima satellitare")}</h3>
             <div className="flex gap-2 items-end">
               <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Indice")}
@@ -3841,7 +3853,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
+          <section hidden={tab !== "analisi"} className="border-t border-black/5 pt-3">
             <SectionHead title={t("Quota (DEM)")} help={t("Il rilievo ombreggiato mostra i sensi delle pendenze; le isoipse ravvicinate = terreno più ripido.")} />
             <div className="flex gap-2">
               <button className="btn-primary flex-1 basis-0" disabled={busy === "dem" || !activeGeom} onClick={showDem}>
@@ -3859,7 +3871,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
+          <section hidden={tab !== "analisi"} className="border-t border-black/5 pt-3">
             <SectionHead title={t("Corsi d'acqua esistenti")} help={t("Rileva e ricalca fiumi, canali e paludi (NDWI) e gli impluvi/alvei dalla morfologia del terreno (DEM), anche asciutti. Falla prima di progettare: i pivot li evitano automaticamente.")} />
             <label className="text-xs text-sage-dark block">{t("Sensibilità")}: {waterSens}/5 {waterSens >= 4 ? t("(rileva anche corsi stretti/deboli)") : ""}
               <input type="range" min={1} max={5} step={1} value={waterSens}
@@ -3895,7 +3907,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
+          <section hidden={tab !== "analisi"} className="border-t border-black/5 pt-3">
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Idoneità del terreno")}</h3>
             <div className="flex gap-3 items-start">
               <div className="flex-1 min-w-0">
@@ -3972,7 +3984,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
+          <section hidden={tab !== "analisi"} className="border-t border-black/5 pt-3">
             <SectionHead title={t("Analisi → Campi")} help={t("Individua le zone idonee nell'AREA attiva: diventano CAMPI (poligoni operativi generati dal sistema), annidati sotto l'area e selezionabili singolarmente. Passo facoltativo: puoi comunque lavorare direttamente sull'AREA (inserire pivot, analizzarla, ecc.) senza generare campi.")} />
             <div className="flex gap-2 items-end">
               <label className="text-xs text-sage-dark flex-1">{t("Soglia idoneità")}: {macroThr}/100
@@ -4009,7 +4021,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className={secShow("analisi") + " border-t border-black/5 pt-3"}>
+          <section hidden={tab !== "analisi"} className="border-t border-black/5 pt-3">
             <SectionHead title={t("Dimensione pivot consigliata")} help={t("Dal tipo di suolo (infiltrazione) e dall'ET₀ di punta stima il raggio massimo del pivot perché l'intensità di pioggia al bordo non superi l'infiltrazione del terreno. Il valore è usato come raggio di default nella pagina Impianti.")} />
             <div className="flex gap-2 items-end">
               <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Tipo di suolo")}
@@ -4048,22 +4060,34 @@ export default function Page() {
             </div>
           </section>
 
-          <section className={secShow("rilievo")}>
-            <SectionHead title={t("Dati agronomici")} help={t("Parametri per il dimensionamento idrico dei pivot: Kc di punta della coltura, efficienza dell'impianto e ore di irrigazione al giorno.")} />
-            <div className="flex gap-2">
-              <label className="text-xs text-sage-dark flex-1">{t("Kc di punta")}
-                <input type="number" min={0.3} max={1.6} step={0.05} value={cur.kc}
-                  onChange={(e) => patch({ kc: Number(e.target.value) })} className="field-input mt-1" /></label>
-              <label className="text-xs text-sage-dark flex-1">{t("Efficienza impianto")}
-                <input type="number" min={0.4} max={1} step={0.05} value={cur.eff}
-                  onChange={(e) => patch({ eff: Number(e.target.value) })} className="field-input mt-1" /></label>
-              <label className="text-xs text-sage-dark flex-1">{t("Ore/giorno")}
-                <input type="number" min={1} max={24} step={1} value={cur.hours}
-                  onChange={(e) => patch({ hours: Number(e.target.value) })} className="field-input mt-1" /></label>
+          <section hidden={tab !== "rilievo"}>
+            <SectionHead title={t("Dati agronomici")} help={t("Scegli la coltura: dal suo Kc di punta, dall'ET₀ della zona e dalla piovosità utile la piattaforma propone il piano irriguo dei pivot. Efficienza dell'impianto e ore di esercizio si regolano nella pagina Irrigazione.")} />
+            {/* Basta la coltura: Kc, efficienza e ore sono parametri di secondo
+                livello e vivono in Irrigazione. Qui accanto compare subito il
+                piano irriguo che ne deriva. */}
+            <div className="flex gap-2 items-end">
+              <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Coltura")}
+                <select className="field-input mt-1 w-full px-2" value={cropKey}
+                  onChange={(e) => { setCropKey(e.target.value); patch({ kc: cropOf(e.target.value).kc }); }}>
+                  {CROP_LIST.map((cp) => <option key={cp.key} value={cp.key}>{t(cp.label)}</option>)}
+                </select>
+              </label>
+              <div className="flex-1 basis-0 min-w-0">
+                <div className="text-xs text-sage-dark">{t("Piano irriguo consigliato")}</div>
+                <div className="field-input mt-1 flex items-baseline gap-1 bg-panel">
+                  <b className="text-brand-darker tabular-nums">{fmt(mm24Suggested, { maximumFractionDigits: 1 })}</b>
+                  <span className="text-xs text-sage-dark">mm/24h</span>
+                </div>
+              </div>
+            </div>
+            <div className="text-[11px] text-sage-dark mt-1">
+              {t("Kc")} {fmt(cropOf(cropKey).kc, { maximumFractionDigits: 2 })} · ET₀ {fmt(et0Peak, { maximumFractionDigits: 1 })} mm/g
+              {rainMm > 0 ? ` · ${t("pioggia")} ${fmt(rainMm, { maximumFractionDigits: 1 })} mm` : ""}
+              {" · "}{t("efficienza")} {fmt(effPct, { maximumFractionDigits: 0 })}%
             </div>
           </section>
 
-          <section className={secShow("rilievo") + " border-t border-black/5 pt-3"}>
+          <section hidden={tab !== "rilievo"} className="border-t border-black/5 pt-3">
             <SectionHead title={t("Canali")} help={t("Traccia uno o più canali: automatici a gravità (a pendenza costante, con presa/finale opzionali) oppure a mano. Ogni canale è modificabile ed esportabile in KMZ. Lo spessore è mostrato come banda sulla mappa e viene evitato dai pivot come preesistenza. Se presa e finale non sono impostati: presa nel punto più alto, finale sul bordo più basso.")} />
             <div className="flex gap-2">
               <label className="text-xs text-sage-dark flex-1">{t("Pendenza target (‰)")}
@@ -4139,7 +4163,7 @@ export default function Page() {
             )}
           </section>
 
-          <section className={secShow("impianti")}>
+          <section hidden={tab !== "impianti"}>
             <SectionHead title={t("Impianti")} help={t("«Inserisci impianti» dispone i pivot a reticolo SOLO sul poligono selezionato a sinistra — indifferentemente un'AREA o un CAMPO: puoi lavorare direttamente sull'area senza per forza generare i campi. Ripetendo su un altro poligono i pivot si aggiungono senza cancellare gli altri. Scegli la disposizione: «A quadrato» (pivot allineati) oppure «A triangolo» (file sfalsate di mezzo passo per incastrare i pivot e recuperare più spazio). Come alimentarli (canali o tubazioni) è indipendente e si definisce nell'adduzione. I pivot sono modificabili: 1° clic = gruppo, 2° clic = singolo (pannello «Proprietà», icona «i»). Strade e canali preesistenti si tracciano nella pagina Rilievo.")} />
 
             <label className="text-xs text-sage-dark block mb-1">{t("Disposizione")}</label>
@@ -4274,7 +4298,7 @@ export default function Page() {
 
 
 
-          <section className={secShow("rilievo") + " border-t border-black/5 pt-3"}>
+          <section hidden={tab !== "rilievo"} className="border-t border-black/5 pt-3">
             <SectionHead title={t("Strade")} help={t("Traccia o importa le strade preesistenti (con spessore). Gli impianti evitano il footprint reale secondo il franco «Da strade» impostato nella pagina Impianti.")} />
 
             {/* Livello Strade: linee disegnabili/importabili che i pivot rispettano */}
@@ -4293,7 +4317,7 @@ export default function Page() {
                   onChange={(e) => setRoadWidth(Number(e.target.value))} className="field-input w-20 py-0.5" />
               </label>
               {!roads.length
-                ? <p className="text-[11px] text-sage-dark mt-1">{t("Nessuna strada. Tracciala sulla mappa o importa un file; gli impianti evitano il footprint reale (spessore) secondo il franco «Da strade».")}</p>
+                ? null
                 : (
                   <ul className="space-y-1 mt-1">
                     {roads.map((r, i) => (
@@ -4312,7 +4336,7 @@ export default function Page() {
             </div>
           </section>
 
-          <section className={secShow("accessori")}>
+          <section hidden={tab !== "accessori"}>
             <SectionHead title={t("Accessori")} help={t("Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.")} />
 
             <div className="bg-panel rounded-lg p-2">
@@ -4392,17 +4416,13 @@ export default function Page() {
 
           </section>
 
-          <section className={secShow("irrigazione")}>
+          <section hidden={tab !== "irrigazione"}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Fabbisogno e portate")}</h3>
             <div className="grid grid-cols-2 gap-2">
               <label className="text-[11px] text-sage-dark">{t("Coltura")}
-                <select className="field-input mt-0.5 px-2 py-1.5 text-sm" value={cropKey} onChange={(e) => setCropKey(e.target.value)}>
-                  <option value="canna">{t("Canna da zucchero")}</option>
-                  <option value="mais">{t("Mais")}</option>
-                  <option value="medica">{t("Erba medica")}</option>
-                  <option value="cereali">{t("Cereali")}</option>
-                  <option value="ortive">{t("Ortive")}</option>
-                  <option value="altro">{t("Altro")}</option>
+                <select className="field-input mt-0.5 px-2 py-1.5 text-sm" value={cropKey}
+                  onChange={(e) => { setCropKey(e.target.value); patch({ kc: cropOf(e.target.value).kc }); }}>
+                  {CROP_LIST.map((cp) => <option key={cp.key} value={cp.key}>{t(cp.label)}</option>)}
                 </select></label>
               <label className="text-[11px] text-sage-dark">{t("Tipo di suolo")}
                 <select className="field-input mt-0.5 px-2 py-1.5 text-sm" value={soilKey}
@@ -4500,7 +4520,7 @@ export default function Page() {
             })()}
           </section>
 
-          <section className={secShow("export")}>
+          <section hidden={tab !== "export"}>
             <SectionHead title={t("Esporta progetto")} help={t("La scheda include idoneità, layout, dimensionamento idrico, fasi e schema dell'impianto.")} />
             <label className="text-xs text-sage-dark">{t("Note (facoltative)")}
               <input className="field-input mt-1" value={notes} onChange={(e) => setNotes(e.target.value)}
@@ -4645,7 +4665,7 @@ export default function Page() {
           </section>
 
           {/* ---------------- Informazioni: riepilogo del progetto ------------- */}
-          <section className={secShow("informazioni")}>
+          <section hidden={tab !== "informazioni"}>
             <SectionHead title={t("Informazioni")} help={t("Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.")} />
             {!pivots.length && !fields.length ? (
               <p className="text-[11px] text-sage-dark">{t("Niente da riepilogare: disegna o importa un'area e inserisci gli impianti.")}</p>
@@ -4715,7 +4735,7 @@ export default function Page() {
           {/* Resta solo l'avviso sui dati demo: senza quello il riquadro
               sarebbe una nota informativa vuota. */}
           {providerMode === "synthetic" && (
-            <p className={"hint " + secShow("export")}>
+            <p hidden={tab !== "export"} className="hint">
               {t("Dati sintetici (demo) — nessun credito Copernicus consumato.")}
             </p>
           )}
