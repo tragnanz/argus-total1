@@ -41,6 +41,7 @@ export const LOCALES: Record<Lang, string> = {
 type Dict = Record<string, string>;
 
 const EN: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Auto: the grid aligns itself with the longest edge of the polygon, which is usually the direction in which the pivots perform best. Manual: you set the direction yourself with the azimuth, useful when the grid has to follow a canal, a road or a cadastral boundary rather than the shape of the field.",
   "Lineari": "Linears",
   "Rotoloni": "Hose reels",
   "Goccia": "Drip",
@@ -584,6 +585,7 @@ const EN: Dict = {
 };
 
 const FR: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Auto : la grille s'aligne d'elle-même sur le côté le plus long du polygone, ce qui correspond en général à la direction dans laquelle les pivots sont les plus rentables. Manuel : vous imposez la direction avec l'azimut, ce qui est utile lorsque la grille doit suivre un canal, une route ou une limite cadastrale plutôt que la forme de la parcelle.",
   "Lineari": "Linéaires",
   "Rotoloni": "Enrouleurs",
   "Goccia": "Goutte-à-goutte",
@@ -1127,6 +1129,7 @@ const FR: Dict = {
 };
 
 const ES: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Auto: la retícula se alinea sola con el lado más largo del polígono, que suele ser la dirección en la que los pivotes rinden más. Manual: la dirección la impones tú con el acimut, algo útil cuando la retícula debe seguir un canal, una carretera o un límite catastral en lugar de la forma de la parcela.",
   "Lineari": "Laterales",
   "Rotoloni": "Enrolladores",
   "Goccia": "Goteo",
@@ -1670,6 +1673,7 @@ const ES: Dict = {
 };
 
 const PT: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Automático: a malha alinha-se sozinha com o lado mais longo do polígono, que normalmente é a direção em que os pivôs rendem mais. Manual: você impõe a direção com o azimute, o que é útil quando a malha precisa seguir um canal, uma estrada ou um limite cadastral em vez da forma do talhão.",
   "Lineari": "Lineares",
   "Rotoloni": "Enroladores",
   "Goccia": "Gotejamento",
@@ -2213,6 +2217,7 @@ const PT: Dict = {
 };
 
 const RO: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Auto: rețeaua se aliniază singură la cea mai lungă latură a poligonului, care de regulă este direcția în care pivoții randează cel mai bine. Manual: impui tu direcția cu ajutorul azimutului, util atunci când rețeaua trebuie să urmeze un canal, un drum sau o limită cadastrală în loc de forma parcelei.",
   "Lineari": "Liniare",
   "Rotoloni": "Tamburi",
   "Goccia": "Picurare",
@@ -2758,6 +2763,7 @@ const RO: Dict = {
 };
 
 const KK: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Авто: тор көпбұрыштың ең ұзын қабырғасына өздігінен тураланады, әдетте бұл пивоттар ең тиімді жұмыс істейтін бағыт болып табылады. Қолмен: бағытты азимут арқылы өзіңіз белгілейсіз, бұл тор алқаптың пішінін емес, каналды, жолды немесе кадастрлық шекараны бойлауы қажет болған жағдайда ыңғайлы.",
   "Lineari": "Сызықтық",
   "Rotoloni": "Барабандар",
   "Goccia": "Тамшылы",
@@ -3303,6 +3309,7 @@ const KK: Dict = {
 };
 
 const AR: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "تلقائي: تتحاذى الشبكة تلقائيًا مع أطول ضلع في المضلع، وهو عادةً الاتجاه الذي تحقق فيه محاور الري المركزية أفضل مردود. يدوي: أنت من يفرض الاتجاه بواسطة السمت، وهو مفيد عندما يتعيّن على الشبكة أن تتبع قناة أو طريقًا أو حدًّا مساحيًا بدلًا من شكل الحقل.",
   "Lineari": "خطية",
   "Rotoloni": "بكرات",
   "Goccia": "التنقيط",
@@ -3846,6 +3853,7 @@ const AR: Dict = {
 };
 
 const ZH: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "自动：网格会自行对齐多边形最长的那条边，通常这也是圆形喷灌机（中心支轴）效益最高的方向。手动：由您通过方位角指定方向，适用于网格需要沿渠道、道路或地籍边界布置，而不是依照地块形状的情况。",
   "Lineari": "平移机",
   "Rotoloni": "卷盘机",
   "Goccia": "滴灌",
@@ -4391,6 +4399,7 @@ const ZH: Dict = {
 };
 
 const HU: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Automatikus: a rács magától a sokszög leghosszabb oldalához igazodik, ami rendszerint az az irány, amelyben a pivotok a legjobb hozamot adják. Kézi: az irányt Ön határozza meg az azimuttal, ami akkor hasznos, ha a rácsnak csatornát, utat vagy kataszteri határt kell követnie a tábla alakja helyett.",
   "Lineari": "Lineárok",
   "Rotoloni": "Dobos gépek",
   "Goccia": "Csepegtető",
@@ -4936,6 +4945,7 @@ const HU: Dict = {
 };
 
 const ID: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Otomatis: kisi menyejajarkan dirinya sendiri dengan sisi terpanjang poligon, yang umumnya merupakan arah dengan hasil pivot paling optimal. Manual: Anda sendiri yang menentukan arah melalui azimut, berguna ketika kisi harus mengikuti saluran irigasi, jalan, atau batas kadaster alih-alih bentuk lahan.",
   "Lineari": "Linear",
   "Rotoloni": "Gulungan selang",
   "Goccia": "Tetes",
@@ -5481,6 +5491,7 @@ const ID: Dict = {
 };
 
 const DE: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Automatisch: Das Raster richtet sich selbst an der längsten Kante des Polygons aus, was in der Regel die Richtung mit dem höchsten Pivot-Ertrag ist. Manuell: Sie geben die Richtung über den Azimut vor, was nützlich ist, wenn sich das Raster an einem Kanal, einer Straße oder einer Katastergrenze orientieren soll statt an der Form des Feldes.",
   "Lineari": "Linear",
   "Rotoloni": "Trommelberegner",
   "Goccia": "Tropf",
@@ -6020,6 +6031,7 @@ const DE: Dict = {
 };
 
 const PL: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Auto: siatka sama wyrównuje się do najdłuższej krawędzi wielokąta, co zwykle odpowiada kierunkowi, w którym pivoty dają najlepszy efekt. Ręcznie: kierunek narzucasz samodzielnie za pomocą azymutu, co przydaje się, gdy siatka ma podążać za kanałem, drogą lub granicą ewidencyjną (katastralną), a nie za kształtem pola.",
   "Lineari": "Liniowe",
   "Rotoloni": "Zwijadła",
   "Goccia": "Kropelkowe",
@@ -6561,6 +6573,7 @@ const PL: Dict = {
 };
 
 const BG: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Авто: мрежата се подравнява сама по най-дългата страна на полигона, което обикновено е посоката, в която пивотите се вписват най-добре. Ръчно: ти задаваш посоката чрез азимута, което е полезно, когато мрежата трябва да следва канал, път или кадастрална граница вместо формата на полето.",
   "Lineari": "Линейни",
   "Rotoloni": "Барабанни",
   "Goccia": "Капково",
@@ -7102,6 +7115,7 @@ const BG: Dict = {
 };
 
 const RU: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Авто: сетка сама выравнивается по самой длинной стороне многоугольника, а это, как правило, направление, при котором пивоты дают наибольшую отдачу. Вручную: направление задаёте вы сами с помощью азимута, что удобно, когда сетка должна следовать вдоль канала, дороги или кадастровой границы, а не повторять форму поля.",
   "Lineari": "Линейные",
   "Rotoloni": "Барабанные",
   "Goccia": "Капельное",
@@ -7643,6 +7657,7 @@ const RU: Dict = {
 };
 
 const AF: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Outomaties: die rooster belyn homself met die langste sy van die veelhoek, wat gewoonlik die rigting is waarin die spilpunte die beste opbrengs lewer. Handmatig: jy bepaal self die rigting met die asimut, wat handig is wanneer die rooster ’n kanaal, ’n pad of ’n kadastrale grens moet volg eerder as die vorm van die land.",
   "Lineari": "Lineêre",
   "Rotoloni": "Haspels",
   "Goccia": "Drup",
@@ -8184,6 +8199,7 @@ const AF: Dict = {
 };
 
 const MS: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Auto: grid akan menjajarkan dirinya dengan sisi terpanjang poligon, iaitu lazimnya arah yang memberikan hasil pivot terbaik. Manual: anda sendiri menetapkan arah menggunakan azimut, berguna apabila grid perlu mengikut saluran, jalan atau sempadan kadaster dan bukannya bentuk ladang.",
   "Lineari": "Linear",
   "Rotoloni": "Gulungan hos",
   "Goccia": "Titisan",
@@ -8725,6 +8741,7 @@ const MS: Dict = {
 };
 
 const VI: Dict = {
+  "Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.": "Tự động: lưới tự căn theo cạnh dài nhất của đa giác, thường là hướng mà các máy tưới pivot đạt hiệu quả cao nhất. Thủ công: bạn tự ấn định hướng bằng góc phương vị, hữu ích khi lưới cần chạy theo kênh mương, đường giao thông hoặc ranh giới địa chính thay vì theo hình dạng của thửa ruộng.",
   "Lineari": "Tịnh tiến",
   "Rotoloni": "Cuộn ống",
   "Goccia": "Nhỏ giọt",

@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.161";
+const REV = "v0.6.162";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -835,6 +835,18 @@ const TAB_ICONS = {
 
 // Intestazione di sezione con testo-guida apribile/chiudibile da "?"
 // (compatta la vista: i suggerimenti restano nascosti finché non servono).
+// «?» accanto all'etichetta di un singolo campo: stesso comportamento del "?"
+// delle sezioni, ma inline e senza titolo proprio.
+function FieldHelp({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (<>
+    <button type="button" onClick={() => setOpen((v) => !v)} aria-label="Aiuto" title={text}
+      className={"inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold leading-none align-middle transition "
+        + (open ? "bg-brand text-white" : "bg-sage/20 text-sage-dark hover:bg-brand hover:text-white")}>?</button>
+    {open && <p className="hint mt-1">{text}</p>}
+  </>);
+}
+
 function SectionHead({ title, help, mb = "mb-2" }: { title: string; help?: string; mb?: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -2839,7 +2851,10 @@ export default function Page() {
             : t("Con tubazioni in pressione la pendenza tollerata è maggiore (max {p}‰).", { p: 70 })}
         </p>
 
-        <label className="text-xs text-sage-dark mt-2 block">{t("Orientamento reticolo")}</label>
+        <div className="text-xs text-sage-dark mt-2 flex items-center gap-1.5">
+          {t("Orientamento reticolo")}
+          <FieldHelp text={t("Auto: il reticolo si allinea da solo al bordo più lungo del poligono, che di norma è la direzione in cui i pivot rendono di più. Manuale: imponi tu la direzione con l'azimut, utile quando il reticolo deve seguire un canale, una strada o un confine catastale invece della forma del campo.")} />
+        </div>
         <div className="seg mt-1">
           <div className="seg-item" data-active={cur.orientMode === "auto"} onClick={() => patch({ orientMode: "auto" })}>{t("Auto (bordo più lungo)")}</div>
           <div className="seg-item" data-active={cur.orientMode === "manual"} onClick={() => patch({ orientMode: "manual" })}>{t("Manuale (azimut)")}</div>
