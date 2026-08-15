@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.156";
+const REV = "v0.6.157";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3784,8 +3784,13 @@ export default function Page() {
         </div>
 
         {/* Finestra degli strumenti: si apre a sinistra del menu verticale */}
+        {/* NB: niente «relative» qui insieme ad «absolute». Sono due utility di
+            posizionamento e in Tailwind vince l'ultima nel CSS (relative), non
+            l'ultima scritta: il pannello perdeva il posizionamento e finiva nel
+            flusso, in basso a sinistra. «absolute» fa già da riferimento per il
+            pulsante di chiusura. */}
         {!rightMin && (
-        <div className="absolute top-[4.5rem] right-[7rem] w-[440px] max-w-[calc(100vw_-_9rem)] max-h-[78vh] widget flex flex-col overflow-hidden relative">
+        <div className="absolute top-[4.5rem] right-[7rem] w-[440px] max-w-[calc(100vw_-_9rem)] max-h-[78vh] widget flex flex-col overflow-hidden">
           {/* Il comando di chiusura galleggia nell'angolo invece di occupare una
               riga propria: la riga dedicata lasciava una fascia vuota sopra il
               primo titolo. */}
