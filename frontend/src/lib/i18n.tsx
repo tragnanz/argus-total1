@@ -41,6 +41,10 @@ export const LOCALES: Record<Lang, string> = {
 type Dict = Record<string, string>;
 
 const EN: Dict = {
+  "Campi da esportare": "Fields to export",
+  "Tutti": "All",
+  "Solo attivo": "Active only",
+  "Seleziona almeno un campo da esportare.": "Select at least one field to export.",
   "Cosa stampare": "What to print",
   "Scheda progetto": "Project data sheet",
   "Planimetria su ortofoto": "Site plan on orthophoto",
@@ -549,6 +553,10 @@ const EN: Dict = {
 };
 
 const FR: Dict = {
+  "Campi da esportare": "Parcelles à exporter",
+  "Tutti": "Toutes",
+  "Solo attivo": "Active uniquement",
+  "Seleziona almeno un campo da esportare.": "Sélectionnez au moins une parcelle à exporter.",
   "Cosa stampare": "Éléments à imprimer",
   "Scheda progetto": "Fiche projet",
   "Planimetria su ortofoto": "Plan de masse sur orthophoto",
@@ -1057,6 +1065,10 @@ const FR: Dict = {
 };
 
 const ES: Dict = {
+  "Campi da esportare": "Parcelas a exportar",
+  "Tutti": "Todas",
+  "Solo attivo": "Solo activa",
+  "Seleziona almeno un campo da esportare.": "Seleccione al menos una parcela para exportar.",
   "Cosa stampare": "Qué imprimir",
   "Scheda progetto": "Ficha del proyecto",
   "Planimetria su ortofoto": "Planimetría sobre ortofoto",
@@ -1565,6 +1577,10 @@ const ES: Dict = {
 };
 
 const PT: Dict = {
+  "Campi da esportare": "Parcelas a exportar",
+  "Tutti": "Todas",
+  "Solo attivo": "Apenas ativa",
+  "Seleziona almeno un campo da esportare.": "Selecione pelo menos uma parcela para exportar.",
   "Cosa stampare": "O que imprimir",
   "Scheda progetto": "Ficha do projeto",
   "Planimetria su ortofoto": "Planta sobre ortofoto",
@@ -2073,6 +2089,10 @@ const PT: Dict = {
 };
 
 const RO: Dict = {
+  "Campi da esportare": "Parcele de exportat",
+  "Tutti": "Toate",
+  "Solo attivo": "Doar activă",
+  "Seleziona almeno un campo da esportare.": "Selectați cel puțin o parcelă de exportat.",
   "Cosa stampare": "Ce se tipărește",
   "Scheda progetto": "Fișa proiectului",
   "Planimetria su ortofoto": "Plan de situație pe ortofoto",
@@ -2583,6 +2603,10 @@ const RO: Dict = {
 };
 
 const KK: Dict = {
+  "Campi da esportare": "Экспорттайтын алқаптар",
+  "Tutti": "Барлығы",
+  "Solo attivo": "Тек белсенді",
+  "Seleziona almeno un campo da esportare.": "Экспорттау үшін кемінде бір алқапты таңдаңыз.",
   "Cosa stampare": "Не басып шығару керек",
   "Scheda progetto": "Жоба парағы",
   "Planimetria su ortofoto": "Ортофотодағы жоспар",
@@ -3093,6 +3117,10 @@ const KK: Dict = {
 };
 
 const AR: Dict = {
+  "Campi da esportare": "الحقول المراد تصديرها",
+  "Tutti": "الكل",
+  "Solo attivo": "النشط فقط",
+  "Seleziona almeno un campo da esportare.": "اختر حقلاً واحدًا على الأقل للتصدير.",
   "Cosa stampare": "ما المراد طباعته",
   "Scheda progetto": "بطاقة المشروع",
   "Planimetria su ortofoto": "المخطط العام على الصورة الجوية",
@@ -3601,6 +3629,10 @@ const AR: Dict = {
 };
 
 const ZH: Dict = {
+  "Campi da esportare": "要导出的地块",
+  "Tutti": "全部",
+  "Solo attivo": "仅当前",
+  "Seleziona almeno un campo da esportare.": "请至少选择一个要导出的地块。",
   "Cosa stampare": "打印内容",
   "Scheda progetto": "项目数据表",
   "Planimetria su ortofoto": "正射影像上的平面图",
@@ -4111,6 +4143,10 @@ const ZH: Dict = {
 };
 
 const HU: Dict = {
+  "Campi da esportare": "Exportálandó táblák",
+  "Tutti": "Összes",
+  "Solo attivo": "Csak aktív",
+  "Seleziona almeno un campo da esportare.": "Válasszon ki legalább egy exportálandó táblát.",
   "Cosa stampare": "Nyomtatandó elemek",
   "Scheda progetto": "Projektadatlap",
   "Planimetria su ortofoto": "Helyszínrajz ortofotón",
@@ -4621,6 +4657,10 @@ const HU: Dict = {
 };
 
 const ID: Dict = {
+  "Campi da esportare": "Lahan yang akan diekspor",
+  "Tutti": "Semua",
+  "Solo attivo": "Hanya aktif",
+  "Seleziona almeno un campo da esportare.": "Pilih setidaknya satu lahan untuk diekspor.",
   "Cosa stampare": "Yang akan dicetak",
   "Scheda progetto": "Lembar data proyek",
   "Planimetria su ortofoto": "Denah di atas ortofoto",
@@ -5131,6 +5171,10 @@ const ID: Dict = {
 };
 
 const DE: Dict = {
+  "Campi da esportare": "Zu exportierende Flächen",
+  "Tutti": "Alle",
+  "Solo attivo": "Nur aktive",
+  "Seleziona almeno un campo da esportare.": "Wählen Sie mindestens eine Fläche zum Exportieren aus.",
   "Cosa stampare": "Druckinhalt",
   "Scheda progetto": "Projektdatenblatt",
   "Planimetria su ortofoto": "Lageplan auf Orthofoto",
@@ -5635,6 +5679,10 @@ const DE: Dict = {
 };
 
 const PL: Dict = {
+  "Campi da esportare": "Pola do eksportu",
+  "Tutti": "Wszystkie",
+  "Solo attivo": "Tylko aktywne",
+  "Seleziona almeno un campo da esportare.": "Wybierz co najmniej jedno pole do eksportu.",
   "Cosa stampare": "Co wydrukować",
   "Scheda progetto": "Karta projektu",
   "Planimetria su ortofoto": "Plan sytuacyjny na ortofotomapie",
@@ -6141,6 +6189,10 @@ const PL: Dict = {
 };
 
 const BG: Dict = {
+  "Campi da esportare": "Ниви за експорт",
+  "Tutti": "Всички",
+  "Solo attivo": "Само активната",
+  "Seleziona almeno un campo da esportare.": "Изберете поне една нива за експорт.",
   "Cosa stampare": "Какво да се отпечата",
   "Scheda progetto": "Данни за проекта",
   "Planimetria su ortofoto": "План върху ортофото",
@@ -6647,6 +6699,10 @@ const BG: Dict = {
 };
 
 const RU: Dict = {
+  "Campi da esportare": "Поля для экспорта",
+  "Tutti": "Все",
+  "Solo attivo": "Только активное",
+  "Seleziona almeno un campo da esportare.": "Выберите хотя бы одно поле для экспорта.",
   "Cosa stampare": "Что печатать",
   "Scheda progetto": "Карточка проекта",
   "Planimetria su ortofoto": "План на ортофотоплане",
@@ -7153,6 +7209,10 @@ const RU: Dict = {
 };
 
 const AF: Dict = {
+  "Campi da esportare": "Landerye om uit te voer",
+  "Tutti": "Alles",
+  "Solo attivo": "Slegs aktiewe",
+  "Seleziona almeno un campo da esportare.": "Kies ten minste een landery om uit te voer.",
   "Cosa stampare": "Wat om te druk",
   "Scheda progetto": "Projekdatablad",
   "Planimetria su ortofoto": "Terreinplan op ortofoto",
@@ -7659,6 +7719,10 @@ const AF: Dict = {
 };
 
 const MS: Dict = {
+  "Campi da esportare": "Ladang untuk dieksport",
+  "Tutti": "Semua",
+  "Solo attivo": "Aktif sahaja",
+  "Seleziona almeno un campo da esportare.": "Pilih sekurang-kurangnya satu ladang untuk dieksport.",
   "Cosa stampare": "Apa yang hendak dicetak",
   "Scheda progetto": "Lembaran data projek",
   "Planimetria su ortofoto": "Pelan tapak atas ortofoto",
@@ -8165,6 +8229,10 @@ const MS: Dict = {
 };
 
 const VI: Dict = {
+  "Campi da esportare": "Thửa ruộng cần xuất",
+  "Tutti": "Tất cả",
+  "Solo attivo": "Chỉ đang chọn",
+  "Seleziona almeno un campo da esportare.": "Vui lòng chọn ít nhất một thửa ruộng để xuất.",
   "Cosa stampare": "Nội dung in",
   "Scheda progetto": "Bảng dữ liệu dự án",
   "Planimetria su ortofoto": "Mặt bằng trên ảnh trực giao",

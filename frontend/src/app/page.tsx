@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.147";
+const REV = "v0.6.148";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1115,6 +1115,9 @@ export default function Page() {
   const [pdfSheet, setPdfSheet] = useState(true);
   const [pdfPlan, setPdfPlan] = useState(true);
   const [pdfLang, setPdfLang] = useState<Lang>("it");
+  // Si memorizzano i campi ESCLUSI, non quelli scelti: un poligono aggiunto
+  // dopo entra automaticamente nell'esportazione invece di restare fuori.
+  const [pdfSkip, setPdfSkip] = useState<Set<number>>(new Set());
   const [autosave, setAutosave] = useState<"" | "saving" | "saved" | "error">("");   // stato salvataggio automatico
   const [drawing, setDrawing] = useState(false);   // disegno/tracciatura in corso → pannellino di controllo
   const [elevStats, setElevStats] = useState<{ id: number; loading?: boolean; err?: boolean; s?: api.ElevationStats } | null>(null);  // quota del campo attivo
@@ -2888,21 +2891,24 @@ export default function Page() {
   async function downloadPdf() {
     if (!fields.length) return needField();
     if (!pdfSheet && !pdfPlan) { setMsg(t("Seleziona almeno una sezione da stampare.")); return; }
+    const sel = pdfPick;
+    if (!sel.length) { setMsg(t("Seleziona almeno un campo da esportare.")); return; }
     setBusy("pdf"); setMsg("");
     try {
       const pname = projects.find((p) => p.id === projectId)?.name || "Progetto";
       const cname = clients.find((c) => c.id === clientId)?.name;
-      if (fields.length === 1) {
-        const f = fields[0];
+      if (sel.length === 1) {
+        const f = sel[0];
         const blob = await api.downloadReport(f.geom, paramsFrom(effSettings(f)),
-          { project_name: pname, client_name: cname, notes, include_suitability: pdfSheet,
+          { project_name: fields.length > 1 ? `${pname} — ${f.name}` : pname,
+            client_name: cname, notes, include_suitability: pdfSheet,
             lang: pdfLang, include_sheet: pdfSheet, include_plan: pdfPlan });
-        saveBlob(blob, `scheda_${safe(pname)}.pdf`);
+        saveBlob(blob, `scheda_${safe(fields.length > 1 ? f.name : pname)}.pdf`);
       } else {
         const zip = new JSZip();
-        for (let i = 0; i < fields.length; i++) {
-          const f = fields[i];
-          setMsg(t("Genero campo {i}/{n}…", { i: i + 1, n: fields.length }));
+        for (let i = 0; i < sel.length; i++) {
+          const f = sel[i];
+          setMsg(t("Genero campo {i}/{n}…", { i: i + 1, n: sel.length }));
           const blob = await api.downloadReport(f.geom, paramsFrom(effSettings(f)),
             { project_name: `${pname} — ${f.name}`, client_name: cname, notes, include_suitability: pdfSheet,
               lang: pdfLang, include_sheet: pdfSheet, include_plan: pdfPlan });
@@ -3074,6 +3080,9 @@ export default function Page() {
       </div>
     );
   }
+
+  // Campi che finiranno nell'esportazione (tutti tranne quelli tolti a mano).
+  const pdfPick = fields.filter((f) => !pdfSkip.has(f.id));
 
   // Statistiche di un poligono per il pannello Livelli: superficie irrigata
   // (somma dei cerchi dei pivot che gli appartengono), medie per macchina e
@@ -4360,6 +4369,44 @@ export default function Page() {
               <input className="field-input mt-1" value={notes} onChange={(e) => setNotes(e.target.value)}
                 placeholder={t("es. coltura, cliente, fase")} />
             </label>
+            {/* Quali campi esportare: uno solo, alcuni o tutti. Con più di uno
+                selezionato i PDF escono raggruppati in uno ZIP. */}
+            {fields.length > 1 && (
+              <div className="mt-2 bg-panel rounded-lg p-2 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide flex-1">
+                    {t("Campi da esportare")} <span className="tabular-nums normal-case">({pdfPick.length}/{fields.length})</span>
+                  </div>
+                  <button className="text-[11px] text-brand hover:underline" onClick={() => setPdfSkip(new Set())}>{t("Tutti")}</button>
+                  <button className="text-[11px] text-brand hover:underline"
+                    disabled={activeId == null}
+                    onClick={() => setPdfSkip(new Set(fields.filter((f) => f.id !== activeId).map((f) => f.id)))}>
+                    {t("Solo attivo")}
+                  </button>
+                </div>
+                <ul className="max-h-36 overflow-auto scroll-soft space-y-0.5">
+                  {fields.map((f) => (
+                    <li key={f.id}>
+                      <label className="flex items-center gap-2 text-sm text-brand-darker cursor-pointer">
+                        <input type="checkbox" checked={!pdfSkip.has(f.id)}
+                          onChange={(e) => setPdfSkip((sk) => {
+                            const n = new Set(sk);
+                            if (e.target.checked) n.delete(f.id); else n.add(f.id);
+                            return n;
+                          })} />
+                        <span className="text-[9px] uppercase font-semibold px-1 py-0.5 rounded shrink-0"
+                          style={{ background: (f.level === "campo" ? "#e4f4ea" : "#fdefe0"), color: (f.level === "campo" ? "#03683a" : "#b5651a") }}>
+                          {f.level === "campo" ? t("Campo") : t("Area")}
+                        </span>
+                        <span className="truncate">{f.name}</span>
+                        <span className="text-sage-dark text-[11px] shrink-0 ml-auto">{uHa(ringAreaHa(f.geom.coordinates))}</span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {/* Cosa stampare: la scheda con i dati, la tavola della planimetria, o
                 entrambe. La lingua della stampa e' indipendente da quella
                 dell'interfaccia: si esporta per il cliente, non per se'. */}
@@ -4381,10 +4428,11 @@ export default function Page() {
             </div>
             <div className="flex gap-2 mt-2">
               <button className="btn-primary flex-1 basis-0"
-                disabled={busy === "pdf" || !hasFields || (!pdfSheet && !pdfPlan)}
-                title={!pdfSheet && !pdfPlan ? t("Seleziona almeno una sezione da stampare.") : undefined}
+                disabled={busy === "pdf" || !hasFields || (!pdfSheet && !pdfPlan) || !pdfPick.length}
+                title={!pdfPick.length ? t("Seleziona almeno un campo da esportare.")
+                  : (!pdfSheet && !pdfPlan ? t("Seleziona almeno una sezione da stampare.") : undefined)}
                 onClick={downloadPdf}>
-                {busy === "pdf" ? t("Preparo…") : (fields.length > 1 ? t("Scarica PDF (ZIP)") : t("Scarica PDF"))}
+                {busy === "pdf" ? t("Preparo…") : (pdfPick.length > 1 ? t("Scarica PDF (ZIP)") : t("Scarica PDF"))}
               </button>
               <button className="btn-ghost flex-1 basis-0" disabled={!laid.length} onClick={downloadGeoJSON}>{t("Layout GeoJSON")}</button>
             </div>
