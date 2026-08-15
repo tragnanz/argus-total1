@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.134";
+const REV = "v0.6.135";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2456,42 +2456,47 @@ export default function Page() {
     for (const l of lines) if (l.kind === "pipe") for (const q of l.coords) s2.add(`${q[0].toFixed(6)},${q[1].toFixed(6)}`);
     return s2;
   }
-  // Collega il pivot selezionato alla tubazione più vicina a SINISTRA o a DESTRA:
-  // il punto entra nella linea dove costa meno metri di tubo.
+  // Collega il pivot selezionato alla tubazione più vicina a SINISTRA o a DESTRA
+  // con un RAMO dedicato: un tratto nuovo dal centro del pivot fino alla
+  // tubazione esistente, che resta com'è. Non si deforma la linea esistente
+  // facendola passare per il pivot.
   function connectSelPivot(side: "left" | "right") {
     if (pivotSel.mode !== "single") return;
     const pv = pivots[pivotSel.idx]; if (!pv) return;
-    const lat0 = pv.lat, mLat = 111320, mLng = 111320 * Math.cos((lat0 * Math.PI) / 180) || 1e-9;
-    const M = (q: number[]) => [q[0] * mLng, q[1] * mLat] as [number, number];
+    const mLat = 111320, mLng = 111320 * Math.cos((pv.lat * Math.PI) / 180) || 1e-9;
+    const M = (q: number[]): [number, number] => [q[0] * mLng, q[1] * mLat];
     const A = M([pv.lng, pv.lat]);
-    let bestLine = -1, bestPos = -1, bestCost = Infinity;
-    pivotLines.forEach((l, li) => {
+    let best: { p: [number, number]; d: number } | null = null;
+    pivotLines.forEach((l) => {
       if (l.kind !== "pipe") return;
       if (l.field != null && hiddenPipeFields.has(l.field)) return;
+      const pm = l.coords.map(M);
       // da che parte sta la tubazione: si guarda il suo punto più vicino
-      let near = M(l.coords[0]), nd = Infinity;
-      for (const q of l.coords) { const m2 = M(q); const d = Math.hypot(m2[0] - A[0], m2[1] - A[1]); if (d < nd) { nd = d; near = m2; } }
-      const isLeft = near[0] < A[0];
-      if ((side === "left") !== isLeft) return;
-      // inserimento più economico: si prova ogni posizione della polilinea
-      for (let k = 1; k <= l.coords.length; k++) {
-        const a = M(l.coords[k - 1]);
-        const b = k < l.coords.length ? M(l.coords[k]) : null;
-        const add = b
-          ? Math.hypot(A[0] - a[0], A[1] - a[1]) + Math.hypot(b[0] - A[0], b[1] - A[1]) - Math.hypot(b[0] - a[0], b[1] - a[1])
-          : Math.hypot(A[0] - a[0], A[1] - a[1]);
-        if (add < bestCost) { bestCost = add; bestLine = li; bestPos = k; }
+      let nx = pm[0], nd = Infinity;
+      for (const q of pm) { const d = Math.hypot(q[0] - A[0], q[1] - A[1]); if (d < nd) { nd = d; nx = q; } }
+      if ((side === "left") !== (nx[0] < A[0])) return;
+      // punto di innesto: il più vicino sulla linea, ma se c'è un VERTICE quasi
+      // altrettanto vicino si preferisce quello — è un nodo reale della rete.
+      let foot: [number, number] | null = null, fd = Infinity;
+      for (let i = 0; i < pm.length - 1; i++) {
+        const a = pm[i], b = pm[i + 1];
+        const vx = b[0] - a[0], vy = b[1] - a[1]; const l2 = vx * vx + vy * vy || 1e-9;
+        let t = ((A[0] - a[0]) * vx + (A[1] - a[1]) * vy) / l2; t = Math.max(0, Math.min(1, t));
+        const q: [number, number] = [a[0] + vx * t, a[1] + vy * t];
+        const d = Math.hypot(q[0] - A[0], q[1] - A[1]);
+        if (d < fd) { fd = d; foot = q; }
       }
+      const pick: [number, number] = (nd <= 1.15 * fd || !foot) ? nx : foot;
+      const pd = Math.hypot(pick[0] - A[0], pick[1] - A[1]);
+      if (!best || pd < best.d) best = { p: pick, d: pd };
     });
-    if (bestLine < 0) { setMsg(side === "left" ? t("Nessuna tubazione a sinistra di questo pivot.") : t("Nessuna tubazione a destra di questo pivot.")); return; }
-    const next = pivotLines.map((l, li) => {
-      if (li !== bestLine) return l;
-      const cc = [...l.coords]; cc.splice(bestPos, 0, [pv.lng, pv.lat]);
-      return { ...l, coords: cc };
-    });
+    if (!best) { setMsg(side === "left" ? t("Nessuna tubazione a sinistra di questo pivot.") : t("Nessuna tubazione a destra di questo pivot.")); return; }
+    const b2 = best as { p: [number, number]; d: number };
+    const branch = { kind: "pipe", coords: [[b2.p[0] / mLng, b2.p[1] / mLat], [pv.lng, pv.lat]], field: pv.field };
+    const next = [...pivotLines, branch];
     setPivotLines(next);
     setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, next) } : gp));
-    setMsg(t("Pivot collegato alla tubazione ✓ (+{m} m)", { m: Math.round(bestCost) }));
+    setMsg(t("Pivot collegato alla tubazione ✓ (+{m} m)", { m: Math.round(b2.d) }));
   }
   // Disegna a mano una NUOVA tubazione: i punti cliccati si agganciano ai centri
   // dei pivot e al canale, quindi nasce già collegata come quelle calcolate.
