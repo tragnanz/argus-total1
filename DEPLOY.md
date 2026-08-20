@@ -45,11 +45,29 @@ delle env var).
 - Frontend: apri l'URL web, disegna un'area, cerca le date, genera l'anteprima e
   una scheda PDF.
 
-## Note sul piano gratuito
-- I servizi web free **vanno in sospensione** dopo inattività: la prima richiesta
-  dopo la pausa impiega ~30–60 s a "svegliarli" (come Argus Smart).
-- Il **Postgres free** scade dopo ~90 giorni: per uso continuativo passare a un
-  piano a pagamento del solo database.
+## Piani di calcolo
+`render.yaml` dichiara **Standard** per l'API e **Starter** per il frontend.
+
+| servizio | piano | RAM / CPU | perché |
+|---|---|---|---|
+| `argus-total-api` | Standard | 2 GB / 1 CPU | un export di un progetto da 121 pivot tocca ~270 MB di picco su 164 MB a riposo: su 512 MB il margine era di poche decine di MB e il servizio si riavviava. Con CDSE i raster reali pesano più dei sintetici. |
+| `argus-total-web` | Starter | 512 MB / 0,5 CPU | a Next.js serve soprattutto non andare in sospensione. |
+| `argus-total-db` | basic-256mb | — | già a pagamento. |
+
+Perché **non** Starter sull'API: costa meno ma ha ancora 512 MB, quindi
+toglierebbe il risveglio a freddo senza alzare il tetto di memoria — proprio il
+limite che faceva cadere il servizio durante gli export.
+
+Cosa cambia in pratica:
+- **niente più sospensione**: sui piani a pagamento il servizio resta acceso, e
+  sparisce il risveglio da ~40 s alla prima richiesta dopo una pausa;
+- **CPU**: da 0,1 a 1 sull'API, cioè dieci volte tanto sulle parti pesanti
+  (layout, idoneità, generazione della tavola).
+
+Il cambio di piano si applica facendo **Manual Sync** del blueprint, oppure a
+mano dal dashboard: servizio → *Settings* → *Instance Type*. La modifica è
+immediata e comporta un riavvio del servizio.
+
 - Deploy automatico: ogni push su GitHub ridistribuisce (per il frontend, se
   cambi `NEXT_PUBLIC_API_BASE`, ricordati del *clear cache & deploy*).
 
