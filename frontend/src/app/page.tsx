@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.168";
+const REV = "v0.6.169";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1356,6 +1356,34 @@ export default function Page() {
     try {
       const p = await api.createProject({ name, client_id: clientId, crop });
       await refreshProjects(clientId); setProjectId(p.id);
+    } catch (e) { showErr(e); }
+  }
+
+  // Svuota la mappa dopo l'eliminazione del progetto aperto, con l'autosave
+  // fermo: non deve riscrivere su un progetto che non esiste più.
+  function resetProjectView() {
+    suppressAutosaveRef.current = true;
+    clearAllFields();
+    setCanals([]); setRoads([]); setWatercourses([]); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set()); setHiddenPipeFields(new Set());
+  }
+  async function deleteCurrentClient() {
+    const c = clients.find((x) => x.id === clientId); if (!c) return;
+    if (!confirm(t("Eliminare il cliente «{name}» e tutti i suoi progetti ({n})? L'operazione non si può annullare.", { name: c.name, n: projects.length }))) return;
+    try {
+      await api.deleteClient(c.id);
+      if (projectId) resetProjectView();
+      setClientId(null); await refreshClients();
+      setMsg(t("Cliente «{name}» eliminato.", { name: c.name }));
+    } catch (e) { showErr(e); }
+  }
+  async function deleteCurrentProject() {
+    const p = projects.find((x) => x.id === projectId); if (!p) return;
+    if (!confirm(t("Eliminare il progetto «{name}» e tutti i suoi dati (campi, impianti, revisioni)? L'operazione non si può annullare.", { name: p.name }))) return;
+    try {
+      await api.deleteProject(p.id);
+      resetProjectView();
+      setProjectId(null); await refreshProjects(clientId);
+      setMsg(t("Progetto «{name}» eliminato.", { name: p.name }));
     } catch (e) { showErr(e); }
   }
 
@@ -3614,6 +3642,8 @@ export default function Page() {
                 {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               <button className="btn-primary shrink-0" onClick={newClient}>+</button>
+              <button className="btn-ghost shrink-0 text-danger px-2 disabled:opacity-40 disabled:cursor-not-allowed" disabled={clientId == null} onClick={deleteCurrentClient}
+                title={t("Elimina cliente")} aria-label={t("Elimina cliente")}><IcoTrash /></button>
             </div>
           </section>
 
@@ -3626,6 +3656,8 @@ export default function Page() {
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
               <button className="btn-primary shrink-0" onClick={newProject}>+</button>
+              <button className="btn-ghost shrink-0 text-danger px-2 disabled:opacity-40 disabled:cursor-not-allowed" disabled={projectId == null} onClick={deleteCurrentProject}
+                title={t("Elimina progetto")} aria-label={t("Elimina progetto")}><IcoTrash /></button>
             </div>
           </section>
 

@@ -53,9 +53,11 @@ def update_client(client_id: int, body: ClientPatch, db: Session = Depends(get_d
 
 
 @router.delete("/clients/{client_id}", status_code=204)
-def delete_client(client_id: int, db: Session = Depends(get_db)):
+def delete_client(client_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    # Solo utenti autenticati e solo clienti della propria organizzazione:
+    # cancellare un cliente elimina a cascata tutti i suoi progetti.
     c = db.get(Client, client_id)
-    if not c:
+    if not c or (c.organization_id is not None and c.organization_id != user.organization_id):
         raise HTTPException(404, "Cliente non trovato")
     db.delete(c); db.commit()
 
@@ -99,9 +101,12 @@ def update_project(project_id: int, body: ProjectPatch, db: Session = Depends(ge
 
 
 @router.delete("/projects/{project_id}", status_code=204)
-def delete_project(project_id: int, db: Session = Depends(get_db)):
+def delete_project(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    # Solo utenti autenticati; se il progetto ha un cliente, deve essere della
+    # propria organizzazione.
     p = db.get(Project, project_id)
-    if not p:
+    org = p.client.organization_id if (p and p.client) else None
+    if not p or (org is not None and org != user.organization_id):
         raise HTTPException(404, "Progetto non trovato")
     db.delete(p); db.commit()
 
