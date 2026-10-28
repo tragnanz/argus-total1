@@ -11,7 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Project, ProjectLayer
+from ..models import Project, ProjectLayer, User
+from ..security import get_current_user
+from ..access import own_layer, own_project
 from ..schemas import LayerIn, LayerOut, LayerPatch
 
 router = APIRouter(prefix="/api", tags=["layers"])
@@ -23,7 +25,8 @@ def _out(x: ProjectLayer) -> LayerOut:
 
 
 @router.get("/projects/{project_id}/layers", response_model=list[LayerOut])
-def list_layers(project_id: int, db: Session = Depends(get_db)):
+def list_layers(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    own_project(db, user, project_id)
     rows = db.scalars(
         select(ProjectLayer).where(ProjectLayer.project_id == project_id)
         .order_by(ProjectLayer.created_at.desc())
@@ -32,9 +35,11 @@ def list_layers(project_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/layers", response_model=LayerOut, status_code=201)
-def create_layer(body: LayerIn, db: Session = Depends(get_db)):
-    if not db.get(Project, body.project_id):
-        raise HTTPException(400, "Progetto inesistente")
+def create_layer(body: LayerIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    try:
+        own_project(db, user, body.project_id)
+    except HTTPException:
+        raise HTTPException(400, "Progetto inesistente") from None
     x = ProjectLayer(project_id=body.project_id, kind=body.kind, name=body.name,
                      data=json.dumps(body.data))
     db.add(x); db.commit(); db.refresh(x)
@@ -42,10 +47,8 @@ def create_layer(body: LayerIn, db: Session = Depends(get_db)):
 
 
 @router.patch("/layers/{layer_id}", response_model=LayerOut)
-def update_layer(layer_id: int, body: LayerPatch, db: Session = Depends(get_db)):
-    x = db.get(ProjectLayer, layer_id)
-    if not x:
-        raise HTTPException(404, "Livello non trovato")
+def update_layer(layer_id: int, body: LayerPatch, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    x = own_layer(db, user, layer_id)
     if body.name is not None:
         x.name = body.name
     if body.data is not None:
@@ -55,8 +58,6 @@ def update_layer(layer_id: int, body: LayerPatch, db: Session = Depends(get_db))
 
 
 @router.delete("/layers/{layer_id}", status_code=204)
-def delete_layer(layer_id: int, db: Session = Depends(get_db)):
-    x = db.get(ProjectLayer, layer_id)
-    if not x:
-        raise HTTPException(404, "Livello non trovato")
+def delete_layer(layer_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    x = own_layer(db, user, layer_id)
     db.delete(x); db.commit()

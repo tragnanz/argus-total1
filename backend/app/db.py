@@ -55,11 +55,30 @@ def _ensure_columns() -> None:
         ccols = {c["name"] for c in insp.get_columns("clients")}
         if "organization_id" not in ccols:
             stmts.append("ALTER TABLE clients ADD COLUMN organization_id INTEGER")
+    if "projects" in tables:
+        pcols = {c["name"] for c in insp.get_columns("projects")}
+        if "organization_id" not in pcols:
+            stmts.append("ALTER TABLE projects ADD COLUMN organization_id INTEGER")
     for s in stmts:
         try:
             with engine.begin() as conn:
                 conn.execute(text(s))
         except Exception:  # noqa: BLE001  (colonna già presente / race)
+            pass
+    # Backfill idempotente dell'organizzazione dei progetti: quella del cliente;
+    # i progetti senza cliente vanno all'unica organizzazione, se ce n'è una sola.
+    if "projects" in tables and "clients" in tables:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "UPDATE projects SET organization_id = (SELECT c.organization_id FROM clients c "
+                    "WHERE c.id = projects.client_id) WHERE organization_id IS NULL AND client_id IS NOT NULL"))
+                if "organizations" in tables:
+                    orgs = conn.execute(text("SELECT id FROM organizations")).fetchall()
+                    if len(orgs) == 1:
+                        conn.execute(text("UPDATE projects SET organization_id = :o "
+                                          "WHERE organization_id IS NULL AND client_id IS NULL"), {"o": orgs[0][0]})
+        except Exception:  # noqa: BLE001
             pass
 
 

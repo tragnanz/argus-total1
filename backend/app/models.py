@@ -63,6 +63,9 @@ class Project(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     client_id: Mapped[int | None] = mapped_column(
         ForeignKey("clients.id", ondelete="CASCADE"), nullable=True)
+    # Organizzazione proprietaria (isolamento multi-tenant). NULL = legacy:
+    # vale quella del cliente, vedi app/access.py.
+    organization_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Progetto agroindustriale: contesto sintetico utile alle milestone future.

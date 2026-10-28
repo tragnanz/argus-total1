@@ -20,7 +20,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Area, Project, ProjectLayer, Share, ShareView
+from ..models import Area, Project, ProjectLayer, Share, ShareView, User
+from ..security import get_current_user
+from ..access import own_project
 
 router = APIRouter(prefix="/api", tags=["share"])
 
@@ -39,10 +41,8 @@ class ShareOut(BaseModel):
 
 # ---- Compat: singolo link legacy (una tantum per progetto) ----
 @router.post("/projects/{project_id}/share")
-def create_share_legacy(project_id: int, db: Session = Depends(get_db)):
-    p = db.get(Project, project_id)
-    if not p:
-        raise HTTPException(404, "Progetto non trovato")
+def create_share_legacy(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    p = own_project(db, user, project_id)
     s = db.scalar(select(Share).where(Share.project_id == project_id))
     if not s:
         s = Share(token=secrets.token_urlsafe(9), project_id=project_id)
@@ -54,10 +54,8 @@ def create_share_legacy(project_id: int, db: Session = Depends(get_db)):
 
 # ---- Link multipli con configurazione di visibilità ----
 @router.post("/projects/{project_id}/shares", response_model=ShareOut)
-def create_share(project_id: int, body: ShareIn, db: Session = Depends(get_db)):
-    p = db.get(Project, project_id)
-    if not p:
-        raise HTTPException(404, "Progetto non trovato")
+def create_share(project_id: int, body: ShareIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    p = own_project(db, user, project_id)
     name = (body.name or "").strip() or "Vista"
     sv = ShareView(
         token=secrets.token_urlsafe(9), project_id=project_id,
@@ -70,7 +68,8 @@ def create_share(project_id: int, body: ShareIn, db: Session = Depends(get_db)):
 
 
 @router.get("/projects/{project_id}/shares", response_model=list[ShareOut])
-def list_shares(project_id: int, db: Session = Depends(get_db)):
+def list_shares(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    own_project(db, user, project_id)
     rows = db.scalars(
         select(ShareView).where(ShareView.project_id == project_id)
         .order_by(ShareView.created_at.desc())
@@ -79,9 +78,10 @@ def list_shares(project_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/shares/{token}", status_code=204)
-def delete_share(token: str, db: Session = Depends(get_db)):
+def delete_share(token: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     sv = db.scalar(select(ShareView).where(ShareView.token == token))
     if sv:
+        own_project(db, user, sv.project_id)          # 404 se il link è di un'altra organizzazione
         db.delete(sv)
         db.commit()
 

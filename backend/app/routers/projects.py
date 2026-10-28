@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Area, Client, Project, User
 from ..security import get_current_user
+from ..access import own_area, own_client, own_project, visible_projects_query
 from ..schemas import (AreaIn, AreaOut, AreaPatch, ClientIn, ClientOut,
                        ClientPatch, ProjectIn, ProjectOut, ProjectPatch)
 
@@ -42,10 +43,8 @@ def create_client(body: ClientIn, db: Session = Depends(get_db), user: User = De
 
 
 @router.patch("/clients/{client_id}", response_model=ClientOut)
-def update_client(client_id: int, body: ClientPatch, db: Session = Depends(get_db)):
-    c = db.get(Client, client_id)
-    if not c:
-        raise HTTPException(404, "Cliente non trovato")
+def update_client(client_id: int, body: ClientPatch, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    c = own_client(db, user, client_id)
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(c, k, v)
     db.commit(); db.refresh(c)
@@ -54,47 +53,51 @@ def update_client(client_id: int, body: ClientPatch, db: Session = Depends(get_d
 
 @router.delete("/clients/{client_id}", status_code=204)
 def delete_client(client_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    # Solo utenti autenticati e solo clienti della propria organizzazione:
-    # cancellare un cliente elimina a cascata tutti i suoi progetti.
-    c = db.get(Client, client_id)
-    if not c or (c.organization_id is not None and c.organization_id != user.organization_id):
-        raise HTTPException(404, "Cliente non trovato")
+    # Solo clienti della propria organizzazione: la cancellazione elimina a
+    # cascata tutti i suoi progetti.
+    c = own_client(db, user, client_id)
     db.delete(c); db.commit()
 
 
 # ---------------- Progetti ----------------
 @router.get("/projects", response_model=list[ProjectOut])
-def list_projects(client_id: int | None = None, db: Session = Depends(get_db)):
-    q = select(Project).order_by(Project.created_at.desc())
+def list_projects(client_id: int | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    q = visible_projects_query(user).order_by(Project.created_at.desc())
     if client_id is not None:
+        own_client(db, user, client_id)
         q = q.where(Project.client_id == client_id)
     return db.scalars(q).all()
 
 
 @router.post("/projects", response_model=ProjectOut, status_code=201)
-def create_project(body: ProjectIn, db: Session = Depends(get_db)):
-    if body.client_id is not None and not db.get(Client, body.client_id):
-        raise HTTPException(400, "Cliente inesistente")
-    p = Project(name=body.name, client_id=body.client_id,
+def create_project(body: ProjectIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if body.client_id is not None:
+        try:
+            own_client(db, user, body.client_id)
+        except HTTPException:
+            raise HTTPException(400, "Cliente inesistente") from None
+    p = Project(name=body.name, client_id=body.client_id, organization_id=user.organization_id,
                 description=body.description, crop=body.crop)
     db.add(p); db.commit(); db.refresh(p)
     return p
 
 
 @router.get("/projects/{project_id}", response_model=ProjectOut)
-def get_project(project_id: int, db: Session = Depends(get_db)):
-    p = db.get(Project, project_id)
-    if not p:
-        raise HTTPException(404, "Progetto non trovato")
+def get_project(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    p = own_project(db, user, project_id)
     return p
 
 
 @router.patch("/projects/{project_id}", response_model=ProjectOut)
-def update_project(project_id: int, body: ProjectPatch, db: Session = Depends(get_db)):
-    p = db.get(Project, project_id)
-    if not p:
-        raise HTTPException(404, "Progetto non trovato")
-    for k, v in body.model_dump(exclude_unset=True).items():
+def update_project(project_id: int, body: ProjectPatch, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    p = own_project(db, user, project_id)
+    data = body.model_dump(exclude_unset=True)
+    if data.get("client_id") is not None:
+        try:
+            own_client(db, user, data["client_id"])
+        except HTTPException:
+            raise HTTPException(400, "Cliente inesistente") from None
+    for k, v in data.items():
         setattr(p, k, v)
     db.commit(); db.refresh(p)
     return p
@@ -102,18 +105,14 @@ def update_project(project_id: int, body: ProjectPatch, db: Session = Depends(ge
 
 @router.delete("/projects/{project_id}", status_code=204)
 def delete_project(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    # Solo utenti autenticati; se il progetto ha un cliente, deve essere della
-    # propria organizzazione.
-    p = db.get(Project, project_id)
-    org = p.client.organization_id if (p and p.client) else None
-    if not p or (org is not None and org != user.organization_id):
-        raise HTTPException(404, "Progetto non trovato")
+    p = own_project(db, user, project_id)
     db.delete(p); db.commit()
 
 
 # ---------------- Aree di progetto ----------------
 @router.get("/projects/{project_id}/areas", response_model=list[AreaOut])
-def list_areas(project_id: int, db: Session = Depends(get_db)):
+def list_areas(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    own_project(db, user, project_id)
     rows = db.scalars(
         select(Area).where(Area.project_id == project_id).order_by(Area.created_at.desc())
     ).all()
@@ -121,9 +120,11 @@ def list_areas(project_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/areas", response_model=AreaOut, status_code=201)
-def create_area(body: AreaIn, db: Session = Depends(get_db)):
-    if not db.get(Project, body.project_id):
-        raise HTTPException(400, "Progetto inesistente")
+def create_area(body: AreaIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    try:
+        own_project(db, user, body.project_id)
+    except HTTPException:
+        raise HTTPException(400, "Progetto inesistente") from None
     if body.parent_area_id is not None:
         parent = db.get(Area, body.parent_area_id)
         if not parent or parent.project_id != body.project_id:
@@ -136,18 +137,14 @@ def create_area(body: AreaIn, db: Session = Depends(get_db)):
 
 
 @router.get("/areas/{area_id}", response_model=AreaOut)
-def get_area(area_id: int, db: Session = Depends(get_db)):
-    a = db.get(Area, area_id)
-    if not a:
-        raise HTTPException(404, "Area non trovata")
+def get_area(area_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    a = own_area(db, user, area_id)
     return _area_out(a)
 
 
 @router.patch("/areas/{area_id}", response_model=AreaOut)
-def update_area(area_id: int, body: AreaPatch, db: Session = Depends(get_db)):
-    a = db.get(Area, area_id)
-    if not a:
-        raise HTTPException(404, "Area non trovata")
+def update_area(area_id: int, body: AreaPatch, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    a = own_area(db, user, area_id)
     data = body.model_dump(exclude_unset=True)
     if "name" in data:
         a.name = data["name"]
@@ -160,10 +157,8 @@ def update_area(area_id: int, body: AreaPatch, db: Session = Depends(get_db)):
 
 
 @router.delete("/areas/{area_id}", status_code=204)
-def delete_area(area_id: int, db: Session = Depends(get_db)):
-    a = db.get(Area, area_id)
-    if not a:
-        raise HTTPException(404, "Area non trovata")
+def delete_area(area_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    a = own_area(db, user, area_id)
     # elimina anche le eventuali sotto-aree (il FK cascade non è garantito su
     # tutti i backend, es. SQLite senza PRAGMA foreign_keys).
     for child in db.scalars(select(Area).where(Area.parent_area_id == area_id)).all():

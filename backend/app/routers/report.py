@@ -10,6 +10,9 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import get_client
+from ..models import User
+from ..security import get_current_user
+from ..access import own_project
 from ..schemas import ReportIn
 
 from analysis.layout import TRANSPORT_SLOPE
@@ -269,7 +272,11 @@ def _real_plan(body, lay) -> tuple[dict, dict]:
 
 
 @router.post("/report")
-def project_report(body: ReportIn, client=Depends(get_client), db: Session = Depends(get_db)):
+def project_report(body: ReportIn, client=Depends(get_client), db: Session = Depends(get_db),
+                   user: User = Depends(get_current_user)):
+    # Il report registra una revisione sul progetto: dev'essere dell'organizzazione.
+    if body.project_id:
+        own_project(db, user, body.project_id)
     geom = body.geom.model_dump()
     transport = body.transport
     slope_max = body.slope_max_pct if body.slope_max_pct is not None \
@@ -392,8 +399,9 @@ def _finish(body, geom: dict, ring: list, lay: dict, suit_meta, want_sheet: bool
 
 @router.get("/revisions")
 def list_revisions(project_id: int, area_id: int | None = None, limit: int = 50,
-                   db: Session = Depends(get_db)):
+                   db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Storico delle revisioni esportate, dalla piu' recente."""
+    own_project(db, user, project_id)
     import json
     from sqlalchemy import select
     from ..models import ExportRevision
