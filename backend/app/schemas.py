@@ -319,6 +319,7 @@ class LayoutIn(BaseModel):
     # riempimento dei bordi con pivot più piccoli: raggio minimo come % di quello
     # pieno (100 = disattivato). Sotto 100 aggiunge pivot ridotti sui contorni.
     min_pivot_pct: float = Field(default=100.0, ge=30, le=100)
+    fill_full: bool = False                                     # riempie i vuoti anche con pivot interi fuori griglia
 
 
 class LayoutOut(BaseModel):

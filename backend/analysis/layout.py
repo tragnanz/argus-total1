@@ -42,6 +42,13 @@ _DEM_CACHE: dict[str, tuple] = {}
 # NB: l'interfaccia le mostra in ‰ (per mille) → qui in % = ‰/10.
 #   canali:    ideale 2‰ (0,2%),  massima 5‰ (0,5%)
 #   tubazioni: ideale 5‰ (0,5%),  massima 70‰ (7,0%)
+# Ricerca dell'origine del reticolo: spostamenti provati per lato (n² tentativi
+# entro un interasse). n si adatta perché il costo resti limitato: tanti tentativi
+# con pivot grandi (pochi nodi), meno con pivot piccoli (molti nodi).
+GRID_SHIFTS_MIN, GRID_SHIFTS_MAX = 6, 20
+GRID_EVAL_BUDGET = 40000          # nodi del reticolo valutati in tutto
+GRID_SHIFTS = None                # se impostato (test), forza n
+
 TRANSPORT_SLOPE = {
     "canal":  {"ideal": 0.2, "max": 0.5},
     "buried": {"ideal": 0.5, "max": 7.0},
@@ -274,40 +281,62 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     def depth_of(ry):
         return (rmaxy - ry) if top else (ry - rminy)
 
-    centers = []                # (rx, ry, x, y) — ruotate + UTM
-    j = 0
-    ry = (rmaxy - R) if top else (rminy + R)
-    while (ry >= rminy + R - 1e-6) if top else (ry <= rmaxy - R + 1e-6):
-        rx = rminx + R + (dx / 2 if (cfg == "staggered" and j % 2 == 1) else 0.0)
-        while rx <= rmaxx - R + 1e-6:
-            pts = off + np.array([rx, ry])
-            if path_rot.contains_point((rx, ry)) and path_rot.contains_points(pts).all():
-                x, y = unrot(rx, ry)
-                ok = _slope_at(g, x, y) <= slope_max
-                if ok and transport == "canal":
-                    # gravità: il pivot dev'essere a valle del canale (quota ≤ canale)
-                    e_p = _elev_at(g, x, y)
-                    e_c = _elev_at(g, *unrot(rx, canal_ry))
-                    if e_p == e_p and e_c == e_c:
-                        ok = e_p <= e_c + 1e-6
-                if ok and only_suitable and suit is not None:
-                    sc = sample_grid(suit[0], suit[1], x, y)
-                    ok = (sc == sc) and sc >= min_suit          # sc==sc → non NaN
-                if ok:
-                    ok = _obs_ok(x, y)                          # niente pivot sul footprint di strade/canali
-                if ok:
-                    centers.append((rx, ry, x, y))
-            rx += dx
-        ry += (-dy if top else dy)
-        j += 1
+    def _grid(ox, oy):
+        """Centri del reticolo con origine spostata di (ox, oy) dall'angolo del bbox."""
+        out = []                # (rx, ry, x, y) — ruotate + UTM
+        j = 0
+        ry = (rmaxy - R - oy) if top else (rminy + R + oy)
+        while (ry >= rminy + R - 1e-6) if top else (ry <= rmaxy - R + 1e-6):
+            rx = rminx + R + ox + (dx / 2 if (cfg == "staggered" and j % 2 == 1) else 0.0)
+            while rx <= rmaxx - R + 1e-6:
+                pts = off + np.array([rx, ry])
+                if path_rot.contains_point((rx, ry)) and path_rot.contains_points(pts).all():
+                    x, y = unrot(rx, ry)
+                    ok = _slope_at(g, x, y) <= slope_max
+                    if ok and transport == "canal":
+                        # gravità: il pivot dev'essere a valle del canale (quota ≤ canale)
+                        e_p = _elev_at(g, x, y)
+                        e_c = _elev_at(g, *unrot(rx, canal_ry))
+                        if e_p == e_p and e_c == e_c:
+                            ok = e_p <= e_c + 1e-6
+                    if ok and only_suitable and suit is not None:
+                        sc = sample_grid(suit[0], suit[1], x, y)
+                        ok = (sc == sc) and sc >= min_suit          # sc==sc → non NaN
+                    if ok:
+                        ok = _obs_ok(x, y)                          # niente pivot sul footprint di strade/canali
+                    if ok:
+                        out.append((rx, ry, x, y))
+                rx += dx
+            ry += (-dy if top else dy)
+            j += 1
+        return out
+
+    # Ricerca dell'origine: il reticolo resta regolare (dorsali dritte), ma se
+    # ne provano n_sh×n_sh spostamenti entro un interasse e si tiene
+    # quello con più pivot; a parità, quello più vicino al collettore. Lo
+    # spostamento nullo è il primo provato, così a parità vince il reticolo di prima.
+    n_nodes = max(1.0, (rmaxx - rminx) * (rmaxy - rminy) / (dx * dy))
+    n_sh = GRID_SHIFTS or int(min(GRID_SHIFTS_MAX, max(GRID_SHIFTS_MIN, math.sqrt(GRID_EVAL_BUDGET / n_nodes))))
+    best_key, centers, grid_shift = None, [], (0.0, 0.0)
+    for iy in range(n_sh):
+        for ix in range(n_sh):
+            ox, oy = dx * ix / n_sh, dy * iy / n_sh
+            cand = _grid(ox, oy)
+            mean_depth = (sum(depth_of(c[1]) for c in cand) / len(cand)) if cand else 0.0
+            key = (len(cand), -mean_depth)
+            if best_key is None or key > best_key:
+                best_key, centers, grid_shift = key, cand, (ox, oy)
 
     # --- RIEMPIMENTO DEI BORDI con pivot più piccoli (fino a min_pivot_pct % del
     # raggio): la maglia principale copre il grosso del campo con pivot pieni,
     # poi sui contorni si aggiungono pivot ridotti per guadagnare superficie,
     # senza sovrapposizioni e restando dentro l'area. ---
     min_pct = min(1.0, max(0.3, float(params.get("min_pivot_pct", 100.0)) / 100.0))
+    # fill_full: riempie i vuoti anche con pivot a piena dimensione fuori griglia
+    # (con min_pct = 100% il passaggio prima era saltato del tutto).
+    fill_full = bool(params.get("fill_full", False))
     fill = []                                    # (x_utm, y_utm, r_m)
-    if min_pct < 0.999 and centers is not None:
+    if (min_pct < 0.999 or fill_full) and centers is not None:
         min_r = min_pct * R
         unit = np.stack([np.cos(ang), np.sin(ang)], 1)     # 16 direzioni unitarie
         px = np.array([c[0] for c in centers], float) if centers else np.zeros(0)
@@ -315,7 +344,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         pr = np.full(px.shape, R, float)
         # raggi da provare, dal più grande al più piccolo (fino a min_r)
         r_steps = [r for r in (R * f for f in (0.9, 0.8, 0.7, 0.6, 0.5, 0.4)) if r > min_r] + [min_r]
-        step = max(res * 2.0, min_r * 0.5)
+        step = max(res * 2.0, min_r * 0.25)        # passo di ricerca dei posti liberi
         cy = rminy + min_r
         while cy <= rmaxy - min_r + 1e-6:
             cx = rminx + min_r
@@ -424,16 +453,21 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     area_pivot_m2 = math.pi * R * R
     vol_pivot_day_m3 = gross_mm_day * area_pivot_m2 / 1000.0     # mm·m² = L → /1000 = m³
     q_pivot_ls = vol_pivot_day_m3 * 1000.0 / (hours * 3600.0)    # l/s
-    q_total_ls = q_pivot_ls * n
-    vol_total_day_m3 = vol_pivot_day_m3 * n
+    # i pivot di riempimento contano in proporzione alla loro area (r²/R²)
+    fill_eq = sum((rf / R) ** 2 for (_, _, rf) in fill)       # pivot "equivalenti" pieni
+    q_total_ls = q_pivot_ls * (n + fill_eq)
+    vol_total_day_m3 = vol_pivot_day_m3 * (n + fill_eq)
 
     # riepilogo per fase di sviluppo
     phases_out = []
     for ph in range(1, n_phases + 1):
         npv = sum(1 for i in range(n) if phase_idx[i] == ph)
+        eq = float(npv)
+        if ph == n_phases and fill:                      # il riempimento sta nell'ultima fase
+            npv += len(fill); eq += fill_eq
         phases_out.append({
-            "phase": ph, "n_pivots": npv, "net_ha": round(npv * pivot_ha, 1),
-            "q_ls": round(q_pivot_ls * npv, 1), "q_m3h": round(q_pivot_ls * npv * 3.6, 1),
+            "phase": ph, "n_pivots": npv, "net_ha": round(eq * pivot_ha, 1),
+            "q_ls": round(q_pivot_ls * eq, 1), "q_m3h": round(q_pivot_ls * eq * 3.6, 1),
         })
 
     # --- GeoJSON per la mappa (cerchi + pompe + spine) ---
@@ -536,7 +570,8 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         "only_suitable": only_suitable, "min_suitability": min_suit if only_suitable else None,
         "overhang_pct": round(overhang * 100, 1),
         "n_phases": n_phases, "phase_order": phase_order, "phases": phases_out,
-        "n_pivots": n + len(fill), "n_pivots_full": n, "n_pivots_fill": len(fill), "min_pivot_pct": round(min_pct * 100), "n_pumps": n_pumps,
+        "n_pivots": n + len(fill), "n_pivots_full": n, "n_pivots_fill": len(fill), "min_pivot_pct": round(min_pct * 100), "fill_full": fill_full,
+        "grid_shift_m": [round(grid_shift[0], 1), round(grid_shift[1], 1)], "n_pumps": n_pumps,
         "net_ha": net_ha, "field_ha": field_ha, "coverage_pct": coverage,
         "gross_block_ha": gross_block_ha, "packing_pct": packing_pct,
         "pivot_ha": round(pivot_ha, 1),

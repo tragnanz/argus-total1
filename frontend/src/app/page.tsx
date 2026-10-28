@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.166";
+const REV = "v0.6.167";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1054,6 +1054,7 @@ export default function Page() {
   const [pivClearWater, setPivClearWater] = useState(0); // franco pivot da acqua/invasi (m)
   const [pivotR, setPivotR] = useState(400);    // raggio pivot (parametro proprio della scheda Pivot)
   const [minPivotPct, setMinPivotPct] = useState(100);   // dimensione minima pivot di riempimento bordi (% del raggio); 100 = disattivato
+  const [fillFull, setFillFull] = useState(false);       // riempie i vuoti con pivot interi fuori griglia
   const [designMode, setDesignMode] = useState<"standard" | "advanced">("standard"); // Systems: standard | avanzata (ottimizza raggio)
   const [advMinR, setAdvMinR] = useState(250);           // avanzata: raggio minimo del range (m)
   const [advMaxR, setAdvMaxR] = useState(450);           // avanzata: raggio massimo del range (m)
@@ -2391,7 +2392,7 @@ export default function Page() {
     const fid = active.id;
     setBusy("layout"); setMsg("");
     try {
-      const p: LayoutParams = { ...paramsFrom(effSettings(active)), radius_m: pivotR, gap_m: safetyM, roads: obstacleLines(), clear_road_m: pivClearRoad, min_pivot_pct: minPivotPct };
+      const p: LayoutParams = { ...paramsFrom(effSettings(active)), radius_m: pivotR, gap_m: safetyM, roads: obstacleLines(), clear_road_m: pivClearRoad, min_pivot_pct: minPivotPct, fill_full: fillFull };
       const r = await api.fetchLayout(active.geom, p);
       applyLayoutResult(fid, r, pivotR);
       setMsg(t("Impianti inseriti su «{name}» ✓", { name: active.name }));
@@ -4312,6 +4313,15 @@ export default function Page() {
                     ? t("Tutti i pivot a piena dimensione. Abbassa la percentuale per riempire i contorni con pivot più piccoli e coprire più superficie.")
                     : t("Il grosso del campo resta coperto dai pivot a piena dimensione ({r} m); sui contorni si aggiungono pivot ridotti fino a {min} m di raggio.", { r: Math.round(pivotR), min: Math.round(pivotR * minPivotPct / 100) })}
                 </p>
+                <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
+                  <input type="checkbox" checked={fillFull} onChange={(e) => setFillFull(e.target.checked)} />
+                  {t("Riempi i vuoti anche con pivot interi fuori griglia")}
+                </label>
+                {fillFull && (
+                  <p className="text-[10px] text-sage-dark mt-1 leading-snug">
+                    {t("I pivot fuori griglia non sono allineati alle dorsali: la loro adduzione non entra nel calcolo della rete.")}
+                  </p>
+                )}
               </div>
             )}
 
