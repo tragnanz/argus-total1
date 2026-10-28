@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.173";
+const REV = "v0.6.174";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -121,19 +121,23 @@ type RoadL = { id: string; coords: number[][]; width_m: number; hidden?: boolean
 const OSM_ROAD_W: Record<string, number> = { motorway: 24, trunk: 20, primary: 12, secondary: 10, tertiary: 8,
   unclassified: 6, residential: 6, service: 5, track: 5 };
 
-// Viabilità di servizio su reticolo QUADRATO di pivot: corridoi rettilinei nello
-// spazio libero tra le file (uno ogni due file), raccordi ORTOGONALI dal
-// corridoio al centro di ogni pivot, collegamenti tra corridoi lungo gli spazi
-// tra le colonne e un accesso (bordo del campo o strada esistente).
+// Viabilità di servizio su reticolo QUADRATO di pivot, a lunghezza minima.
+// Vincoli: le strade corrono nei corridoi liberi tra le file (o tra le colonne),
+// ogni pivot è raggiunto da un raccordo ORTOGONALE fino al centro, i corridoi si
+// collegano lungo gli spazi tra le colonne, più un accesso (bordo o strada esistente).
+// Ottimizza: (1) quali corridoi aprire e quale serve ogni fila — programmazione
+// dinamica esatta sulle file, poi rifinitura pivot per pivot; (2) collegamenti come
+// albero di copertura minimo; (3) orientamento: corridoi lungo le file o le colonne.
 // Coordinate [lng, lat]; calcolo in metri su proiezione locale.
-function serviceRoadsGrid(ctrLL: number[][], ringLL: number[][], extRoads: number[][][]): { segs: number[][][]; err?: "triangular" } {
+function serviceRoadsGrid(ctrLL: number[][], ringLL: number[][], extRoads: number[][][]): { segs: number[][][]; err?: "triangular"; km?: number } {
   if (!ctrLL.length) return { segs: [] };
   const lat0 = ctrLL.reduce((a, p) => a + p[1], 0) / ctrLL.length, lon0 = ctrLL.reduce((a, p) => a + p[0], 0) / ctrLL.length;
   const kx = 111320 * Math.cos((lat0 * Math.PI) / 180), ky = 110540;
   const xy = (p: number[]) => [(p[0] - lon0) * kx, (p[1] - lat0) * ky];
-  const P = ctrLL.map(xy), ring = ringLL.map(xy), ext = extRoads.map((l) => l.map(xy));
+  const toLL = (q: number[]) => [lon0 + q[0] / kx, lat0 + q[1] / ky];
+  const P = ctrLL.map(xy), ring = ringLL.map(xy);
   const n = P.length;
-  // interasse e orientamento dai vicini più prossimi (angoli modulo 90°)
+  // interasse e orientamento del reticolo dai vicini più prossimi (angoli modulo 90°)
   const nn: { d: number; a: number }[] = [];
   for (let i = 0; i < n; i++) {
     let bd = Infinity, ba = 0;
@@ -141,121 +145,169 @@ function serviceRoadsGrid(ctrLL: number[][], ringLL: number[][], extRoads: numbe
     if (isFinite(bd)) nn.push({ d: bd, a: ba });
   }
   const sp = nn.length ? nn.map((x) => x.d).sort((a, b) => a - b)[Math.floor(nn.length / 2)] : 1000;
-  let th = 0;
+  let th0 = 0;
   if (nn.length) {
-    th = Math.atan2(nn.reduce((a, x) => a + Math.sin(4 * x.a), 0), nn.reduce((a, x) => a + Math.cos(4 * x.a), 0)) / 4;
+    th0 = Math.atan2(nn.reduce((a, x) => a + Math.sin(4 * x.a), 0), nn.reduce((a, x) => a + Math.cos(4 * x.a), 0)) / 4;
     // reticolo triangolare: i vicini stanno a 60°, non a 90° → niente corridoi rettilinei
-    const dev = nn.reduce((a, x) => { let r = ((x.a - th) % (Math.PI / 2) + Math.PI / 2) % (Math.PI / 2); r = Math.min(r, Math.PI / 2 - r); return a + r; }, 0) / nn.length;
+    const dev = nn.reduce((a, x) => { let r = ((x.a - th0) % (Math.PI / 2) + Math.PI / 2) % (Math.PI / 2); r = Math.min(r, Math.PI / 2 - r); return a + r; }, 0) / nn.length;
     if (dev > (12 * Math.PI) / 180) return { segs: [], err: "triangular" };
   }
-  const c = Math.cos(th), s = Math.sin(th);
-  const toUV = (p: number[]) => [p[0] * c + p[1] * s, -p[0] * s + p[1] * c];
-  const fromUV = (u: number, v: number) => [u * c - v * s, u * s + v * c];
-  const toLL = (q: number[]) => [lon0 + q[0] / kx, lat0 + q[1] / ky];
-  const U = P.map(toUV);
+  const insideXY = (q: number[]) => { let ins = false; for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) { const a = ring[i], b = ring[j]; if ((a[1] > q[1]) !== (b[1] > q[1]) && q[0] < ((b[0] - a[0]) * (q[1] - a[1])) / (b[1] - a[1]) + a[0]) ins = !ins; } return ins; };
   const cluster = (vals: number[]) => {                 // valori → centri dei gruppi (file o colonne)
     const srt = [...vals].sort((a, b) => a - b); const out: number[][] = [];
     for (const x of srt) { const last = out[out.length - 1]; if (last && x - last[last.length - 1] < sp * 0.4) last.push(x); else out.push([x]); }
     return out.map((g) => g.reduce((a, x) => a + x, 0) / g.length);
   };
-  const rowV = cluster(U.map((p) => p[1])), colU = cluster(U.map((p) => p[0]));
-  const rowOf = (v: number) => rowV.reduce((bi, rv, i) => (Math.abs(rv - v) < Math.abs(rowV[bi] - v) ? i : bi), 0);
-  const nr = rowV.length;
-  // corridoio di ogni fila: tra la fila e quella accoppiata (0|1, 2|3, …); un'eventuale
-  // fila dispari finale usa il corridoio verso la penultima; fila unica → lato esterno più dentro il campo
-  const inside = (q: number[]) => { let ins = false; for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) { const a = ring[i], b = ring[j]; if ((a[1] > q[1]) !== (b[1] > q[1]) && q[0] < ((b[0] - a[0]) * (q[1] - a[1])) / (b[1] - a[1]) + a[0]) ins = !ins; } return ins; };
-  const corrV = (r: number): number => {
-    if (nr === 1) {
-      const up = rowV[0] + sp / 2, dn = rowV[0] - sp / 2;
-      const score = (v: number) => U.filter((p) => inside(fromUV(p[0], v))).length;
-      return score(up) >= score(dn) ? up : dn;
-    }
-    const g = (r % 2 === 0) ? (r + 1 < nr ? r : r - 1) : r - 1;
-    return (rowV[g] + rowV[g + 1]) / 2;
+  // lunghezza dei tratti continui di un corridoio dati gli u serviti (si spezza oltre 1,5 interassi)
+  const runsOf = (us: number[]) => {
+    const srt = [...us].sort((a, b) => a - b); const out: { lo: number; hi: number }[] = [];
+    for (const u of srt) { const last = out[out.length - 1]; if (last && u - last.hi <= sp * 1.5) last.hi = u; else out.push({ lo: u, hi: u }); }
+    return out;
   };
-  const segsUV: number[][][] = [];
-  const runsBy = new Map<number, number[]>();          // corridoio (v) → u dei pivot serviti
-  for (const p of U) {
-    const v = corrV(rowOf(p[1]));
-    segsUV.push([[p[0], p[1]], [p[0], v]]);            // raccordo ortogonale al centro del pivot
-    const key = Math.round(v * 10) / 10;
-    if (!runsBy.has(key)) runsBy.set(key, []);
-    runsBy.get(key)!.push(p[0]);
-  }
-  // tratti continui di ogni corridoio (si spezza dove mancano pivot per più di 1,5 interassi)
-  type Run = { v: number; lo: number; hi: number; id: number };
-  const runs: Run[] = [];
-  const corrKeys = [...runsBy.keys()].sort((a, b) => a - b);
-  for (const v of corrKeys) {
-    const us = runsBy.get(v)!.sort((a, b) => a - b);
-    let lo = us[0], prev = us[0];
-    for (let i = 1; i <= us.length; i++) {
-      if (i === us.length || us[i] - prev > sp * 1.5) { runs.push({ v, lo, hi: prev, id: runs.length }); if (i < us.length) lo = us[i]; }
-      if (i < us.length) prev = us[i];
-    }
-  }
-  const par = runs.map((_, i) => i);
-  const find = (i: number): number => (par[i] === i ? i : (par[i] = find(par[i])));
-  // spazi tra le colonne, dove i collegamenti trasversali passano liberi
-  const colGaps = colU.slice(1).map((u, i) => (u + colU[i]) / 2);
-  const allGaps = colGaps.length ? colGaps : [colU[0] + sp / 2];
-  for (let k = 0; k + 1 < corrKeys.length; k++) {
-    const A = runs.filter((r) => r.v === corrKeys[k]), B = runs.filter((r) => r.v === corrKeys[k + 1]);
-    for (const ra of A) for (const rb of B) {
-      if (find(ra.id) === find(rb.id)) continue;
-      const lo = Math.max(ra.lo, rb.lo) - sp / 2, hi = Math.min(ra.hi, rb.hi) + sp / 2;
-      if (lo > hi) continue;
-      const mid = (lo + hi) / 2;
-      const cand = allGaps.filter((u) => u >= lo - 1 && u <= hi + 1);
-      if (!cand.length) continue;
-      const u = cand.reduce((b, x) => (Math.abs(x - mid) < Math.abs(b - mid) ? x : b), cand[0]);
-      segsUV.push([[u, ra.v], [u, rb.v]]);
-      ra.lo = Math.min(ra.lo, u); ra.hi = Math.max(ra.hi, u); rb.lo = Math.min(rb.lo, u); rb.hi = Math.max(rb.hi, u);
-      par[find(ra.id)] = find(rb.id);
-    }
-  }
-  // componenti ancora separate: collegamento ortogonale a L tra gli estremi più vicini
-  for (;;) {
-    const roots = [...new Set(runs.map((r) => find(r.id)))];
-    if (roots.length <= 1) break;
-    let best: { a: Run; b: Run; ua: number; ub: number; d: number } | null = null;
-    for (const a of runs) for (const b of runs) {
-      if (find(a.id) !== roots[0] || find(b.id) === roots[0]) continue;
-      for (const ua of [a.lo, a.hi]) for (const ub of [b.lo, b.hi]) {
-        const d = Math.abs(ua - ub) + Math.abs(a.v - b.v);
-        if (!best || d < best.d) best = { a, b, ua, ub, d };
+  const runLen = (us: number[]) => runsOf(us).reduce((a, r) => a + (r.hi - r.lo), 0);
+
+  const build = (th: number) => {
+    const c = Math.cos(th), s = Math.sin(th);
+    const toUV = (p: number[]) => [p[0] * c + p[1] * s, -p[0] * s + p[1] * c];
+    const fromUV = (u: number, v: number) => [u * c - v * s, u * s + v * c];
+    const U = P.map(toUV);
+    const rowV = cluster(U.map((p) => p[1])), colU = cluster(U.map((p) => p[0]));
+    const nr = rowV.length;
+    const rowOf = (v: number) => rowV.reduce((bi, rv, i) => (Math.abs(rv - v) < Math.abs(rowV[bi] - v) ? i : bi), 0);
+    const rowsU: number[][] = rowV.map(() => []);
+    const rowIdx = U.map((p) => rowOf(p[1]));
+    U.forEach((p, i) => rowsU[rowIdx[i]].push(p[0]));
+    // corridoi candidati: tra due file consecutive; per una fila estrema, anche il lato esterno se dentro il campo
+    const gapV: number[] = [];                        // gap g sta tra fila g-1 e fila g (g = 0..nr): 0 e nr sono esterni
+    for (let g = 0; g <= nr; g++) gapV.push(g === 0 ? rowV[0] - sp / 2 : g === nr ? rowV[nr - 1] + sp / 2 : (rowV[g - 1] + rowV[g]) / 2);
+    const gapOk = gapV.map((v, g) => (g > 0 && g < nr) || rowsU[g === 0 ? 0 : nr - 1].every((u) => insideXY(fromUV(u, v))));
+    // DP: ogni fila r è servita dal gap r (sopra) o r+1 (sotto); costo di un gap = lunghezza dei suoi tratti
+    const cost = (g: number, upRow: boolean, dnRow: boolean) => {
+      if (!gapOk[g]) return (upRow || dnRow) ? Infinity : 0;
+      const us = [...(upRow && g > 0 ? rowsU[g - 1] : []), ...(dnRow && g < nr ? rowsU[g] : [])];
+      return us.length ? runLen(us) : 0;
+    };
+    // dp[r][a]: a = 0 → fila r usa il gap r, a = 1 → usa il gap r+1
+    const dp: number[][] = [], from: number[][] = [];
+    for (let r = 0; r < nr; r++) {
+      dp.push([Infinity, Infinity]); from.push([0, 0]);
+      for (let a = 0; a < 2; a++) {
+        if (r === 0) { dp[0][a] = a === 0 ? cost(0, false, true) : 0; continue; }
+        for (let pa = 0; pa < 2; pa++) {
+          // gap r è condiviso: fila r-1 lo usa se pa=1, fila r se a=0
+          const v = dp[r - 1][pa] + cost(r, pa === 1, a === 0);
+          if (v < dp[r][a]) { dp[r][a] = v; from[r][a] = pa; }
+        }
       }
     }
-    if (!best) break;
-    segsUV.push([[best.ua, best.a.v], [best.ub, best.a.v], [best.ub, best.b.v]]);
-    best.a.lo = Math.min(best.a.lo, best.ub); best.a.hi = Math.max(best.a.hi, best.ub);
-    par[find(best.a.id)] = find(best.b.id);
-  }
-  for (const r of runs) if (r.hi > r.lo) segsUV.push([[r.lo, r.v], [r.hi, r.v]]);
-  // accesso: prolungamento del corridoio fino al bordo (il più corto) o strada esistente più vicina
-  const ringUV = ring.map(toUV);
-  const rayHit = (o: number[], dir: number): number => {    // distanza lungo ±u fino al bordo
-    let best = Infinity;
-    for (let i = 0; i < ringUV.length - 1; i++) {
-      const a = ringUV[i], b = ringUV[i + 1];
-      if ((a[1] - o[1]) * (b[1] - o[1]) > 0 || a[1] === b[1]) continue;
-      const t = (o[1] - a[1]) / (b[1] - a[1]); const u = a[0] + t * (b[0] - a[0]);
-      const d = (u - o[0]) * dir; if (d > 0 && d < best) best = d;
+    const last = [0, 1].map((a) => dp[nr - 1][a] + cost(nr, a === 1, false));
+    const choice: number[] = new Array(nr);
+    choice[nr - 1] = last[0] <= last[1] ? 0 : 1;
+    for (let r = nr - 1; r > 0; r--) choice[r - 1] = from[r][choice[r]];
+    // assegnazioni candidate (fila → gap): esito della DP e accoppiamento classico
+    // delle file (0|1, 2|3… oppure 1|2, 3|4…); il confronto finale è sulla rete INTERA
+    const pairing = (ph: number) => rowV.map((_, r) => {
+      const g = ((r + ph) % 2 === 0) ? r + 1 : r;            // gap tra r e la fila accoppiata
+      if (g > 0 && g < nr) return g;
+      const alt = g === 0 ? 1 : nr - 1;                       // fila spaiata in testa/coda
+      if (alt > 0 && alt < nr) return alt;
+      return gapOk[g] ? g : (gapOk[0] ? 0 : nr);
+    });
+    const assigns: number[][] = [rowV.map((_, r) => r + choice[r]), pairing(0), pairing(1)]
+      .filter((a) => a.every((g) => gapOk[g]));
+    let bestRes: { segs: number[][][]; total: number } | null = null;
+    for (const rowGap of assigns) for (const refine of [false, true]) {
+      const res = finish(U.map((_, i) => rowGap[rowIdx[i]]), refine);
+      if (!bestRes || res.total < bestRes.total) bestRes = res;
     }
-    return best;
+    return bestRes ?? { segs: [], total: Infinity };
+
+  function finish(gapOf0: number[], refine: boolean): { segs: number[][][]; total: number } {
+    // rifinitura pivot per pivot (solo verso un gap già aperto e valido)
+    const gapOf = [...gapOf0];
+    const open = new Set(gapOf);
+    const usOf = (g: number) => U.filter((_, i) => gapOf[i] === g).map((p) => p[0]);
+    for (let pass = 0; refine && pass < 4; pass++) {
+      let moved = false;
+      for (let i = 0; i < n; i++) {
+        const r = rowIdx[i], g = gapOf[i], alt = g === r ? r + 1 : r;
+        if (!open.has(alt) || !gapOk[alt]) continue;
+        const before = runLen(usOf(g)) + runLen(usOf(alt));
+        gapOf[i] = alt;
+        const after = runLen(usOf(g)) + runLen(usOf(alt));
+        if (after < before - 1e-6) moved = true; else gapOf[i] = g;
+      }
+      if (!moved) break;
+    }
+    const segsUV: number[][][] = [];
+    let total = 0;
+    U.forEach((p, i) => { segsUV.push([[p[0], p[1]], [p[0], gapV[gapOf[i]]]]); total += Math.abs(p[1] - gapV[gapOf[i]]); });
+    // tratti di corridoio
+    type Run = { v: number; lo: number; hi: number; id: number };
+    const runs: Run[] = [];
+    for (const g of [...open].sort((a, b) => a - b)) for (const r of runsOf(usOf(g))) runs.push({ v: gapV[g], lo: r.lo, hi: r.hi, id: runs.length });
+    // collegamenti candidati: verticali negli spazi tra colonne (costo = Δv + allungamento dei tratti)
+    const colGaps = colU.slice(1).map((u, i) => (u + colU[i]) / 2);
+    const ext = (r: Run, u: number) => Math.max(0, r.lo - u, u - r.hi);
+    type Edge = { a: number; b: number; w: number; seg: number[][] };
+    const edges: Edge[] = [];
+    for (const A of runs) for (const B of runs) {
+      if (B.id <= A.id) continue;
+      if (Math.abs(A.v - B.v) < 1) {                        // stesso corridoio: proseguo dritto
+        const d = Math.max(0, Math.max(A.lo, B.lo) - Math.min(A.hi, B.hi));
+        const ua = A.hi < B.lo ? A.hi : A.lo, ub = A.hi < B.lo ? B.lo : B.hi;
+        edges.push({ a: A.id, b: B.id, w: d, seg: [[ua, A.v], [ub, A.v]] });
+        continue;
+      }
+      let best: Edge | null = null;
+      for (const u of colGaps) {
+        const w = Math.abs(A.v - B.v) + ext(A, u) + ext(B, u);
+        if (ext(A, u) > sp || ext(B, u) > sp) continue;
+        if (!best || w < best.w) best = { a: A.id, b: B.id, w, seg: [[Math.min(Math.max(u, A.lo), A.hi), A.v], [u, A.v], [u, B.v], [Math.min(Math.max(u, B.lo), B.hi), B.v]] };
+      }
+      if (best) edges.push(best);
+      // ripiego: collegamento a L tra gli estremi (può attraversare cerchi: costo maggiorato)
+      for (const ua of [A.lo, A.hi]) for (const ub of [B.lo, B.hi]) edges.push({ a: A.id, b: B.id, w: (Math.abs(ua - ub) + Math.abs(A.v - B.v)) * 3, seg: [[ua, A.v], [ub, A.v], [ub, B.v]] });
+    }
+    edges.sort((x, y) => x.w - y.w);
+    const par = runs.map((_, i) => i);
+    const find = (i: number): number => (par[i] === i ? i : (par[i] = find(par[i])));
+    for (const e of edges) {
+      if (find(e.a) === find(e.b)) continue;
+      par[find(e.a)] = find(e.b);
+      segsUV.push(e.seg);
+      for (let k = 0; k + 1 < e.seg.length; k++) total += Math.hypot(e.seg[k + 1][0] - e.seg[k][0], e.seg[k + 1][1] - e.seg[k][1]);
+    }
+    for (const r of runs) if (r.hi > r.lo) { segsUV.push([[r.lo, r.v], [r.hi, r.v]]); total += r.hi - r.lo; }
+    // accesso più corto: prolungamento lungo il corridoio fino al bordo, o strada esistente
+    const ringUV = ring.map(toUV);
+    const rayHit = (o: number[], dir: number): number => {
+      let best = Infinity;
+      for (let i = 0; i < ringUV.length - 1; i++) {
+        const a = ringUV[i], b = ringUV[i + 1];
+        if ((a[1] - o[1]) * (b[1] - o[1]) > 0 || a[1] === b[1]) continue;
+        const t = (o[1] - a[1]) / (b[1] - a[1]); const u = a[0] + t * (b[0] - a[0]);
+        const d = (u - o[0]) * dir; if (d > 0 && d < best) best = d;
+      }
+      return best;
+    };
+    let acc: { from: number[]; to: number[]; d: number } | null = null;
+    for (const r of runs) for (const [u, dir] of [[r.lo, -1], [r.hi, 1]] as [number, number][]) {
+      const d = rayHit([u, r.v], dir);
+      if (isFinite(d) && (!acc || d < acc.d)) acc = { from: [u, r.v], to: [u + dir * d, r.v], d };
+    }
+    for (const line of extRoads) for (const r of runs) for (const u of [r.lo, r.hi]) {
+      const q = nearestOnLine(toLL(fromUV(u, r.v)), line);
+      if (q.dist < 5000 && q.dist < (acc ? acc.d : Infinity)) acc = { from: [u, r.v], to: toUV(xy(q.pt)), d: q.dist };
+    }
+    if (acc) { segsUV.push([acc.from, acc.to]); total += acc.d; }
+    return { segs: segsUV.map((sg) => sg.map((q) => toLL(fromUV(q[0], q[1])))), total };
+  }
   };
-  let acc: { from: number[]; to: number[]; d: number } | null = null;
-  for (const r of runs) for (const [u, dir] of [[r.lo, -1], [r.hi, 1]] as [number, number][]) {
-    const d = rayHit([u, r.v], dir);
-    if (isFinite(d) && (!acc || d < acc.d)) acc = { from: [u, r.v], to: [u + dir * d, r.v], d };
-  }
-  for (const line of ext) for (const r of runs) for (const u of [r.lo, r.hi]) {
-    const o = fromUV(u, r.v);
-    const q = nearestOnLine(toLL(o), line.map(toLL));
-    if (q.dist < (acc ? acc.d : Infinity) && q.dist < 5000) acc = { from: [u, r.v], to: toUV(xy(q.pt)), d: q.dist };
-  }
-  if (acc) segsUV.push([acc.from, acc.to]);
-  return { segs: segsUV.map((sg) => sg.map((q) => toLL(fromUV(q[0], q[1])))) };
+  // corridoi lungo le file o lungo le colonne: vince la rete più corta
+  const A = build(th0), B = build(th0 + Math.PI / 2);
+  const best = A.total <= B.total ? A : B;
+  return { segs: best.segs, km: best.total / 1000 };
 }
 // Punto più vicino a p su una polilinea (in coordinate locali metriche).
 function nearestOnLine(p: number[], line: number[][]): { pt: number[]; dist: number } {
