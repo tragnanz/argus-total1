@@ -3,6 +3,15 @@
 @tailwind utilities;
 
 html, body { height: 100%; }
+
+/* ---------- Scala dell'interfaccia ----------
+   --ui-scale riduce in blocco widget, pannelli, testi e controlli Leaflet
+   (0.8 = il vecchio 80% di zoom del browser diventa il 100%). Si applica con
+   `zoom` allo strato overlay, non alla mappa: Leaflet a 1:1 tiene giusti
+   click, disegno e coordinate. Le misure in vh/vw dentro lo strato scalato
+   vanno divise per --ui-scale, perché anche loro vengono ridotte. */
+:root { --ui-scale: 0.8; }
+.overlay-layer, .ui-scale, .leaflet-control-container .leaflet-control { zoom: var(--ui-scale); }
 body {
   @apply bg-brand-darker text-brand-dark antialiased;
   font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;

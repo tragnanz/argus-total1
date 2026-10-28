@@ -32,7 +32,7 @@ export default function LoginPage() {
 
   return (
     <main className="min-h-screen flex items-center justify-center p-4" style={{ background: "#0f2a1c" }}>
-      <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
+      <div className="ui-scale w-full max-w-sm bg-white rounded-2xl shadow-xl p-6">
         <div className="flex items-center gap-2 mb-5">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold" style={{ background: "#123524" }}>A</div>
           <div>

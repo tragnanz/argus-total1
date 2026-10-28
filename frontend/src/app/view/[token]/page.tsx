@@ -150,7 +150,7 @@ export default function ViewPage({ params }: { params: { token: string } }) {
         </div>
 
         {/* Pannello informazioni (richiudibile) */}
-        <div className="absolute top-[4.5rem] left-4 w-[360px] max-w-[calc(100vw_-_2rem)] max-h-[80vh] widget flex flex-col overflow-hidden z-30">
+        <div className="absolute top-[4.5rem] left-4 w-[360px] max-w-[calc(100vw/var(--ui-scale)_-_2rem)] max-h-[calc(80vh/var(--ui-scale))] widget flex flex-col overflow-hidden z-30">
           <div className="px-4 py-2.5 flex items-center justify-between border-b border-black/5">
             <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide truncate">{t("Informazioni progetto")}</div>
             <button onClick={() => setInfoOpen((o) => !o)} title={infoOpen ? "–" : "+"}

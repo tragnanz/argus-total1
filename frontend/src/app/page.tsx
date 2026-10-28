@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.164";
+const REV = "v0.6.165";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3358,7 +3358,7 @@ export default function Page() {
 
       {/* Pannellino di controllo del disegno/tracciatura (snap ai confini dei poligoni attivo). */}
       {drawing && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[500] widget px-2 py-1.5 flex items-center gap-2 pointer-events-auto">
+        <div className="ui-scale fixed top-20 left-1/2 -translate-x-1/2 z-[500] widget px-2 py-1.5 flex items-center gap-2 pointer-events-auto">
           <span className="text-[11px] text-sage-dark px-1 hidden sm:inline">{t("Disegno in corso — aggancia ai bordi/vertici")}</span>
           <button className="btn-ghost" title={t("Annulla ultimo punto")} onClick={() => mapApi.current?.drawUndo()}>↶ {t("Ultimo punto")}</button>
           <button className="btn-primary" title={t("Concludi il tracciato")} onClick={() => mapApi.current?.drawFinish()}>{t("Fine")}</button>
@@ -3493,7 +3493,7 @@ export default function Page() {
           </div>
 
           {/* 3 — ricerca: colonna centrale della griglia, quindi centrata sullo schermo */}
-          <form onSubmit={geocode} className="nabu-cluster gap-2 pl-1.5 pr-1.5 py-1.5 w-[min(28rem,42vw)] min-w-[220px] justify-self-center">
+          <form onSubmit={geocode} className="nabu-cluster gap-2 pl-1.5 pr-1.5 py-1.5 w-[min(28rem,calc(42vw/var(--ui-scale)))] min-w-[220px] justify-self-center">
             <button type="button" onClick={() => mapApi.current?.locate()}
               className="bg-nabu-accent text-white rounded-[9px] w-9 h-9 grid place-items-center shrink-0 hover:bg-nabu-accentDark"
               title={t("Usa la mia posizione (GPS)")} aria-label={t("La mia posizione")}><IcoCross /></button>
@@ -3576,14 +3576,14 @@ export default function Page() {
         )}
 
         {/* Colonna sinistra: pannello Progetto + widget Proprietà (impilati) */}
-        <div className="absolute top-[4.5rem] left-4 bottom-[6.5rem] w-[440px] max-w-[calc(100vw_-_2rem)] flex flex-col gap-3 z-30 pointer-events-none">
+        <div className="absolute top-[4.5rem] left-4 bottom-[6.5rem] w-[440px] max-w-[calc(100vw/var(--ui-scale)_-_2rem)] flex flex-col gap-3 z-30 pointer-events-none">
         {leftMin ? (
           <button onClick={() => setLeftMin(false)} title={t("Espandi il pannello Progetto")}
             className="pointer-events-auto self-start widget px-3 py-2 flex items-center gap-2 text-sm text-brand-darker hover:bg-black/5">
             <IcoExpand /> {t("Progetto")}
           </button>
         ) : (
-        <div className="pointer-events-auto w-full max-h-[52vh] shrink-0 widget flex flex-col overflow-hidden">
+        <div className="pointer-events-auto w-full max-h-[calc(52vh/var(--ui-scale))] shrink-0 widget flex flex-col overflow-hidden">
           <div className="flex items-center justify-between px-3 pt-2 shrink-0">
             <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Progetto")}</span>
             <button onClick={() => setLeftMin(true)} title={t("Riduci a icona")}
@@ -3849,7 +3849,7 @@ export default function Page() {
             flusso, in basso a sinistra. «absolute» fa già da riferimento per il
             pulsante di chiusura. */}
         {!rightMin && (
-        <div className="absolute top-[4.5rem] right-[7rem] w-[440px] max-w-[calc(100vw_-_9rem)] max-h-[78vh] widget flex flex-col overflow-hidden">
+        <div className="absolute top-[4.5rem] right-[7rem] w-[440px] max-w-[calc(100vw/var(--ui-scale)_-_9rem)] max-h-[calc(78vh/var(--ui-scale))] widget flex flex-col overflow-hidden">
           {/* Il comando di chiusura galleggia nell'angolo invece di occupare una
               riga propria: la riga dedicata lasciava una fascia vuota sopra il
               primo titolo. */}
@@ -4841,7 +4841,7 @@ export default function Page() {
         )}
 
         {msg && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 pill-dark px-4 py-2 text-sm max-w-[80vw]">
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 pill-dark px-4 py-2 text-sm max-w-[calc(80vw/var(--ui-scale))]">
             {msg} <button className="ml-2 opacity-70" onClick={() => setMsg("")}>✕</button>
           </div>
         )}
@@ -4849,7 +4849,7 @@ export default function Page() {
         {/* Profilo altimetrico del canale */}
         {profileCanal != null && canals[profileCanal] && (
           <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40" onClick={() => setProfileCanal(null)}>
-            <div className="widget p-4 w-[640px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+            <div className="widget p-4 w-[640px] max-w-[calc(92vw/var(--ui-scale))]" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-semibold text-brand-darker">{t("Profilo elevazione")} — {t("Canale")} {profileCanal + 1}</h3>
                 <button className="text-sage-dark hover:text-danger" onClick={() => setProfileCanal(null)}>✕</button>
@@ -4869,7 +4869,7 @@ export default function Page() {
         {/* Modale gestione utenti e crediti (solo admin) */}
         {showUsers && me?.is_admin && (
           <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={() => setShowUsers(false)}>
-            <div className="w-full max-w-2xl max-h-[85vh] bg-white rounded-2xl shadow-xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="w-full max-w-2xl max-h-[calc(85vh/var(--ui-scale))] bg-white rounded-2xl shadow-xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
               <div className="px-4 py-3 flex items-center justify-between border-b border-black/5">
                 <div className="font-semibold text-brand-darker">{t("Gestione utenti e crediti")}</div>
                 <button onClick={() => setShowUsers(false)} className="text-sage-dark hover:text-brand text-xl leading-none px-2">×</button>
