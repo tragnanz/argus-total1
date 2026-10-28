@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.174";
+const REV = "v0.6.175";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1301,6 +1301,9 @@ export default function Page() {
   // Selezione delle tubazioni a due tempi, come per i pivot: primo clic = gruppo,
   // secondo clic = la singola tubazione, che entra in modifica con i suoi vertici.
   const [pipeSel, setPipeSel] = useState<{ mode: "none" | "group" | "single"; idx: number }>({ mode: "none", idx: -1 });
+  // gruppi di strade aperti (albero Livelli e pannello Strade): chiusi di default
+  const [openRoadGroups, setOpenRoadGroups] = useState<Set<string>>(new Set());
+  const toggleRoadGroup = (k: string) => setOpenRoadGroups((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const [openFolders, setOpenFolders] = useState({ campi: true, canali: true, strade: true, invasi: true, pivot: true }); // cartelle del pannello Livelli
   const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
   // Livello Strade (linee, con spessore) disegnabile/importabile: i pivot le rispettano.
@@ -1645,6 +1648,10 @@ export default function Page() {
   function toggleCanalHidden(i: number) { setCanals((cs) => { const arr = cs.map((c, k) => k === i ? { ...c, hidden: !c.hidden } : c); renderCanals(arr); return arr; }); }
   function toggleWaterHidden(i: number) { setWatercourses((ws) => { const arr = ws.map((w, k) => k === i ? { ...w, hidden: !w.hidden } : w); renderWater(arr); return arr; }); }
   function removeWater(i: number) { setWatercourses((ws) => { const arr = ws.filter((_, k) => k !== i); renderWater(arr); return arr; }); }
+  // Operazioni su un GRUPPO di strade (per id): visibilità, larghezza, rimozione.
+  function setRoadsHiddenByIds(ids: Set<string>, h: boolean) { setRoads((rs) => rs.map((r) => (ids.has(r.id) ? { ...r, hidden: h } : r))); }
+  function setRoadsWidthByIds(ids: Set<string>, w: number) { setRoads((rs) => rs.map((r) => (ids.has(r.id) ? { ...r, width_m: w } : r))); }
+  function removeRoadsByIds(ids: Set<string>) { setRoads((rs) => rs.filter((r) => !ids.has(r.id))); }
   function toggleRoadHidden(i: number) { setRoads((rs) => rs.map((r, k) => k === i ? { ...r, hidden: !r.hidden } : r)); }
   function togglePivotFieldHidden(fid: number) { setHiddenPivotFields((s) => { const n = new Set(s); if (n.has(fid)) n.delete(fid); else n.add(fid); return n; }); }
   // ---- Tubazioni (oggetti): visibilità, rimozione e riassegnazione per campo ----
@@ -3468,6 +3475,32 @@ export default function Page() {
       </li>
     );
   }
+  // Gruppo di strade nell'albero Livelli: UNA riga (occhio, zoom, rimuovi tutto),
+  // espandibile per vedere i singoli tratti.
+  function roadGroupRow(gkey: string, items: { r: RoadL; i: number }[]) {
+    if (!items.length) return null;
+    const ids = new Set(items.map((x) => x.r.id));
+    const anyVis = items.some((x) => !x.r.hidden);
+    const km = items.reduce((a, x) => a + lineLenKm(x.r.coords), 0);
+    const open = openRoadGroups.has(gkey);
+    return (
+      <li key={gkey}>
+        <div className="flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5">
+          <button className="text-sage-dark w-3 text-[10px]" onClick={() => toggleRoadGroup(gkey)}>{open ? "▾" : "▸"}</button>
+          <button className="text-brand-mid w-4" title={t("Mostra/Nascondi tutto")} onClick={() => setRoadsHiddenByIds(ids, anyVis)}>{anyVis ? "◉" : "○"}</button>
+          <button className="flex-1 text-left leading-tight" title={t("Zoom")} onClick={() => zoomToCoords(items.flatMap((x) => x.r.coords))}>
+            {t("Strade")} · {items.length} {t("tratti")} · {uKm(km)}
+          </button>
+          <button className="text-danger w-4" title={t("Rimuovi tutte")} onClick={() => removeRoadsByIds(ids)}>✕</button>
+        </div>
+        {open && (
+          <ul className="space-y-0.5 mt-0.5 ml-4">
+            {items.map(({ r, i }) => objRow("road", r.id, `r${r.id}`, !!r.hidden, () => toggleRoadHidden(i), <>{t("Strada")} {i + 1} · {uM(r.width_m)}</>, () => zoomToCoords(r.coords), () => removeRoad(i)))}
+          </ul>
+        )}
+      </li>
+    );
+  }
   // Cartella del pannello Livelli (intestazione con freccia + occhio + conteggio).
   function renderLayerFolder(key: "canali" | "strade" | "invasi" | "pivot", label: string, count: number, anyVisible: boolean, onToggleAll: () => void, body: React.ReactNode) {
     const open = openFolders[key];
@@ -3646,7 +3679,7 @@ export default function Page() {
               </li>
             ))}
             {ownedCanals.map(({ c, i }) => objRow("canal", i, `c${i}`, !!c.hidden, () => toggleCanalHidden(i), <>{t("Canale")} {i + 1} · {uM(c.length_m)}</>, () => zoomToCoords(c.geojson.coordinates), () => removeCanal(i)))}
-            {ownedRoads.map(({ r, i }) => objRow("road", r.id, `r${r.id}`, !!r.hidden, () => toggleRoadHidden(i), <>{t("Strada")} {i + 1} · {uM(r.width_m)}</>, () => zoomToCoords(r.coords), () => removeRoad(i)))}
+            {roadGroupRow(`f${f.id}`, ownedRoads)}
             {ownedWater.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{w.kind} {i + 1}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
             {ownedPivN > 0 && objRow("pivot", f.id, `pv${f.id}`, hiddenPivotFields.has(f.id), () => togglePivotFieldHidden(f.id),
               <>{t("Pivot")} · {ownedPivN} · {uHa(st.irrHa)}<span className="text-sage-dark"> · {t("mediana")} {uHa(st.medHa, 1)} / {uM(st.medR)}</span></>,
@@ -3970,7 +4003,7 @@ export default function Page() {
                   <p className="text-[11px] text-sage-dark mb-1">{t("Trascinali su un campo per assegnarli.")}</p>
                   <ul className="space-y-0.5">
                     {cItems.map(({ c, i }) => objRow("canal", i, `c${i}`, !!c.hidden, () => toggleCanalHidden(i), <>{t("Canale")} {i + 1} · {uM(c.length_m)}</>, () => zoomToCoords(c.geojson.coordinates), () => removeCanal(i)))}
-                    {rItems.map(({ r, i }) => objRow("road", r.id, `r${r.id}`, !!r.hidden, () => toggleRoadHidden(i), <>{t("Strada")} {i + 1} · {uM(r.width_m)}</>, () => zoomToCoords(r.coords), () => removeRoad(i)))}
+                    {roadGroupRow("unassigned", rItems)}
                     {wItems.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{w.kind} {i + 1}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
                     {pGroups.map((g) => objRow("pivot", g.fid, `pg${g.fid}`, hiddenPivotFields.has(g.fid), () => togglePivotFieldHidden(g.fid), <>{g.name} · {g.n} pivot</>, () => {}, () => removePivotsOfField(g.fid)))}
                     {tGroups.map((g) => objRow("pipe", g.fid, `tg${g.fid}`, hiddenPipeFields.has(g.fid), () => togglePipeFieldHidden(g.fid), <>{g.name} · {g.n} {t("tubazioni")}</>, () => zoomToPipesOfField(g.fid), () => removePipesOfField(g.fid)))}
@@ -4727,9 +4760,31 @@ export default function Page() {
                 ? null
                 : (
                   <ul className="space-y-1 mt-1">
-                    {roads.map((r, i) => (
+                    {([["service", t("Strade di servizio")], ["osm", t("Strade OpenStreetMap")], ["existing", t("Strade esistenti")]] as [string, string][]).map(([kind, label]) => {
+                      const items = roads.map((r, i) => ({ r, i })).filter((x) => (x.r.kind ?? "existing") === kind);
+                      if (!items.length) return null;
+                      const ids = new Set(items.map((x) => x.r.id));
+                      const gk = `panel-${kind}`;
+                      const open = openRoadGroups.has(gk);
+                      const widths = [...new Set(items.map((x) => Math.round(x.r.width_m)))];
+                      const km = items.reduce((a, x) => a + lineLenKm(x.r.coords), 0);
+                      return (
+                        <li key={gk}>
+                          <div className="flex items-center justify-between gap-2 text-[11px] text-brand-darker bg-panel rounded px-1.5 py-1">
+                            <button className="text-sage-dark w-3 text-[10px]" onClick={() => toggleRoadGroup(gk)}>{open ? "▾" : "▸"}</button>
+                            <button className="truncate flex-1 text-left font-medium" onClick={() => toggleRoadGroup(gk)}>{label} · {items.length} {t("tratti")} · {uKm(km)}</button>
+                            <input type="number" min={1} max={200} step={1} value={widths.length === 1 ? widths[0] : ""} placeholder="–" title={t("Spessore (m)")}
+                              onChange={(e) => { const w = Number(e.target.value); if (w > 0) setRoadsWidthByIds(ids, w); }} className="field-input w-16 py-0.5 shrink-0" />
+                            <span className="flex gap-1 shrink-0">
+                              <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(label), items.map(({ i, r }) => ({ name: `Strada ${i + 1}`, geom: { type: "LineString" as const, coordinates: r.coords } })))}>⤓</button>
+                              <button className="text-danger" title={t("Rimuovi tutte")} onClick={() => removeRoadsByIds(ids)}>✕</button>
+                            </span>
+                          </div>
+                          {open && (
+                            <ul className="space-y-1 mt-1 ml-4">
+                              {items.map(({ r, i }) => (
                       <li key={r.id} className="flex items-center justify-between gap-2 text-[11px] text-sage-dark">
-                        <span className="truncate flex-1">{t("Strada")} {i + 1} · {uKm(lineLenKm(r.coords))}{r.kind === "service" ? ` · ${t("servizio")}` : r.kind === "osm" ? " · OSM" : ""}</span>
+                        <span className="truncate flex-1">{t("Strada")} {i + 1} · {uKm(lineLenKm(r.coords))}</span>
                         <input type="number" min={1} max={200} step={1} value={Math.round(r.width_m)} title={t("Spessore (m)")}
                           onChange={(e) => setRoadWidthAt(i, Number(e.target.value))} className="field-input w-16 py-0.5 shrink-0" />
                         <span className="flex gap-1 shrink-0">
@@ -4737,7 +4792,12 @@ export default function Page() {
                           <button className="text-danger" title={t("Rimuovi")} onClick={() => removeRoad(i)}>✕</button>
                         </span>
                       </li>
-                    ))}
+                              ))}
+                            </ul>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
             </div>
