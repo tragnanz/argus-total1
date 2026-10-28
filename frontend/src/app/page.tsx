@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.170";
+const REV = "v0.6.171";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1448,6 +1448,15 @@ export default function Page() {
     const first = pivotLines.find((l) => l.kind === "pipe" && (l.field ?? -1) === fid);
     if (first?.coords?.length) zoomToCoords(first.coords);
   }
+  // Zone escluse per pendenza (tratteggio rosso) dei campi visibili con layout.
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fcs = fields.filter((f) => !f.hidden && f.layGeo).map((f) => ({ type: "FeatureCollection" as const,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      features: ((f.layGeo as any).features || []).filter((ft: any) => ft?.properties?.kind === "excluded") }))
+      .filter((fc) => fc.features.length);
+    mapApi.current?.setExcluded(fcs as GeoJSONFC[]);
+  }, [fields]);
   function removePivotsOfField(fid: number) {
     const mp = pivots.filter((p) => p.field !== fid);
     const ml = pivotLines.filter((l) => l.field !== fid);
@@ -4414,6 +4423,18 @@ export default function Page() {
                 <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
                   {t("Rete totale")}: <b>{uKm(agg.pipe / 1000, 1)}</b>
                 </div>
+                {(() => {
+                  const lf = fields.filter((f) => f.lay && Number((f.lay as { excluded_slope_ha?: number }).excluded_slope_ha) > 0);
+                  if (!lf.length) return null;
+                  const ha = lf.reduce((s, f) => s + Number((f.lay as { excluded_slope_ha?: number }).excluded_slope_ha), 0);
+                  const pm = Math.round(Number(lf[0].lay!.slope_max_pct) * 10);
+                  return (
+                    <div className="text-xs rounded-lg p-2 leading-relaxed flex items-center gap-2 border border-danger/30 text-danger"
+                      style={{ background: "repeating-linear-gradient(45deg, rgba(217,45,32,.10) 0 2px, transparent 2px 6px)" }}>
+                      <span>{t("Zone escluse per pendenza oltre {p}‰: {a}", { p: pm, a: uHa(ha) })}</span>
+                    </div>
+                  );
+                })()}
               </div>
             )}
             </>)}

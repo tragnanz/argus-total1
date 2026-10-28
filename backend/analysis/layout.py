@@ -556,6 +556,12 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
             clipped.append(f)
     features = clipped
 
+    # --- ZONE ESCLUSE PER PENDENZA: pixel del DEM dentro il campo con pendenza
+    # oltre il massimo, cioè le posizioni dove il reticolo rifiuta un centro
+    # pivot. Restituite come poligoni (kind "excluded") da tratteggiare in mappa.
+    excl_feats, excluded_ha = _excluded_slope(g, ring_utm, slope_max, to_wgs)
+    features.extend(excl_feats)
+
     minx, miny, maxx, maxy = g["minx"], g["miny"], g["maxx"], g["maxy"]
     corners = [(minx, miny), (maxx, miny), (maxx, maxy), (minx, maxy)]
     lls = [to_wgs.transform(x, y) for x, y in corners]
@@ -573,6 +579,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         "n_pivots": n + len(fill), "n_pivots_full": n, "n_pivots_fill": len(fill), "min_pivot_pct": round(min_pct * 100), "fill_full": fill_full,
         "grid_shift_m": [round(grid_shift[0], 1), round(grid_shift[1], 1)], "n_pumps": n_pumps,
         "net_ha": net_ha, "field_ha": field_ha, "coverage_pct": coverage,
+        "excluded_slope_ha": excluded_ha,
         "gross_block_ha": gross_block_ha, "packing_pct": packing_pct,
         "pivot_ha": round(pivot_ha, 1),
         "pipe_total_m": pipe_total, "pipe_max_m": pipe_max,
@@ -588,6 +595,41 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     }
     return {"geojson": {"type": "FeatureCollection", "features": features},
             "bounds": bounds, "meta": meta}
+
+
+def _excluded_slope(g, ring_utm, slope_max, to_wgs, min_px: int = 4):
+    """Poligoni (WGS84) delle zone del campo con pendenza oltre slope_max (%), e
+    loro superficie in ha. Le macchie sotto `min_px` pixel non si disegnano
+    (rumore del DEM) ma contano nella superficie."""
+    from matplotlib.path import Path
+    try:
+        from rasterio.features import shapes
+        from rasterio.transform import Affine
+        from scipy import ndimage
+    except Exception:  # noqa: BLE001  (dipendenze opzionali: niente tratteggio)
+        return [], 0.0
+    hp, wp, res = g["hp"], g["wp"], g["res"]
+    ys, xs = np.mgrid[0:hp, 0:wp]
+    X = g["minx"] + (xs + 0.5) * res
+    Y = g["top"] - (ys + 0.5) * res
+    inside = Path(ring_utm).contains_points(np.c_[X.ravel(), Y.ravel()]).reshape(hp, wp)
+    slope = np.nan_to_num(g["slope"], nan=0.0)
+    bad = inside & (slope > slope_max)
+    excluded_ha = round(float(bad.sum()) * res * res / 10000.0, 1)
+    if not bad.any():
+        return [], 0.0
+    lab, n = ndimage.label(bad)
+    sizes = ndimage.sum(bad, lab, range(1, n + 1))
+    keep = np.isin(lab, 1 + np.flatnonzero(sizes >= min_px))
+    feats = []
+    tr = Affine(res, 0, g["minx"], 0, -res, g["top"])
+    for geom, val in shapes(keep.astype("uint8"), mask=keep, transform=tr):
+        if val != 1:
+            continue
+        rings = [[list(to_wgs.transform(x, y)) for x, y in r] for r in geom["coordinates"]]
+        feats.append({"type": "Feature", "properties": {"kind": "excluded", "reason": "slope"},
+                      "geometry": {"type": "Polygon", "coordinates": rings}})
+    return feats, excluded_ha
 
 
 def _ring_area(ring_xy) -> float:

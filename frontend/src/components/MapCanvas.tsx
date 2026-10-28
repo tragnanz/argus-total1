@@ -41,6 +41,7 @@ export type MapHandle = {
   clearOverlay: (key: OverlayKey) => void;
   showLayouts: (items: { id: number; fc: GeoJSONFC }[], opts?: { measures?: boolean }) => void;
   clearLayout: () => void;
+  setExcluded: (fcs: GeoJSONFC[]) => void;
   showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs, pipeSel?: PivotSel, waterLines?: number[][][]) => void;
   editPipe: (coords: number[][], cb: (coords: number[][]) => void, snap?: number[][], snapLines?: number[][][],
     labels?: { pivot: string; canal: string; free: string }) => void;
@@ -158,6 +159,10 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const overlaysRef = useRef<Record<OverlayKey, L.ImageOverlay | null>>(
     { index: null, dem: null, suitability: null });
   const layoutRef = useRef<L.LayerGroup | null>(null);
+  // Zone escluse dal layout (pendenza oltre il massimo): tratteggio rosso su un
+  // renderer SVG proprio, che ospita il <pattern> del tratteggio.
+  const exclRef = useRef<L.LayerGroup | null>(null);
+  const exclRendererRef = useRef<L.SVG | null>(null);
   const pivotsRef = useRef<L.LayerGroup | null>(null);
   const pivotBgRef = useRef<(() => void) | null>(null);
   const macroRef = useRef<L.LayerGroup | null>(null);
@@ -214,6 +219,12 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     canalRef.current = L.layerGroup().addTo(map);
     canalEditRef.current = L.layerGroup().addTo(map);
     pendingRef.current = L.layerGroup().addTo(map);
+    // pannello sotto gli overlay (400): il tratteggio sta sotto campi e pivot e
+    // non intercetta i clic
+    const exclPane = map.createPane("argusExcluded");
+    exclPane.style.zIndex = "390"; exclPane.style.pointerEvents = "none";
+    exclRendererRef.current = L.svg({ padding: 0.5, pane: "argusExcluded" });
+    exclRef.current = L.layerGroup().addTo(map);
     layoutRef.current = L.layerGroup().addTo(map);
     roadsRef.current = L.layerGroup().addTo(map);
     pivotsRef.current = L.layerGroup().addTo(map);
@@ -549,6 +560,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         let lb: L.LatLngBounds | null = null;
         for (const it of items) {
           const gj = L.geoJSON(it.fc as never, {
+            filter: (f) => f?.properties?.kind !== "excluded",
             style: (f) => {
               const k = f?.properties?.kind;
               if (k === "pivot") {
@@ -584,6 +596,34 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           try { const gb = gj.getBounds(); if (gb.isValid()) lb = lb ? lb.extend(gb) : L.latLngBounds(gb.getSouthWest(), gb.getNorthEast()); } catch { /* */ }
         }
         if (lb && lb.isValid()) map.fitBounds(lb, { padding: [40, 40] });
+      },
+      setExcluded(fcs) {
+        const map = mapRef.current; const g = exclRef.current; const rnd = exclRendererRef.current;
+        if (!map || !g || !rnd) return;
+        g.clearLayers();
+        for (const fc of fcs) {
+          g.addLayer(L.geoJSON(fc as never, {
+            renderer: rnd, interactive: false, pane: "argusExcluded",
+            style: () => ({ color: "#d92d20", weight: 0.8, opacity: 0.55, fillColor: "url(#argus-hatch-red)", fillOpacity: 1 }),
+          } as L.GeoJSONOptions));
+        }
+        // Il contenitore SVG del renderer esiste solo dopo il primo poligono:
+        // il pattern del tratteggio si aggiunge lì, una volta sola.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const svg: SVGSVGElement | undefined = (rnd as any)._container;
+        if (svg && !svg.querySelector("#argus-hatch-red")) {
+          const NS = "http://www.w3.org/2000/svg";
+          const defs = document.createElementNS(NS, "defs");
+          const pat = document.createElementNS(NS, "pattern");
+          pat.setAttribute("id", "argus-hatch-red"); pat.setAttribute("patternUnits", "userSpaceOnUse");
+          pat.setAttribute("width", "7"); pat.setAttribute("height", "7"); pat.setAttribute("patternTransform", "rotate(45)");
+          const bg = document.createElementNS(NS, "rect");
+          bg.setAttribute("width", "7"); bg.setAttribute("height", "7"); bg.setAttribute("fill", "#d92d20"); bg.setAttribute("fill-opacity", "0.08");
+          const ln = document.createElementNS(NS, "line");
+          ln.setAttribute("x1", "0"); ln.setAttribute("y1", "0"); ln.setAttribute("x2", "0"); ln.setAttribute("y2", "7");
+          ln.setAttribute("stroke", "#d92d20"); ln.setAttribute("stroke-width", "1.6"); ln.setAttribute("stroke-opacity", "0.5");
+          pat.appendChild(bg); pat.appendChild(ln); defs.appendChild(pat); svg.insertBefore(defs, svg.firstChild);
+        }
       },
       clearLayout() { layoutRef.current?.clearLayers(); pivotsRef.current?.clearLayers(); pivotBgRef.current = null; },
       showPivots(model, sel, cbs, pipeSel, waterLines) {

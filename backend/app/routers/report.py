@@ -314,6 +314,9 @@ def project_report(body: ReportIn, client=Depends(get_client), db: Session = Dep
     from analysis.layout import compute_layout
     try:
         lay = compute_layout(client, geom, layout_params)
+        # le zone escluse (tratteggio in mappa) non vanno nella tavola stampata
+        lay["geojson"]["features"] = [f for f in lay["geojson"]["features"]
+                                      if (f.get("properties") or {}).get("kind") != "excluded"]
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Errore layout per la scheda: {e}")
 
