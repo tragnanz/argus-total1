@@ -12,6 +12,8 @@ export type PivotItem = { lat: number; lng: number; r: number; conn?: string; fi
   q?: number; p?: number };   // portata (l/s) e pressione (bar) richieste dal pivot
 export type PivotModel = { pivots: PivotItem[]; lines: { kind: string; coords: number[][]; dn?: number[]; qs?: number[] }[] };
 export type PivotSel = { mode: "none" | "group" | "single"; idx: number };
+// Stato dello strumento «cerchi»: cerchi fissati (n, ettari totali) e cerchio in corso (r, ha).
+export type CircleInfo = { n: number; totHa: number; r: number | null; ha: number | null };
 export type PivotCbs = {
   onClick: (idx: number) => void;
   onMove: (idx: number, lat: number, lng: number) => void;
@@ -59,6 +61,10 @@ export type MapHandle = {
   locate: () => void;
   startMeasure: (cb: (text: string) => void) => void;
   stopMeasure: () => void;
+  // Cerchi dal centro: simulazione rapida di pivot (non crea macchine, solo misura).
+  startCircles: (cb: (info: CircleInfo) => void) => void;
+  stopCircles: () => void;
+  clearCircles: () => void;
   startElevation: (cb: (coords: number[][]) => void) => void;
   stopElevation: () => void;
   setElevationLabels: (labels: string[]) => void;
@@ -174,6 +180,12 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const measuringRef = useRef(false);
   const mptsRef = useRef<L.LatLng[]>([]);
   const mcbRef = useRef<((text: string) => void) | null>(null);
+  const circlesRef = useRef<L.LayerGroup | null>(null);
+  const circlingRef = useRef(false);
+  const ccenterRef = useRef<L.LatLng | null>(null);
+  const chovRef = useRef<L.LatLng | null>(null);
+  const cdoneRef = useRef<{ c: L.LatLng; r: number }[]>([]);
+  const ccbRef = useRef<((info: CircleInfo) => void) | null>(null);
   const elevRef = useRef<L.LayerGroup | null>(null);
   const elevingRef = useRef(false);
   const eptsRef = useRef<L.LatLng[]>([]);
@@ -206,11 +218,23 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     roadsRef.current = L.layerGroup().addTo(map);
     pivotsRef.current = L.layerGroup().addTo(map);
     measureRef.current = L.layerGroup().addTo(map);
+    circlesRef.current = L.layerGroup().addTo(map);
     elevRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
     // Clic sulla mappa: misura (se attiva) oppure selezione punto (presa/finale).
     map.on("click", (e: L.LeafletMouseEvent) => {
+      if (circlingRef.current) {
+        // Primo clic: centro. Secondo clic: fissa il raggio e riparte da capo.
+        if (!ccenterRef.current) { ccenterRef.current = e.latlng; chovRef.current = e.latlng; }
+        else {
+          const r = map.distance(ccenterRef.current, e.latlng);
+          if (r >= 1) cdoneRef.current.push({ c: ccenterRef.current, r });
+          ccenterRef.current = null; chovRef.current = null;
+        }
+        _redrawCircles();
+        return;
+      }
       if (measuringRef.current) { mptsRef.current.push(e.latlng); _redrawMeasure(); return; }
       if (elevingRef.current) {
         eptsRef.current.push(e.latlng);
@@ -228,6 +252,11 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
       pickCbRef.current = null;
       try { map.getContainer().style.cursor = ""; } catch { /* */ }
       cb(e.latlng.lng, e.latlng.lat);
+    });
+
+    // Anteprima del cerchio mentre si cerca il raggio.
+    map.on("mousemove", (e: L.LeafletMouseEvent) => {
+      if (circlingRef.current && ccenterRef.current) { chovRef.current = e.latlng; _redrawCircles(); }
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -388,6 +417,45 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         .addTo(g).openTooltip();
     }
     mcbRef.current?.(text);
+  }
+
+  // ---- cerchi dal centro (simulazione pivot) ----
+  function _fmtRadius(m: number): string {
+    return imperialRef.current ? `${Math.round(m * 3.28084)} ft` : `${Math.round(m)} m`;
+  }
+  function _circleHa(r: number): number { return (Math.PI * r * r) / 10000; }
+  function _redrawCircles() {
+    const map = mapRef.current, g = circlesRef.current;
+    if (!map || !g) return;
+    g.clearLayers();
+    const dot = (c: L.LatLng) =>
+      L.circleMarker(c, { radius: 4, color: "#08341c", weight: 1.5, fillColor: "#20aae2", fillOpacity: 1 }).addTo(g);
+    const draw = (c: L.LatLng, r: number, live: boolean) => {
+      L.circle(c, {
+        radius: r, color: "#20aae2", weight: 2, ...(live ? { dashArray: "6,4" } : {}),
+        fillColor: "#20aae2", fillOpacity: live ? 0.08 : 0.15,
+      }).addTo(g);
+      if (live && chovRef.current) {
+        L.polyline([c, chovRef.current], { color: "#20aae2", weight: 1.5, dashArray: "4,4" }).addTo(g);
+      }
+      dot(c);
+      L.marker(c, { opacity: 0, interactive: false })
+        .bindTooltip(`R ${_fmtRadius(r)} \u00b7 ${_fmtArea(_circleHa(r))}`,
+          { permanent: true, direction: "center", className: "pivot-measure" })
+        .addTo(g).openTooltip();
+    };
+    cdoneRef.current.forEach((x) => draw(x.c, x.r, false));
+    const c = ccenterRef.current, h = chovRef.current;
+    let r: number | null = null;
+    if (c) {
+      const d = h ? map.distance(c, h) : 0;
+      if (d >= 1) { draw(c, d, true); r = d; } else dot(c);
+    }
+    ccbRef.current?.({
+      n: cdoneRef.current.length,
+      totHa: cdoneRef.current.reduce((s, x) => s + _circleHa(x.r), 0),
+      r, ha: r == null ? null : _circleHa(r),
+    });
   }
 
   function _redrawElev() {
@@ -875,7 +943,34 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         measureRef.current?.clearLayers();
         try { map.getContainer().style.cursor = "crosshair"; } catch { /* */ }
       },
-      setUnits(imp) { imperialRef.current = imp; if (measuringRef.current) _redrawMeasure(); },
+      setUnits(imp) {
+        imperialRef.current = imp;
+        if (measuringRef.current) _redrawMeasure();
+        if (circlingRef.current) _redrawCircles();
+      },
+      startCircles(cb) {
+        const map = mapRef.current; if (!map) return;
+        ccbRef.current = cb;
+        circlingRef.current = true;
+        ccenterRef.current = null; chovRef.current = null;
+        cdoneRef.current = [];
+        circlesRef.current?.clearLayers();
+        try { map.getContainer().style.cursor = "crosshair"; } catch { /* */ }
+      },
+      stopCircles() {
+        const map = mapRef.current;
+        circlingRef.current = false;
+        ccenterRef.current = null; chovRef.current = null;
+        cdoneRef.current = [];
+        ccbRef.current = null;
+        circlesRef.current?.clearLayers();
+        try { if (map) map.getContainer().style.cursor = ""; } catch { /* */ }
+      },
+      clearCircles() {
+        cdoneRef.current = [];
+        ccenterRef.current = null; chovRef.current = null;
+        _redrawCircles();
+      },
       stopMeasure() {
         const map = mapRef.current;
         measuringRef.current = false;

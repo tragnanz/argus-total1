@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import JSZip from "jszip";
-import type { MapHandle, PivotItem, PivotSel } from "@/components/MapCanvas";
+import type { MapHandle, PivotItem, PivotSel, CircleInfo } from "@/components/MapCanvas";
 import { useI18n, LANGS, type Lang } from "@/lib/i18n";
 import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.162";
+const REV = "v0.6.164";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -803,6 +803,7 @@ const IcoUndo = () => (<svg {...svgProps}><path d="M9 14 4 9l5-5" /><path d="M4 
 const IcoRedo = () => (<svg {...svgProps}><path d="m15 14 5-5-5-5" /><path d="M20 9H9a5 5 0 0 0 0 10h1" /></svg>);
 const IcoLayers = () => (<svg {...svgProps}><path d="m12 2 9 5-9 5-9-5 9-5Z" /><path d="m3 12 9 5 9-5" /><path d="m3 17 9 5 9-5" /></svg>);
 const IcoRuler = () => (<svg {...svgProps}><path d="M3 15 15 3l6 6L9 21z" /><path d="M7.5 10.5 9 12M10.5 7.5 12 9M13.5 4.5 15 6" /></svg>);
+const IcoCircleRuler = () => (<svg {...svgProps}><circle cx="12" cy="12" r="8.5" /><path d="M12 12h8.5" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /></svg>);
 const IcoElevation = () => (<svg {...svgProps}><path d="M3 20h18" /><path d="m3 17 5-7 3 3.5L16 5l5 12" /></svg>);
 const IcoMinimize = () => (<svg {...svgProps}><path d="M5 12h14" /></svg>);
 const IcoExpand = () => (<svg {...svgProps}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 12h6M12 9v6" /></svg>);
@@ -955,6 +956,8 @@ export default function Page() {
   const [layersOpen, setLayersOpen] = useState(false);
   const [measuring, setMeasuring] = useState(false);
   const [measureTxt, setMeasureTxt] = useState("");
+  const [circling, setCircling] = useState(false);
+  const [circleInfo, setCircleInfo] = useState<CircleInfo | null>(null);
   const [elevOn, setElevOn] = useState(false);
   const [elevData, setElevData] = useState<ElevationResult | null>(null);
   const [leftMin, setLeftMin] = useState(false);    // pannello Progetto ridotto a icona
@@ -968,11 +971,22 @@ export default function Page() {
   activeIdRef.current = activeId;
   // NB: la cronologia Annulla/Ripristina è definita più sotto, dopo gli stati
   // pivot/strade che ora fanno parte dello snapshot.
+  function stopCircles() { setCircling(false); setCircleInfo(null); mapApi.current?.stopCircles(); }
   function toggleMeasure() {
     if (measuring) { setMeasuring(false); setMeasureTxt(""); mapApi.current?.stopMeasure(); setMsg(""); return; }
     if (elevOn) { setElevOn(false); setElevData(null); mapApi.current?.stopElevation(); }
+    if (circling) stopCircles();
     setMeasuring(true); setMsg(t("Misura: clicca i punti sulla mappa. 2 punti = distanza, 3+ = area."));
     mapApi.current?.startMeasure((txt) => setMeasureTxt(txt));
+  }
+  // Righello circolare: cerchi tracciati dal centro, per simulare pivot sulla mappa.
+  function toggleCircles() {
+    if (circling) { stopCircles(); setMsg(""); return; }
+    if (measuring) { setMeasuring(false); setMeasureTxt(""); mapApi.current?.stopMeasure(); }
+    if (elevOn) { setElevOn(false); setElevData(null); mapApi.current?.stopElevation(); }
+    setCircling(true); setCircleInfo(null);
+    setMsg(t("Cerchi: clicca il centro, poi un secondo clic fissa il raggio. Ripremi l'icona per chiudere."));
+    mapApi.current?.startCircles((info) => setCircleInfo(info));
   }
   // Strumento profilo/dislivelli: polilinea le cui quote (DEM) vengono lette punto per punto.
   async function onElevPoints(coords: number[][]) {
@@ -987,6 +1001,7 @@ export default function Page() {
   function toggleElevation() {
     if (elevOn) { setElevOn(false); setElevData(null); mapApi.current?.stopElevation(); setMsg(""); return; }
     if (measuring) { setMeasuring(false); setMeasureTxt(""); mapApi.current?.stopMeasure(); }
+    if (circling) stopCircles();
     setElevOn(true); setElevData(null);
     setMsg(t("Profilo: clicca i punti sulla mappa per leggere quote e dislivelli. Ripremi l'icona per chiudere."));
     mapApi.current?.startElevation(onElevPoints);
@@ -3425,6 +3440,8 @@ export default function Page() {
                 title={t("Livelli e mappa di base")} aria-label={t("Livelli")}><IcoLayers /></button>
               <button onClick={toggleMeasure} className={"tool-btn " + (measuring ? "tool-btn-active" : "")}
                 title={t("Misura distanze/aree")} aria-label={t("Righello")}><IcoRuler /></button>
+              <button onClick={toggleCircles} className={"tool-btn " + (circling ? "tool-btn-active" : "")}
+                title={t("Simula pivot: cerchi dal centro")} aria-label={t("Cerchi")}><IcoCircleRuler /></button>
               <button onClick={toggleElevation} className={"tool-btn " + (elevOn ? "text-white" : "")}
                 style={elevOn ? { background: "#b23b1e" } : undefined}
                 title={t("Profilo altimetrico / dislivelli (polilinea)")} aria-label={t("Quote")}><IcoElevation /></button>
@@ -3454,12 +3471,24 @@ export default function Page() {
                   <button onClick={() => { mapApi.current?.stopMeasure(); setMeasureTxt(""); mapApi.current?.startMeasure(setMeasureTxt); }}
                     className="btn-ghost w-full">{t("Cancella misure")}</button>
                 )}
+                {circling && (
+                  <button onClick={() => { setCircleInfo(null); mapApi.current?.clearCircles(); }}
+                    className="btn-ghost w-full">{t("Cancella cerchi")}</button>
+                )}
               </div>
             </>)}
           </div>
 
           {measuring && measureTxt && (
             <div className="nabu-bar px-3 py-2.5 text-sm text-white">{measureTxt}</div>
+          )}
+
+          {circling && circleInfo && (circleInfo.r != null || circleInfo.n > 0) && (
+            <div className="nabu-bar px-3 py-2.5 text-sm text-white">
+              {circleInfo.r != null
+                ? `${t("Raggio")} ${uM(circleInfo.r)} \u00b7 ${uHa(circleInfo.ha ?? 0, 1)}`
+                : `${t("Cerchi")}: ${circleInfo.n} \u00b7 ${uHa(circleInfo.totHa, 1)}`}
+            </div>
           )}
           </div>
 
