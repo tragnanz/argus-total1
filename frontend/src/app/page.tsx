@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.167";
+const REV = "v0.6.168";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -62,6 +62,7 @@ const TABS: { key: string; label: string }[] = [
   { key: "rilievo", label: "Rilievo" },
   { key: "impianti", label: "Impianti" },
   { key: "accessori", label: "Accessori" },
+  { key: "strade", label: "Strade" },
   { key: "irrigazione", label: "Irrigazione" },
   { key: "export", label: "Esporta" },
   { key: "informazioni", label: "Informazioni" },
@@ -825,12 +826,13 @@ const IcoNavAnalisi = () => (<svg {...navProps}><path d="M3 12h4l3-8 4 16 3-8h4"
 const IcoNavRilievo = () => (<svg {...navProps}><path d="m3 20 6-9 4 5 3-4 5 8z" /></svg>);
 const IcoNavImpianti = () => (<svg {...navProps}><circle cx="12" cy="12" r="8" /><path d="M12 12h8" /><circle cx="12" cy="12" r="1.6" /></svg>);
 const IcoNavAccessori = () => (<svg {...navProps}><path d="M4 7h16M4 12h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="12" r="2" /><circle cx="8" cy="17" r="2" /></svg>);
+const IcoNavStrade = () => (<svg {...navProps}><path d="M8 3 4 21" /><path d="m16 3 4 18" /><path d="M12 4v3M12 10.5v3M12 17v3" /></svg>);
 const IcoNavExport = () => (<svg {...navProps}><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M4 20h16" /></svg>);
 const IcoNavIrrigazione = () => (<svg {...navProps}><path d="M12 3s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z" /><path d="M10 13a2 2 0 0 0 4 0" /></svg>);
 const IcoNavInfo = () => (<svg {...navProps}><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 7.6v.6" /></svg>);
 const TAB_ICONS = {
   analisi: IcoNavAnalisi, rilievo: IcoNavRilievo, impianti: IcoNavImpianti,
-  accessori: IcoNavAccessori, irrigazione: IcoNavIrrigazione, export: IcoNavExport,
+  accessori: IcoNavAccessori, strade: IcoNavStrade, irrigazione: IcoNavIrrigazione, export: IcoNavExport,
   informazioni: IcoNavInfo,
 };
 
@@ -4387,7 +4389,7 @@ export default function Page() {
 
 
 
-          <section hidden={tab !== "rilievo"} className="border-t border-black/5 pt-3">
+          <section hidden={tab !== "strade"}>
             <SectionHead title={t("Strade")} help={t("Traccia o importa le strade preesistenti (con spessore). Gli impianti evitano il footprint reale secondo il franco «Da strade» impostato nella pagina Impianti.")} />
 
             {/* Livello Strade: linee disegnabili/importabili che i pivot rispettano */}
