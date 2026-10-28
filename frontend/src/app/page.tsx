@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.165";
+const REV = "v0.6.166";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1212,6 +1212,18 @@ export default function Page() {
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pipeSel, pivotLines, hiddenPipeFields, pivots]);
+  // Esc chiude il righello o il righello circolare, come ripremere l'icona.
+  useEffect(() => {
+    if (!measuring && !circling) return;
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (measuring) toggleMeasure();
+      else if (circling) toggleCircles();
+    };
+    window.addEventListener("keydown", onEsc);
+    return () => window.removeEventListener("keydown", onEsc);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [measuring, circling]);
 
   function goHome() { setMapMenuOpen(false); setBellOpen(false); mapApi.current?.fitAll(); }
 
