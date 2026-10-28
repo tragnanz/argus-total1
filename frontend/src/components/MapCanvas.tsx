@@ -47,7 +47,7 @@ export type MapHandle = {
     labels?: { pivot: string; canal: string; free: string }) => void;
   endPipeEdit: () => void;
   clearPivots: () => void;
-  showRoads: (roads: { coords: number[][]; width_m?: number }[], onRemove?: (i: number) => void) => void;
+  showRoads: (roads: { coords: number[][]; width_m?: number; kind?: string }[], onRemove?: (i: number) => void) => void;
   drawRoadManual: (cb: (coords: number[][]) => void) => void;
   clearRoads: () => void;
   showMacroareas: (items: { geom: Polygon; label: string }[]) => void;
@@ -769,7 +769,10 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           }
           // Casing bianco + asse grigio scuro: leggibile sul satellitare.
           g.addLayer(L.polyline(latlngs, { color: "#ffffff", weight: 4, opacity: 0.9, interactive: false }));
-          const ly = L.polyline(latlngs, { color: "#374151", weight: 2, opacity: 0.95 });
+          // viabilità di servizio (generata per i pivot): asse ambra tratteggiato
+          const svc = rd.kind === "service";
+          const ly = L.polyline(latlngs, svc ? { color: "#b7791f", weight: 2.5, opacity: 0.95, dashArray: "6,4" }
+            : { color: "#374151", weight: 2, opacity: 0.95 });
           ly.bindTooltip(`Strada ${i + 1}${rd.width_m ? ` · ${Math.round(rd.width_m)} m` : ""}`, { direction: "top", sticky: true });
           if (onRemove) ly.on("click", (e) => { L.DomEvent.stop(e); onRemove(i); });
           g.addLayer(ly);

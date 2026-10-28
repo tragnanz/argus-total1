@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.171";
+const REV = "v0.6.172";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -112,7 +112,47 @@ type Field = {
 // pannello Livelli stile Photoshop: owner = id del campo a cui l'oggetto appartiene.
 type CanalL = Canal & { hidden?: boolean; uid?: number; owner?: number };
 type WaterL = Watercourse & { hidden?: boolean; uid?: number; owner?: number };
-type RoadL = { id: string; coords: number[][]; width_m: number; hidden?: boolean; owner?: number };
+// kind: assente/"existing" = strada preesistente tracciata o importata; "osm" = da
+// OpenStreetMap (preesistente); "service" = viabilità di servizio generata per i
+// pivot (NON è un ostacolo per il layout).
+type RoadL = { id: string; coords: number[][]; width_m: number; hidden?: boolean; owner?: number; kind?: "existing" | "osm" | "service" };
+
+// Larghezza indicativa (m) delle strade OSM per categoria «highway».
+const OSM_ROAD_W: Record<string, number> = { motorway: 24, trunk: 20, primary: 12, secondary: 10, tertiary: 8,
+  unclassified: 6, residential: 6, service: 5, track: 5 };
+
+// Rete di servizio: albero di copertura minimo (Prim) tra i centri dei pivot e un
+// accesso. Coordinate [lng, lat]; distanze in metri su proiezione locale.
+function serviceRoadTree(centers: number[][], access: number[]): number[][][] {
+  const pts = [access, ...centers];
+  const lat0 = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+  const kx = 111320 * Math.cos((lat0 * Math.PI) / 180), ky = 110540;
+  const d = (a: number[], b: number[]) => Math.hypot((a[0] - b[0]) * kx, (a[1] - b[1]) * ky);
+  const n = pts.length, inT = new Array(n).fill(false), best = new Array(n).fill(Infinity), par = new Array(n).fill(-1);
+  best[0] = 0; const segs: number[][][] = [];
+  for (let it = 0; it < n; it++) {
+    let u = -1;
+    for (let i = 0; i < n; i++) if (!inT[i] && (u < 0 || best[i] < best[u])) u = i;
+    inT[u] = true;
+    if (par[u] >= 0) segs.push([pts[par[u]], pts[u]]);
+    for (let v = 0; v < n; v++) if (!inT[v]) { const dv = d(pts[u], pts[v]); if (dv < best[v]) { best[v] = dv; par[v] = u; } }
+  }
+  return segs;
+}
+// Punto più vicino a p su una polilinea (in coordinate locali metriche).
+function nearestOnLine(p: number[], line: number[][]): { pt: number[]; dist: number } {
+  const kx = 111320 * Math.cos((p[1] * Math.PI) / 180), ky = 110540;
+  let bestPt = line[0], bestD = Infinity;
+  for (let i = 0; i < line.length - 1; i++) {
+    const ax = (line[i][0] - p[0]) * kx, ay = (line[i][1] - p[1]) * ky;
+    const bx = (line[i + 1][0] - p[0]) * kx, by = (line[i + 1][1] - p[1]) * ky;
+    const vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy;
+    const t = L2 > 0 ? Math.max(0, Math.min(1, -(ax * vx + ay * vy) / L2)) : 0;
+    const qx = ax + t * vx, qy = ay + t * vy, dd = Math.hypot(qx, qy);
+    if (dd < bestD) { bestD = dd; bestPt = [p[0] + qx / kx, p[1] + qy / ky]; }
+  }
+  return { pt: bestPt, dist: bestD };
+}
 
 // Snapshot completo per la cronologia Annulla/Ripristina (tutte le mosse).
 type Snapshot = {
@@ -2278,7 +2318,7 @@ export default function Page() {
   const rid = () => `r${roads.length}_${roads.reduce((s, r) => s + r.coords.length, 0)}`;
   useEffect(() => {
     const vis = roads.filter((r) => !r.hidden);
-    mapApi.current?.showRoads?.(vis.map((r) => ({ coords: r.coords, width_m: r.width_m })), (i) => { const id = vis[i]?.id; if (id != null) setRoads((rs) => rs.filter((r) => r.id !== id)); });
+    mapApi.current?.showRoads?.(vis.map((r) => ({ coords: r.coords, width_m: r.width_m, kind: r.kind })), (i) => { const id = vis[i]?.id; if (id != null) setRoads((rs) => rs.filter((r) => r.id !== id)); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roads]);
   // Aggiorna la banda-spessore dei canali quando cambia lo spessore di default.
@@ -2304,6 +2344,62 @@ export default function Page() {
       setMsg(add.length ? t("Importate {n} strade da file.", { n: add.length }) : t("Nessuna linea trovata nei file (KMZ/KML/GeoJSON)."));
     } catch (e) { showErr(e); }
   }
+  // Viabilità di servizio per i pivot del campo attivo (rigenera quella precedente).
+  function genServiceRoads() {
+    if (!active) return needField();
+    const fid = active.id;
+    const ctr = pivots.filter((p) => p.field === fid).map((p) => [p.lng, p.lat]);
+    if (!ctr.length) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
+    // accesso: la strada esistente più vicina ai pivot, altrimenti il bordo del campo
+    const ext = roads.filter((r) => r.kind !== "service" && !r.hidden && r.coords.length >= 2);
+    let access: number[] | null = null; let bestD = Infinity;
+    for (const c of ctr) {
+      for (const r of ext) { const q = nearestOnLine(c, r.coords); if (q.dist < bestD) { bestD = q.dist; access = q.pt; } }
+    }
+    if (!access || bestD > 5000) {
+      bestD = Infinity;
+      const ring = active.geom.coordinates[0];
+      for (const c of ctr) { const q = nearestOnLine(c, ring); if (q.dist < bestD) { bestD = q.dist; access = q.pt; } }
+    }
+    const segs = serviceRoadTree(ctr, access!);
+    const stamp = Date.now();
+    const add: RoadL[] = segs.map((sg, i) => ({ id: `svc${stamp}_${i}`, coords: sg, width_m: roadWidth, owner: fid, kind: "service" }));
+    setRoads((rs) => [...rs.filter((r) => !(r.kind === "service" && r.owner === fid)), ...add]);
+    const km = add.reduce((sum, r) => sum + lineLenKm(r.coords), 0);
+    setMsg(t("Strade di servizio: {n} tratti, {km}.", { n: add.length, km: uKm(km) }));
+  }
+  // Strade esistenti da OpenStreetMap nell'intorno del campo attivo (via Overpass).
+  async function detectOsmRoads() {
+    if (!active) return needField();
+    const ring = active.geom.coordinates[0];
+    const lons = ring.map((p) => p[0]), lats = ring.map((p) => p[1]);
+    const m = 0.005;                                    // margine ~500 m
+    const s0 = Math.min(...lats) - m, w0 = Math.min(...lons) - m, n0 = Math.max(...lats) + m, e0 = Math.max(...lons) + m;
+    setBusy("osm"); setMsg(t("Ricerca strade OpenStreetMap…"));
+    try {
+      const q = `[out:json][timeout:25];way["highway"](${s0},${w0},${n0},${e0});out geom;`;
+      const r = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: "data=" + encodeURIComponent(q),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+      if (!r.ok) throw new Error(`OpenStreetMap ${r.status}`);
+      const js = await r.json();
+      const inBox = (p: number[]) => p[0] >= w0 && p[0] <= e0 && p[1] >= s0 && p[1] <= n0;
+      const have = new Set(roads.map((x) => x.id));
+      const add: RoadL[] = [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const el of (js.elements || []) as any[]) {
+        if (el.type !== "way" || !Array.isArray(el.geometry)) continue;
+        const coords: number[][] = el.geometry.map((g: { lon: number; lat: number }) => [g.lon, g.lat]);
+        // tieni solo i tratti dentro il riquadro: le strade lunghe non escono dall'area
+        let cur: number[][] = []; let part = 0;
+        const flush = () => { if (cur.length >= 2) { const id = `osm${el.id}_${part++}`; if (!have.has(id)) add.push({ id, coords: cur, width_m: OSM_ROAD_W[el.tags?.highway] ?? roadWidth, kind: "osm" }); } cur = []; };
+        for (const p of coords) { if (inBox(p)) cur.push(p); else flush(); }
+        flush();
+      }
+      if (!add.length) { setMsg(t("Nessuna strada OpenStreetMap in quest'area.")); return; }
+      setRoads((rs) => [...rs, ...add]);
+      setMsg(t("Strade OpenStreetMap trovate: {n}.", { n: add.length }));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
   function removeRoad(i: number) { setRoads((rs) => rs.filter((_, k) => k !== i)); }
   function setRoadWidthAt(i: number, w: number) { setRoads((rs) => rs.map((r, k) => (k === i ? { ...r, width_m: w } : r))); }
   function clearRoads() { setRoads([]); }
@@ -2320,7 +2416,7 @@ export default function Page() {
         : { geojson: { type: "Polygon", coordinates: w.geojson.coordinates }, width_m: 0, clear_m: pivClearWater }
     ));
     const items = [
-      ...roads.map((r) => ({ geojson: { type: "LineString", coordinates: r.coords }, width_m: r.width_m, clear_m: pivClearRoad })),
+      ...roads.filter((r) => r.kind !== "service" && !r.hidden).map((r) => ({ geojson: { type: "LineString", coordinates: r.coords }, width_m: r.width_m, clear_m: pivClearRoad })),
       ...canals.map((c) => ({ geojson: { type: "LineString", coordinates: c.geojson.coordinates }, width_m: canalWidth, clear_m: pivClearWater })),
       ...waterItems,
     ];
@@ -4453,6 +4549,12 @@ export default function Page() {
                 <button className="btn-ghost flex-1 basis-0" onClick={() => roadFileRef.current?.click()}>{t("Importa KMZ")}</button>
                 <button className="btn-ghost flex-1 basis-0" disabled={!roads.length} onClick={clearRoads}>{t("Rimuovi tutte")}</button>
               </div>
+              <div className="flex gap-2 mt-2">
+                <button className="btn-ghost flex-1 basis-0" onClick={genServiceRoads}
+                  title={t("Collega i centri dei pivot del campo attivo con la rete più corta, partendo dalla strada esistente più vicina o dal bordo del campo. Non conta come ostacolo per il layout.")}>{t("Genera strade di servizio")}</button>
+                <button className="btn-ghost flex-1 basis-0" disabled={busy === "osm"} onClick={detectOsmRoads}
+                  title={t("Strade e piste già mappate su OpenStreetMap attorno al campo attivo. La copertura varia: nelle zone rurali molte piste mancano.")}>{busy === "osm" ? "…" : t("Rileva strade esistenti (OSM)")}</button>
+              </div>
               <input ref={roadFileRef} type="file" accept=".geojson,.json,.kml,.kmz" multiple className="hidden"
                 onChange={(e) => { importRoads(e.target.files); if (e.target) e.target.value = ""; }} />
               <label className="flex items-center gap-2 text-[11px] text-sage-dark mt-1">
@@ -4466,7 +4568,7 @@ export default function Page() {
                   <ul className="space-y-1 mt-1">
                     {roads.map((r, i) => (
                       <li key={r.id} className="flex items-center justify-between gap-2 text-[11px] text-sage-dark">
-                        <span className="truncate flex-1">{t("Strada")} {i + 1} · {uKm(lineLenKm(r.coords))}</span>
+                        <span className="truncate flex-1">{t("Strada")} {i + 1} · {uKm(lineLenKm(r.coords))}{r.kind === "service" ? ` · ${t("servizio")}` : r.kind === "osm" ? " · OSM" : ""}</span>
                         <input type="number" min={1} max={200} step={1} value={Math.round(r.width_m)} title={t("Spessore (m)")}
                           onChange={(e) => setRoadWidthAt(i, Number(e.target.value))} className="field-input w-16 py-0.5 shrink-0" />
                         <span className="flex gap-1 shrink-0">
