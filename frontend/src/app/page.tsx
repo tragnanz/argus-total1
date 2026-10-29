@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.179";
+const REV = "v0.6.180";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2169,7 +2169,11 @@ export default function Page() {
       if (pivots.length) {
         const mp = pivots.map((p) => ({ ...p, field: ownerArea(p.field) ?? undefined }));
         const ml = pivotLines.map((l) => ({ ...l, field: ownerArea(l.field) ?? undefined }));
-        newLayerIds.push((await api.createLayer({ project_id: pid, kind: "pivots", name: t("Pivot"), data: { geojson: fcFromModel(mp, ml), meta: guided?.meta ?? { n_pivots: pivots.length } } })).id);
+        const pfc = fcFromModel(mp, ml);
+        // portata calcolata di ogni pivot (l/s): la mostra il link di sola lettura
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        pfc.features.forEach((ft: any, i: number) => { if (i < mp.length && ft.properties?.kind === "pivot") ft.properties.q_ls = Math.round(pivotFlow(pivots[i]) * 10) / 10; });
+        newLayerIds.push((await api.createLayer({ project_id: pid, kind: "pivots", name: t("Pivot"), data: { geojson: pfc, meta: guided?.meta ?? { n_pivots: pivots.length } } })).id);
       }
 
       // 3) Ora che TUTTO il nuovo è salvato, elimina il vecchio. I layer si
@@ -3454,13 +3458,14 @@ export default function Page() {
         canals.map((c) => [c.owner ?? 0, c.hidden ? 1 : 0, c.geojson.coordinates]),
         roads.map((r) => [r.id, r.owner ?? 0, r.hidden ? 1 : 0, r.width_m, r.coords]),
         watercourses.map((w) => [w.owner ?? 0, w.hidden ? 1 : 0]),
-        pivots.map((p) => [Math.round(p.lat * 1e6), Math.round(p.lng * 1e6), p.r, p.field ?? 0, p.conn ?? ""]),
+        pivots.map((p) => [Math.round(p.lat * 1e6), Math.round(p.lng * 1e6), p.r, p.field ?? 0, p.conn ?? "", p.q ?? 0]),
+        [mm24, hoursDay],                                   // cambiano la portata salvata dei pivot
         pivotLines.map((l) => [l.kind, l.field ?? 0, l.coords.length]),
         [...hiddenPivotFields].sort((a, b) => a - b),
         [...hiddenPipeFields].sort((a, b) => a - b),
       ]);
     } catch { return ""; }
-  }, [fields, canals, roads, watercourses, pivots, pivotLines, hiddenPivotFields, hiddenPipeFields]);
+  }, [fields, canals, roads, watercourses, pivots, pivotLines, hiddenPivotFields, hiddenPipeFields, mm24, hoursDay]);
   latestSigRef.current = saveSig;
 
   // Esegue un salvataggio serializzato: se ne arriva un altro mentre salva, lo

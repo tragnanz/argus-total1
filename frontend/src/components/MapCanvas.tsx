@@ -167,10 +167,12 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   // Etichette dei pivot (superficie · portata): visibili solo se il cerchio a
   // schermo è abbastanza grande da contenerle, altrimenti si sovrappongono.
   const pvLabelsRef = useRef<{ tt: L.Tooltip; r: number; lat: number }[]>([]);
+  // stesse regole per le etichette delle misure (link di sola lettura)
+  const measureLabelsRef = useRef<{ tt: L.Tooltip; r: number; lat: number }[]>([]);
   const updatePvLabels = () => {
     const map = mapRef.current; if (!map) return;
     const z = map.getZoom();
-    for (const it of pvLabelsRef.current) {
+    for (const it of [...pvLabelsRef.current, ...measureLabelsRef.current]) {
       const mpp = (156543.03392 * Math.cos((it.lat * Math.PI) / 180)) / Math.pow(2, z);
       const el = it.tt.getElement();
       if (el) el.style.display = it.r / mpp >= 30 ? "" : "none";
@@ -581,6 +583,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         const map = mapRef.current; const g = layoutRef.current;
         if (!map || !g) return;
         g.clearLayers();
+        measureLabelsRef.current = [];
         const measures = !!opts?.measures;
         let lb: L.LatLngBounds | null = null;
         for (const it of items) {
@@ -613,7 +616,12 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
                 let sr = 0; for (const p of pts) { const dx = (p[0] - lon) * mLng, dy = (p[1] - lat) * mLat; sr += Math.hypot(dx, dy); }
                 const r = Math.round(sr / pts.length);
                 const ha = Math.PI * r * r / 10000;
-                layer.bindTooltip(`R ${r} m · ${ha.toFixed(0)} ha`, { permanent: true, direction: "center", className: "pivot-measure" });
+                // raggio, superficie e portata su tre righe; visibili solo da vicino
+                const q = Number(feat.properties?.q_ls ?? feat.properties?.q);
+                const txt = `R ${r} m<br>${ha.toFixed(1)} ha${Number.isFinite(q) && q > 0 ? `<br>${Math.round(q)} l/s` : ""}`;
+                layer.bindTooltip(txt, { permanent: true, direction: "center", className: "pivot-measure pivot-label" });
+                const tt = layer.getTooltip();
+                if (tt) measureLabelsRef.current.push({ tt, r, lat });
               } catch { /* */ }
             } : undefined,
           });
@@ -621,6 +629,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           try { const gb = gj.getBounds(); if (gb.isValid()) lb = lb ? lb.extend(gb) : L.latLngBounds(gb.getSouthWest(), gb.getNorthEast()); } catch { /* */ }
         }
         if (lb && lb.isValid()) map.fitBounds(lb, { padding: [40, 40] });
+        setTimeout(updatePvLabels, 0);                    // dopo l'inquadratura
       },
       setExcluded(fcs) {
         const map = mapRef.current; const g = exclRef.current; const rnd = exclRendererRef.current;
