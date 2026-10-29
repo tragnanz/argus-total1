@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.175";
+const REV = "v0.6.176";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1284,6 +1284,11 @@ export default function Page() {
   const [mm24, setMm24] = useState(8);               // fabbisogno lordo (mm/24h)
   const [rainMm, setRainMm] = useState(0);           // piovosità utile (mm/24h)
   const [effPct, setEffPct] = useState(85);          // efficienza dell'impianto (%)
+  // Etichette sulla mappa con superficie e portata di ogni pivot (spegnibili).
+  const [pivotLabels, setPivotLabelsState] = useState<boolean>(() => {
+    try { return typeof window === "undefined" ? true : window.localStorage.getItem("argus.pivotLabels") !== "0"; } catch { return true; }
+  });
+  const setPivotLabels = (v: boolean) => { setPivotLabelsState(v); try { window.localStorage.setItem("argus.pivotLabels", v ? "1" : "0"); } catch { /* */ } };
   const [hoursDay, setHoursDay] = useState(20);      // ore di esercizio al giorno
   const [wetW, setWetW] = useState(20);              // larghezza bagnata degli irrigatori (m)
   const [pattern, setPattern] = useState("ellittica");  // forma del profilo di bagnatura
@@ -2413,7 +2418,8 @@ export default function Page() {
     // Filtra i gruppi pivot nascosti (per campo) e rimappa gli indici visibili → reali.
     const visIdx = pivots.map((_, k) => k).filter((k) => !hiddenPivotFields.has(pivots[k].field ?? -1));
     const fed = fedPivotKeys(pivotLines);
-    const visP = visIdx.map((k) => ({ ...pivots[k], unconn: pivotLines.some((l) => l.kind === "pipe") && !fed.has(pKey(pivots[k])) }));
+    const visP = visIdx.map((k) => ({ ...pivots[k], unconn: pivotLines.some((l) => l.kind === "pipe") && !fed.has(pKey(pivots[k])),
+      label: pivotLabels ? `${uHa(Math.PI * pivots[k].r * pivots[k].r / 10000, 1)}<br>${fmt(Math.round(pivotFlow(pivots[k])))} l/s` : undefined }));
     // Le tubazioni hanno una visibilità propria (oggetto a sé); le altre linee
     // seguono la visibilità del gruppo pivot del loro campo.
     const visL = pivotLines.filter((l) => l.kind === "pipe"
@@ -2476,7 +2482,7 @@ export default function Page() {
       },
     }, pipeSelForShow, waterLinesLL());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pivots, pivotLines, pivotSel, pipeSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses]);
+  }, [pivots, pivotLines, pivotSel, pipeSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses, pivotLabels, mm24, hoursDay, imperial]);
 
   // Operazioni sul singolo pivot selezionato.
   const selPivot = pivotSel.mode === "single" && pivotSel.idx >= 0 ? pivots[pivotSel.idx] : null;
@@ -4090,6 +4096,41 @@ export default function Page() {
                   <b className="text-brand-darker text-sm">{t("Gruppo pivot")} · {pivots.length}</b>
                   <p className="text-[11px] text-sage-dark mt-1">{t("Sulla mappa: 2° clic su un pivot per modificarlo singolarmente.")}</p>
                   <button className="btn-ghost w-full mt-2" onClick={applyRadiusToAll}>{t("Applica raggio {r} m a tutti", { r: pivotR })}</button>
+                  <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
+                    <input type="checkbox" checked={pivotLabels} onChange={(e) => setPivotLabels(e.target.checked)} />
+                    {t("Mostra superficie e portata sulla mappa")}
+                  </label>
+                  {/* Elenco pivot: superficie e portata di ciascuno; clic = selezione singola */}
+                  <table className="w-full text-[11px] mt-2 tabular-nums">
+                    <thead>
+                      <tr className="text-sage-dark text-left border-b border-black/10">
+                        <th className="font-medium py-0.5">#</th>
+                        <th className="font-medium text-right">{t("Raggio (m)")}</th>
+                        <th className="font-medium text-right">{t("Area")}</th>
+                        <th className="font-medium text-right">{t("Portata (l/s)")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pivots.map((pv, i) => (
+                        <tr key={i} className="hover:bg-black/5 cursor-pointer" title={t("Modifica")}
+                          onClick={() => setPivotSel({ mode: "single", idx: i })}>
+                          <td className="py-0.5 text-brand-mid">{i + 1}</td>
+                          <td className="text-right">{Math.round(pv.r)}</td>
+                          <td className="text-right">{uHa(Math.PI * pv.r * pv.r / 10000, 1)}</td>
+                          <td className="text-right">{fmt(Math.round(pivotFlow(pv)))}{pv.q && pv.q > 0 ? "*" : ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-black/10 font-semibold text-brand-darker">
+                        <td className="py-0.5">{t("Totale")}</td>
+                        <td />
+                        <td className="text-right">{uHa(pivots.reduce((a, pv) => a + Math.PI * pv.r * pv.r / 10000, 0))}</td>
+                        <td className="text-right">{fmt(Math.round(pivots.reduce((a, pv) => a + pivotFlow(pv), 0)))}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                  {pivots.some((pv) => pv.q && pv.q > 0) && <p className="text-[10px] text-sage-dark mt-1">* {t("portata impostata a mano")}</p>}
                 </div>
               ) : active ? (
                 <div className="space-y-2">

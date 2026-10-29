@@ -134,6 +134,8 @@ body {
   font-size: 9px; font-weight: 600; padding: 0 3px; border-radius: 4px; white-space: nowrap;
 }
 .pivot-measure::before { display: none !important; }
+/* etichetta superficie/portata dei pivot: due righe centrate */
+.pivot-label { text-align: center; line-height: 1.15; padding: 1px 4px; }
 
 /* etichetta permanente del pin "Agrostar" */
 .argus-pin {

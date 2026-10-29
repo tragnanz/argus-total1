@@ -8,7 +8,7 @@ export type OverlayKey = "index" | "dem" | "suitability";
 export type FieldStyle = { color?: string; fillColor?: string; fillOpacity?: number; weight?: number };
 export type FieldGeom = { id: number; name: string; geom: Polygon; style?: FieldStyle; level?: "area" | "campo" };
 // Modello pivot interattivo (gerarchia gruppo → singolo)
-export type PivotItem = { lat: number; lng: number; r: number; conn?: string; field?: number; unconn?: boolean;
+export type PivotItem = { lat: number; lng: number; r: number; conn?: string; field?: number; unconn?: boolean; label?: string;
   q?: number; p?: number };   // portata (l/s) e pressione (bar) richieste dal pivot
 export type PivotModel = { pivots: PivotItem[]; lines: { kind: string; coords: number[][]; dn?: number[]; qs?: number[] }[] };
 export type PivotSel = { mode: "none" | "group" | "single"; idx: number };
@@ -159,6 +159,18 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const overlaysRef = useRef<Record<OverlayKey, L.ImageOverlay | null>>(
     { index: null, dem: null, suitability: null });
   const layoutRef = useRef<L.LayerGroup | null>(null);
+  // Etichette dei pivot (superficie · portata): visibili solo se il cerchio a
+  // schermo è abbastanza grande da contenerle, altrimenti si sovrappongono.
+  const pvLabelsRef = useRef<{ tt: L.Tooltip; r: number; lat: number }[]>([]);
+  const updatePvLabels = () => {
+    const map = mapRef.current; if (!map) return;
+    const z = map.getZoom();
+    for (const it of pvLabelsRef.current) {
+      const mpp = (156543.03392 * Math.cos((it.lat * Math.PI) / 180)) / Math.pow(2, z);
+      const el = it.tt.getElement();
+      if (el) el.style.display = it.r / mpp >= 30 ? "" : "none";
+    }
+  };
   // Zone escluse dal layout (pendenza oltre il massimo): tratteggio rosso su un
   // renderer SVG proprio, che ospita il <pattern> del tratteggio.
   const exclRef = useRef<L.LayerGroup | null>(null);
@@ -232,6 +244,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     circlesRef.current = L.layerGroup().addTo(map);
     elevRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
+    map.on("zoomend", updatePvLabels);
 
     // Clic sulla mappa: misura (se attiva) oppure selezione punto (presa/finale).
     map.on("click", (e: L.LeafletMouseEvent) => {
@@ -725,6 +738,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           }
         });
         const groupSel = sel.mode === "group" || sel.mode === "single";
+        const pvLabels: { tt: L.Tooltip; r: number; lat: number }[] = [];
         model.pivots.forEach((pv, i) => {
           const isSingle = sel.mode === "single" && sel.idx === i;
           const base = pv.conn === "pipe" ? "#20aae2" : "#038037";
@@ -745,6 +759,13 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           c.on("click", (e) => { L.DomEvent.stop(e); cbs.onClick(i); });
           c.bindTooltip(`#${i + 1} · r ${Math.round(pv.r)} m`, { direction: "top", sticky: true });
           g.addLayer(c);
+          // Etichetta fissa sotto il centro (superficie · portata), se richiesta.
+          if (pv.label) {
+            const tt = L.tooltip({ permanent: true, direction: "bottom", offset: [0, 4], className: "pivot-measure pivot-label", interactive: false })
+              .setLatLng([pv.lat, pv.lng]).setContent(pv.label);
+            g.addLayer(tt);
+            pvLabels.push({ tt, r: pv.r, lat: pv.lat });
+          }
           if (isSingle) {
             const handle = L.marker([pv.lat, pv.lng], {
               draggable: true,
@@ -756,8 +777,10 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             g.addLayer(handle);
           }
         });
+        pvLabelsRef.current = pvLabels;
+        updatePvLabels();
       },
-      clearPivots() { pivotsRef.current?.clearLayers(); pivotBgRef.current = null; },
+      clearPivots() { pivotsRef.current?.clearLayers(); pivotBgRef.current = null; pvLabelsRef.current = []; },
       showRoads(roads, onRemove) {
         const g = roadsRef.current; if (!g) return;
         g.clearLayers();
