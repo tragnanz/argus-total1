@@ -448,6 +448,14 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     clim, elev = get_climate(lat0, lon0, allow_network=params.get("allow_climate_network", True))
     et = eto_year(clim, elev, lat0)
     et0_peak = max(et["eto_day"])                        # mm/giorno
+    # Irraggiamento per il dimensionamento fotovoltaico: kWh/m²/giorno (= ore di
+    # sole equivalenti) del MESE DI PUNTA dell'ET₀, cioè quando i pivot consumano
+    # di più, più la media annua e il mese peggiore come riferimento.
+    _rs_kwh = [round(v / 3.6, 2) for v in (clim.get("rs") or [])]
+    _m_peak = max(range(len(et["eto_day"])), key=lambda i: et["eto_day"][i])
+    solar = ({"psh_design": _rs_kwh[_m_peak], "psh_year": round(sum(_rs_kwh) / len(_rs_kwh), 2),
+              "psh_min": min(_rs_kwh), "design_month": _m_peak + 1, "rs_month_kwh": _rs_kwh}
+             if len(_rs_kwh) == 12 else None)
     etc_peak = et0_peak * kc
     gross_mm_day = etc_peak / eff
     area_pivot_m2 = math.pi * R * R
@@ -592,6 +600,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
             "vol_pivot_day_m3": round(vol_pivot_day_m3, 0), "vol_total_day_m3": round(vol_total_day_m3, 0),
             "climate_source": et["source"],
         },
+        "solar": solar,
     }
     return {"geojson": {"type": "FeatureCollection", "features": features},
             "bounds": bounds, "meta": meta}

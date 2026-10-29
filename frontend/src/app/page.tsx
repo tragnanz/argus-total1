@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.178";
+const REV = "v0.6.179";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1289,6 +1289,18 @@ export default function Page() {
     try { return typeof window === "undefined" ? true : window.localStorage.getItem("argus.pivotLabels") !== "0"; } catch { return true; }
   });
   const setPivotLabels = (v: boolean) => { setPivotLabelsState(v); try { window.localStorage.setItem("argus.pivotLabels", v ? "1" : "0"); } catch { /* */ } };
+  // ---- Alimentazione dei pivot: rete/generatore oppure fotovoltaico ----
+  const [powerMode, setPowerMode] = useState<"grid" | "solar">("grid");
+  const [solarOpen, setSolarOpen] = useState(false);              // parametri del calcolo FV
+  const [pvPsh, setPvPsh] = useState<number | null>(null);        // kWh/m²/g; null = dal sito (NASA POWER)
+  const [pvSunH, setPvSunH] = useState(8);                        // ore di pompaggio col sole (senza batterie)
+  const [pvHead, setPvHead] = useState(15);                       // sollevamento + perdite in rete (m)
+  const [pvEta, setPvEta] = useState(60);                         // rendimento pompa·motore·inverter (%)
+  const [pvPR, setPvPR] = useState(75);                           // performance ratio del campo FV (%)
+  const [pvWm2, setPvWm2] = useState(210);                        // potenza dei moduli (Wp/m²)
+  const [pvGcr, setPvGcr] = useState(45);                         // copertura del suolo (%)
+  const [pvDod, setPvDod] = useState(80);                         // profondità di scarica batterie (%)
+  const [pvBattEff, setPvBattEff] = useState(90);                 // rendimento di ciclo batterie (%)
   const [hoursDay, setHoursDay] = useState(20);      // ore di esercizio al giorno
   const [wetW, setWetW] = useState(20);              // larghezza bagnata degli irrigatori (m)
   const [pattern, setPattern] = useState("ellittica");  // forma del profilo di bagnatura
@@ -3519,6 +3531,114 @@ export default function Page() {
       </li>
     );
   }
+  // ---- Fotovoltaico per i pivot: energia giornaliera e superficie necessaria ----
+  // Energia di un pivot al giorno = pompaggio (volume lordo × prevalenza totale /
+  // rendimento) + motori delle torri. Prevalenza = pressione al centro del pivot
+  // (irrigatori + condotta del pivot) + sollevamento e perdite in rete.
+  // SENZA batterie: si pompa solo col sole (ore di pompaggio), con pompa più grande;
+  //   kWp = max(energia / (ore sole equivalenti × PR), 1,25 × potenza di picco).
+  // CON batterie: si pompa nelle ore di esercizio; la quota fuori dalle ore di sole
+  //   passa dalle batterie (perdita di ciclo); capacità = energia notturna / DoD.
+  // Superficie: moduli = kWp / (Wp/m²); terreno = moduli / copertura del suolo.
+  function solarSizing() {
+    const psSite = fields.map((f) => (f.lay as { solar?: { psh_design?: number; design_month?: number } } | null | undefined)?.solar)
+      .find((x) => x && x.psh_design);
+    const psh = Math.max(0.5, pvPsh ?? psSite?.psh_design ?? 6);
+    const PR = Math.max(0.3, pvPR / 100), eta = Math.max(0.2, pvEta / 100);
+    const hSun = Math.max(1, Math.min(14, pvSunH)), hRun = Math.max(1, Math.min(24, hoursDay));
+    let ePump = 0, eTow = 0, irrHa = 0;
+    for (const pv of pivots) {
+      const areaM2 = Math.PI * pv.r * pv.r;
+      irrHa += areaM2 / 10000;
+      const vol = (areaM2 * mm24) / 1000;                           // m³/giorno (mm24 è lordo)
+      const head = pivotPressure(pv) * 10.197 + Math.max(0, pvHead); // m
+      ePump += (vol * head) / 367 / eta;                            // kWh/giorno (ρg/3,6e6 = 1/367)
+      eTow += Math.ceil(pv.r / 55) * 0.55 * 0.5 * hRun;             // torri: ~0,55 kW, 50% di marcia
+    }
+    const eDay = ePump + eTow;
+    const pvArea = (kwp: number) => {
+      const mod = (kwp * 1000) / Math.max(50, pvWm2);               // m² di moduli
+      return { mod, land: mod / Math.max(0.1, pvGcr / 100) };       // m² di terreno
+    };
+    // senza batterie
+    const pSun = eDay / hSun;
+    const kwpNo = Math.max(eDay / (psh * PR), 1.25 * pSun);
+    // con batterie
+    const fSun = Math.min(1, hSun / hRun);
+    const eNight = eDay * (1 - fSun);
+    const kwpBat = (eDay * fSun + eNight / Math.max(0.5, pvBattEff / 100)) / (psh * PR);
+    const battKwh = eNight / Math.max(0.2, pvDod / 100);
+    return { psh, pshAuto: pvPsh == null, designMonth: psSite?.design_month, eDay, ePump, eTow, irrHa, n: pivots.length,
+      no: { kwp: kwpNo, pPump: pSun, ...pvArea(kwpNo) },
+      bat: { kwp: kwpBat, pPump: eDay / hRun, battKwh, ...pvArea(kwpBat) } };
+  }
+  function renderPowerSupply() {
+    if (!pivots.length) return null;
+    const num = (label: string, v: number, set: (x: number) => void, step = 1, min = 0, max = 100000) => (
+      <label className="text-[11px] text-sage-dark">{label}
+        <input type="number" min={min} max={max} step={step} value={v}
+          onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) set(x); }} className="field-input mt-0.5 py-1 text-sm" /></label>
+    );
+    const S = powerMode === "solar" ? solarSizing() : null;
+    const kw = (x: number) => `${fmt(Math.round(x))} kW`;
+    const kwp = (x: number) => `${fmt(Math.round(x))} kWp`;
+    const m2 = (x: number) => x >= 10000 ? uHa(x / 10000, 1) : `${fmt(Math.round(x))} m²`;
+    const row = (label: string, a: string, b: string, strong = false) => (
+      <tr className={strong ? "font-semibold text-brand-darker" : ""}>
+        <td className="py-0.5 pr-2 text-sage-dark">{label}</td><td className="text-right">{a}</td><td className="text-right">{b}</td>
+      </tr>
+    );
+    return (
+      <div className="bg-panel rounded-lg p-2 space-y-2">
+        <div className="text-xs font-semibold text-brand-darker">{t("Alimentazione dei pivot")}</div>
+        <div className="seg">
+          <div className="seg-item" data-active={powerMode === "grid"} onClick={() => setPowerMode("grid")}>{t("Rete / generatore")}</div>
+          <div className="seg-item" data-active={powerMode === "solar"} onClick={() => setPowerMode("solar")}>{t("Fotovoltaico")}</div>
+        </div>
+        {S && (<>
+          <div className="text-[11px] text-sage-dark leading-relaxed">
+            {t("Energia richiesta")}: <b>{fmt(Math.round(S.eDay))} kWh/{t("giorno")}</b> · {S.n} pivot · {uHa(S.irrHa)}
+            <br />{t("Irraggiamento di progetto")}: <b>{fmt(S.psh, { maximumFractionDigits: 1 })} kWh/m²/{t("giorno")}</b>
+            {S.pshAuto && S.designMonth ? ` (${t("mese di punta")}: ${new Date(2026, S.designMonth - 1, 1).toLocaleString(lang, { month: "long" })})` : S.pshAuto ? ` (${t("valore predefinito: posa i pivot per il dato del sito")})` : ""}
+          </div>
+          <table className="w-full text-[11px] tabular-nums">
+            <thead><tr className="text-sage-dark border-b border-black/10">
+              <th />
+              <th className="text-right font-medium">{t("Senza batterie")}</th>
+              <th className="text-right font-medium">{t("Con batterie")}</th>
+            </tr></thead>
+            <tbody>
+              {row(t("Ore di pompaggio"), `${fmt(Math.min(14, Math.max(1, pvSunH)))} h`, `${fmt(Math.min(24, Math.max(1, hoursDay)))} h`)}
+              {row(t("Potenza pompe + torri"), kw(S.no.pPump), kw(S.bat.pPump))}
+              {row(t("Campo fotovoltaico"), kwp(S.no.kwp), kwp(S.bat.kwp), true)}
+              {row(t("Superficie moduli"), m2(S.no.mod), m2(S.bat.mod))}
+              {row(t("Terreno occupato"), m2(S.no.land), m2(S.bat.land), true)}
+              {row(t("% della superficie irrigata"), `${fmt((S.no.land / 10000 / Math.max(0.01, S.irrHa)) * 100, { maximumFractionDigits: 1 })}%`, `${fmt((S.bat.land / 10000 / Math.max(0.01, S.irrHa)) * 100, { maximumFractionDigits: 1 })}%`)}
+              {row(t("Batterie"), "—", `${fmt(Math.round(S.bat.battKwh))} kWh`, true)}
+            </tbody>
+          </table>
+          <p className="text-[10px] text-sage-dark leading-snug">{t("Senza batterie si pompa solo con il sole: pompe più grandi, nessun accumulo. Con batterie si pompa nelle ore di esercizio impostate: pompe più piccole, campo un po' più grande per le perdite di ciclo. Superficie a terra esclusa viabilità e cabine.")}</p>
+          <button className="text-[11px] text-brand-mid" onClick={() => setSolarOpen((o) => !o)}>{solarOpen ? "▾" : "▸"} {t("Parametri del calcolo")}</button>
+          {solarOpen && (
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-[11px] text-sage-dark">{t("Irraggiamento (kWh/m²/giorno)")}
+                <input type="number" min={0.5} max={12} step={0.1} value={pvPsh ?? ""} placeholder={fmt(S.psh, { maximumFractionDigits: 1 })}
+                  onChange={(e) => setPvPsh(e.target.value === "" ? null : Number(e.target.value))} className="field-input mt-0.5 py-1 text-sm" /></label>
+              {num(t("Ore di pompaggio col sole"), pvSunH, setPvSunH, 0.5, 1, 14)}
+              {num(t("Sollevamento + perdite in rete (m)"), pvHead, setPvHead, 1, 0, 300)}
+              {num(t("Rendimento pompa·motore·inverter (%)"), pvEta, setPvEta, 1, 20, 95)}
+              {num(t("Performance ratio FV (%)"), pvPR, setPvPR, 1, 30, 95)}
+              {num(t("Potenza moduli (Wp/m²)"), pvWm2, setPvWm2, 5, 50, 300)}
+              {num(t("Copertura del suolo (%)"), pvGcr, setPvGcr, 1, 10, 100)}
+              {num(t("Profondità di scarica (%)"), pvDod, setPvDod, 1, 20, 100)}
+              {num(t("Rendimento ciclo batterie (%)"), pvBattEff, setPvBattEff, 1, 50, 100)}
+            </div>
+          )}
+          <p className="text-[10px] text-sage-dark">{t("Volume e ore di esercizio dalla pagina Irrigazione; pressione di ogni pivot dal calcolo idraulico.")}</p>
+        </>)}
+      </div>
+    );
+  }
   // Gruppo di strade nell'albero Livelli: UNA riga (occhio, zoom, rimuovi tutto),
   // espandibile per vedere i singoli tratti.
   function roadGroupRow(gkey: string, items: { r: RoadL; i: number }[]) {
@@ -4804,6 +4924,7 @@ export default function Page() {
                     </div>
                   );
                 })()}
+                {renderPowerSupply()}
               </div>
             )}
             </>)}
