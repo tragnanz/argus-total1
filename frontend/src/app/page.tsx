@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.176";
+const REV = "v0.6.177";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -61,7 +61,7 @@ const TABS: { key: string; label: string }[] = [
   { key: "analisi", label: "Analisi" },
   { key: "rilievo", label: "Rilievo" },
   { key: "impianti", label: "Impianti" },
-  { key: "accessori", label: "Accessori" },
+  { key: "accessori", label: "Tubazioni" },
   { key: "strade", label: "Strade" },
   { key: "irrigazione", label: "Irrigazione" },
   { key: "export", label: "Esporta" },
@@ -1035,7 +1035,7 @@ const navProps = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none",
 const IcoNavAnalisi = () => (<svg {...navProps}><path d="M3 12h4l3-8 4 16 3-8h4" /></svg>);
 const IcoNavRilievo = () => (<svg {...navProps}><path d="m3 20 6-9 4 5 3-4 5 8z" /></svg>);
 const IcoNavImpianti = () => (<svg {...navProps}><circle cx="12" cy="12" r="8" /><path d="M12 12h8" /><circle cx="12" cy="12" r="1.6" /></svg>);
-const IcoNavAccessori = () => (<svg {...navProps}><path d="M4 7h16M4 12h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="12" r="2" /><circle cx="8" cy="17" r="2" /></svg>);
+const IcoNavAccessori = () => (<svg {...navProps}><path d="M2 9h8" /><path d="M2 15h8" /><path d="M10 7v10" /><path d="M14 7v10" /><path d="M14 9h2a5 5 0 0 1 5 5v8" /><path d="M14 15h1a1 1 0 0 1 1 1v6" /></svg>);
 const IcoNavStrade = () => (<svg {...navProps}><path d="M8 3 4 21" /><path d="m16 3 4 18" /><path d="M12 4v3M12 10.5v3M12 17v3" /></svg>);
 const IcoNavExport = () => (<svg {...navProps}><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M4 20h16" /></svg>);
 const IcoNavIrrigazione = () => (<svg {...navProps}><path d="M12 3s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z" /><path d="M10 13a2 2 0 0 0 4 0" /></svg>);
@@ -4845,7 +4845,7 @@ export default function Page() {
           </section>
 
           <section hidden={tab !== "accessori"}>
-            <SectionHead title={t("Accessori")} help={t("Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.")} />
+            <SectionHead title={t("Tubazioni")} help={t("Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.")} />
 
             <div className="bg-panel rounded-lg p-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Tubazioni di adduzione dal canale")}</div>
