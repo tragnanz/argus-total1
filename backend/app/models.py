@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -163,3 +163,25 @@ class ExportRevision(Base):
     sections: Mapped[str] = mapped_column(String(24), nullable=False, default="")
     summary: Mapped[str] = mapped_column(Text, nullable=False, default="{}")   # JSON: pivot, ha, scala
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ShareComment(Base):
+    """Commento lasciato da un cliente sul link di sola lettura. Legato al
+    progetto (per chi lavora nell'app) e al token del link da cui arriva (il
+    cliente vede solo i commenti del proprio link). Facoltativamente fissato su
+    un punto della mappa. Tabella nuova → create_all la crea senza migrazioni."""
+    __tablename__ = "share_comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    token: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    share_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    author: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lng: Mapped[float | None] = mapped_column(Float, nullable=True)
+    seen: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+

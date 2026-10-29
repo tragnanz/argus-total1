@@ -20,6 +20,56 @@ export default function ViewPage({ params }: { params: { token: string } }) {
   const [data, setData] = useState<api.ShareData | null>(null);
   const [err, setErr] = useState("");
   const [infoOpen, setInfoOpen] = useState(true);   // pannello informazioni richiudibile
+  // ---- Commenti del cliente su questo link ----
+  const [comments, setComments] = useState<api.ShareComment[]>([]);
+  const [cOpen, setCOpen] = useState(true);
+  const [cAuthor, setCAuthor] = useState(() => { try { return window.localStorage.getItem("argus.commentAuthor") ?? ""; } catch { return ""; } });
+  const [cBody, setCBody] = useState("");
+  const [cPoint, setCPoint] = useState<{ lat: number; lng: number } | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [cBusy, setCBusy] = useState(false);
+  const [cMsg, setCMsg] = useState("");
+  const loadComments = () => api.listLinkComments(params.token).then(setComments).catch(() => { /* link non valido: già segnalato */ });
+  useEffect(() => { loadComments(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [params.token]);
+  // segnaposto dei commenti (+ quello in preparazione) sulla mappa
+  useEffect(() => {
+    const pins = comments.map((c, i) => ({ c, n: i + 1 })).filter((x) => x.c.lat != null && x.c.lng != null)
+      .map((x) => ({ lat: x.c.lat as number, lng: x.c.lng as number, n: x.n, text: x.c.body, done: x.c.resolved }));
+    if (cPoint) pins.push({ lat: cPoint.lat, lng: cPoint.lng, n: comments.length + 1, text: cBody || "…", done: false });
+    // la mappa si carica in modo asincrono: riprova finché è pronta
+    let tries = 0;
+    const iv = setInterval(() => {
+      const m = mapApi.current;
+      if (m || ++tries > 50) { clearInterval(iv); m?.setCommentPins?.(pins); }
+    }, 100);
+    return () => clearInterval(iv);
+  }, [comments, cPoint, cBody, data]);
+  // Esc annulla la scelta del punto
+  useEffect(() => {
+    if (!picking) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { mapApi.current?.pickPoint(null); setPicking(false); } };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [picking]);
+  function startPick() {
+    setPicking(true);
+    mapApi.current?.pickPoint((lat, lng) => { setCPoint({ lat, lng }); setPicking(false); });
+  }
+  async function sendComment() {
+    const body = cBody.trim(); if (!body) return;
+    setCBusy(true); setCMsg("");
+    try {
+      try { window.localStorage.setItem("argus.commentAuthor", cAuthor.trim()); } catch { /* */ }
+      await api.addLinkComment(params.token, { author: cAuthor.trim(), body, lat: cPoint?.lat ?? null, lng: cPoint?.lng ?? null });
+      setCBody(""); setCPoint(null); setCMsg(t("Commento inviato ✓"));
+      await loadComments();
+    } catch (e) { setCMsg(e instanceof Error ? e.message : String(e)); } finally { setCBusy(false); }
+  }
+  const fmtWhen = (iso: string | null) => {
+    if (!iso) return "";
+    const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+    return d.toLocaleString(lang, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  };
 
   const fmtHa = (n?: number | null) => (n == null ? "?" : `${fmt(Math.round(n))} ha`);
 
@@ -195,6 +245,53 @@ export default function ViewPage({ params }: { params: { token: string } }) {
             </div>
           )}
         </div>
+
+        {/* Pannello commenti del cliente (destra) */}
+        {data && (
+          <div className="absolute top-[4.5rem] right-4 w-[340px] max-w-[calc(100vw/var(--ui-scale)_-_2rem)] max-h-[calc(80vh/var(--ui-scale))] widget flex flex-col overflow-hidden z-30">
+            <div className="px-4 py-2.5 flex items-center justify-between border-b border-black/5">
+              <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide truncate">{t("Commenti")} · {comments.length}</div>
+              <button onClick={() => setCOpen((o) => !o)} className="text-sage-dark hover:text-brand px-2 -mr-2 text-xl leading-none shrink-0">{cOpen ? "–" : "+"}</button>
+            </div>
+            {cOpen && (
+              <div className="overflow-auto scroll-soft p-4 space-y-3">
+                {comments.length === 0 && <p className="text-[12px] text-sage-dark">{t("Nessun commento. Scrivi qui osservazioni o richieste: le riceverà chi ha preparato il progetto.")}</p>}
+                <ul className="space-y-2">
+                  {comments.map((c, i) => (
+                    <li key={c.id} className={"bg-panel rounded-lg px-2.5 py-2 text-[12px] " + (c.resolved ? "opacity-70" : "")}>
+                      <div className="flex items-center gap-1 text-[11px] text-sage-dark">
+                        <span className="font-semibold text-brand-darker">#{i + 1}</span>
+                        <span className="truncate">{c.author || t("Anonimo")} · {fmtWhen(c.created_at)}</span>
+                        {c.resolved && <span className="ml-auto text-brand font-medium shrink-0">✓ {t("Risolto")}</span>}
+                        {c.lat != null && c.lng != null && (
+                          <button className={(c.resolved ? "" : "ml-auto ") + "text-brand-mid shrink-0"} title={t("Mostra sulla mappa")}
+                            onClick={() => mapApi.current?.flyTo(c.lat as number, c.lng as number, 15)}>📍</button>
+                        )}
+                      </div>
+                      <div className="text-brand-darker whitespace-pre-wrap break-words mt-0.5">{c.body}</div>
+                    </li>
+                  ))}
+                </ul>
+                <div className="border-t border-black/5 pt-3 space-y-2">
+                  <input value={cAuthor} onChange={(e) => setCAuthor(e.target.value)} maxLength={80} placeholder={t("Il tuo nome")} className="field-input text-sm" />
+                  <textarea value={cBody} onChange={(e) => setCBody(e.target.value)} maxLength={2000} rows={3}
+                    placeholder={t("Scrivi un commento…")} className="field-input text-sm resize-y" />
+                  <div className="flex items-center gap-2">
+                    {cPoint ? (
+                      <span className="text-[11px] text-sage-dark flex-1">📍 {t("Punto sulla mappa")} · <button className="text-danger" onClick={() => setCPoint(null)}>{t("togli")}</button></span>
+                    ) : (
+                      <button className="btn-ghost flex-1 text-[12px]" onClick={picking ? () => { mapApi.current?.pickPoint(null); setPicking(false); } : startPick}>
+                        {picking ? t("Clicca sulla mappa… (Esc annulla)") : t("📍 Indica un punto (facoltativo)")}
+                      </button>
+                    )}
+                    <button className="btn-primary shrink-0" disabled={cBusy || !cBody.trim()} onClick={sendComment}>{cBusy ? "…" : t("Invia")}</button>
+                  </div>
+                  {cMsg && <p className="text-[11px] text-sage-dark">{cMsg}</p>}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="absolute bottom-1 left-3 text-[11px] text-white/80 z-10 pointer-events-none">Argus Total · by Nabu srl — Agrostar Group srl</div>
       </div>

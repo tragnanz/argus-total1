@@ -60,6 +60,9 @@ export type MapHandle = {
   showReachable: (polys: { type: "Polygon"; coordinates: number[][][] }[], label: string) => void;
   clearReachable: () => void;
   locate: () => void;
+  // Commenti: scelta di un punto con un clic (Esc annulla) e segnaposto numerati.
+  pickPoint: (cb: ((lat: number, lng: number) => void) | null) => void;
+  setCommentPins: (pins: { lat: number; lng: number; n: number; text: string; done?: boolean }[]) => void;
   startMeasure: (cb: (text: string) => void) => void;
   stopMeasure: () => void;
   // Cerchi dal centro: simulazione rapida di pivot (non crea macchine, solo misura).
@@ -159,6 +162,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const overlaysRef = useRef<Record<OverlayKey, L.ImageOverlay | null>>(
     { index: null, dem: null, suitability: null });
   const layoutRef = useRef<L.LayerGroup | null>(null);
+  const pickRef = useRef<((lat: number, lng: number) => void) | null>(null);
+  const commentsRef = useRef<L.LayerGroup | null>(null);
   // Etichette dei pivot (superficie · portata): visibili solo se il cerchio a
   // schermo è abbastanza grande da contenerle, altrimenti si sovrappongono.
   const pvLabelsRef = useRef<{ tt: L.Tooltip; r: number; lat: number }[]>([]);
@@ -245,9 +250,16 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     elevRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
     map.on("zoomend", updatePvLabels);
+    commentsRef.current = L.layerGroup().addTo(map);
 
     // Clic sulla mappa: misura (se attiva) oppure selezione punto (presa/finale).
     map.on("click", (e: L.LeafletMouseEvent) => {
+      if (pickRef.current) {
+        const cb = pickRef.current; pickRef.current = null;
+        map.getContainer().style.cursor = "";
+        cb(e.latlng.lat, e.latlng.lng);
+        return;
+      }
       if (circlingRef.current) {
         // Primo clic: centro. Secondo clic: fissa il raggio e riparte da capo.
         if (!ccenterRef.current) { ccenterRef.current = e.latlng; chovRef.current = e.latlng; }
@@ -779,6 +791,26 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         });
         pvLabelsRef.current = pvLabels;
         updatePvLabels();
+      },
+      pickPoint(cb) {
+        const map = mapRef.current; if (!map) return;
+        pickRef.current = cb;
+        map.getContainer().style.cursor = cb ? "crosshair" : "";
+      },
+      setCommentPins(pins) {
+        const g = commentsRef.current; if (!g) return;
+        g.clearLayers();
+        for (const p of pins) {
+          const bg = p.done ? "#7a8c81" : "#b23b1e";
+          const m = L.marker([p.lat, p.lng], {
+            icon: L.divIcon({ className: "", iconSize: [24, 30], iconAnchor: [12, 30],
+              html: `<div style="width:24px;height:24px;border-radius:12px 12px 12px 0;transform:rotate(-45deg);background:${bg};border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);display:grid;place-items:center"><span style="transform:rotate(45deg);color:#fff;font:700 11px Inter,system-ui,sans-serif">${p.n}</span></div>` }),
+            zIndexOffset: 1000,
+          });
+          const esc = (x: string) => x.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[ch] as string));
+          m.bindTooltip(`<b>#${p.n}</b> ${esc(p.text).slice(0, 160)}`, { direction: "top", offset: [0, -28] });
+          g.addLayer(m);
+        }
       },
       clearPivots() { pivotsRef.current?.clearLayers(); pivotBgRef.current = null; pvLabelsRef.current = []; },
       showRoads(roads, onRemove) {

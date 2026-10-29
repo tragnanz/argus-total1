@@ -8,19 +8,30 @@ vedere a clienti diversi viste diverse dello stesso impianto.
 - GET    /api/projects/{id}/shares  → elenca i link del progetto
 - DELETE /api/shares/{token}        → elimina un link
 - GET    /api/share/{token}         → dati pubblici (progetto + aree + layer + config)
+
+Commenti dei clienti:
+- GET    /api/share/{token}/comments      → (pubblico) commenti del link
+- POST   /api/share/{token}/comments      → (pubblico) nuovo commento, con limiti anti-abuso
+- GET    /api/projects/{id}/comments      → tutti i commenti del progetto (autenticato)
+- POST   /api/projects/{id}/comments/seen → segna tutti come letti
+- PATCH  /api/comments/{id}               → letto / risolto
+- DELETE /api/comments/{id}               → elimina
 """
 from __future__ import annotations
 
 import json
 import secrets
+import threading
+import time
+from collections import deque
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Area, Project, ProjectLayer, Share, ShareView, User
+from ..models import Area, Project, ProjectLayer, Share, ShareComment, ShareView, User
 from ..security import get_current_user
 from ..access import own_project
 
@@ -128,3 +139,134 @@ def get_share(token: str, db: Session = Depends(get_db)):
             for l in layers
         ],
     }
+
+
+# ---------------- Commenti dei clienti ----------------
+COMMENT_MAX_PER_LINK = 500            # tetto di commenti per singolo link
+_RATE_N, _RATE_WINDOW_S = 10, 600     # max 10 commenti ogni 10 minuti per IP e link
+_rate: dict[str, deque] = {}
+_rate_lock = threading.Lock()
+
+
+def _rate_ok(key: str) -> bool:
+    now = time.monotonic()
+    with _rate_lock:
+        q = _rate.setdefault(key, deque())
+        while q and now - q[0] > _RATE_WINDOW_S:
+            q.popleft()
+        if len(q) >= _RATE_N:
+            return False
+        q.append(now)
+        if len(_rate) > 5000:                      # pulizia: niente crescita illimitata
+            for k in [k for k, v in _rate.items() if not v]:
+                _rate.pop(k, None)
+        return True
+
+
+def _share_of(db: Session, token: str) -> tuple[int, str]:
+    """(project_id, nome del link) dal token; 404 se il link non esiste più."""
+    sv = db.scalar(select(ShareView).where(ShareView.token == token))
+    if sv:
+        return sv.project_id, sv.name
+    s = db.scalar(select(Share).where(Share.token == token))
+    if s:
+        return s.project_id, ""
+    raise HTTPException(404, "Link non valido o revocato")
+
+
+class CommentIn(BaseModel):
+    author: str = Field(default="", max_length=80)
+    body: str = Field(min_length=1, max_length=2000)
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lng: float | None = Field(default=None, ge=-180, le=180)
+
+
+class CommentPatch(BaseModel):
+    seen: bool | None = None
+    resolved: bool | None = None
+
+
+def _c_public(c: ShareComment) -> dict:
+    return {"id": c.id, "author": c.author, "body": c.body, "lat": c.lat, "lng": c.lng,
+            "resolved": bool(c.resolved), "created_at": c.created_at.isoformat() if c.created_at else None}
+
+
+def _c_full(c: ShareComment) -> dict:
+    return {**_c_public(c), "token": c.token, "share_name": c.share_name, "seen": bool(c.seen)}
+
+
+@router.get("/share/{token}/comments")
+def list_link_comments(token: str, db: Session = Depends(get_db)):
+    _share_of(db, token)
+    rows = db.scalars(select(ShareComment).where(ShareComment.token == token)
+                      .order_by(ShareComment.created_at.asc(), ShareComment.id.asc())).all()
+    return [_c_public(c) for c in rows]
+
+
+@router.post("/share/{token}/comments", status_code=201)
+def add_link_comment(token: str, body: CommentIn, request: Request, db: Session = Depends(get_db)):
+    project_id, share_name = _share_of(db, token)
+    text = body.body.strip()
+    if not text:
+        raise HTTPException(400, "Commento vuoto")
+    ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+          or (request.client.host if request.client else "?"))
+    if not _rate_ok(f"{ip}|{token}"):
+        raise HTTPException(429, "Troppi commenti in poco tempo: riprova tra qualche minuto")
+    n = len(db.scalars(select(ShareComment.id).where(ShareComment.token == token)).all())
+    if n >= COMMENT_MAX_PER_LINK:
+        raise HTTPException(429, "Raggiunto il numero massimo di commenti per questo link")
+    c = ShareComment(project_id=project_id, token=token, share_name=share_name[:200],
+                     author=(body.author or "").strip()[:80], body=text,
+                     lat=body.lat if body.lng is not None else None,
+                     lng=body.lng if body.lat is not None else None)
+    db.add(c); db.commit(); db.refresh(c)
+    return _c_public(c)
+
+
+@router.get("/projects/{project_id}/comments")
+def list_project_comments(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    own_project(db, user, project_id)
+    rows = db.scalars(select(ShareComment).where(ShareComment.project_id == project_id)
+                      .order_by(ShareComment.created_at.desc(), ShareComment.id.desc())).all()
+    return [_c_full(c) for c in rows]
+
+
+@router.post("/projects/{project_id}/comments/seen", status_code=204)
+def mark_comments_seen(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    own_project(db, user, project_id)
+    for c in db.scalars(select(ShareComment).where(ShareComment.project_id == project_id,
+                                                   ShareComment.seen.is_(False))).all():
+        c.seen = True
+    db.commit()
+
+
+def _own_comment(db: Session, user: User, comment_id: int) -> ShareComment:
+    c = db.get(ShareComment, comment_id)
+    if not c:
+        raise HTTPException(404, "Commento non trovato")
+    try:
+        own_project(db, user, c.project_id)
+    except HTTPException:
+        raise HTTPException(404, "Commento non trovato") from None
+    return c
+
+
+@router.patch("/comments/{comment_id}")
+def update_comment(comment_id: int, body: CommentPatch, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    c = _own_comment(db, user, comment_id)
+    if body.seen is not None:
+        c.seen = body.seen
+    if body.resolved is not None:
+        c.resolved = body.resolved
+        if body.resolved:
+            c.seen = True
+    db.commit(); db.refresh(c)
+    return _c_full(c)
+
+
+@router.delete("/comments/{comment_id}", status_code=204)
+def delete_comment(comment_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    c = _own_comment(db, user, comment_id)
+    db.delete(c); db.commit()
+

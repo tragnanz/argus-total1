@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.177";
+const REV = "v0.6.178";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1384,6 +1384,19 @@ export default function Page() {
 
   const [notes, setNotes] = useState("");
   const [shares, setShares] = useState<api.ShareView[]>([]);   // link di sola lettura del progetto
+  // Commenti lasciati dai clienti sui link di sola lettura
+  const [comments, setComments] = useState<api.ShareComment[]>([]);
+  const [showResolved, setShowResolved] = useState(false);
+  const notifiedCommentIds = useRef<Set<number>>(new Set());
+  async function refreshComments(pid: number, notify = true) {
+    try {
+      const cs = await api.listProjectComments(pid);
+      setComments(cs);
+      const fresh = cs.filter((c) => !c.seen && !notifiedCommentIds.current.has(c.id));
+      fresh.forEach((c) => notifiedCommentIds.current.add(c.id));
+      if (notify && fresh.length) setMsg(t("Nuovi commenti dei clienti: {n} (pagina Esporta)", { n: fresh.length }));
+    } catch { /* silenzioso: è un'aggiunta, non deve bloccare il progetto */ }
+  }
   const [shareName, setShareName] = useState("");              // nome del prossimo link da creare
   // Stampa: cosa includere nel PDF e in che lingua (indipendente dall'interfaccia).
   const [pdfSheet, setPdfSheet] = useState(true);
@@ -1467,10 +1480,35 @@ export default function Page() {
   useEffect(() => { if (api.getToken()) refreshClients(); }, []);
   useEffect(() => { refreshProjects(clientId); setProjectId(null); }, [clientId]);
   useEffect(() => {
-    if (projectId) { openProject(projectId); refreshShares(projectId); }
+    if (projectId) { openProject(projectId); refreshShares(projectId); notifiedCommentIds.current = new Set(); refreshComments(projectId); }
     else { setAreas([]); setLayers([]); setShares([]); }
   }, [projectId]);
 
+  // Nuovi commenti: ricontrolla ogni 2 minuti mentre il progetto è aperto.
+  useEffect(() => {
+    if (!projectId) { setComments([]); return; }
+    const iv = setInterval(() => refreshComments(projectId), 120000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+  // Segnaposto dei commenti sulla mappa quando è aperta la pagina Esporta.
+  useEffect(() => {
+    const shown = tab === "export" && !rightMin
+      ? comments.filter((c) => c.lat != null && c.lng != null && (showResolved || !c.resolved)) : [];
+    const order = [...comments].reverse();
+    mapApi.current?.setCommentPins?.(shown.map((c) => ({ lat: c.lat as number, lng: c.lng as number,
+      n: order.indexOf(c) + 1, text: `${c.author ? c.author + ": " : ""}${c.body}`, done: c.resolved })));
+  }, [comments, tab, rightMin, showResolved]);
+  async function patchComment(id: number, patch: { seen?: boolean; resolved?: boolean }) {
+    try { const c = await api.updateComment(id, patch); setComments((cs) => cs.map((x) => (x.id === id ? c : x))); } catch (e) { showErr(e); }
+  }
+  async function removeComment(id: number) {
+    try { await api.deleteComment(id); setComments((cs) => cs.filter((x) => x.id !== id)); } catch (e) { showErr(e); }
+  }
+  async function markAllCommentsSeen() {
+    if (!projectId) return;
+    try { await api.markCommentsSeen(projectId); setComments((cs) => cs.map((x) => ({ ...x, seen: true }))); } catch (e) { showErr(e); }
+  }
   async function refreshClients() { try { setClients(await api.listClients()); } catch (e) { showErr(e); } }
   async function refreshProjects(cid: number | null) { try { setProjects(await api.listProjects(cid)); } catch (e) { showErr(e); } }
   async function refreshAreas(pid: number) { try { setAreas(await api.listAreas(pid)); } catch (e) { showErr(e); } }
@@ -5170,6 +5208,54 @@ export default function Page() {
                 </ul>
               )}
             </div>
+
+            {/* Commenti lasciati dai clienti sui link */}
+            {projectId != null && (() => {
+              const order = [...comments].reverse();             // numerazione in ordine di arrivo
+              const list = comments.filter((c) => showResolved || !c.resolved);
+              const unseenN = comments.filter((c) => !c.seen).length;
+              const openN = comments.filter((c) => !c.resolved).length;
+              const when = (iso: string | null) => {
+                if (!iso) return "";
+                const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+                return d.toLocaleString(lang, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+              };
+              return (
+                <div className="mt-4 border-t border-brand/15 pt-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="text-sm font-semibold text-brand-darker flex-1">{t("Commenti dei clienti")} · {openN}</div>
+                    {unseenN > 0 && <span className="text-[10px] font-bold bg-nabu-accent text-white rounded-full px-1.5">{unseenN} {t("nuovi")}</span>}
+                    <button className="text-[11px] text-brand-mid" onClick={() => projectId && refreshComments(projectId, false)} title={t("Aggiorna")}>↻</button>
+                  </div>
+                  <div className="flex items-center gap-3 text-[11px] text-sage-dark mb-1">
+                    <label className="flex items-center gap-1"><input type="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} />{t("Mostra risolti")}</label>
+                    {unseenN > 0 && <button className="text-brand-mid ml-auto" onClick={markAllCommentsSeen}>{t("Segna tutti come letti")}</button>}
+                  </div>
+                  {!list.length ? (
+                    <p className="text-[11px] text-sage-dark">{comments.length ? t("Nessun commento aperto.") : t("Nessun commento: i clienti possono scriverne dal link di sola lettura.")}</p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {list.map((c) => (
+                        <li key={c.id} className={"rounded-lg px-2 py-1.5 text-[12px] " + (c.seen ? "bg-panel" : "bg-nabu-accent/10 border border-nabu-accent/40") + (c.resolved ? " opacity-60" : "")}
+                          onMouseEnter={() => { if (!c.seen) patchComment(c.id, { seen: true }); }}>
+                          <div className="flex items-center gap-1 text-[11px] text-sage-dark">
+                            <span className="font-semibold text-brand-darker">#{order.indexOf(c) + 1}</span>
+                            <span className="truncate flex-1">{c.author || t("Anonimo")} · {c.share_name || t("link")} · {when(c.created_at)}</span>
+                            {c.lat != null && c.lng != null && (
+                              <button className="text-brand-mid shrink-0" title={t("Mostra sulla mappa")} onClick={() => mapApi.current?.flyTo(c.lat as number, c.lng as number, 15)}>📍</button>
+                            )}
+                            <button className={"shrink-0 " + (c.resolved ? "text-brand" : "text-sage-dark hover:text-brand")} title={c.resolved ? t("Riapri") : t("Segna come risolto")}
+                              onClick={() => patchComment(c.id, { resolved: !c.resolved })}>✓</button>
+                            <button className="text-danger shrink-0" title={t("Elimina")} onClick={() => removeComment(c.id)}>✕</button>
+                          </div>
+                          <div className="text-brand-darker whitespace-pre-wrap break-words mt-0.5">{c.body}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })()}
           </section>
 
           {/* ---------------- Informazioni: riepilogo del progetto ------------- */}

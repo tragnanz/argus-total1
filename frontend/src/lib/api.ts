@@ -228,6 +228,22 @@ export const deleteShare = (token: string) =>
 export const fetchShare = (token: string) =>
   req<ShareData>(`/api/share/${encodeURIComponent(token)}`);
 
+// ---- Commenti dei clienti sul link di sola lettura ----
+export type ShareComment = { id: number; author: string; body: string; lat: number | null; lng: number | null;
+  resolved: boolean; created_at: string | null; token?: string; share_name?: string; seen?: boolean };
+export const listLinkComments = (token: string) =>
+  req<ShareComment[]>(`/api/share/${encodeURIComponent(token)}/comments`);
+export const addLinkComment = (token: string, c: { author: string; body: string; lat?: number | null; lng?: number | null }) =>
+  req<ShareComment>(`/api/share/${encodeURIComponent(token)}/comments`, { method: "POST", body: JSON.stringify(c) });
+export const listProjectComments = (projectId: number) =>
+  req<ShareComment[]>(`/api/projects/${projectId}/comments`);
+export const markCommentsSeen = (projectId: number) =>
+  req<void>(`/api/projects/${projectId}/comments/seen`, { method: "POST" });
+export const updateComment = (id: number, patch: { seen?: boolean; resolved?: boolean }) =>
+  req<ShareComment>(`/api/comments/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+export const deleteComment = (id: number) =>
+  req<void>(`/api/comments/${id}`, { method: "DELETE" });
+
 // ---- Satellite ----
 export const fetchScenes = (geom: Polygon, months_back = 12, max_cloud = 95) =>
   req<Scene[]>("/api/satellite/scenes", {
