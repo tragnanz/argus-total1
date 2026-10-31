@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.184";
+const REV = "v0.6.185";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -95,6 +95,8 @@ const DEFAULTS: Settings = {
 
 // Sotto-area (macro-area) inscritta in un campo.
 type FieldMacro = { id: number; name: string; geom: Polygon; area_ha: number; mean_score: number; savedId?: number };
+type PivotBrand = "starpivot" | "reinke" | "valley" | "rkd" | "zimmatic";
+const PIVOT_BRANDS: Record<PivotBrand, string> = { starpivot: "Star Pivot", reinke: "Reinke", valley: "Valley", rkd: "RKD", zimmatic: "Zimmatic" };
 type Field = {
   id: number; name: string; geom: Polygon;
   settings?: Settings;                 // override per-campo (usato se non "stesse regole")
@@ -1307,6 +1309,13 @@ export default function Page() {
   const [pvGcr, setPvGcr] = useState(45);                         // copertura del suolo (%)
   const [pvDod, setPvDod] = useState(80);                         // profondità di scarica batterie (%)
   const [pvBattEff, setPvBattEff] = useState(90);                 // rendimento di ciclo batterie (%)
+  // ---- Produttore dei pivot (per progetto, nel browser) ----
+  const [pivotBrand, setPivotBrandState] = useState<PivotBrand>("starpivot");
+  useEffect(() => {
+    try { const v = window.localStorage.getItem(`argus.pivotBrand.${projectId ?? 0}`) as PivotBrand | null;
+      setPivotBrandState(v && v in PIVOT_BRANDS ? v : "starpivot"); } catch { setPivotBrandState("starpivot"); }
+  }, [projectId]);
+  const setPivotBrand = (v: PivotBrand) => { setPivotBrandState(v); try { window.localStorage.setItem(`argus.pivotBrand.${projectId ?? 0}`, v); } catch { /* */ } };
   // ---- Fonte d'acqua e schema d'impianto ----
   type SrcType = "fiume" | "canale" | "pozzo" | "invaso";
   const [srcPt, setSrcPt] = useState<number[] | null>(null);          // [lng, lat] del punto di presa
@@ -3423,6 +3432,106 @@ export default function Page() {
       loadRevs();
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
+  // ---- Esportazione per Ceres (.ceres) ----------------------------------------
+  // JSON { app, ver, name, m } con m = progetto Ceres in Base64 UTF-8 (stesso
+  // formato del link #m=). Campi "ff" e macchine "p" ad array posizionali.
+  // Le campate sono composte con il listino Star Pivot 6"5/8 e marcate come
+  // ricomponibili ([12] = 0): Ceres sceglie poi i diametri dei tubi.
+  // Listino campate 6"5/8 (indice tubo 2 in Ceres) e sbracci per produttore.
+  // Zimmatic: nessun listino disponibile → si passa solo il raggio e Ceres compone.
+  const SPAN_LIST: Record<PivotBrand, { spans: number[]; oh: number[] } | null> = {
+    starpivot: { spans: [59.8, 54.0, 48.1, 42.3], oh: [5.9, 11.7, 17.6, 23.4] },
+    reinke: { spans: [62.2, 59.1, 53.3, 47.5, 41.8, 36.0], oh: [0] },
+    valley: { spans: [68.6, 62.5, 57.0, 54.9, 48.8, 42.7, 41.1, 35.1], oh: [0] },
+    rkd: { spans: [65.3, 59.4, 53.5, 47.6, 41.7, 35.8], oh: [0] },
+    zimmatic: null,
+  };
+  // Composizione: minimo di scarto dal raggio (m) + 2,5 per campata + 0,5 per
+  // lunghezza diversa. Ricerca su multinsiemi (al più 3 lunghezze diverse).
+  const spanMemo = useRef(new Map<string, { spans: number[]; oh: number; total: number } | null>());
+  function spanComposition(R: number, brand: PivotBrand): { spans: number[]; oh: number; total: number } | null {
+    const mk = `${brand}|${Math.round(R)}`;
+    if (spanMemo.current.has(mk)) return spanMemo.current.get(mk)!;
+    const res = spanCompose(Math.round(R), brand); spanMemo.current.set(mk, res); return res;
+  }
+  function spanCompose(R: number, brand: PivotBrand): { spans: number[]; oh: number; total: number } | null {
+    const L = SPAN_LIST[brand]; if (!L) return null;
+    type B = { spans: number[]; oh: number; total: number; key: number[] };
+    let best: B | null = null;
+    const better = (a: number[], b: number[]) => { for (let i = 0; i < a.length; i++) { if (a[i] !== b[i]) return a[i] < b[i]; } return false; };
+    const lens = L.spans, mx = Math.max(...lens), mn = Math.min(...lens);
+    for (const oh of L.oh) {
+      const S = R - oh; if (S < mn * 0.8) continue;
+      for (let n = Math.max(1, Math.floor(S / mx)); n <= Math.ceil(S / mn); n++) {
+        for (let i1 = 0; i1 < lens.length; i1++) for (let i2 = i1; i2 < lens.length; i2++) for (let i3 = i2; i3 < lens.length; i3++)
+          for (let a = 0; a <= n; a++) for (let b = 0; a + b <= n; b++) {
+            const c = n - a - b;
+            if ((i2 === i1 && b) || (i3 === i2 && c)) continue;     // stessa lunghezza: basta un contatore
+            const spans = [...Array(a).fill(lens[i1]), ...Array(b).fill(lens[i2]), ...Array(c).fill(lens[i3])];
+            const tot = spans.reduce((x, y) => x + y, 0) + oh, err = Math.abs(tot - R);
+            const kinds = new Set(spans).size;
+            const key = [err + 2.5 * n + 0.5 * kinds, oh];                // 1 m di scarto ≈ 0,4 campate in più
+            if (!best || better(key, best.key)) best = { spans: spans.sort((x, y) => y - x), oh, total: tot, key };
+          }
+      }
+    }
+    return best ? { spans: best.spans, oh: best.oh, total: best.total } : null;
+  }
+  function exportCeres() {
+    if (!pivots.length) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
+    const r6 = (x: number) => Math.round(x * 1e6) / 1e6;
+    const inRing = (lng: number, lat: number, ring: number[][]) => {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const [xi, yi] = ring[i], [xj, yj] = ring[j];
+        if ((yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+      }
+      return inside;
+    };
+    // campo di ogni pivot: quello assegnato, altrimenti quello che ne contiene il centro
+    const owner = pivots.map((pv) => {
+      if (pv.field != null && fields.some((f) => f.id === pv.field)) return pv.field;
+      const hit = fields.filter((f) => inRing(pv.lng, pv.lat, f.geom.coordinates[0]))
+        .sort((a, b) => ringAreaHa(a.geom.coordinates) - ringAreaHa(b.geom.coordinates))[0];
+      return hit?.id ?? null;
+    });
+    const used = new Set(owner.filter((x): x is number => x != null));
+    const ffSrc = fields.filter((f) => used.has(f.id));
+    if (!ffSrc.length) { setMsg(t("Nessun pivot è dentro un campo: impossibile esportare per Ceres.")); return; }
+    const idOf = new Map(ffSrc.map((f, i) => [f.id, i + 1]));
+    const ff = ffSrc.map((f) => {
+      const ring = f.geom.coordinates[0].slice();
+      if (ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]) ring.pop();
+      const st = effSettings(f);
+      const n = owner.filter((o) => o === f.id).length;
+      return { i: idOf.get(f.id)!, v: ring.map((p) => [r6(p[1]), r6(p[0])]),
+        q: [50, Math.max(800, Math.round(st.radius)), 0, Math.max(1, Math.round(st.gap)), Math.max(14, n), 0, 25] };
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const p: any[] = [];
+    pivots.forEach((pv, k) => {
+      const fid = owner[k]; if (fid == null) return;
+      const c = spanComposition(pv.r, pivotBrand);
+      p.push(c
+        ? [r6(pv.lat), r6(pv.lng), Math.round(c.total), 360, 0, 0, 25, 0, 0, idOf.get(fid)!,
+          Math.round(c.oh * 10), c.spans.map((L) => [2, Math.round(L * 10)]), 0]
+        : [r6(pv.lat), r6(pv.lng), Math.round(pv.r), 360, 0, 0, 25, 0, 0, idOf.get(fid)!, 0, [], 0]);
+    });
+    const skipped = pivots.length - p.length;
+    const cname = clients.find((c) => c.id === clientId)?.name || "";
+    const pname = projects.find((x) => x.id === projectId)?.name || "";
+    const today = new Date(); const dt = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const obj: any = { c: cname || pname, ...(pname ? { r: pname } : {}), dt, ...(pivotBrand !== "starpivot" ? { pb: pivotBrand } : {}), ff, p };
+    const json = JSON.stringify(obj);
+    const m = btoa(unescape(encodeURIComponent(json)));
+    // verifica: la decodifica deve restituire lo stesso JSON
+    if (decodeURIComponent(escape(atob(m))) !== json) { setMsg(t("Esportazione per Ceres non riuscita: verifica di codifica fallita.")); return; }
+    const name = pname || cname || "Argus Total";
+    saveBlob(new Blob([JSON.stringify({ app: "ceres", ver: "78.16", name, m })], { type: "application/json" }), `${safe(name)}.ceres`);
+    setMsg(t("File .ceres esportato: {n} pivot in {f} campi.", { n: fmt(p.length), f: fmt(ff.length) })
+      + (skipped ? " " + t("{n} pivot fuori dai campi non esportati.", { n: fmt(skipped) }) : ""));
+  }
   function downloadGeoJSON() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const feats: any[] = [];
@@ -5312,6 +5421,11 @@ export default function Page() {
               </div>
             ) : (<>
 
+            <label className="text-xs text-sage-dark block mb-1">{t("Produttore dei pivot")}
+              <select className="field-input mt-1 text-sm" value={pivotBrand} onChange={(e) => setPivotBrand(e.target.value as PivotBrand)}>
+                {(Object.keys(PIVOT_BRANDS) as PivotBrand[]).map((k) => <option key={k} value={k}>{PIVOT_BRANDS[k]}</option>)}
+              </select>
+            </label>
             <label className="text-xs text-sage-dark block mb-1">{t("Disposizione")}</label>
             <div className="seg mb-1">
               <div className="seg-item" data-active={cur.layoutCfg === "square"} onClick={() => patch({ layoutCfg: "square" })}>{t("A quadrato")}</div>
@@ -5817,6 +5931,8 @@ export default function Page() {
               </button>
               <button className="btn-ghost flex-1 basis-0" disabled={!laid.length} onClick={downloadGeoJSON}>{t("Layout GeoJSON")}</button>
             </div>
+            <button className="btn-ghost w-full mt-2" disabled={!pivots.length} onClick={exportCeres}
+              title={t("Campi e pivot con le campate del produttore scelto in Impianti, da aprire in Ceres con File › Apri file.")}>{t("Esporta per Ceres (.ceres)")}</button>
 
             {/* Storico delle revisioni: ogni export prende il numero successivo
                 e la tavola lo porta stampato nel cartiglio. Vive sul server,
