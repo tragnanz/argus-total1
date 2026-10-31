@@ -20,11 +20,20 @@ from matplotlib.patches import Polygon as MplPoly
 
 from .report_i18n import tr, RTL, fmt_num, fmt_date
 
-BRAND = "#038037"
+# Libreria grafica Nabu (Argus Total è un prodotto Nabu): verde #4CAF4F per
+# accenti, navy #0F172A per fondi scuri, testi charcoal/grigi, bordi #E2E8F0.
+BRAND = "#4CAF4F"
+N_NAVY = "#0F172A"
+N_HEAD = "#1A1D21"
+N_BODY = "#525252"
+N_MUTED = "#737373"
+N_BORDER = "#E2E8F0"
+N_SOFT = "#FAFAFA"
+N_GREEN10 = "#EDF7ED"   # verde al 10% su bianco
 # Palette della tavola tecnica (misurata sulle tavole di settore).
 _CYAN = "#00d1ff"        # confini dei poligoni e tubazioni
 _GREEN = "#2ee0a1"       # cerchi dei pivot
-_INK = "#123524"         # riquadri scuri e cornice
+_INK = N_NAVY            # riquadri scuri e cornice
 
 
 def _halo():
@@ -33,7 +42,7 @@ def _halo():
     return [pe.withStroke(linewidth=1.6, foreground="#0b2318")]
 
 ACCENT = "#20aae2"
-PHASE_COLORS = ["#038037", "#20aae2", "#87bf59", "#f0b429", "#b23b1e", "#6b21a8"]
+PHASE_COLORS = ["#4CAF4F", "#20aae2", "#87bf59", "#f0b429", "#b23b1e", "#6b21a8"]
 
 _ASSETS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
 _CJK_TTF = os.path.join(_ASSETS, "fonts", "NabuCJK.ttf")   # cinese incorporato (subset)
@@ -53,6 +62,14 @@ def _ensure_fonts() -> None:
         pdfmetrics.registerFont(TTFont("Deja-Bold", os.path.join(fdir, "DejaVuSans-Bold.ttf")))
     except Exception:  # noqa: BLE001
         pass
+    # Font della libreria Nabu: Inter per testo e interfaccia, Poppins per i titoli.
+    for name, fn in (("Inter", "Inter-Regular.ttf"), ("Inter-SemiBold", "Inter-SemiBold.ttf"),
+                     ("Inter-Bold", "Inter-Bold.ttf"), ("Poppins-Bold", "Poppins-Bold.ttf")):
+        try:
+            pdfmetrics.registerFont(TTFont(name, os.path.join(fdir, fn)))
+            _NABU_FONTS.add(name)
+        except Exception:  # noqa: BLE001
+            pass
     if os.path.exists(_CJK_TTF):
         try:  # cinese: TTF (TrueType) INCORPORATO nel PDF → resa ovunque
             pdfmetrics.registerFont(TTFont("Nabu-CJK", _CJK_TTF))
@@ -68,10 +85,24 @@ def _ensure_fonts() -> None:
     _FONTS_READY = True
 
 
+_NABU_FONTS: set = set()
+# Poppins copre solo l'alfabeto latino (niente cirillico né vietnamita).
+_POPPINS_LANGS = {"it", "en", "fr", "es", "pt", "ro", "hu", "id", "de", "pl", "af", "ms"}
+
+
 def _fonts(lang: str) -> tuple[str, str]:
     if lang == "zh":
         return ("Nabu-CJK", "Nabu-CJK") if _HAS_CJK else ("STSong-Light", "STSong-Light")
-    return "Deja", "Deja-Bold"
+    if lang == "ar" or "Inter" not in _NABU_FONTS:
+        return "Deja", "Deja-Bold"
+    return "Inter", "Inter-Bold"
+
+
+def _font_head(lang: str) -> str:
+    """Font dei titoli: Poppins dove copre l'alfabeto, altrimenti il grassetto del testo."""
+    if lang in _POPPINS_LANGS and "Poppins-Bold" in _NABU_FONTS:
+        return "Poppins-Bold"
+    return _fonts(lang)[1]
 
 
 def _shape(lang: str, s: str) -> str:
@@ -502,7 +533,7 @@ def layout_schematic_png(geojson: dict, meta: dict, lat0: float, lang: str = "it
 def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
               layout_meta: dict, schematic_png: bytes, rev: str, lang: str = "it",
               with_sheet: bool = True, with_plan: bool = True,
-              sheet_kit: dict | None = None) -> bytes:
+              sheet_kit: dict | None = None, extra_sections: list | None = None) -> bytes:
     """Compone il PDF. `with_sheet` stampa i dati di progetto, `with_plan` la
     tavola della planimetria: si possono chiedere separatamente o insieme.
 
@@ -520,6 +551,7 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
                                     TableStyle, Image as RLImage)
 
     FONT, FONTB = _fonts(lang)
+    FONTH = _font_head(lang)
     rtl = lang in RTL
     align = TA_RIGHT if rtl else TA_LEFT
 
@@ -570,43 +602,52 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
     # sulla tavola c'e' anche l'intestazione con il marchio.
     PLAN_H = _lh - 24 * mm - (26 * mm if with_sheet else 48 * mm)
     ss = getSampleStyleSheet()
-    h = ParagraphStyle("h", parent=ss["Heading2"], fontName=FONTB, textColor=colors.HexColor(BRAND),
-                       spaceBefore=8, spaceAfter=4, alignment=align)
+    h = ParagraphStyle("h", parent=ss["Heading2"], fontName=FONTH, fontSize=13, leading=17,
+                       textColor=colors.HexColor(N_HEAD), spaceBefore=12, spaceAfter=5, alignment=align)
     small = ParagraphStyle("s", parent=ss["Normal"], fontName=FONT, fontSize=8,
-                           textColor=colors.grey, alignment=align)
+                           textColor=colors.HexColor(N_MUTED), alignment=align)
     story = []
 
-    logo = os.path.join(_ASSETS, "nabu-logo-color.png")
-    title = Paragraph(f"<b>{T('sheet_title')}</b><br/><font size=11 color='#20aae2'>{L('Argus Total — Nabu')}</font>",
-                      ParagraphStyle("t", parent=ss["Title"], fontName=FONTB, fontSize=17, leading=20,
-                                     textColor=colors.HexColor(BRAND), alignment=align))
-    # Sulla TAVOLA A3 il marchio sta nel cartiglio: l'intestazione serve solo
-    # quando il documento comincia con la scheda.
+    # Intestazione: marchio Argus Total a sinistra, titolo, marchio Nabu a destra.
+    logo = os.path.join(_ASSETS, "argus-total-logo.png")
+    nabu = os.path.join(_ASSETS, "nabu-logo-color.png")
+    title = Paragraph(f"{T('sheet_title')}",
+                      ParagraphStyle("t", parent=ss["Title"], fontName=FONTH, fontSize=20, leading=24,
+                                     textColor=colors.HexColor(N_HEAD), alignment=align, spaceAfter=0))
+    sub = Paragraph(L(info.get("project_name", "")),
+                    ParagraphStyle("ts", fontName=FONT, fontSize=10, leading=13,
+                                   textColor=colors.HexColor(N_MUTED), alignment=align))
     if with_sheet or not kit:
-        if os.path.exists(logo):
-            cells = [RLImage(logo, width=30 * mm, height=30 * mm, kind="proportional"), title]
-            head = Table([cells[::-1] if rtl else cells], colWidths=[34 * mm, None] if not rtl else [None, 34 * mm])
-            head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
-            story.append(head)
-        else:
-            story.append(title)
-        story.append(Spacer(1, 6))
+        left = RLImage(logo, width=44 * mm, height=13 * mm, kind="proportional") if os.path.exists(logo) else Spacer(1, 1)
+        right = RLImage(nabu, width=20 * mm, height=14 * mm, kind="proportional") if os.path.exists(nabu) else Spacer(1, 1)
+        mid = [title, sub]
+        cells = [left, mid, right]
+        head = Table([cells[::-1] if rtl else cells],
+                     colWidths=[48 * mm, None, 24 * mm] if not rtl else [24 * mm, None, 48 * mm])
+        head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                  ("LINEBELOW", (0, 0), (-1, 0), 1.2, colors.HexColor(BRAND)),
+                                  ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
+        story.append(head)
+        story.append(Spacer(1, 4))
 
     p_lab = ParagraphStyle("kvl", fontName=FONT, fontSize=9.5, leading=12,
-                           textColor=colors.HexColor("#3b5654"), alignment=align)
-    p_val = ParagraphStyle("kvv", fontName=FONT, fontSize=9.5, leading=12, alignment=align)
+                           textColor=colors.HexColor(N_MUTED), alignment=align)
+    p_val = ParagraphStyle("kvv", fontName=FONT, fontSize=9.5, leading=12,
+                           textColor=colors.HexColor(N_HEAD), alignment=align)
 
     def kv_table(rows):
         data = []
         for a, b in rows:
-            pa = Paragraph(L(a), p_lab); pb = Paragraph(L(b), p_val)
+            # le etichette arrivano già da T() (già «modellate» per l'arabo):
+            # rimodellarle le rovescerebbe di nuovo
+            pa = Paragraph(a, p_lab); pb = Paragraph(L(b), p_val)
             data.append([pb, pa] if rtl else [pa, pb])
         cols = [None, 55 * mm] if rtl else [55 * mm, None]
         tb = Table(data, colWidths=cols)
         tb.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 3), ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#e3ebe5")),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.5, colors.HexColor(N_BORDER)),
         ]))
         return tb
 
@@ -617,11 +658,14 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
             colw = list(reversed(colw))
         tb = Table(data, colWidths=colw)
         tb.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(header_color)),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, -1), FONT), ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(N_SOFT)),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(N_HEAD)),
+            ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor(N_BODY)),
+            ("FONTNAME", (0, 0), (-1, -1), FONT), ("FONTNAME", (0, 0), (-1, 0), FONTB),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
             ("ALIGN", (0, 0), (-1, -1), "RIGHT" if rtl else "LEFT"),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#e3ebe5")),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(N_BORDER)),
+            ("LINEBELOW", (0, 0), (-1, 0), 1.0, colors.HexColor(BRAND)),
         ]))
         return tb
 
@@ -701,6 +745,48 @@ def build_pdf(info: dict, field_ha: float, suit_meta: dict | None,
                [[N(p["phase"]), N(p["n_pivots"]), N(p["net_ha"]), N(p["q_ls"])] for p in phases]
         sheet.append(data_table(rows, ACCENT, [20 * mm, 25 * mm, 30 * mm, 35 * mm]))
 
+    # --- sezioni preparate dal client (fonte d'acqua, computo metrico) ---
+    # Arrivano già tradotte nella lingua della stampa: titolo e righe di testo.
+    for sec in (extra_sections or []):
+        try:
+            title_s = str(sec.get("title", ""))[:200]
+            rows = [[str(c)[:400] for c in r] for r in (sec.get("rows") or [])][:400]
+            header = [str(c)[:120] for c in (sec.get("header") or [])]
+        except Exception:  # noqa: BLE001
+            continue
+        if not rows:
+            continue
+        sheet.append(Paragraph(L(title_s), h))
+        if header:
+            ncol = len(header)
+            avail = _pw - 36 * mm
+            ws = sec.get("widths") or []
+            if len(ws) == ncol and sum(ws) > 0:
+                colw = [avail * float(x) / float(sum(ws)) for x in ws]
+            else:
+                colw = [avail / ncol] * ncol
+            cell = ParagraphStyle("xc", fontName=FONT, fontSize=8, leading=10, alignment=align,
+                                  textColor=colors.HexColor(N_BODY))
+            hcell = ParagraphStyle("xh", parent=cell, textColor=colors.HexColor(N_HEAD), fontName=FONTB)
+            data = [[Paragraph(L(c), hcell) for c in header]] + \
+                   [[Paragraph(L(c), cell) for c in (r + [""] * ncol)[:ncol]] for r in rows]
+            if rtl:
+                data = [list(reversed(r)) for r in data]; colw = list(reversed(colw))
+            tb = Table(data, colWidths=colw, repeatRows=1)
+            tb.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(N_SOFT)),
+                ("LINEBELOW", (0, 0), (-1, 0), 1.0, colors.HexColor(BRAND)),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(N_BORDER)),
+                ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]))
+            for i, r in enumerate(rows, 1):
+                if len(r) >= 2 and all(not c for c in r[1:]):      # riga di categoria
+                    tb.setStyle(TableStyle([("BACKGROUND", (0, i), (-1, i), colors.HexColor(N_GREEN10))]))
+            sheet.append(tb)
+        else:
+            sheet.append(kv_table([(L(r[0]), r[1] if len(r) > 1 else "") for r in rows]))
+
     if with_sheet:
         story.extend(sheet)
 
@@ -738,7 +824,8 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
                  pipes: list[list[list[float]]], canals: list[list[list[float]]],
                  lang: str = "it", px_w: int = 1810, px_h: int = 1296,
                  status: dict | None = None, lk: float = 1.0, fk: float = 1.0,
-                 detail: float = 1.0, printed_pt: float = 1006.0) -> tuple[bytes, float]:
+                 detail: float = 1.0, printed_pt: float = 1006.0,
+                 source: dict | None = None) -> tuple[bytes, float]:
     """Ritorna (png, denominatore della scala) per il riquadro mappa.
 
     `pivots` = [{lat, lon, r, ha, q_m3h, p_bar, n}], `rings` gli anelli dei
@@ -746,7 +833,7 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
     riquadro (1006 pt = 354,9 mm).
     """
     import matplotlib.font_manager as fm
-    from matplotlib.patches import Circle, FancyBboxPatch
+    from matplotlib.patches import Circle, FancyBboxPatch, Wedge
 
     prop = None
     if lang == "zh":
@@ -773,6 +860,10 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
         dlon = pv["r"] / (111320.0 * max(0.1, math.cos(math.radians(pv["lat"]))))
         lons += [pv["lon"] - dlon, pv["lon"] + dlon]
         lats += [pv["lat"] - dlat, pv["lat"] + dlat]
+    # Fonte d'acqua (presa, tracciato, vasca): entra nell'inquadratura.
+    src = source or {}
+    for p in (src.get("line") or []) + ([src["src"]] if src.get("src") else []):
+        lons.append(float(p[0])); lats.append(float(p[1]))
     if not lons:
         lons, lats = [0.0], [0.0]
 
@@ -830,6 +921,35 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
             ax.plot([p[0] for p in pts], [p[1] for p in pts], color=_CYAN,
                     linewidth=1.6 * lk, zorder=4, solid_capstyle="round")
 
+    # --- fonte d'acqua: tracciato (condotta piena, canale tratteggiato), vasca, presa ---
+    if src.get("line") and len(src["line"]) >= 2:
+        pts = _merc_ring(src["line"])
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        ax.plot(xs, ys, color="#ffffff", linewidth=5.0 * lk, zorder=3.5, solid_capstyle="round")
+        ax.plot(xs, ys, color="#1d4ed8", linewidth=3.0 * lk, zorder=3.6, solid_capstyle="round",
+                linestyle=(0, (5, 3)) if src.get("lineKind") == "canal" else "-")
+    res = src.get("reservoir")
+    if res and res.get("center"):
+        c0 = _merc(float(res["center"][0]), float(res["center"][1]))
+        rr = float(res.get("r", 0)) / max(0.05, math.cos(math.radians(float(res["center"][1]))))
+        ax.add_patch(Circle(c0, rr, facecolor="#38bdf8", alpha=0.55, edgecolor="#1d4ed8", linewidth=1.6 * lk, zorder=3.7))
+    if src.get("src"):
+        s0 = _merc(float(src["src"][0]), float(src["src"][1]))
+        ax.plot(s0[0], s0[1], marker="v", color="#1d4ed8", markersize=9 * lk, markeredgecolor="#ffffff",
+                markeredgewidth=1.2, zorder=10)
+        lab = (src.get("labels") or {}).get("src")
+        if lab:
+            ax.text(s0[0], s0[1], "  " + LB(str(lab)), fontsize=6.4 * fk, color="#ffffff", ha="left", va="bottom",
+                    fontproperties=prop, zorder=11, path_effects=_halo())
+    for p in (src.get("points") or []):
+        try:
+            q = _merc(float(p["pt"][0]), float(p["pt"][1]))
+        except Exception:  # noqa: BLE001
+            continue
+        ax.text(q[0], q[1], LB(str(p.get("label", ""))), fontsize=6.6 * fk, fontweight="bold", color="#ffffff",
+                ha="center", va="center", fontproperties=prop, zorder=12,
+                bbox=dict(boxstyle="round,pad=0.35", facecolor="#1d4ed8", edgecolor="#ffffff", linewidth=0.8))
+
     # --- poligoni con vertici numerati ---
     vn = 0
     for rg in rings:
@@ -860,8 +980,24 @@ def plan_map_png(rings: list[list[list[float]]], pivots: list[dict],
         # il raggio va convertito nelle unita' della mappa (Mercator dilata)
         ru = pv["r"] / max(0.05, math.cos(math.radians(pv["lat"])))
         r_px = ru * px_per_unit
-        ax.add_patch(Circle(pc, ru, facecolor="none", edgecolor=_GREEN,
-                            linewidth=1.6 * lk, zorder=8))
+        deg = float(pv.get("deg") or 360.0)
+        gun = float(pv.get("gun") or 0.0)
+        if deg < 359.5:
+            # settore: azimut da nord in senso orario → angoli matplotlib antiorari da est
+            az = float(pv.get("az") or 0.0)
+            t1, t2 = 90.0 - (az + deg), 90.0 - az
+            ax.add_patch(Wedge(pc, ru, t1, t2, facecolor="none", edgecolor=_GREEN, linewidth=1.6 * lk, zorder=8))
+            if gun > 0:
+                rg = (pv["r"] + gun) / max(0.05, math.cos(math.radians(pv["lat"])))
+                ax.add_patch(Wedge(pc, rg, t1, t2, width=rg - ru, facecolor="none", edgecolor=_GREEN,
+                                   linewidth=0.9 * lk, linestyle=(0, (3, 2)), zorder=8))
+        else:
+            ax.add_patch(Circle(pc, ru, facecolor="none", edgecolor=_GREEN,
+                                linewidth=1.6 * lk, zorder=8))
+            if gun > 0:
+                rg = (pv["r"] + gun) / max(0.05, math.cos(math.radians(pv["lat"])))
+                ax.add_patch(Circle(pc, rg, facecolor="none", edgecolor=_GREEN,
+                                    linewidth=0.9 * lk, linestyle=(0, (3, 2)), zorder=8))
         if r_px >= 26 / detail:
             rings = max(3, min(14, int(r_px / 9)))
             for j in range(1, rings + 1):

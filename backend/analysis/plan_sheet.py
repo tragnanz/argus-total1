@@ -19,9 +19,12 @@ import os
 from .report_i18n import tr, RTL, fmt_num, fmt_date
 
 # --- palette ---------------------------------------------------------------
-INK = "#123524"          # verde Nabu scuro: cornice, testi, riquadri
-INK_SOFT = "#5b7166"     # etichette secondarie
-LINE = "#b9c6bd"         # filetti del cartiglio
+# Libreria grafica Nabu: navy per cornice e testi forti, grigi per le
+# etichette, bordi #E2E8F0, verde #4CAF4F per gli accenti.
+INK = "#0F172A"          # navy Nabu: cornice, testi, riquadri
+INK_SOFT = "#737373"     # etichette secondarie
+LINE = "#E2E8F0"         # filetti del cartiglio
+NGREEN = "#4CAF4F"       # accenti
 CYAN = "#00d1ff"         # confini dei poligoni e tubazioni
 GREEN = "#2ee0a1"        # cerchi dei pivot
 WHITE = "#ffffff"
@@ -141,7 +144,9 @@ def _draw_sidebar(cv, g: dict, pivots: list[dict], centre: tuple[float, float],
         cv.drawString(xt, _y(g, y), f"{pv['lat']:.6f}, {pv['lon']:.6f}")
         y += lh
 
-        head = (f"R {fmt_num(lang, pv['r'])}m · 360° · "
+        _deg = int(round(float(pv.get("deg") or 360)))
+        _gun = f" +{fmt_num(lang, pv['gun'])}m" if pv.get("gun") else ""
+        head = (f"R {fmt_num(lang, pv['r'])}m{_gun} · {_deg}° · "
                 f"{fmt_num(lang, pv['ha'], 2)} ha")
         if pv.get("pct") is not None:
             head += f" · {fmt_num(lang, pv['pct'], 1)}%"
@@ -188,29 +193,24 @@ def _draw_cartouche(cv, g: dict, cells: list[tuple[str, str]], lang: str,
     for xd in cx_[1:-1]:
         cv.line(xd, _y(g, y0), xd, _y(g, y1))
 
-    # cella del marchio
-    logo = os.path.join(_ASSETS, "nabu-logo-color.png")
+    # cella del marchio: logo Argus Total della libreria (Argus + «TOTAL»)
+    logo = os.path.join(_ASSETS, "argus-total-logo.png")
     lx = cx_[0] + 10.0 * k
+    lw = min(cx_[1] - lx - 8.0 * k, 92.0 * k)
     if os.path.exists(logo):
         try:
-            cv.drawImage(logo, lx, _y(g, y0 + 30.0 * k), width=26 * k, height=20 * k,
-                         preserveAspectRatio=True, mask="auto")
+            cv.drawImage(logo, lx, _y(g, y0 + 33.0 * k), width=lw, height=26 * k,
+                         preserveAspectRatio=True, anchor="w", mask="auto")
         except Exception:  # noqa: BLE001
             pass
-    # La cella del marchio si stringe col foglio: i testi vanno rimisurati,
-    # altrimenti in A4 sconfinano nella cella del cliente.
-    bx = lx + 31.0 * k
-    bw = cx_[1] - bx - 6.0 * k
-    cv.setFillColor(colors.HexColor(INK))
-    cv.setFont(fontb, _fit(cv, "Argus Total", fontb, 12.0 * fk, bw))
-    cv.drawString(bx, _y(g, y0 + 23.0 * k), "Argus Total")
     cv.setFillColor(colors.HexColor(INK_SOFT))
-    cv.setFont(font, _fit(cv, "by Nabu, Agrostar Group", font, 5.8 * fk, bw))
-    cv.drawString(bx + 1.0 * k, _y(g, y0 + 31.0 * k), "by Nabu, Agrostar Group")
+    fw0 = cx_[1] - lx - 8.0 * k
+    cv.setFont(font, _fit(cv, "by Nabu, Agrostar Group", font, 5.8 * fk, fw0))
+    cv.drawString(lx, _y(g, y0 + 41.0 * k), "by Nabu, Agrostar Group")
     fw = cx_[1] - lx - 8.0 * k
     sub = _shape_ok(lang, tr(lang, "ps_sottotitolo"))
     cv.setFont(font, _fit(cv, sub, font, 5.8 * fk, fw))
-    cv.drawString(lx, _y(g, y0 + 50.0 * k), sub)
+    cv.drawString(lx, _y(g, y0 + 52.0 * k), sub)
     cv.setFont(font, _fit(cv, rev, font, 5.8 * fk, fw))
     cv.drawString(lx, _y(g, y0 + 63.0 * k), rev)
 

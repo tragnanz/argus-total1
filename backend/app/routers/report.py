@@ -179,9 +179,11 @@ def _sheet_kit(body, geom: dict, plan_gj: dict, meta: dict, lang: str, rev: str,
         if not r:      # ricavato dal raggio del cerchio, se non arriva dal client
             r = (max(lats) - min(lats)) / 2.0 * 110540.0
         ha = _ring_area_ha(ring)
+        if pr.get("ha"):
+            ha = float(pr["ha"])               # con settore e irrigatore finale la calcola il client
         cards.append({
             "n": i, "lat": pr.get("lat", lat), "lon": pr.get("lng", lon),
-            "r": round(r), "ha": ha,
+            "r": round(r), "ha": ha, "deg": pr.get("deg"), "az": pr.get("az"), "gun": pr.get("gun"),
             "pct": (ha / field_ha * 100.0) if field_ha else None,
             "q_m3h": pr.get("q_m3h"), "p_bar": pr.get("p_bar"), "elev": pr.get("z"),
         })
@@ -204,7 +206,8 @@ def _sheet_kit(body, geom: dict, plan_gj: dict, meta: dict, lang: str, rev: str,
     px_h = max(400, int(round(px_w * box_h / box_w)))
     png, denom = plan_map_png(rings, cards, pipes, canals, lang=lang, status=status,
                               px_w=px_w, px_h=px_h, lk=g["lk"] * 1.18, fk=g["fk"] * 1.08,
-                              detail=g["detail"], printed_pt=box_w)
+                              detail=g["detail"], printed_pt=box_w,
+                              source=body.plan_source if isinstance(body.plan_source, dict) else None)
 
     all_lat = [c["lat"] for c in cards] or [0.0]
     all_lon = [c["lon"] for c in cards] or [0.0]
@@ -376,7 +379,7 @@ def _finish(body, geom: dict, ring: list, lay: dict, suit_meta, want_sheet: bool
                                            field_geom=geom, status=status)
         pdf = build_pdf(info, meta.get("field_ha", 0.0), suit_meta, meta, png,
                         f"v{REV}", lang=lang, with_sheet=want_sheet, with_plan=want_plan,
-                        sheet_kit=kit)
+                        sheet_kit=kit, extra_sections=body.extra_sections)
         # La mappa e il layout pesano decine di MB: si lasciano andare prima di
         # tenere in memoria anche il PDF finito.
         if kit:

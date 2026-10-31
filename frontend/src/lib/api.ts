@@ -358,6 +358,9 @@ export type ReportInfo = {
   plan_format?: "a3" | "a4";   // formato della tavola
   project_id?: number | null;  // per numerare le revisioni
   area_id?: number | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  plan_source?: any;           // fonte d'acqua da disegnare sulla tavola
+  extra_sections?: { title: string; header?: string[]; widths?: number[]; rows: string[][] }[] | null;
 };
 // ---- Revisioni degli export (numerazione automatica, storico per campo) ----
 export type ExportRevision = {

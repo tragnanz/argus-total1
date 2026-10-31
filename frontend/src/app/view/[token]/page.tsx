@@ -103,6 +103,7 @@ export default function ViewPage({ params }: { params: { token: string } }) {
         // Rispetta la visibilità impostata: i livelli nascosti NON compaiono nel link.
         const polys = areas.filter((a) => a.kind !== "macro" && !hiddenField(a.id));
         m.setFields(polys.map((a) => ({ id: a.id, name: a.name, geom: a.geojson, style: styleFor(a.id), level: levelFor(a.id) })), null, []);
+        if (cfg.source && cfg.source.src) m.setSourceScheme(cfg.source);
         const macros = areas.filter((a) => a.kind === "macro");
         if (macros.length) m.showMacroareas(macros.map((a) => ({ geom: a.geojson, label: a.name })));
 

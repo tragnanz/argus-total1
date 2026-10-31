@@ -372,6 +372,10 @@ class ReportIn(LayoutIn):
     plan_canals: list[list[list[float]]] | None = None
     plan_rings: list[list[list[float]]] | None = None   # poligoni figli da disegnare
     plan_format: str = "a3"                             # formato della tavola: a3 | a4
+    # Fonte d'acqua da disegnare sulla tavola: {src, line, lineKind, reservoir, points, labels}
+    plan_source: dict | None = None
+    # Sezioni aggiuntive della scheda, già tradotte: [{title, header?, rows, widths?}]
+    extra_sections: list[dict] | None = None
     # Servono a numerare le revisioni: la storia e' per progetto e per campo.
     project_id: int | None = None
     area_id: int | None = None
