@@ -64,6 +64,9 @@ export type MapHandle = {
   // Commenti: scelta di un punto con un clic (Esc annulla) e segnaposto numerati.
   pickPoint: (cb: ((lat: number, lng: number) => void) | null) => void;
   setCommentPins: (pins: { lat: number; lng: number; n: number; text: string; done?: boolean }[]) => void;
+  // Fonte d'acqua e schema d'impianto (presa, adduttrice, vasca): solo disegno.
+  setSourceScheme: (d: { src: number[] | null; line?: number[][] | null; lineKind?: "pipe" | "canal";
+    reservoir?: { center: number[]; r: number } | null; labels?: { src: string; res: string; line: string } } | null) => void;
   startMeasure: (cb: (text: string) => void) => void;
   stopMeasure: () => void;
   // Cerchi dal centro: simulazione rapida di pivot (non crea macchine, solo misura).
@@ -169,6 +172,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const layoutRef = useRef<L.LayerGroup | null>(null);
   const pickRef = useRef<((lat: number, lng: number) => void) | null>(null);
   const commentsRef = useRef<L.LayerGroup | null>(null);
+  const sourceRef = useRef<L.LayerGroup | null>(null);
   // Etichette dei pivot (superficie · portata): visibili solo se il cerchio a
   // schermo è abbastanza grande da contenerle, altrimenti si sovrappongono.
   const pvLabelsRef = useRef<{ tt: L.Tooltip; r: number; lat: number }[]>([]);
@@ -277,6 +281,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     mapRef.current = map;
     map.on("zoomend", updatePvLabels);
     commentsRef.current = L.layerGroup().addTo(map);
+    sourceRef.current = L.layerGroup().addTo(map);
 
     // Clic sulla mappa: misura (se attiva) oppure selezione punto (presa/finale).
     map.on("click", (e: L.LeafletMouseEvent) => {
@@ -829,6 +834,29 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         const map = mapRef.current; if (!map) return;
         pickRef.current = cb;
         map.getContainer().style.cursor = cb ? "crosshair" : "";
+      },
+      setSourceScheme(d) {
+        const g = sourceRef.current; if (!g) return;
+        g.clearLayers();
+        if (!d) return;
+        if (d.line && d.line.length >= 2) {
+          const ll = d.line.map((p) => [p[1], p[0]] as [number, number]);
+          g.addLayer(L.polyline(ll, { color: "#ffffff", weight: 6, opacity: 0.85, interactive: false }));
+          g.addLayer(L.polyline(ll, d.lineKind === "canal"
+            ? { color: "#0284c7", weight: 3.5, dashArray: "8,5" }
+            : { color: "#1d4ed8", weight: 3.5 }).bindTooltip(d.labels?.line ?? "", { sticky: true }));
+        }
+        if (d.reservoir) {
+          g.addLayer(L.circle([d.reservoir.center[1], d.reservoir.center[0]], { radius: d.reservoir.r,
+            color: "#1d4ed8", weight: 2, fillColor: "#38bdf8", fillOpacity: 0.45 }).bindTooltip(d.labels?.res ?? "", { sticky: true }));
+        }
+        if (d.src) {
+          g.addLayer(L.marker([d.src[1], d.src[0]], {
+            icon: L.divIcon({ className: "", iconSize: [26, 32], iconAnchor: [13, 32],
+              html: '<div style="width:26px;height:26px;border-radius:13px 13px 13px 0;transform:rotate(-45deg);background:#1d4ed8;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);display:grid;place-items:center"><span style="transform:rotate(45deg);color:#fff;font:700 13px Inter,system-ui,sans-serif">≈</span></div>' }),
+            zIndexOffset: 1200,
+          }).bindTooltip(d.labels?.src ?? "", { direction: "top", offset: [0, -30] }));
+        }
       },
       setCommentPins(pins) {
         const g = commentsRef.current; if (!g) return;
