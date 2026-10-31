@@ -85,6 +85,10 @@ try {
   ok(feats.some((f) => f.properties?.tipo === "attrezzatura" && f.properties?.pompa_modello), ".ceres: planimetria con la pompa consigliata");
   ok(feats.filter((f) => f.properties?.tipo === "cavo").every((f) => f.geometry.coordinates.length >= 3), ".ceres: cavi dei pivot lungo le tubazioni");
 
+  const annex = await download(() => page.locator('button:has-text("Allegato tecnico dell")').click());
+  const annexPdf = await readBytes(annex);
+  ok(annexPdf.subarray(0, 4).toString() === "%PDF" && annexPdf.length > 100000, "Allegato tecnico: PDF con planimetria");
+  if (process.env.ARGUS_SAVE) await annex.saveAs(process.env.ARGUS_SAVE);
   await page.locator('button:has-text("Varianti del progetto")').click(); await page.waitForTimeout(600);
   await page.locator('button:has-text("Genera le varianti")').click(); await page.waitForTimeout(15000);
   const vt = await section();

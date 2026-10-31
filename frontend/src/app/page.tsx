@@ -15,7 +15,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.196";
+const REV = "v0.6.197";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -4026,6 +4026,123 @@ export default function Page() {
       setOlyCust(res.items[0]?.id ?? "");
     } catch (e) { olyErr(e); }
   }
+  // ---- ALLEGATO TECNICO DELL'IMPIANTO (PDF) -----------------------------------------
+  // Documento tecnico da allegare all'offerta Mercurius: NON è un'offerta e non
+  // porta prezzi, costi o importi (il backend rifiuta qualunque «€»). Riferimento
+  // e revisione sono quelli dell'ultimo .ceres, così allegato e offerta si ritrovano.
+  async function downloadTechAnnex() {
+    if (!projectId || (!pivots.length && !Object.keys(sysDesigns).length)) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
+    const pid = projectId;
+    setBusy("annex");
+    try {
+      ensureHydra(); await ensureProfile();
+      const lastRev = nextCeresRev() - 1;
+      const doc = inLang(pdfLang, () => {
+        const n0 = (x: number) => fx(Math.round(x)), n1 = (x: number) => fx(x, { maximumFractionDigits: 1 }), n2 = (x: number) => fx(x, { maximumFractionDigits: 2 });
+        const pname = projects.find((x) => x.id === pid)?.name || "Argus Total", cname = clients.find((c) => c.id === clientId)?.name || "—";
+        const P = pumpStation(), VM = variantMetrics(), HY = hydraNow(), NF = netFittings(HY);
+        const S = srcPt && pivots.length ? sourceSchemes() : null;
+        const sc = S ? (S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? null) : null;
+        const stations = pumpStationsList(), cabs = cableRuns(stations), G = powerGear(stations);
+        const ref = `ARGUS-${pid}${lastRev >= 1 ? ` · ${tx("revisione")} ${lastRev}` : ""}`;
+        const allPts = pivots.map((p) => [p.lng, p.lat]);
+        const ctr = allPts.length ? [allPts.reduce((a, q) => a + q[0], 0) / allPts.length, allPts.reduce((a, q) => a + q[1], 0) / allPts.length] : null;
+        const PIPE_TXT = ['10"', '8"5/8', '6"5/8'];
+        const sections: Record<string, unknown>[] = [];
+        // 1 — dati di progetto
+        sections.push({ title: tx("Dati di progetto"), kv: [
+          [tx("Cliente"), cname], [tx("Progetto"), pname],
+          ...(ctr ? [[tx("Posizione (WGS84)"), `${ctr[1].toFixed(5)}, ${ctr[0].toFixed(5)}`]] : []),
+          [tx("Superficie irrigata"), `${n1(VM.ha)} ha`],
+          [tx("Pivot"), `${fx(pivots.length)} · ${PIVOT_BRANDS[pivotBrand]}`],
+          ...(Object.keys(sysDesigns).length ? [[tx("Campi con lineari, rotoloni o goccia"), fx(Object.keys(sysDesigns).length)]] : []),
+          [tx("Fabbisogno di progetto"), `${n1(mmDes)} mm/24h`],
+          [tx("Ore di funzionamento al giorno"), `${n1(hoursDay)} h`],
+          [tx("Portata totale"), `${n0(P.qDes)} l/s`],
+          [tx("Volume annuo"), `${n0(P.volYear)} m³`],
+        ] });
+        // 2 — macchine
+        if (pivots.length) sections.push({ title: tx("Macchine"), table: {
+          header: [tx("Pivot"), tx("Settore"), tx("Lunghezza") + " (m)", tx("Superficie") + " (ha)", tx("Campate"), tx("Sbraccio") + " (m)", tx("Irrigatore finale"), "l/s", "bar"],
+          widths: [8, 9, 11, 11, 22, 9, 11, 9, 10],
+          rows: pivots.map((pv, k) => {
+            const c = spanComposition(pv, pivotBrand), deg = pv.deg ?? 360;
+            const sp = new Map<string, number>(); for (const x of c?.spans ?? []) { const kk = `${PIPE_TXT[x.pipe]} ${n1(x.len)} m`; sp.set(kk, (sp.get(kk) ?? 0) + 1); }
+            return [`P${k + 1}`, deg >= 360 ? "360°" : `${Math.round(deg)}°`, n0(c ? c.total : pv.r), n2(pvAreaM2(pv) / 10000),
+              [...sp.entries()].map(([kk, n]) => `${n} × ${kk}`).join(", ") || "—", c?.oh ? n1(c.oh) : "—",
+              pv.gun && pv.gun > 0 ? `${n0(pv.gun)} m` : "—", n1(pivotFlow(pv)), n2(pivotPressure(pv))];
+          }) } });
+        // 3 — rete idraulica
+        if (HY?.byDn.length) {
+          const fitRows: string[][] = [];
+          if (NF) {
+            for (const [dn, n] of [...NF.air.entries()].sort((a, b) => a[0] - b[0])) if (dn) fitRows.push([`${tx("Sfiato d'aria")} DN ${dn}`, fx(n), NF.withProfile ? tx("sui colmi del profilo") : tx("ogni 500 m (senza quote)")]);
+            if (NF.drains) fitRows.push([tx("Scarico"), fx(NF.drains), ""]);
+            for (const [dn, n] of [...NF.tees.entries()].sort((a, b) => a[0] - b[0])) fitRows.push([`${tx("Tee")} DN ${dn}`, fx(n), ""]);
+            for (const [k, n] of NF.reds) fitRows.push([`${tx("Riduzione")} DN ${k.replace("x", " × ")}`, fx(n), ""]);
+          }
+          const mv = new Map<number, number>(); for (const pv of pivots) { const r = pivotRiser(pv); mv.set(r.mv, (mv.get(r.mv) ?? 0) + 1); }
+          for (const [dn, n] of [...mv.entries()].sort((a, b) => a[0] - b[0])) fitRows.push([`${tx("Idrovalvola e diffusore del pivot")} DN ${dn}`, fx(n), ""]);
+          sections.push({ title: tx("Rete idraulica"),
+            intro: tx("Tubazioni interrate in PE100 PN10, diametri scelti per velocità massima di {v} m/s; perdite di carico con Hazen-Williams (C = {c}).", { v: n1(vMax), c: fx(hwC) }),
+            kv: [[tx("Lunghezza della rete"), `${n2(HY.byDn.reduce((a, x) => a + x[1], 0) / 1000)} km`], [tx("Prevalenza richiesta alla presa"), `${n0(HY.headMax)} m`],
+              [tx("Perdita di carico massima su un tratto"), `${n2(HY.hlMax)} m`]],
+            table: { header: [tx("Voce"), tx("Quantità"), tx("Note")], widths: [50, 15, 35],
+              rows: [...[...HY.byDn].sort((a, b) => a[0] - b[0]).map(([dn, m]) => [`${tx("Tubazione DN {d}", { d: dn })}`, `${n0(m)} m`, ""]), ...fitRows] } });
+        }
+        // 4 — fonte d'acqua
+        if (sc && S) sections.push({ title: tx("Fonte d'acqua"), kv: [
+          [tx("Tipo di fonte"), tx(srcType)], [tx("Schema della fonte"), `${sc.key} · ${sc.name}`],
+          ...(sc.main?.kind === "pipe" && sc.main.dn ? [[tx("Adduttrice"), `DN ${sc.main.dn} · ${n0(sc.main.L * (sc.main.n ?? 1))} m`]] : []),
+          ...(sc.main?.kind === "canal" ? [[tx("Canale a gravità"), `${n0(sc.main.L)} m`]] : []),
+          ...(sc.res ? [[tx("Vasca di accumulo"), `${n0(sc.res.vol)} m³ · ${n2(sc.res.ha)} ha · ${tx("profondità")} ${n1(resDepth)} m`]] : []),
+        ] });
+        // 5 — stazioni di pompaggio
+        if (stations.length) sections.push({ title: tx("Stazioni di pompaggio"),
+          intro: tx("Pompe scelte dalle curve Caprari per rendimento al punto di lavoro."),
+          table: { header: [tx("Stazione"), "l/s", "m", tx("Pompa"), tx("Motore") + " (kW)", "η (%)", tx("Potenza assorbita") + " (kW)"], widths: [24, 8, 8, 30, 10, 8, 12],
+            rows: stations.map((st) => [st.name, n0(st.qLs), n0(st.head), st.pick ? `${st.nTot > 1 ? `${st.nTot} × ` : ""}Caprari ${st.pick.model}` : "—",
+              st.pick ? n1(st.pick.motor) : n1(st.kW), st.pick ? n0(st.pick.eta) : "—", st.pick ? n1(st.pick.pAbs) : "—"]) } });
+        // 6 — energia
+        sections.push({ title: tx("Energia"), kv: [
+          [tx("Alimentazione"), VM.energy], [tx("Potenza installata"), `${n0(VM.kWinst)} kW`], [tx("Potenza assorbita"), `${n0(VM.kWabs)} kW`],
+          [tx("Energia"), `${n0(VM.mwh)} MWh/${tx("anno")}`],
+          ...(VM.pvKwp ? [[tx("Fotovoltaico"), `${n0(VM.pvKwp)} kWp`]] : []), ...(VM.battKwh ? [[tx("Batterie"), `${n0(VM.battKwh)} kWh`]] : []),
+          [tx("Energia per ettaro"), `${n0(VM.ha > 0 ? (VM.mwh * 1000) / VM.ha : 0)} kWh/ha`],
+          ...(VM.volYear ? [[tx("Energia per m³ pompato"), `${fx((VM.mwh * 1000) / VM.volYear, { maximumFractionDigits: 3 })} kWh/m³`]] : []),
+          [tx("Consegna dell'energia"), G.supply === "mt" ? `${tx("Cabina di trasformazione MT/BT")} ${fx(G.kva)} kVA` : G.supply === "bt" ? tx("Punto di consegna in bassa tensione")
+            : G.supply === "gen" ? `${tx("Gruppo elettrogeno")} ${fx(G.kva)} kVA` : tx("Fotovoltaico")],
+          ...G.panels.map((pn) => [`${tx("Quadro di comando delle pompe")} · ${pn.name}`, `${pn.n} × ${n1(pn.kWp)} kW${pn.inverter ? ` · ${tx("Inverter")}` : ""}`]),
+        ],
+          table: cabs.length ? { header: [tx("Linea"), "kW", tx("Cavo"), tx("Lunghezza") + " (m)", "ΔV (%)"], widths: [38, 12, 22, 16, 12],
+            rows: cabs.map((c) => [c.name, n1(c.kW), `${c.mat} 3 × ${n1(c.S)} mm²`, n0(c.L), n1(c.dv)]) } : undefined,
+          note: tx("Cavi interrati a 400 V, sezione scelta per corrente e caduta di tensione entro il 4 %; i pivot sono alimentati dalla stazione che li serve, lungo le tubazioni.") });
+        // 7 — computo delle quantità (senza prezzi)
+        const rows: string[][] = []; let last = "";
+        for (const r of computoRows()) {
+          if (r.cat !== last) { rows.push([r.cat, "", "", ""]); last = r.cat; }
+          rows.push([r.item, r.qty != null ? fx(r.qty) : "", r.unit, r.note ?? ""]);
+        }
+        sections.push({ title: tx("Quantità dell'impianto"), intro: tx("Elenco delle quantità dell'impianto, senza prezzi."),
+          table: { header: [tx("Voce"), tx("Quantità"), tx("Unità"), tx("Note")], widths: [42, 12, 8, 38], rows } });
+        const plan = mercuriusComputo(`ARGUS-${pid}`, Math.max(1, lastRev)).planimetria as { elementi?: { features?: unknown[] } } | undefined;
+        return {
+          lang: pdfLang, title: tx("Allegato tecnico dell'impianto"),
+          subtitle: [cname !== "—" ? cname : "", pname].filter(Boolean).join(" · "),
+          client: cname, project: pname, reference: ref, date: new Date().toISOString().slice(0, 10),
+          cover_rows: [[tx("Cliente"), cname], [tx("Progetto"), pname], [tx("Riferimento"), ref], [tx("Data"), new Date().toISOString().slice(0, 10)],
+            [tx("Superficie irrigata"), `${n1(VM.ha)} ha`], [tx("Portata totale"), `${n0(P.qDes)} l/s`], [tx("Alimentazione"), VM.energy]],
+          cover_note: tx("Documento tecnico che descrive l'impianto: dati di progetto, planimetria, macchine, rete idraulica, pompaggio, energia e quantità. Non contiene prezzi: le condizioni economiche sono nell'offerta."),
+          plan: { title: tx("Planimetria"), features: plan?.elementi?.features ?? [],
+            legend: [["#2EE0A1", tx("Pivot")], ["#20AAE2", tx("Tubazioni")], ["#F0B429", tx("Linee elettriche")], ["#4CAF4F", tx("Stazione di pompaggio")]] },
+          sections,
+        };
+      });
+      const pname = projects.find((x) => x.id === pid)?.name || "progetto";
+      saveBlob(await api.techAnnex(doc), `${safe(pname)}_allegato_tecnico.pdf`);
+      setMsg(t("Allegato tecnico scaricato ✓"));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
   function renderOlympus() {
     return (
       <div className="mt-3 bg-panel rounded-lg p-2 space-y-1.5">
@@ -4610,7 +4727,19 @@ export default function Page() {
       feats.push({ type: "Feature", properties: { tipo: "impianto", impianto: `P${k + 1}`, macchina: "circle", raggio_m: Math.round(pv.r), angolo_gradi: deg,
         ...(deg < 360 ? { settore_gradi: [az % 360, (az + deg) % 360] } : {}) }, geometry: { type: "Point", coordinates: [pv.lng, pv.lat] } });
     });
-    for (const l of pivotLines) if (l.kind === "pipe" && l.coords.length >= 2) feats.push({ type: "Feature", properties: { tipo: "tubazione", posa: "interrata" }, geometry: { type: "LineString", coordinates: l.coords } });
+    // tubazioni: un tratto per diametro (DN e lunghezza sulla tavola)
+    const dnLines = new Map((hydraNow()?.lines ?? []).map(([i, d]) => [i, d] as [number, number[]]));
+    pivotLines.forEach((l, i) => {
+      if (l.kind !== "pipe" || l.coords.length < 2) return;
+      const dns = dnLines.get(i);
+      if (!dns) { feats.push({ type: "Feature", properties: { tipo: "tubazione", posa: "interrata" }, geometry: { type: "LineString", coordinates: l.coords } }); return; }
+      let k0 = 0;
+      for (let k = 1; k <= dns.length; k++) if (k === dns.length || dns[k] !== dns[k0]) {
+        const co = l.coords.slice(k0, k + 1), L = co.reduce((a, q, j) => a + (j ? distM(co[j - 1], q) : 0), 0);
+        feats.push({ type: "Feature", properties: { tipo: "tubazione", posa: "interrata", ...(dns[k0] ? { DN: dns[k0] } : {}), lunghezza_m: Math.round(L) }, geometry: { type: "LineString", coordinates: co } });
+        k0 = k;
+      }
+    });
     if (sc?.main && srcRoute && srcRoute.length >= 2) feats.push({ type: "Feature", properties: { tipo: "tubazione", posa: "interrata", ...(sc.main.dn ? { DN: sc.main.dn } : {}), lunghezza_m: Math.round(sc.main.L) }, geometry: { type: "LineString", coordinates: srcRoute } });
     for (const st of stations) {
       if (!st.pt) continue;
@@ -8191,6 +8320,9 @@ export default function Page() {
             </div>
             <button className="btn-ghost w-full mt-2" disabled={!pivots.length && !Object.values(sysDesigns).some((d) => d.sys === "lineari")} onClick={exportCeres}
               title={t("Campi e pivot con le campate del produttore scelto in Impianti, da aprire in Ceres con File › Apri file. Contiene anche il computo per Mercurius (riferimento del progetto e revisione crescente).")}>{busy === "ceres" ? t("Preparo…") : t("Esporta per Ceres (.ceres)")}</button>
+            <button className="btn-ghost w-full mt-2" disabled={busy === "annex" || (!pivots.length && !Object.keys(sysDesigns).length)} onClick={downloadTechAnnex}
+              title={t("Documento tecnico da allegare all'offerta Mercurius, nella lingua di stampa scelta sopra: dati, planimetria su ortofoto, macchine, rete, pompaggio, energia e quantità. Senza prezzi.")}>
+              {busy === "annex" ? t("Preparo…") : t("Allegato tecnico dell'impianto (PDF)")}</button>
             {renderOlympus()}
             <div className="mt-3 bg-panel rounded-lg p-2 space-y-1.5">
               <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Fasi di realizzazione")}</div>

@@ -485,3 +485,23 @@ def ortho(body: OrthoIn, user: User = Depends(get_current_user)):
     if out is None:
         raise HTTPException(502, "Ortofoto non disponibile in questo momento.")
     return out
+
+
+class TechAnnexIn(BaseModel):
+    doc: dict[str, Any]
+
+
+@router.post("/tech-annex")
+def tech_annex(body: TechAnnexIn, user: User = Depends(get_current_user)):
+    """Allegato tecnico dell'impianto: nessun prezzo (i prezzi stanno in Mercurius)."""
+    from analysis.tech_annex import build_tech_annex
+    from ..main import REV
+    if not _EXPORT_LOCK.acquire(timeout=_EXPORT_WAIT_S):
+        raise HTTPException(503, "Export occupato, riprova fra poco.")
+    try:
+        pdf = build_tech_annex(body.doc, REV)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    finally:
+        _EXPORT_LOCK.release(); _trim_memory()
+    return Response(pdf, media_type="application/pdf")

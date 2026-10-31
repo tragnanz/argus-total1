@@ -460,3 +460,18 @@ export async function olympusCall<T>(url: string, tok: { a: string; r: string } 
 }
 export const updateLayer = (id: number, body: { name?: string; data?: Record<string, unknown> }) =>
   req<ProjectLayer>(`/api/layers/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+// Allegato tecnico dell'impianto (PDF, senza prezzi)
+export async function techAnnex(doc: Record<string, unknown>): Promise<Blob> {
+  const tok = getToken();
+  const res = await fetch(`${API_BASE}/api/project/tech-annex`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+    body: JSON.stringify({ doc }),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json())?.detail ?? detail; } catch { /* */ }
+    throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  return res.blob();
+}
