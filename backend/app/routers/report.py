@@ -426,3 +426,62 @@ def list_revisions(project_id: int, area_id: int | None = None, limit: int = 50,
                     "lang": r.lang, "sections": r.sections, "summary": summary,
                     "created_at": r.created_at.isoformat() if r.created_at else None})
     return out
+
+
+# ---------------------------------------------------------------------------
+# Confronto tra varianti (PDF Nabu) e ortofoto per il file .ceres
+# ---------------------------------------------------------------------------
+from typing import Any  # noqa: E402
+
+from pydantic import BaseModel, Field  # noqa: E402
+
+
+class VariantsPdfIn(BaseModel):
+    title: str = Field(max_length=200)
+    subtitle: str = Field(default="", max_length=300)
+    date: str = Field(default="", max_length=40)
+    note: str = Field(default="", max_length=2000)
+    columns: list[str] = Field(min_length=1, max_length=8)
+    rows: list[dict[str, Any]] = Field(default_factory=list, max_length=60)
+    qty_title: str = Field(default="", max_length=200)
+    qty_rows: list[dict[str, Any]] = Field(default_factory=list, max_length=600)
+    lang: str = "it"
+    footer: str = Field(default="", max_length=200)
+
+
+@router.post("/variants-pdf")
+def variants_pdf(body: VariantsPdfIn, user: User = Depends(get_current_user)):
+    from analysis.variants_pdf import build_variants_pdf
+    from ..main import REV
+    if not _EXPORT_LOCK.acquire(timeout=_EXPORT_WAIT_S):
+        raise HTTPException(503, "Export occupato, riprova fra poco.")
+    try:
+        pdf = build_variants_pdf(body.title, body.subtitle, body.date, body.note, body.columns, body.rows,
+                                 body.qty_title, body.qty_rows, REV, body.lang, body.footer)
+    finally:
+        _EXPORT_LOCK.release(); _trim_memory()
+    return Response(pdf, media_type="application/pdf")
+
+
+class OrthoIn(BaseModel):
+    bbox: list[float] = Field(min_length=4, max_length=4)   # ovest, sud, est, nord (WGS84)
+    ratio: float = Field(default=1.387, gt=0.2, lt=5)
+    width_px: int = Field(default=1600, ge=400, le=2400)
+
+
+@router.post("/ortho")
+def ortho(body: OrthoIn, user: User = Depends(get_current_user)):
+    """Ortofoto del riquadro per la planimetria del .ceres (Mercurius)."""
+    from analysis.variants_pdf import ortho_for_bbox
+    w, s, e, n = body.bbox
+    if not (-180 <= w < e <= 180 and -85 <= s < n <= 85) or (e - w) > 0.6 or (n - s) > 0.6:
+        raise HTTPException(400, "Riquadro non valido.")
+    if not _EXPORT_LOCK.acquire(timeout=_EXPORT_WAIT_S):
+        raise HTTPException(503, "Export occupato, riprova fra poco.")
+    try:
+        out = ortho_for_bbox(w, s, e, n, body.ratio, body.width_px)
+    finally:
+        _EXPORT_LOCK.release(); _trim_memory()
+    if out is None:
+        raise HTTPException(502, "Ortofoto non disponibile in questo momento.")
+    return out

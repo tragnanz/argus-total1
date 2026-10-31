@@ -401,3 +401,60 @@ export async function downloadReport(geom: Polygon, p: LayoutParams, info: Repor
   }
   return res.blob();
 }
+
+// ---- Ortofoto per la planimetria del .ceres e PDF di confronto varianti ----
+export type Ortho = { riquadro: { ovest: number; sud: number; est: number; nord: number }; immagine: string; attribuzione: string; px: number[] };
+export const ortho = (bbox: number[], ratio = 1.387) =>
+  req<Ortho>("/api/project/ortho", { method: "POST", body: JSON.stringify({ bbox, ratio }) });
+export type VariantsPdfBody = {
+  title: string; subtitle?: string; date?: string; note?: string; columns: string[];
+  rows: { label: string; cells: { v: string; d?: string; s?: number }[] }[];
+  qty_title?: string; qty_rows?: { label: string; head?: boolean; values?: string[] }[]; lang?: string; footer?: string;
+};
+export async function variantsPdf(body: VariantsPdfBody): Promise<Blob> {
+  const tok = getToken();
+  const res = await fetch(`${API_BASE}/api/project/variants-pdf`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json())?.detail ?? detail; } catch { /* */ }
+    throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  return res.blob();
+}
+
+// ---- Olympus · Mercurius (chiamate dirette dal browser, come fa Ceres) ----
+// L'accesso è quello dell'utente in Olympus (email e password → token): la
+// password non si salva, i token restano solo nella sessione del browser.
+export class OlympusError extends Error { status: number; constructor(status: number, msg: string) { super(msg); this.status = status; } }
+export function olympusBase(url: string): string {
+  let u = url.trim().replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+  return u.replace(/\/api\/v1$/i, "") + "/api/v1";
+}
+export async function olympusCall<T>(url: string, tok: { a: string; r: string } | null, path: string,
+  init?: { method?: string; body?: unknown }, onTokens?: (t: { a: string; r: string } | null) => void): Promise<T> {
+  const base = olympusBase(url);
+  const go = (a?: string) => fetch(base + path, {
+    method: init?.method || "GET",
+    headers: { "Content-Type": "application/json", ...(a ? { Authorization: `Bearer ${a}` } : {}) },
+    body: init?.body != null ? JSON.stringify(init.body) : undefined,
+  });
+  let res = await go(tok?.a);
+  if (res.status === 401 && tok?.r) {
+    const rf = await fetch(base + "/auth/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh_token: tok.r }) });
+    if (rf.ok) { const j = await rf.json(); const nt = { a: j.access_token, r: j.refresh_token }; onTokens?.(nt); res = await go(nt.a); }
+    else onTokens?.(null);
+  }
+  let data: unknown = null;
+  try { data = await res.json(); } catch { /* */ }
+  if (!res.ok) {
+    const d = (data as { detail?: unknown })?.detail;
+    const msg = typeof d === "string" ? d : Array.isArray(d) ? d.map((x) => (x as { msg?: string }).msg || JSON.stringify(x)).join(" · ") : `HTTP ${res.status}`;
+    throw new OlympusError(res.status, msg);
+  }
+  return data as T;
+}
