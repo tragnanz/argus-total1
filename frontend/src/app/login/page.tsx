@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import * as api from "@/lib/api";
-import { useI18n } from "@/lib/i18n";
+import { useI18n, translateError } from "@/lib/i18n";
 
 export default function LoginPage() {
   const { t } = useI18n();
@@ -21,12 +21,12 @@ export default function LoginPage() {
     setErr(""); setBusy(true);
     try {
       const r = mode === "register"
-        ? await api.authRegister(email.trim(), password, org.trim() || "La mia organizzazione")
+        ? await api.authRegister(email.trim(), password, org.trim() || t("La mia organizzazione"))
         : await api.authLogin(email.trim(), password);
       api.setToken(r.access_token);
       router.replace("/");
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(translateError(t, e instanceof Error ? e.message : String(e)));
     } finally { setBusy(false); }
   }
 
@@ -55,7 +55,7 @@ export default function LoginPage() {
           <div>
             <label className="text-xs text-sage-dark">{t("Email")}</label>
             <input type="email" required autoComplete="username" className="field-input mt-1"
-              value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nome@azienda.it" />
+              value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t("nome@azienda.it")} />
           </div>
           <div>
             <label className="text-xs text-sage-dark">{t("Password")}</label>

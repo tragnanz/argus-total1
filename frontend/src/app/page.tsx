@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import JSZip from "jszip";
 import type { MapHandle, PivotItem, PivotSel, CircleInfo } from "@/components/MapCanvas";
-import { useI18n, LANGS, type Lang } from "@/lib/i18n";
+import { useI18n, LANGS, type Lang, translateError } from "@/lib/i18n";
 import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
 import type {
@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.182";
+const REV = "v0.6.183";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1054,8 +1054,9 @@ const TAB_ICONS = {
 // delle sezioni, ma inline e senza titolo proprio.
 function FieldHelp({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
+  const { t } = useI18n();
   return (<>
-    <button type="button" onClick={() => setOpen((v) => !v)} aria-label="Aiuto" title={text}
+    <button type="button" onClick={() => setOpen((v) => !v)} aria-label={t("Aiuto")} title={text}
       className={"inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold leading-none align-middle transition "
         + (open ? "bg-brand text-white" : "bg-sage/20 text-sage-dark hover:bg-brand hover:text-white")}>?</button>
     {open && <p className="hint mt-1">{text}</p>}
@@ -1064,12 +1065,13 @@ function FieldHelp({ text }: { text: string }) {
 
 function SectionHead({ title, help, mb = "mb-2" }: { title: string; help?: string; mb?: string }) {
   const [open, setOpen] = useState(false);
+  const { t } = useI18n();
   return (
     <div className={mb}>
       <div className="flex items-center gap-1.5">
         <h3 className="text-sm font-semibold text-brand-darker">{title}</h3>
         {help && (
-          <button type="button" onClick={() => setOpen((v) => !v)} aria-label="Aiuto"
+          <button type="button" onClick={() => setOpen((v) => !v)} aria-label={t("Aiuto")}
             className={"inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold leading-none transition "
               + (open ? "bg-brand text-white" : "bg-sage/20 text-sage-dark hover:bg-brand hover:text-white")}>?</button>
         )}
@@ -1621,7 +1623,7 @@ export default function Page() {
       showErr(e); setAutosave("error");
     }
   }
-  function showErr(e: unknown) { setMsg(e instanceof Error ? e.message : String(e)); refreshUsage(); }
+  function showErr(e: unknown) { setMsg(translateError(t, e instanceof Error ? e.message : String(e))); refreshUsage(); }
 
   // ---- clienti / progetti ----
   async function newClient() {
@@ -5164,7 +5166,7 @@ export default function Page() {
                             <input type="number" min={1} max={200} step={1} value={widths.length === 1 ? widths[0] : ""} placeholder="–" title={t("Spessore (m)")}
                               onChange={(e) => { const w = Number(e.target.value); if (w > 0) setRoadsWidthByIds(ids, w); }} className="field-input w-16 py-0.5 shrink-0" />
                             <span className="flex gap-1 shrink-0">
-                              <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(label), items.map(({ i, r }) => ({ name: `Strada ${i + 1}`, geom: { type: "LineString" as const, coordinates: r.coords } })))}>⤓</button>
+                              <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(label), items.map(({ i, r }) => ({ name: `${t("Strada")} ${i + 1}`, geom: { type: "LineString" as const, coordinates: r.coords } })))}>⤓</button>
                               <button className="text-danger" title={t("Rimuovi tutte")} onClick={() => removeRoadsByIds(ids)}>✕</button>
                             </span>
                           </div>
@@ -5176,7 +5178,7 @@ export default function Page() {
                         <input type="number" min={1} max={200} step={1} value={Math.round(r.width_m)} title={t("Spessore (m)")}
                           onChange={(e) => setRoadWidthAt(i, Number(e.target.value))} className="field-input w-16 py-0.5 shrink-0" />
                         <span className="flex gap-1 shrink-0">
-                          <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(`strada_${i + 1}`), [{ name: `Strada ${i + 1}`, geom: { type: "LineString", coordinates: r.coords } }])}>⤓</button>
+                          <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(`${t("Strada")}_${i + 1}`), [{ name: `${t("Strada")} ${i + 1}`, geom: { type: "LineString", coordinates: r.coords } }])}>⤓</button>
                           <button className="text-danger" title={t("Rimuovi")} onClick={() => removeRoad(i)}>✕</button>
                         </span>
                       </li>

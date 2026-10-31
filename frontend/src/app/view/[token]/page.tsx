@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import type { MapHandle } from "@/components/MapCanvas";
 import * as api from "@/lib/api";
-import { useI18n, LANGS, type Lang } from "@/lib/i18n";
+import { useI18n, LANGS, type Lang, translateError } from "@/lib/i18n";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -63,7 +63,7 @@ export default function ViewPage({ params }: { params: { token: string } }) {
       await api.addLinkComment(params.token, { author: cAuthor.trim(), body, lat: cPoint?.lat ?? null, lng: cPoint?.lng ?? null });
       setCBody(""); setCPoint(null); setCMsg(t("Commento inviato ✓"));
       await loadComments();
-    } catch (e) { setCMsg(e instanceof Error ? e.message : String(e)); } finally { setCBusy(false); }
+    } catch (e) { setCMsg(translateError(t, e instanceof Error ? e.message : String(e))); } finally { setCBusy(false); }
   }
   const fmtWhen = (iso: string | null) => {
     if (!iso) return "";
@@ -76,7 +76,7 @@ export default function ViewPage({ params }: { params: { token: string } }) {
   useEffect(() => {
     api.fetchShare(params.token)
       .then(setData)
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+      .catch((e) => setErr(translateError(t, e instanceof Error ? e.message : String(e))));
   }, [params.token]);
 
   // Disegna tutto sulla mappa appena i dati e la mappa sono pronti.
@@ -194,7 +194,7 @@ export default function ViewPage({ params }: { params: { token: string } }) {
             </div>
           )}
           <select className="pill-light h-11 px-2 text-sm shrink-0 max-w-[7.5rem]" value={lang}
-            onChange={(e) => setLang(e.target.value as Lang)} aria-label="Lingua">
+            onChange={(e) => setLang(e.target.value as Lang)} aria-label={t("Lingua")}>
             {LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
           </select>
         </div>

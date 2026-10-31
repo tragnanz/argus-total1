@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, type MutableRefObject } from "react";
 import L from "leaflet";
+import { useI18n } from "@/lib/i18n";
 import "@geoman-io/leaflet-geoman-free";
 import type { Polygon, GeoJSONFC } from "@/lib/api";
 
@@ -154,6 +155,10 @@ type Props = {
 };
 
 export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalProfile, onDrawChange, apiRef }: Props) {
+  // Testi della mappa (tooltip, popup, suggerimenti di disegno) nella lingua scelta.
+  const { t, lang } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
   const elRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -220,6 +225,25 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   // Callback sempre aggiornate (la mappa viene creata una sola volta).
   const baseRef = useRef<L.TileLayer | null>(null);
   const labelsRef = useRef<L.TileLayer | null>(null);
+  // Suggerimenti di Geoman durante il disegno: traduzioni dell'app per ogni lingua
+  // (Geoman di suo non conosce kazako, arabo, bulgaro, afrikaans, malese, vietnamita).
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pm = (mapRef.current as any)?.pm; if (!pm?.setLang) return;
+    try {
+      pm.setLang(`argus-${lang}`, {
+        tooltips: {
+          placeMarker: t("Clicca per posizionare il punto"),
+          firstVertex: t("Clicca per posizionare il primo vertice"),
+          continueLine: t("Clicca per continuare a disegnare"),
+          finishLine: t("Clicca sull'ultimo punto per terminare"),
+          finishPoly: t("Clicca sul primo punto per chiudere"),
+          finishRect: t("Clicca per terminare"),
+        },
+        actions: { finish: t("Fine"), cancel: t("Annulla"), removeLastVertex: t("Ultimo punto"), reset: t("Azzera"), clear: t("Svuota") },
+      }, "en");
+    } catch { /* traduzioni non essenziali */ }
+  }, [lang, t]);
   const cbRef = useRef({ onCreate, onEditActive, onSelect, onCanalProfile, onDrawChange });
   useEffect(() => { cbRef.current = { onCreate, onEditActive, onSelect, onCanalProfile, onDrawChange }; });
 
@@ -837,7 +861,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           const svc = rd.kind === "service";
           const ly = L.polyline(latlngs, svc ? { color: "#b7791f", weight: 2.5, opacity: 0.95, dashArray: "6,4" }
             : { color: "#374151", weight: 2, opacity: 0.95 });
-          ly.bindTooltip(`Strada ${i + 1}${rd.width_m ? ` · ${Math.round(rd.width_m)} m` : ""}`, { direction: "top", sticky: true });
+          ly.bindTooltip(`${tRef.current("Strada")} ${i + 1}${rd.width_m ? ` · ${Math.round(rd.width_m)} m` : ""}`, { direction: "top", sticky: true });
           if (onRemove) ly.on("click", (e) => { L.DomEvent.stop(e); onRemove(i); });
           g.addLayer(ly);
         });
@@ -873,7 +897,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           if (it.geom.type === "LineString") {           // asse fiume/canale
             const latlngs = (it.geom.coordinates as number[][]).map((p) => [p[1], p[0]] as [number, number]);
             const ly = L.polyline(latlngs, { color: "#0369a1", weight: 3, opacity: 0.95 });
-            ly.bindTooltip("Fiume/canale", { direction: "center" });
+            ly.bindTooltip(tRef.current("Fiume/canale"), { direction: "center" });
             g.addLayer(ly);
             continue;
           }
@@ -883,7 +907,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             weight: 2, fillColor: isBasin ? "#0ea5e9" : "#22d3ee",
             fillOpacity: isBasin ? 0.45 : 0.3, dashArray: isBasin ? undefined : "5,4",
           });
-          ly.bindTooltip(isBasin ? "Bacino/lago" : "Palude", { direction: "center" });
+          ly.bindTooltip(isBasin ? tRef.current("Bacino/lago") : tRef.current("Palude"), { direction: "center" });
           g.addLayer(ly);
         }
       },
@@ -972,10 +996,10 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           const box = L.DomUtil.create("div");
           box.style.cssText = "min-width:150px";
           const ttl = L.DomUtil.create("div", "", box);
-          ttl.textContent = `Canale ${i + 1}`;
+          ttl.textContent = `${tRef.current("Canale")} ${i + 1}`;
           ttl.style.cssText = "font-weight:600;margin-bottom:6px;color:#08341c";
           const btn = L.DomUtil.create("button", "", box);
-          btn.textContent = "📈 Vedi profilo elevazione";
+          btn.textContent = `📈 ${tRef.current("Vedi profilo elevazione")}`;
           btn.style.cssText = "background:#038037;color:#fff;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px;width:100%";
           L.DomEvent.on(btn, "click", (e) => { L.DomEvent.stop(e); cbRef.current.onCanalProfile?.(i); });
           line.bindPopup(box);
@@ -1255,7 +1279,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             draggable: true, zIndexOffset: 1200,
             icon: L.divIcon({ className: "", iconSize: [14, 14], iconAnchor: [7, 7], html: dot(k0) }),
           });
-          const lab = labels || { pivot: "Agganciato al centro del pivot", canal: "Agganciato al canale", free: "Punto libero" };
+          const lab = labels || { pivot: tRef.current("Agganciato al centro del pivot"), canal: tRef.current("Agganciato al canale"), free: tRef.current("Punto libero") };
           m.bindTooltip(k0 === "pivot" ? lab.pivot : k0 === "canal" ? lab.canal : lab.free,
             { direction: "top", offset: [0, -10] });
           m.on("drag", (e) => {
@@ -1364,5 +1388,5 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     };
   });
 
-  return <div ref={elRef} className="map-root" aria-label="Mappa satellitare" />;
+  return <div ref={elRef} className="map-root" aria-label={t("Mappa satellitare")} />;
 }
