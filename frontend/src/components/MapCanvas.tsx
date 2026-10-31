@@ -10,7 +10,21 @@ export type FieldStyle = { color?: string; fillColor?: string; fillOpacity?: num
 export type FieldGeom = { id: number; name: string; geom: Polygon; style?: FieldStyle; level?: "area" | "campo" };
 // Modello pivot interattivo (gerarchia gruppo → singolo)
 export type PivotItem = { lat: number; lng: number; r: number; conn?: string; field?: number; unconn?: boolean; label?: string;
-  q?: number; p?: number };   // portata (l/s) e pressione (bar) richieste dal pivot
+  q?: number; p?: number;     // portata (l/s) e pressione (bar) richieste dal pivot
+  deg?: number;               // gradi irrigati (assente o 360 = cerchio intero)
+  az?: number;                // inizio del settore, azimut da nord in senso orario
+  gun?: number };             // gittata dell'irrigatore finale (m); assente o 0 = senza
+// Settore (o cerchio) come anello [lat, lng] per Leaflet.
+function sectorLatLngs(lat: number, lng: number, r: number, deg = 360, az = 0): [number, number][] {
+  const dLat = r / 111320, dLng = r / (111320 * Math.cos((lat * Math.PI) / 180) || 1e-9);
+  const full = deg >= 359.5, steps = Math.max(8, Math.round((full ? 360 : deg) / 4));
+  const out: [number, number][] = full ? [] : [[lat, lng]];
+  for (let i = 0; i <= steps; i++) {
+    const a = ((az + ((full ? 360 : deg) * i) / steps) * Math.PI) / 180;
+    out.push([lat + dLat * Math.cos(a), lng + dLng * Math.sin(a)]);
+  }
+  return out;
+}
 export type PivotModel = { pivots: PivotItem[]; lines: { kind: string; coords: number[][]; dn?: number[]; qs?: number[] }[] };
 export type PivotSel = { mode: "none" | "group" | "single"; idx: number };
 // Stato dello strumento «cerchi»: cerchi fissati (n, ettari totali) e cerchio in corso (r, ha).
@@ -797,7 +811,17 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             : groupSel
               ? { color: "#0d3b26", weight: 2.5, fillColor: base, fillOpacity: 0.30 }
               : { color: "#0d3b26", weight: 1, fillColor: base, fillOpacity: 0.22 };
-          const c = L.circle([pv.lat, pv.lng], { radius: pv.r, ...style });
+          const deg = Math.max(1, Math.min(360, pv.deg ?? 360)), az = pv.az ?? 0;
+          const c: L.Circle | L.Polygon = deg >= 359.5
+            ? L.circle([pv.lat, pv.lng], { radius: pv.r, ...style })
+            : L.polygon(sectorLatLngs(pv.lat, pv.lng, pv.r, deg, az), style);
+          // Irrigatore finale: fascia tratteggiata oltre l'ultima torre.
+          if (pv.gun && pv.gun > 0) {
+            const R2 = pv.r + pv.gun;
+            g.addLayer(deg >= 359.5
+              ? L.circle([pv.lat, pv.lng], { radius: R2, color: "#0d3b26", weight: 1, dashArray: "4,4", fillColor: base, fillOpacity: 0.08, interactive: false })
+              : L.polygon(sectorLatLngs(pv.lat, pv.lng, R2, deg, az), { color: "#0d3b26", weight: 1, dashArray: "4,4", fillColor: base, fillOpacity: 0.08, interactive: false }));
+          }
           // Punto del CENTRO: è il punto da alimentare, utile come riferimento
           // per le tubazioni (e come aggancio quando si modificano).
           // Centro del pivot. In ROSSO se non è alimentato da nessuna tubazione:
@@ -807,7 +831,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             fillColor: pv.unconn ? "#fff" : "#0d3b26", fillOpacity: 1, interactive: false,
           }));
           c.on("click", (e) => { L.DomEvent.stop(e); cbs.onClick(i); });
-          c.bindTooltip(`#${i + 1} · r ${Math.round(pv.r)} m`, { direction: "top", sticky: true });
+          c.bindTooltip(`#${i + 1} · r ${Math.round(pv.r)} m${deg < 359.5 ? ` · ${Math.round(deg)}°` : ""}${pv.gun ? ` · +${Math.round(pv.gun)} m` : ""}`, { direction: "top", sticky: true });
           g.addLayer(c);
           // Etichetta fissa sotto il centro (superficie · portata), se richiesta.
           if (pv.label) {
@@ -822,7 +846,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
               icon: L.divIcon({ className: "", iconSize: [16, 16], iconAnchor: [8, 8],
                 html: '<div style="width:16px;height:16px;border-radius:50%;background:#f0b429;border:2px solid #b23b1e;box-shadow:0 0 0 2px #fff"></div>' }),
             });
-            handle.on("drag", (e) => { const ll = (e.target as L.Marker).getLatLng(); c.setLatLng(ll); });
+            handle.on("drag", (e) => { const ll = (e.target as L.Marker).getLatLng(); if (c instanceof L.Circle) c.setLatLng(ll); });
             handle.on("dragend", (e) => { const ll = (e.target as L.Marker).getLatLng(); cbs.onMove(i, ll.lat, ll.lng); });
             g.addLayer(handle);
           }

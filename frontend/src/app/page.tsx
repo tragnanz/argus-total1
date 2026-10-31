@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.188";
+const REV = "v0.6.189";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -416,6 +416,22 @@ function nearestOnPolyline(p: number[], coords: number[][]): { pt: number[]; dis
 
 // ---- Gerarchia pivot: conversione FeatureCollection ⇄ modello modificabile ----
 // Anello circolare (lon,lat) per un pivot di raggio r (m) centrato in (lat,lng).
+// Superficie irrigata da un pivot (m²): settore di (raggio + gittata dell'irrigatore finale).
+const pvAreaM2 = (p: { r: number; deg?: number; gun?: number }) =>
+  (Math.max(1, Math.min(360, p.deg ?? 360)) / 360) * Math.PI * Math.pow(p.r + Math.max(0, p.gun ?? 0), 2);
+// Anello del settore [lng, lat] (cerchio intero se deg = 360); azimut da nord in senso orario.
+function sectorRing(lat: number, lng: number, r: number, deg = 360, az = 0): number[][] {
+  if (deg >= 359.5) return circleRing(lat, lng, r);
+  const dLat = r / 111320, dLng = r / (111320 * Math.cos((lat * Math.PI) / 180) || 1e-9);
+  const steps = Math.max(8, Math.round(deg / 4));
+  const ring: number[][] = [[lng, lat]];
+  for (let i = 0; i <= steps; i++) {
+    const a = ((az + (deg * i) / steps) * Math.PI) / 180;
+    ring.push([lng + dLng * Math.sin(a), lat + dLat * Math.cos(a)]);
+  }
+  ring.push([lng, lat]);
+  return ring;
+}
 function circleRing(lat: number, lng: number, r: number, n = 32): number[][] {
   const dLat = r / 111320;
   const dLng = r / (111320 * Math.cos((lat * Math.PI) / 180) || 1e-9);
@@ -452,8 +468,11 @@ function pivotsFromFC(fc: any, defR: number): { pivots: PivotItem[]; lines: Pipe
         sr += Math.hypot(dx, dy);
       }
       const r = ring.length ? sr / ring.length : defR;
-      pivots.push({ lat, lng, r: Math.round(r), conn: f?.properties?.connection, field: f?.properties?.field,
-        q: f?.properties?.q, p: f?.properties?.p });
+      const pr = f?.properties ?? {};
+      const cen = Array.isArray(pr.center) && pr.center.length === 2 ? pr.center : null;
+      pivots.push({ lat: cen ? Number(cen[1]) : lat, lng: cen ? Number(cen[0]) : lng, r: pr.r ? Number(pr.r) : Math.round(r),
+        conn: pr.connection, field: pr.field, q: pr.q, p: pr.p,
+        ...(pr.deg != null ? { deg: Number(pr.deg), az: Number(pr.az ?? 0) } : {}), ...(pr.gun ? { gun: Number(pr.gun) } : {}) });
     } else if (g?.type === "LineString") {
       lines.push({ kind: k, coords: g.coordinates, field: f?.properties?.field, dn: f?.properties?.dn, qs: f?.properties?.qs });
     }
@@ -466,8 +485,11 @@ function fcFromModel(pivots: PivotItem[], lines: { kind: string; coords: number[
   const feats: any[] = pivots.map((pv) => ({
     type: "Feature",
     properties: { kind: "pivot", connection: pv.conn ?? "canal", phase: pv.conn === "pipe" ? 2 : 1, field: pv.field,
-      ...(pv.q != null ? { q: pv.q } : {}), ...(pv.p != null ? { p: pv.p } : {}) },
-    geometry: { type: "Polygon", coordinates: [circleRing(pv.lat, pv.lng, pv.r)] },
+      ...(pv.q != null ? { q: pv.q } : {}), ...(pv.p != null ? { p: pv.p } : {}),
+      // centro e raggio espliciti: col settore il poligono non è più un cerchio
+      center: [pv.lng, pv.lat], r: pv.r,
+      ...(pv.deg != null && pv.deg < 360 ? { deg: pv.deg, az: pv.az ?? 0 } : {}), ...(pv.gun ? { gun: pv.gun } : {}) },
+    geometry: { type: "Polygon", coordinates: [sectorRing(pv.lat, pv.lng, pv.r, pv.deg ?? 360, pv.az ?? 0)] },
   }));
   for (const ln of lines) {
     feats.push({ type: "Feature", geometry: { type: "LineString", coordinates: ln.coords },
@@ -1314,6 +1336,7 @@ export default function Page() {
   // ---- Produttore dei pivot (per progetto, nel browser) ----
   // Salvato sul server con il progetto (impostazioni di progetto), vedi più sotto.
   const [pivotBrand, setPivotBrand] = useState<PivotBrand>("starpivot");
+  const [spanVmax, setSpanVmax] = useState(3);           // velocità massima nei tubi delle campate (m/s)
   // ---- Fonte d'acqua e schema d'impianto ----
   type SrcType = "fiume" | "canale" | "pozzo" | "invaso";
   const [srcPt, setSrcPt] = useState<number[] | null>(null);          // [lng, lat] del punto di presa
@@ -1783,7 +1806,7 @@ export default function Page() {
     const mp = pivots.filter((p) => p.field !== fid);
     const ml = pivotLines.filter((l) => l.field !== fid);
     setPivots(mp); setPivotLines(ml); setPivotSel({ mode: "none", idx: -1 });
-    setGuided(mp.length ? { geojson: fcFromModel(mp, ml), meta: { n_pivots: mp.length, radius_m: pivotR, net_ha: Math.round(mp.reduce((s, x) => s + Math.PI * x.r * x.r / 10000, 0) * 10) / 10, safety_m: safetyM } } : null);
+    setGuided(mp.length ? { geojson: fcFromModel(mp, ml), meta: { n_pivots: mp.length, radius_m: pivotR, net_ha: Math.round(mp.reduce((s, x) => s + pvAreaM2(x) / 10000, 0) * 10) / 10, safety_m: safetyM } } : null);
     setFields((fs) => fs.map((f) => f.id === fid ? { ...f, lay: null, layGeo: null } : f));
   }
   // Mostra/Nascondi un intero tipo di livello (occhio sulla cartella).
@@ -2512,7 +2535,7 @@ export default function Page() {
       const geojson = fcFromModel(next, pivotLines);
       const nCanal = next.filter((p) => p.conn !== "pipe").length;
       const nPipe = next.length - nCanal;
-      const netHa = next.reduce((s, p) => s + (Math.PI * p.r * p.r) / 10000, 0);
+      const netHa = next.reduce((s, p) => s + pvAreaM2(p) / 10000, 0);
       return { ...prev, geojson, meta: { ...prev.meta, n_pivots: next.length, n_canal_conn: nCanal, n_pipe_conn: nPipe, net_ha: Math.round(netHa * 10) / 10 } };
     });
   }
@@ -2535,7 +2558,7 @@ export default function Page() {
     const visIdx = pivots.map((_, k) => k).filter((k) => !hiddenPivotFields.has(pivots[k].field ?? -1));
     const fed = fedPivotKeys(pivotLines);
     const visP = visIdx.map((k) => ({ ...pivots[k], unconn: pivotLines.some((l) => l.kind === "pipe") && !fed.has(pKey(pivots[k])),
-      label: pivotLabels ? `${uHa(Math.PI * pivots[k].r * pivots[k].r / 10000, 1)}<br>${fmt(Math.round(pivotFlow(pivots[k])))} l/s` : undefined }));
+      label: pivotLabels ? `${uHa(pvAreaM2(pivots[k]) / 10000, 1)}<br>${fmt(Math.round(pivotFlow(pivots[k])))} l/s` : undefined }));
     // Le tubazioni hanno una visibilità propria (oggetto a sé); le altre linee
     // seguono la visibilità del gruppo pivot del loro campo.
     const visL = pivotLines.filter((l) => l.kind === "pipe"
@@ -2808,7 +2831,7 @@ export default function Page() {
     const layGeoNoLines = { type: "FeatureCollection" as const, features: (r.geojson.features || []).filter((ft: any) => ft.geometry?.type !== "LineString") };
     setFields((fs) => fs.map((f) => f.id === fid ? { ...f, lay: r.meta, layGeo: layGeoNoLines } : f));
     setPivots(mergedP); setPivotLines(mergedL); setPivotSel({ mode: "none", idx: -1 });
-    const netHa = mergedP.reduce((s, x) => s + (Math.PI * x.r * x.r) / 10000, 0);
+    const netHa = mergedP.reduce((s, x) => s + pvAreaM2(x) / 10000, 0);
     setGuided({ geojson: fcFromModel(mergedP, mergedL), meta: { n_pivots: mergedP.length, radius_m: radiusM, net_ha: Math.round(netHa * 10) / 10, safety_m: safetyM } });
     refreshUsage();
   }
@@ -2845,7 +2868,7 @@ export default function Page() {
         const p: LayoutParams = { ...paramsFrom(effSettings(active)), radius_m: rad, gap_m: safetyM, roads: obstacleLines(), clear_road_m: pivClearRoad, min_pivot_pct: 100 };
         const res = await api.fetchLayout(active.geom, p);
         const { pivots: np } = pivotsFromFC(res.geojson, rad);
-        const area = np.reduce((s, x) => s + (Math.PI * x.r * x.r) / 10000, 0);
+        const area = np.reduce((s, x) => s + pvAreaM2(x) / 10000, 0);
         if (area > bestArea) { bestArea = area; best = res; bestR = rad; }
       }
       if (!best) { setMsg(t("Nessun layout trovato nel range indicato.")); return; }
@@ -2989,7 +3012,7 @@ export default function Page() {
   // Portata di UN pivot: 1 mm su 1 m² = 1 litro, quindi basta l'area del cerchio.
   const pivotFlow = (pv: { r: number; q?: number }) => {
     if (pv.q && pv.q > 0) return pv.q;                       // valore imposto a mano
-    const area = Math.PI * pv.r * pv.r;                      // m²
+    const area = pvAreaM2(pv);                      // m²
     return (area * mmDes) / (Math.max(1, hoursDay) * 3600);  // l/s (fabbisogno lordo di progetto)
   };
   // ---- Intensità all'ESTREMITÀ del pivot -----------------------------------
@@ -3452,47 +3475,69 @@ export default function Page() {
   // ---- Esportazione per Ceres (.ceres) ----------------------------------------
   // JSON { app, ver, name, m } con m = progetto Ceres in Base64 UTF-8 (stesso
   // formato del link #m=). Campi "ff" e macchine "p" ad array posizionali.
-  // Le campate sono composte con il listino Star Pivot 6"5/8 e marcate come
-  // ricomponibili ([12] = 0): Ceres sceglie poi i diametri dei tubi.
-  // Listino campate 6"5/8 (indice tubo 2 in Ceres) e sbracci per produttore.
-  // Zimmatic: nessun listino disponibile → si passa solo il raggio e Ceres compone.
-  const SPAN_LIST: Record<PivotBrand, { spans: number[]; oh: number[] } | null> = {
-    starpivot: { spans: [59.8, 54.0, 48.1, 42.3], oh: [5.9, 11.7, 17.6, 23.4] },
-    reinke: { spans: [62.2, 59.1, 53.3, 47.5, 41.8, 36.0], oh: [0] },
-    valley: { spans: [68.6, 62.5, 57.0, 54.9, 48.8, 42.7, 41.1, 35.1], oh: [0] },
-    rkd: { spans: [65.3, 59.4, 53.5, 47.6, 41.7, 35.8], oh: [0] },
+  // Le campate sono composte con il listino del produttore e i diametri scelti
+  // da Argus (velocità nei tubi), quindi marcate come scelte ([12] = 1).
+  // Listino campate per diametro (indice tubo Ceres: 0 = 10", 1 = 8"5/8, 2 = 6"5/8)
+  // e sbracci per produttore. Zimmatic: nessun listino → si passa solo il raggio.
+  const SPAN_LIST: Record<PivotBrand, { d10: number[]; d8: number[]; d6: number[]; oh: number[] } | null> = {
+    starpivot: { d10: [42.3], d8: [54.0, 48.1, 42.3], d6: [59.8, 54.0, 48.1, 42.3], oh: [5.9, 11.7, 17.6, 23.4] },
+    reinke: { d10: [41.8, 36.0], d8: [53.3, 47.5, 41.8, 36.0], d6: [62.2, 59.1, 53.3, 47.5, 41.8, 36.0], oh: [0] },
+    valley: { d10: [42.7, 41.1, 35.1], d8: [54.9, 48.8, 42.7, 41.1, 35.1], d6: [68.6, 62.5, 57.0, 54.9, 48.8, 42.7, 41.1, 35.1], oh: [0] },
+    rkd: { d10: [41.7, 35.8], d8: [53.5, 47.6, 41.7, 35.8], d6: [65.3, 59.4, 53.5, 47.6, 41.7, 35.8], oh: [0] },
     zimmatic: null,
   };
-  // Composizione: minimo di scarto dal raggio (m) + 2,5 per campata + 0,5 per
-  // lunghezza diversa. Ricerca su multinsiemi (al più 3 lunghezze diverse).
-  const spanMemo = useRef(new Map<string, { spans: number[]; oh: number; total: number } | null>());
-  function spanComposition(R: number, brand: PivotBrand): { spans: number[]; oh: number; total: number } | null {
-    const mk = `${brand}|${Math.round(R)}`;
-    if (spanMemo.current.has(mk)) return spanMemo.current.get(mk)!;
-    const res = spanCompose(Math.round(R), brand); spanMemo.current.set(mk, res); return res;
+  // Diametri interni dei tubi delle campate (m) per il controllo della velocità.
+  const SPAN_ID = [0.2474, 0.2135, 0.1628];
+  type Span = { pipe: number; len: number };
+  type Comp = { spans: Span[]; oh: number; total: number };
+  // Campate da 6"5/8 per coprire esattamente S: minimo di scarto (m) + 2,5 per
+  // campata + 0,5 per lunghezza diversa (al più 3 lunghezze diverse).
+  function fillSpans(S: number, lens: number[]): { lens: number[]; tot: number; cost: number } | null {
+    if (S <= 1) return { lens: [], tot: 0, cost: Math.abs(S) };
+    const mx = Math.max(...lens), mn = Math.min(...lens);
+    let best: { lens: number[]; tot: number; cost: number } | null = null;
+    for (let n = Math.max(1, Math.floor(S / mx)); n <= Math.ceil(S / mn); n++)
+      for (let i1 = 0; i1 < lens.length; i1++) for (let i2 = i1; i2 < lens.length; i2++) for (let i3 = i2; i3 < lens.length; i3++)
+        for (let a = 0; a <= n; a++) for (let b = 0; a + b <= n; b++) {
+          const c = n - a - b;
+          if ((i2 === i1 && b) || (i3 === i2 && c)) continue;
+          const tot = a * lens[i1] + b * lens[i2] + c * lens[i3];
+          const kinds = (a ? 1 : 0) + (b ? 1 : 0) + (c ? 1 : 0);
+          const cost = Math.abs(tot - S) + 2.5 * n + 0.5 * kinds;
+          if (!best || cost < best.cost) best = { lens: [...Array(a).fill(lens[i1]), ...Array(b).fill(lens[i2]), ...Array(c).fill(lens[i3])].sort((x, y) => y - x), tot, cost };
+        }
+    return best;
   }
-  function spanCompose(R: number, brand: PivotBrand): { spans: number[]; oh: number; total: number } | null {
-    const L = SPAN_LIST[brand]; if (!L) return null;
-    type B = { spans: number[]; oh: number; total: number; key: number[] };
-    let best: B | null = null;
-    const better = (a: number[], b: number[]) => { for (let i = 0; i < a.length; i++) { if (a[i] !== b[i]) return a[i] < b[i]; } return false; };
-    const lens = L.spans, mx = Math.max(...lens), mn = Math.min(...lens);
-    for (const oh of L.oh) {
-      const S = R - oh; if (S < mn * 0.8) continue;
-      for (let n = Math.max(1, Math.floor(S / mx)); n <= Math.ceil(S / mn); n++) {
-        for (let i1 = 0; i1 < lens.length; i1++) for (let i2 = i1; i2 < lens.length; i2++) for (let i3 = i2; i3 < lens.length; i3++)
-          for (let a = 0; a <= n; a++) for (let b = 0; a + b <= n; b++) {
-            const c = n - a - b;
-            if ((i2 === i1 && b) || (i3 === i2 && c)) continue;     // stessa lunghezza: basta un contatore
-            const spans = [...Array(a).fill(lens[i1]), ...Array(b).fill(lens[i2]), ...Array(c).fill(lens[i3])];
-            const tot = spans.reduce((x, y) => x + y, 0) + oh, err = Math.abs(tot - R);
-            const kinds = new Set(spans).size;
-            const key = [err + 2.5 * n + 0.5 * kinds, oh];                // 1 m di scarto ≈ 0,4 campate in più
-            if (!best || better(key, best.key)) best = { spans: spans.sort((x, y) => y - x), oh, total: tot, key };
-          }
+  // Composizione con i DIAMETRI: dal centro la portata che resta nel tubo è
+  // Q·(1 − (x/Rb)²) (Rb = raggio bagnato, con l'irrigatore finale); ogni campata
+  // prende il tubo più piccolo con velocità ≤ vMax all'ingresso. Prima i 10",
+  // poi gli 8"5/8 (campate più lunghe del listino), il resto in 6"5/8.
+  const spanMemo = useRef(new Map<string, Comp | null>());
+  function spanComposition(pv: { r: number; gun?: number; q?: number; deg?: number }, brand: PivotBrand): Comp | null {
+    const Q = pivotFlow(pv) / 1000, R = Math.round(pv.r);
+    const mk = `${brand}|${R}|${Math.round((pv.gun ?? 0))}|${Q.toFixed(4)}|${spanVmax}`;
+    if (spanMemo.current.has(mk)) return spanMemo.current.get(mk)!;
+    const L = SPAN_LIST[brand];
+    let res: Comp | null = null;
+    if (L) {
+      const Rb = R + Math.max(0, pv.gun ?? 0);
+      const cap = SPAN_ID.map((d) => spanVmax * Math.PI * d * d / 4);              // m³/s per diametro
+      const xNeed = (c: number) => (Q > c ? Rb * Math.sqrt(1 - c / Q) : 0);         // fin dove serve il tubo più grande
+      const x10 = xNeed(cap[1]), x8 = xNeed(cap[2]);
+      let best: (Comp & { cost: number }) | null = null;
+      for (const oh of L.oh) for (const l10 of L.d10) for (const l8 of L.d8) {
+        const spans: Span[] = []; let pos = 0;
+        while (pos < x10 && pos + oh < R - 1) { spans.push({ pipe: 0, len: l10 }); pos += l10; }
+        while (pos < x8 && pos + oh < R - 1) { spans.push({ pipe: 1, len: l8 }); pos += l8; }
+        const rest = fillSpans(R - oh - pos, L.d6); if (!rest) continue;
+        const tot = pos + rest.tot + oh;
+        const cost = Math.abs(tot - R) + 2.5 * (spans.length + rest.lens.length) + 0.5 * new Set(spans.map((x) => x.len)).size + (rest.cost - Math.abs(R - oh - pos - rest.tot) - 2.5 * rest.lens.length);
+        if (!best || cost < best.cost) best = { spans: [...spans, ...rest.lens.map((len) => ({ pipe: 2, len }))], oh, total: tot, cost };
       }
+      if (best) res = { spans: best.spans, oh: best.oh, total: best.total };
     }
-    return best ? { spans: best.spans, oh: best.oh, total: best.total } : null;
+    spanMemo.current.set(mk, res);
+    return res;
   }
   function exportCeres() {
     if (!pivots.length) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
@@ -3528,11 +3573,13 @@ export default function Page() {
     const p: any[] = [];
     pivots.forEach((pv, k) => {
       const fid = owner[k]; if (fid == null) return;
-      const c = spanComposition(pv.r, pivotBrand);
+      const c = spanComposition(pv, pivotBrand);
+      const deg = Math.round(Math.max(1, Math.min(360, pv.deg ?? 360))), az = Math.round(pv.az ?? 0) % 360;
+      const gun = pv.gun && pv.gun > 0 ? 1 : 0, throwM = Math.round(pv.gun && pv.gun > 0 ? pv.gun : 25);
       p.push(c
-        ? [r6(pv.lat), r6(pv.lng), Math.round(c.total), 360, 0, 0, 25, 0, 0, idOf.get(fid)!,
-          Math.round(c.oh * 10), c.spans.map((L) => [2, Math.round(L * 10)]), 0]
-        : [r6(pv.lat), r6(pv.lng), Math.round(pv.r), 360, 0, 0, 25, 0, 0, idOf.get(fid)!, 0, [], 0]);
+        ? [r6(pv.lat), r6(pv.lng), Math.round(c.total), deg, deg >= 360 ? 0 : az, gun, throwM, 0, 0, idOf.get(fid)!,
+          Math.round(c.oh * 10), c.spans.map((sp) => [sp.pipe, Math.round(sp.len * 10)]), 1]
+        : [r6(pv.lat), r6(pv.lng), Math.round(pv.r), deg, deg >= 360 ? 0 : az, gun, throwM, 0, 0, idOf.get(fid)!, 0, [], 0]);
     });
     const skipped = pivots.length - p.length;
     const cname = clients.find((c) => c.id === clientId)?.name || "";
@@ -3725,13 +3772,14 @@ export default function Page() {
     setSrcShown(typeof fo.shown === "string" ? fo.shown : null); setSrcElev(null);
     const te = (st as { terrain?: { dem?: string; smooth?: number } }).terrain ?? {};
     setDemModel(te.dem === "COPERNICUS_90" ? "COPERNICUS_90" : "COPERNICUS_30"); setDemSmooth(num(te.smooth, 100));
+    setSpanVmax(num((st as { span_vmax?: number }).span_vmax, 3));
     projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
     projLoaded.current = projectId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, projects]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId) return;
-    const payload = { pivot_brand: pivotBrand, fonte: fonteState(), terrain: { dem: demModel, smooth: demSmooth } };
+    const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, fonte: fonteState(), terrain: { dem: demModel, smooth: demSmooth } };
     const js = JSON.stringify(payload);
     if (js === projSaved.current) return;
     const pid = projectId;
@@ -3743,7 +3791,7 @@ export default function Page() {
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, srcMonthly, srcSectors,
-    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, demModel, demSmooth]);
+    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, demModel, demSmooth, spanVmax]);
   // ---- FONTE D'ACQUA → SCHEMI D'IMPIANTO ----------------------------------
   // L'utente indica la presa (fiume, canale, pozzo, invaso) e, se vuole, il
   // tracciato fino alla vasca. Con le quote del DEM (presa, profilo del
@@ -3973,7 +4021,8 @@ export default function Page() {
     const finish = (sc: Omit<Scheme, "mwh" | "kWabs" | "pvKwp" | "battKwh" | "solarPct">): Scheme => {
       let mwh = 0, kWabs = 0, kWday = 0, eDayKwh = 0, eSunKwh = 0;
       for (const st of sc.stages) {
-        mwh += mwhOf(st.hAvg ?? st.head) * (st.share ?? 1);                // settori: quota del volume annuo kWabs += st.kW; kWday += st.kW;
+        mwh += mwhOf(st.hAvg ?? st.head) * (st.share ?? 1);                // settori: quota del volume annuo
+        kWabs += st.kW; kWday += st.kW;
         eDayKwh += st.kW * st.hours;                                       // kWh nel giorno di punta
         eSunKwh += st.kW * Math.min(st.hours, sunH);                       // di cui nelle ore di sole
       }
@@ -4377,7 +4426,7 @@ export default function Page() {
   function pumpStation() {
     const n = pivots.length;
     const qDes = pivots.reduce((a, p) => a + pivotFlow(p), 0);                     // l/s
-    const irrHa = pivots.reduce((a, p) => a + Math.PI * p.r * p.r / 10000, 0);
+    const irrHa = pivots.reduce((a, p) => a + pvAreaM2(p) / 10000, 0);
     const pMaxBar = n ? Math.max(...pivots.map((p) => pivotPressure(p))) : 0;
     const headFromNet = hydra ? hydra.headMax : null;
     const head = (headFromNet ?? (pMaxBar * 10.2 + Math.max(0, psHeadExtra))) + Math.max(0, psLift);
@@ -4551,7 +4600,7 @@ export default function Page() {
     const hSun = Math.max(1, Math.min(14, pvSunH)), hRun = Math.max(1, Math.min(24, hoursDay));
     let ePump = 0, eTow = 0, irrHa = 0;
     for (const pv of pivots) {
-      const areaM2 = Math.PI * pv.r * pv.r;
+      const areaM2 = pvAreaM2(pv);
       irrHa += areaM2 / 10000;
       const vol = (areaM2 * mmDes) / 1000;                          // m³/giorno (lordo di progetto)
       const head = pivotPressure(pv) * 10.197 + Math.max(0, pvHead); // m
@@ -4691,7 +4740,7 @@ export default function Page() {
     const pvs = pivots;
     const rs = pvs.map((p) => p.r).sort((a, b) => a - b);
     const med = rs.length ? (rs.length % 2 ? rs[(rs.length - 1) / 2] : (rs[rs.length / 2 - 1] + rs[rs.length / 2]) / 2) : 0;
-    const pivHa = pvs.reduce((a, p) => a + (Math.PI * p.r * p.r) / 10000, 0);
+    const pivHa = pvs.reduce((a, p) => a + pvAreaM2(p) / 10000, 0);
     const qLs = pvs.reduce((a, p) => a + pivotFlow(p), 0);
 
     const pipes = pivotLines.filter((l) => l.kind === "pipe");
@@ -4775,7 +4824,7 @@ export default function Page() {
   // sviluppo complessivo delle tubazioni del gruppo.
   function fieldStats(fid: number) {
     const pv = pivots.filter((p) => p.field === fid);
-    const irrHa = pv.reduce((s, p) => s + (Math.PI * p.r * p.r) / 10000, 0);
+    const irrHa = pv.reduce((s, p) => s + pvAreaM2(p) / 10000, 0);
     const pipes = pivotLines.filter((l) => l.kind === "pipe" && l.field === fid);
     const canalKm = canals.filter((c) => c.owner === fid).reduce((s, c) => s + (c.length_m || 0) / 1000, 0);
     // Mediana dei raggi: piu' rappresentativa della media quando il gruppo ha
@@ -5249,7 +5298,38 @@ export default function Page() {
                         className="field-input mt-1" /></label>
                   </div>
                   <div className="text-[10px] text-sage-dark mt-1">{t("Vuoto = calcolato da superficie e fabbisogno.")}</div>
-                  <div className="text-[11px] text-sage-dark mt-1">{t("Area")}: <b>{uHa(Math.PI * selPivot.r * selPivot.r / 10000, 1)}</b></div>
+                  <div className="flex gap-2 mt-2">
+                    <label className="text-[11px] text-sage-dark flex-1">{t("Settore irrigato (°)")}
+                      <input type="number" min={10} max={360} step={5} value={Math.round(selPivot.deg ?? 360)}
+                        onChange={(e) => { const d = Math.max(10, Math.min(360, Number(e.target.value) || 360)); updateSelPivot(d >= 360 ? { deg: undefined, az: undefined } : { deg: d, az: selPivot.az ?? 0 }); }}
+                        className="field-input mt-1" /></label>
+                    <label className="text-[11px] text-sage-dark flex-1">{t("Inizio settore (azimut °)")}
+                      <input type="number" min={0} max={359} step={5} value={Math.round(selPivot.az ?? 0)} disabled={(selPivot.deg ?? 360) >= 360}
+                        onChange={(e) => updateSelPivot({ az: ((Number(e.target.value) % 360) + 360) % 360 })}
+                        className="field-input mt-1" /></label>
+                  </div>
+                  <div className="flex gap-2 mt-2 items-end">
+                    <label className="flex items-center gap-2 text-[11px] text-sage-dark flex-1 pb-2">
+                      <input type="checkbox" checked={!!selPivot.gun} onChange={(e) => updateSelPivot({ gun: e.target.checked ? 25 : undefined })} />
+                      {t("Irrigatore finale")}</label>
+                    <label className="text-[11px] text-sage-dark flex-1">{t("Gittata (m)")}
+                      <input type="number" min={5} max={60} step={1} value={selPivot.gun ?? 25} disabled={!selPivot.gun}
+                        onChange={(e) => updateSelPivot({ gun: Math.max(5, Math.min(60, Number(e.target.value) || 25)) })}
+                        className="field-input mt-1" /></label>
+                  </div>
+                  <div className="text-[11px] text-sage-dark mt-1">{t("Area")}: <b>{uHa(pvAreaM2(selPivot) / 10000, 1)}</b></div>
+                  {(() => {
+                    const c = spanComposition(selPivot, pivotBrand);
+                    if (!c) return <div className="text-[11px] text-sage-dark mt-1">{PIVOT_BRANDS[pivotBrand]}: {t("composizione delle campate in Ceres")}</div>;
+                    const PIPE = ['10"', '8"5/8', '6"5/8'];
+                    const groups: { pipe: number; len: number; n: number }[] = [];
+                    for (const sp of c.spans) { const g = groups[groups.length - 1]; if (g && g.pipe === sp.pipe && g.len === sp.len) g.n++; else groups.push({ ...sp, n: 1 }); }
+                    return (
+                      <div className="text-[11px] text-sage-dark mt-1 leading-snug">
+                        {PIVOT_BRANDS[pivotBrand]} · {fmt(c.total, { maximumFractionDigits: 1 })} m: {groups.map((g) => `${g.n}×${PIPE[g.pipe]} ${fmt(g.len, { maximumFractionDigits: 1 })} m`).join(" + ")}{c.oh ? ` + ${t("sbraccio")} ${fmt(c.oh, { maximumFractionDigits: 1 })} m` : ""}
+                      </div>
+                    );
+                  })()}
                   <button className="btn-ghost w-full text-danger mt-2" onClick={deleteSelPivot}>{t("Elimina pivot")}</button>
                 </div>
               ) : pivots.length && pivotSel.mode === "group" ? (
@@ -5257,6 +5337,10 @@ export default function Page() {
                   <b className="text-brand-darker text-sm">{t("Gruppo pivot")} · {pivots.length}</b>
                   <p className="text-[11px] text-sage-dark mt-1">{t("Sulla mappa: 2° clic su un pivot per modificarlo singolarmente.")}</p>
                   <button className="btn-ghost w-full mt-2" onClick={applyRadiusToAll}>{t("Applica raggio {r} m a tutti", { r: pivotR })}</button>
+                  <div className="flex gap-2 mt-2">
+                    <button className="btn-ghost flex-1 basis-0 text-[12px]" onClick={() => commitPivots(pivots.map((p) => ({ ...p, gun: 25 })))}>{t("Irrigatore finale su tutti")}</button>
+                    <button className="btn-ghost flex-1 basis-0 text-[12px]" onClick={() => commitPivots(pivots.map((p) => ({ ...p, gun: undefined })))}>{t("Toglilo a tutti")}</button>
+                  </div>
                   <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
                     <input type="checkbox" checked={pivotLabels} onChange={(e) => setPivotLabels(e.target.checked)} />
                     {t("Mostra superficie e portata sulla mappa")}
@@ -5277,7 +5361,7 @@ export default function Page() {
                           onClick={() => setPivotSel({ mode: "single", idx: i })}>
                           <td className="py-0.5 text-brand-mid">{i + 1}</td>
                           <td className="text-right">{Math.round(pv.r)}</td>
-                          <td className="text-right">{uHa(Math.PI * pv.r * pv.r / 10000, 1)}</td>
+                          <td className="text-right">{uHa(pvAreaM2(pv) / 10000, 1)}</td>
                           <td className="text-right">{fmt(Math.round(pivotFlow(pv)))}{pv.q && pv.q > 0 ? "*" : ""}</td>
                         </tr>
                       ))}
@@ -5286,7 +5370,7 @@ export default function Page() {
                       <tr className="border-t border-black/10 font-semibold text-brand-darker">
                         <td className="py-0.5">{t("Totale")}</td>
                         <td />
-                        <td className="text-right">{uHa(pivots.reduce((a, pv) => a + Math.PI * pv.r * pv.r / 10000, 0))}</td>
+                        <td className="text-right">{uHa(pivots.reduce((a, pv) => a + pvAreaM2(pv) / 10000, 0))}</td>
                         <td className="text-right">{fmt(Math.round(pivots.reduce((a, pv) => a + pivotFlow(pv), 0)))}</td>
                       </tr>
                     </tfoot>
@@ -5783,6 +5867,10 @@ export default function Page() {
               <select className="field-input mt-1 text-sm" value={pivotBrand} onChange={(e) => setPivotBrand(e.target.value as PivotBrand)}>
                 {(Object.keys(PIVOT_BRANDS) as PivotBrand[]).map((k) => <option key={k} value={k}>{PIVOT_BRANDS[k]}</option>)}
               </select>
+            </label>
+            <label className="text-xs text-sage-dark block mb-1">{t("Velocità massima nei tubi delle campate (m/s)")}
+              <input type="number" min={1} max={5} step={0.1} value={spanVmax}
+                onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) setSpanVmax(Math.max(1, Math.min(5, x))); }} className="field-input mt-1 text-sm" />
             </label>
             <label className="text-xs text-sage-dark block mb-1">{t("Disposizione")}</label>
             <div className="seg mb-1">
