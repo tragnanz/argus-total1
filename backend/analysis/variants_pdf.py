@@ -80,7 +80,9 @@ def build_variants_pdf(title: str, subtitle: str, date: str, note: str, columns:
     story += [head, Spacer(1, 8)]
 
     n = max(1, len(columns))
-    lab_w = 70 * mm
+    lab_w = 70 * mm if n <= 6 else 58 * mm
+    if n > 6:   # tante colonne: caratteri un po' più piccoli perché i valori stiano in riga
+        st_c.fontSize = st_v.fontSize = 8; st_c.leading = st_v.leading = 10; st_l.fontSize = 8; st_l.leading = 10
     col_w = (W - 28 * mm - lab_w) / n
 
     def cell(c: dict):

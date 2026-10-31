@@ -441,7 +441,7 @@ class VariantsPdfIn(BaseModel):
     subtitle: str = Field(default="", max_length=300)
     date: str = Field(default="", max_length=40)
     note: str = Field(default="", max_length=2000)
-    columns: list[str] = Field(min_length=1, max_length=8)
+    columns: list[str] = Field(min_length=1, max_length=12)
     rows: list[dict[str, Any]] = Field(default_factory=list, max_length=60)
     qty_title: str = Field(default="", max_length=200)
     qty_rows: list[dict[str, Any]] = Field(default_factory=list, max_length=600)

@@ -15,7 +15,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.194";
+const REV = "v0.6.195";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1380,7 +1380,11 @@ export default function Page() {
   const [variants, setVariants] = useState<Variant[]>([]);             // varianti salvate del progetto (livelli «variant»)
   const [variantName, setVariantName] = useState("");
   const [variantsOpen, setVariantsOpen] = useState(false);
-  const [cableM, setCableM] = useState(50);                          // distanza dal punto di consegna dell'energia alle pompe (m)
+  const [cableM, setCableM] = useState(50);
+  const [costKwh, setCostKwh] = useState(0.22);                      // energia di rete (€/kWh)
+  const [costDiesel, setCostDiesel] = useState(1.6);                 // gasolio (€/l)
+  const [dieselLkWh, setDieselLkWh] = useState(0.3);                 // consumo del generatore (l/kWh)
+  const [genShare, setGenShare] = useState(40);                      // quota di energia dal generatore con FV + generatore (%)                          // distanza dal punto di consegna dell'energia alle pompe (m)
   const [resDepth, setResDepth] = useState(4);                       // profondità utile della vasca (m)
   const [resDays, setResDays] = useState(3);                         // giorni di scorta nella vasca
   const [resEvapK, setResEvapK] = useState(1.1);                     // evaporazione da specchio libero = k × ET₀
@@ -3191,9 +3195,9 @@ export default function Page() {
   // dei pivot che stanno a valle. Dal diametro minimo che rispetta la velocità
   // massima si sale al primo diametro commerciale disponibile.
   const DN_LIST = [110, 125, 140, 160, 180, 200, 225, 250, 280, 315, 355, 400, 450, 500, 560, 630, 710, 800, 900, 1000];
-  function computeHydraulics(apply: boolean, elev?: Map<string, number> | null) {
+  function computeHydraulics(apply: boolean, elev?: Map<string, number> | null, quiet = false) {
     const pipes = pivotLines.map((l, i) => ({ l, i })).filter((x) => x.l.kind === "pipe");
-    if (!pipes.length) { setMsg(t("Nessuna tubazione da dimensionare.")); return null; }
+    if (!pipes.length) { if (!quiet) setMsg(t("Nessuna tubazione da dimensionare.")); return null; }
     const lat0 = pipes[0].l.coords[0]?.[1] ?? 0;
     const mLat = 111320, mLng = 111320 * Math.cos((lat0 * Math.PI) / 180) || 1e-9;
     const key = (q: number[]) => `${q[0].toFixed(5)},${q[1].toFixed(5)}`;
@@ -3236,7 +3240,15 @@ export default function Page() {
       for (const w of W) { for (let i = 0; i < w.length - 1; i++) if (dSeg(m2, w[i], w[i + 1]) < 15) { on = true; break; } if (on) break; }
       if (on) sources.push(k);
     }
-    if (!sources.length) { setMsg(t("Nessuna presa sul canale: collega almeno una tubazione all'acqua.")); return null; }
+    // Senza presa sul canale: la rete parte dalla stazione (fonte d'acqua o
+    // pozzo) o, in mancanza, dall'inizio della prima tubazione.
+    if (!sources.length) {
+      const ref = srcRoute && srcRoute.length >= 2 ? srcRoute[srcRoute.length - 1] : srcPt ?? pipes[0].l.coords[0];
+      let bk = "", bd = Infinity;
+      for (const [k, q] of posOf) { const d = Math.hypot((q[0] - ref[0]) * mLng, (q[1] - ref[1]) * mLat); if (d < bd) { bd = d; bk = k; } }
+      if (bk) sources.push(bk);
+    }
+    if (!sources.length) { if (!quiet) setMsg(t("Nessuna presa sul canale: collega almeno una tubazione all'acqua.")); return null; }
     // albero di percorrenza dalle sorgenti (BFS): ogni arco viene orientato
     const parentEdge = new Map<string, number>();
     const order: string[] = [];
@@ -3317,10 +3329,27 @@ export default function Page() {
       setPivotLines(next);
       setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, next) } : gp));
     }
+    const lens = (i: number) => pivotLines[i].coords.map((q, k, a) => (k ? Math.hypot((q[0] - a[k - 1][0]) * mLng, (q[1] - a[k - 1][1]) * mLat) : 0)).slice(1);
     return { byDn: [...byDn.entries()].sort((a, b) => a[0] - b[0]), totalQ, hlMax, unserved, isolated, nSources: sources.length,
-      headMax, withElev: !!elev };
+      headMax, withElev: !!elev,
+      // per tubazione: [indice, diametri dei tratti, lunghezze dei tratti] (sfiati, scarichi, non ritorno)
+      lines: [...dnOf.entries()].map(([i, dns]) => [i, dns.map((d) => d ?? 0), lens(i)] as [number, number[], number[]]) };
   }
-  const [hydra, setHydra] = useState<null | { byDn: [number, number][]; totalQ: number; hlMax: number; unserved: number; isolated: number; nSources: number; headMax: number; withElev: boolean }>(null);
+  type HydraRes = { byDn: [number, number][]; totalQ: number; hlMax: number; unserved: number; isolated: number; nSources: number; headMax: number; withElev: boolean;
+    lines?: [number, number[], number[]][] };
+  const [hydra, setHydra] = useState<null | HydraRes>(null);
+  // Diametri della rete: quelli calcolati, oppure si calcolano al momento
+  // dell'esportazione (computo, .ceres, varianti) senza passare dalla pagina.
+  const hydraOverride = useRef<HydraRes | null>(null);
+  useEffect(() => { hydraOverride.current = null; }, [hydra]);
+  const hydraNow = (): HydraRes | null => hydraOverride.current ?? hydra;
+  function ensureHydra(): HydraRes | null {
+    const h0 = hydraNow(); if (h0) return h0;
+    if (!pivotLines.some((l) => l.kind === "pipe")) return null;
+    const h = computeHydraulics(true, null, true);
+    if (h) { hydraOverride.current = h; setHydra(h); }
+    return h;
+  }
   async function runHydraulics() {
     // Quote del terreno: servono per la prevalenza vera alla presa (un pivot in
     // quota costa metri d'acqua tanto quanto le perdite di carico).
@@ -3689,8 +3718,9 @@ export default function Page() {
     }
     if (!common) return R;
     const cNet = tx("Rete di adduzione");
-    if (hydra && hydra.byDn.length) {
-      for (const [dn, m] of [...hydra.byDn].sort((a, b) => a[0] - b[0])) R.push({ cat: cNet, item: tx("Tubazione DN {d}", { d: dn }), qty: Math.round(m), unit: "m" });
+    const HYc = hydraNow();
+    if (HYc && HYc.byDn.length) {
+      for (const [dn, m] of [...HYc.byDn].sort((a, b) => a[0] - b[0])) R.push({ cat: cNet, item: tx("Tubazione DN {d}", { d: dn }), qty: Math.round(m), unit: "m" });
     } else {
       const m = pivotLines.filter((l) => l.kind === "pipe").reduce((a, l) => a + lenOf(l.coords), 0);
       if (m > 0) R.push({ cat: cNet, item: tx("Tubazioni (diametri da calcolare nella pagina Tubazioni)"), qty: Math.round(m), unit: "m" });
@@ -3743,6 +3773,7 @@ export default function Page() {
     return R;
   }
   async function downloadComputo() {
+    ensureHydra();
     const rows = computoRows();
     if (!rows.length) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
     const pname = projects.find((x) => x.id === projectId)?.name || "Argus Total";
@@ -3852,6 +3883,7 @@ export default function Page() {
   async function exportCeres() {
     if (!projectId) { setMsg(t("Seleziona un progetto prima di creare il link.")); return; }
     const rev = nextCeresRev();
+    ensureHydra();
     const r = ceresFile(`ARGUS-${projectId}`, rev);
     if ("err" in r) { setMsg(r.err); return; }
     const pid = projectId;
@@ -3880,6 +3912,7 @@ export default function Page() {
   const [olyTerr, setOlyTerr] = useState("");                            // r:<codice regione> | c:<ISO2>
   const [olyTerrs, setOlyTerrs] = useState<{ v: string; n: string }[]>([]);
   const [olyOpen, setOlyOpen] = useState(false);
+  const [olyLink, setOlyLink] = useState<string | null>(null);
   const olyTok = useRef<{ a: string; r: string } | null>(null);
   useEffect(() => {
     try {
@@ -3928,17 +3961,19 @@ export default function Page() {
   async function olySend(customerId?: string, newCustomer?: string) {
     if (!projectId || !olyTok.current) return;
     const pid = projectId;
-    setBusy("oly"); setOlyMsg(null);
+    setBusy("oly"); setOlyMsg(null); setOlyLink(null);
     try {
       let rev = nextCeresRev();
+      ensureHydra();
       for (let tries = 0; tries < 4; tries++) {
         const r = ceresFile(`ARGUS-${pid}`, rev);
         if ("err" in r) { setOlyMsg({ bad: true, m: r.err }); return; }
         const file = await withPhoto(r.file);
         try {
-          const out = await oly<{ code?: string; revisione?: number }>("/progetti/import", { method: "POST", body: { computo: file, ...(customerId ? { customer_id: customerId } : newCustomer ? { nuovo_cliente: { ragione_sociale: newCustomer,
+          const out = await oly<{ id?: string; code?: string; revisione?: number }>("/progetti/import", { method: "POST", body: { computo: file, ...(customerId ? { customer_id: customerId } : newCustomer ? { nuovo_cliente: { ragione_sociale: newCustomer,
             ...(olyTerr.startsWith("r:") ? { region_code: olyTerr.slice(2) } : olyTerr.startsWith("c:") ? { country_iso2: olyTerr.slice(2) } : {}) } } : {}) } });
           saveCeresRev(pid, rev); setOlyCustomers(null);
+          setOlyLink(out.id ? `${api.olympusBase(olyUrl).replace(/\/api\/v1$/, "")}/progetti/${out.id}` : null);
           setOlyMsg({ bad: false, m: t("Progetto {c} creato in Olympus: riferimento {r}, revisione {v}.", { c: out.code ?? "", r: `ARGUS-${pid}`, v: rev }) + catNote() });
           return;
         } catch (e) {
@@ -4010,6 +4045,7 @@ export default function Page() {
             <input type="file" accept=".json,application/json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) catalogFromFile(f); e.target.value = ""; }} /></label>
           <p className="text-[10px] text-sage-dark leading-snug">{olyCat ? t("Catalogo Olympus: {n} articoli. Le voci senza codice prendono quello dell'articolo corrispondente.", { n: fmt(Object.keys(olyCat).length) }) : t("Senza catalogo le voci che Argus non sa codificare arrivano in Mercurius «da prezzare».")}</p>
           {olyMsg && <p className={`text-[11px] leading-snug ${olyMsg.bad ? "text-danger" : "text-brand-darker"}`}>{olyMsg.m}</p>}
+          {olyLink && <a className="text-[12px] text-brand font-semibold hover:underline block" href={olyLink} target="_blank" rel="noopener noreferrer">{t("Apri il progetto in Olympus")} ↗</a>}
         </>}
       </div>
     );
@@ -4106,8 +4142,62 @@ export default function Page() {
   // Alimentazione delle pompe (dal punto di consegna dell'energia, distanza
   // impostata in Pompaggio) e dei pivot (dalla stazione al punto pivot: torri
   // 0,75 kW ciascuna, più la pompa di rilancio dell'irrigatore finale).
+  // Percorso lungo le tubazioni (stessa trincea): Dijkstra sui vertici della rete
+  function netPaths() {
+    const key = (q: number[]) => `${q[0].toFixed(5)},${q[1].toFixed(5)}`;
+    const pos = new Map<string, number[]>(), adj = new Map<string, [string, number][]>();
+    for (const l of pivotLines) if (l.kind === "pipe") for (let k = 0; k < l.coords.length - 1; k++) {
+      const A = l.coords[k], B = l.coords[k + 1], a = key(A), b = key(B), d = distM(A, B);
+      pos.set(a, A); pos.set(b, B);
+      (adj.get(a) ?? adj.set(a, []).get(a))!.push([b, d]); (adj.get(b) ?? adj.set(b, []).get(b))!.push([a, d]);
+    }
+    // il punto della rete più vicino: proiezione sul tratto più vicino
+    const segs: [string, string][] = [];
+    for (const [a, l] of adj) for (const [b] of l) if (a < b) segs.push([a, b]);
+    const snap = (p: number[]) => {
+      let best: { a: string; b: string; q: number[]; d: number; da: number; db: number } | null = null;
+      for (const [a, b] of segs) {
+        const A = pos.get(a)!, B = pos.get(b)!;
+        const kx = 111320 * Math.cos((p[1] * Math.PI) / 180), ky = 110540;
+        const vx = (B[0] - A[0]) * kx, vy = (B[1] - A[1]) * ky, l2 = vx * vx + vy * vy || 1e-9;
+        const tt = Math.max(0, Math.min(1, (((p[0] - A[0]) * kx) * vx + ((p[1] - A[1]) * ky) * vy) / l2));
+        const q = [A[0] + (B[0] - A[0]) * tt, A[1] + (B[1] - A[1]) * tt], d = distM(p, q);
+        if (!best || d < best.d) best = { a, b, q, d, da: distM(q, A), db: distM(q, B) };
+      }
+      return best;
+    };
+    const cache = new Map<string, { dist: Map<string, number>; prev: Map<string, string> }>();
+    const tree = (src: string) => {
+      const c = cache.get(src); if (c) return c;
+      const dist = new Map<string, number>([[src, 0]]), prev = new Map<string, string>(), done = new Set<string>();
+      for (;;) {
+        let u = "", ud = Infinity; for (const [k, d] of dist) if (!done.has(k) && d < ud) { ud = d; u = k; }
+        if (!u) break; done.add(u);
+        for (const [v, w] of adj.get(u) ?? []) if (ud + w < (dist.get(v) ?? Infinity)) { dist.set(v, ud + w); prev.set(v, u); }
+      }
+      const r = { dist, prev }; cache.set(src, r); return r;
+    };
+    return (from: number[], to: number[]): { coords: number[][]; L: number } | null => {
+      const f = snap(from), g = snap(to); if (!f || !g) return null;
+      // stesso tratto: si scorre direttamente lungo il tubo
+      if ((f.a === g.a && f.b === g.b)) return { coords: [from, f.q, g.q, to], L: f.d + distM(f.q, g.q) + g.d };
+      let best: { L: number; e1: string; e2: string } | null = null;
+      for (const [e1, d1] of [[f.a, f.da], [f.b, f.db]] as [string, number][]) {
+        const { dist } = tree(e1);
+        for (const [e2, d2] of [[g.a, g.da], [g.b, g.db]] as [string, number][]) {
+          const D = dist.get(e2); if (D == null) continue;
+          const L = d1 + D + d2; if (!best || L < best.L) best = { L, e1, e2 };
+        }
+      }
+      if (!best) return null;
+      const { prev } = tree(best.e1);
+      const path: number[][] = []; for (let k: string | undefined = best.e2; k; k = prev.get(k)) path.unshift(pos.get(k)!);
+      return { coords: [from, f.q, ...path, g.q, to], L: f.d + best.L + g.d };
+    };
+  }
   function cableRuns(stations?: PStation[]): CableRun[] {
     const out: CableRun[] = [];
+    const route = netPaths();
     const st = stations ?? pumpStationsList();
     for (const s of st) {
       const kW = s.pick ? s.pick.motor * s.nDuty : s.kW;
@@ -4118,8 +4208,10 @@ export default function Page() {
     if (feed) pivots.forEach((pv, k) => {
       const c = spanComposition(pv, pivotBrand);
       const kW = (c ? c.spans.length : Math.max(1, Math.round(pv.r / 50))) * 0.75 + (pv.gun && pv.gun > 0 ? 1.5 : 0);
-      const L = Math.max(10, Math.round(distM(feed, [pv.lng, pv.lat]) * 1.15));
-      out.push({ name: `${tx("alimentazione")} · P${k + 1}`, kW, L, ...cableFor(kW, L), coords: [feed, [pv.lng, pv.lat]] });
+      // lungo la rete (stessa trincea del tubo, +3 % di scorta); senza rete in linea retta +15 %
+      const r = route(feed, [pv.lng, pv.lat]);
+      const L = Math.max(10, Math.round(r ? r.L * 1.03 : distM(feed, [pv.lng, pv.lat]) * 1.15));
+      out.push({ name: `${tx("alimentazione")} · P${k + 1}`, kW, L, ...cableFor(kW, L), coords: r ? r.coords : [feed, [pv.lng, pv.lat]] });
     });
     return out;
   }
@@ -4272,8 +4364,22 @@ export default function Page() {
     {
       const R: MRow[] = [];
       let tot = 0;
-      if (hydra) for (const [dn, m] of [...hydra.byDn].sort((a, b) => a[0] - b[0])) { R.push(...pipeRows(dn, m, "rete di adduzione")); tot += m; }
+      const HY = hydraNow();
+      if (HY) for (const [dn, m] of [...HY.byDn].sort((a, b) => a[0] - b[0])) { R.push(...pipeRows(dn, m, "rete di adduzione")); tot += m; }
       const lenOf = (ln: number[][]) => ln.reduce((a, q, i) => { if (!i) return 0; const o = ln[i - 1]; return a + Math.hypot((q[0] - o[0]) * 111320 * Math.cos(((q[1] + o[1]) / 2) * Math.PI / 180), (q[1] - o[1]) * 110540); }, 0);
+      // Pezzi speciali della rete: sfiato a triplo effetto all'inizio di ogni
+      // tubazione e ogni 500 m, scarico in fondo a ogni tubazione (diametro del tratto).
+      if (HY?.lines?.length) {
+        const air = new Map<number, number>(); let drains = 0;
+        for (const [, dns, ls] of HY.lines) {
+          let run = 0; const first = dns.find((d) => d > 0);
+          if (first) air.set(first, (air.get(first) ?? 0) + 1);
+          dns.forEach((d, k) => { run += ls[k] ?? 0; while (run >= 500 && d > 0) { air.set(d, (air.get(d) ?? 0) + 1); run -= 500; } });
+          if (dns.some((d) => d > 0)) drains++;
+        }
+        for (const [dn, n] of [...air.entries()].sort((a, b) => a[0] - b[0])) R.push({ codice: `V-AIR-${dn}`, quantita: n, unita: "pz" });
+        if (drains) R.push({ codice: "V-DRAIN", quantita: drains, unita: "pz" });
+      }
       if (!tot) {
         tot = pivotLines.filter((l) => l.kind === "pipe").reduce((a, l) => a + lenOf(l.coords), 0);
         R.push({ codice: "ARGUS-TUBAZIONE", quantita: Math.round(tot), unita: "m", descrizione: "Tubazione interrata (diametri da calcolare nella pagina Tubazioni di Argus Total)" });
@@ -4290,6 +4396,11 @@ export default function Page() {
     const sc = S ? (S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? null) : null;
     const P = pumpStation();
     const stations = pumpStationsList();
+    const netMaxDn = Math.max(0, ...(hydraNow()?.byDn ?? []).map((x) => x[0]));
+    // valvola di non ritorno all'uscita di ogni stazione (a catalogo fino al DN 225)
+    const checkRow = (dn: number): MRow => [50, 63, 75, 90, 110, 125, 140, 160, 200, 225].includes(dn)
+      ? { codice: `V-CHECK-${dn}`, quantita: 1, unita: "pz" }
+      : { codice: `ARGUS-V-CHECK-${dn}`, quantita: 1, unita: "pz", descrizione: `Valvola di non ritorno · DN ${dn}` };
     const famTxt: Record<string, string> = { vert: "verticale sommersa", subm: "elettropompa sommersa", horiz: "ad asse orizzontale" };
     const stationDesc = (st: PStation) => `${st.name}: ` + (st.pick
       ? `${st.nTot > 1 ? st.nTot + " × " : ""}pompa Caprari ${st.pick.model} (${famTxt[st.pick.fam] ?? st.pick.fam}), motore ${it(st.pick.motor, 1)} kW, ${it(st.qLs)} l/s, ${it(st.head)} m`
@@ -4297,7 +4408,8 @@ export default function Page() {
     let scen = powerMode === "solar" ? "fotovoltaico" : "rete elettrica";
     if (S && sc) {
       const R: MRow[] = [];
-      for (const st of stations) R.push({ codice: "PT-PUMP", quantita: 1, unita: "pz", descrizione: stationDesc(st) });
+      stations.forEach((st, i) => { R.push({ codice: "PT-PUMP", quantita: 1, unita: "pz", descrizione: stationDesc(st) });
+        const dn = i === 0 && sc.key !== "C" && sc.main?.kind === "pipe" && sc.main.dn ? sc.main.dn : netMaxDn; if (dn) R.push(checkRow(dn)); });
       if (sc.main?.kind === "pipe" && sc.main.dn) R.push(...pipeRows(sc.main.dn, sc.main.L * (sc.main.n ?? 1), "adduttrice"));
       if (sc.main?.kind === "canal") R.push({ codice: "ARGUS-CANALE-GRAVITA", quantita: Math.round(sc.main.L), unita: "m", descrizione: `Canale a gravità, scavo massimo ${it(sc.main.cutMax ?? 0, 1)} m` });
       if (sc.res) {
@@ -4311,7 +4423,7 @@ export default function Page() {
       } else scen = "rete elettrica / generatore";
       add(`Fonte d'acqua · schema ${sc.key}`, R);
     } else if (P.best && stations.length) {
-      add("Stazione di pompaggio", stations.map((st) => ({ codice: "PT-PUMP", quantita: 1, unita: "pz", descrizione: stationDesc(st) })));
+      add("Stazione di pompaggio", stations.flatMap((st) => [{ codice: "PT-PUMP", quantita: 1, unita: "pz", descrizione: stationDesc(st) } as MRow, ...(netMaxDn ? [checkRow(netMaxDn)] : [])]));
     }
     if (!sc && powerMode === "solar" && pivots.length) {
       const So = solarSizing();
@@ -4344,7 +4456,7 @@ export default function Page() {
       ["Fabbisogno di progetto", `${it(mmDes, 1)} mm/24h`], ["Potenza installata", `${it(kWinst)} kW`], ["Energia annua", `${it(mwh)} MWh`],
       ...(sc ? [["Schema della fonte", `${sc.key} · ${sc.name}`]] : []),
       ...(sc?.res ? [["Vasca di accumulo", `${it(sc.res.vol)} m³`]] : []),
-      ...(hydra ? [["Rete di adduzione", `${it(hydra.byDn.reduce((a, x) => a + x[1], 0) / 1000, 2)} km`]] : []),
+      ...(hydraNow() ? [["Rete di adduzione", `${it(hydraNow()!.byDn.reduce((a, x) => a + x[1], 0) / 1000, 2)} km`]] : []),
       ["Macchine", `${pivots.length} pivot${Object.keys(sysDesigns).length ? `, ${Object.keys(sysDesigns).length} campi con altri sistemi` : ""}`],
     ].map(([etichetta, valore]) => ({ etichetta: etichetta.slice(0, 80), valore: valore.slice(0, 120) })).slice(0, 40);
     // Planimetria come dati (senza foto): campi, impronte dei pivot, tubazioni
@@ -4400,7 +4512,7 @@ export default function Page() {
   // salvata come livello «variant» del progetto. Si confrontano in tabella e si
   // possono ricaricare.
   type VarMetrics = { ha: number; qLs: number; head: number; kWinst: number; kWabs: number; mwh: number; pvKwp: number; battKwh: number;
-    resVol: number; netKm: number; mainKm: number; nPivots: number; nSpans: number; nSys: number; scheme: string; energy: string; mm: number };
+    resVol: number; netKm: number; mainKm: number; nPivots: number; nSpans: number; nSys: number; scheme: string; energy: string; mm: number; ek?: string };
   type Variant = { id: number; name: string; created: string; metrics: VarMetrics; computo: CRow[]; snapshot: Record<string, unknown>; ceres: Record<string, unknown> | null };
   function variantMetrics(): VarMetrics {
     const P = pumpStation();
@@ -4419,11 +4531,11 @@ export default function Page() {
     }
     if (!sc && powerMode === "solar" && pivots.length) { const So = solarSizing(); if (srcEnergy === "fv-batt") { pvKwp = So.bat.kwp; battKwh = So.bat.battKwh; } else pvKwp = So.no.kwp; }
     return { ha: P.irrHa, qLs: P.qDes, head, kWinst, kWabs, mwh, pvKwp, battKwh, resVol: sc?.res?.vol ?? 0,
-      netKm: hydra ? hydra.byDn.reduce((a, x) => a + x[1], 0) / 1000 : 0, mainKm: sc?.main ? (sc.main.L * (sc.main.n ?? 1)) / 1000 : 0,
+      netKm: hydraNow() ? hydraNow()!.byDn.reduce((a, x) => a + x[1], 0) / 1000 : 0, mainKm: sc?.main ? (sc.main.L * (sc.main.n ?? 1)) / 1000 : 0,
       nPivots: pivots.length, nSpans, nSys: Object.keys(sysDesigns).length,
       scheme: sc ? `${sc.key} · ${sc.name}` : "—",
       energy: sc ? (srcEnergy === "rete" ? tx("Rete / generatore") : srcEnergy === "fv-gen" ? tx("FV + generatore") : tx("FV + batterie")) : (powerMode === "solar" ? (srcEnergy === "fv-batt" ? tx("FV + batterie") : srcEnergy === "fv-gen" ? tx("FV + generatore") : tx("Fotovoltaico")) : tx("Rete / generatore")),
-      mm: mmDes };
+      mm: mmDes, ek: powerMode === "solar" || sc ? srcEnergy : "rete" };
   }
   function variantSnapshot(): Record<string, unknown> {
     const centroid = (f: Field) => { const r = f.geom.coordinates[0]; return [r.reduce((a, q) => a + q[0], 0) / r.length, r.reduce((a, q) => a + q[1], 0) / r.length]; };
@@ -4431,12 +4543,13 @@ export default function Page() {
       pivots: pivots.map((p) => ({ ...p, field: undefined, unconn: undefined, label: undefined, phaseColor: undefined })),
       lines: pivotLines.map((l) => ({ ...l, field: undefined })),
       systems: Object.entries(sysDesigns).map(([k, d]) => { const f = fieldOfKey(k); return { d, name: f?.name ?? "", c: f ? centroid(f) : null }; }),
-      fonte: fonteState(), powerMode, pivotBrand, spanVmax, mm24, hoursDay, sprinkBar, pivotPointBar, hydra,
+      fonte: fonteState(), powerMode, pivotBrand, spanVmax, mm24, hoursDay, sprinkBar, pivotPointBar, hydra: hydraNow(),
     };
   }
-  async function saveVariant() {
+  async function saveVariant(nameOverride?: string) {
     if (!projectId) { setMsg(t("Seleziona un progetto prima di creare il link.")); return; }
-    const name = variantName.trim() || t("Variante {n}", { n: variants.length + 1 });
+    const name = nameOverride || variantName.trim() || t("Variante {n}", { n: variants.length + 1 });
+    ensureHydra();
     setBusy("variant");
     try {
       // il .ceres della variante: riferimento proprio (ogni variante è un'offerta a sé), revisione 1
@@ -4504,12 +4617,19 @@ export default function Page() {
       [tx("Potenza installata") + " (kW)", (m) => m.kWinst, 0, -1],
       [tx("Potenza assorbita") + " (kW)", (m) => m.kWabs, 0, -1],
       [tx("Energia") + " (MWh/" + tx("anno") + ")", (m) => m.mwh, 0, -1],
+      [tx("Costo dell'energia") + " (€/" + tx("anno") + ")", (m) => Math.round(energyCost(m)), 0, -1],
       [tx("Fotovoltaico") + " (kWp)", (m) => opt(m.pvKwp), 0, 0],
       [tx("Batterie") + " (kWh)", (m) => opt(m.battKwh), 0, 0],
       [tx("Vasca di accumulo") + " (m³)", (m) => opt(m.resVol), 0, 0],
       [tx("Adduttrice") + " (km)", (m) => opt(m.mainKm), 1, -1],
       [tx("Rete di adduzione") + " (km)", (m) => opt(m.netKm), 1, -1],
     ];
+  }
+  // Costo dell'energia in esercizio: rete a €/kWh; FV + generatore: la quota
+  // impostata va a gasolio (l/kWh × €/l); FV + batterie: nessun acquisto di energia.
+  function energyCost(m: VarMetrics): number {
+    const kWh = (m.mwh || 0) * 1000, ek = m.ek ?? "rete";
+    return ek === "fv-batt" ? 0 : ek === "fv-gen" ? kWh * (genShare / 100) * dieselLkWh * costDiesel : kWh * costKwh;
   }
   // Differenza di una variante rispetto allo stato attuale: testo e segno (1 meglio, -1 peggio)
   function variantDiff(v: number | string, ref: number | string, d: number, dir: number): { txt: string; s: number } | null {
@@ -4519,13 +4639,36 @@ export default function Page() {
     if (!dd) return null;
     return { txt: (dd > 0 ? "+" : "−") + fx(Math.abs(dd), { maximumFractionDigits: d }), s: dir ? Math.sign(dd) * dir : 0 };
   }
+  // Varianti preparate da Argus: le tre alimentazioni sul progetto attuale e,
+  // con la fonte d'acqua, gli altri schemi possibili (con o senza vasca).
+  const latest = useRef<{ saveVariant: (n?: string) => Promise<void> } | null>(null);
+  latest.current = { saveVariant };
+  async function generateVariants() {
+    if (!projectId || (!pivots.length && !Object.keys(sysDesigns).length)) return;
+    ensureHydra();
+    const orig = { e: srcEnergy, pm: powerMode, sh: srcShown };
+    const S = srcPt && pivots.length ? sourceSchemes() : null;
+    const opts: { name: string; e: "rete" | "fv-gen" | "fv-batt"; sh?: string | null }[] = [
+      { name: tx("Rete / generatore"), e: "rete" }, { name: tx("FV + generatore"), e: "fv-gen" }, { name: tx("FV + batterie"), e: "fv-batt" }];
+    if (S) for (const sc of S.schemes.filter((x) => x.ok)) if (sc.key !== (srcShown ?? S.best?.key)) opts.push({ name: `${tx("schema")} ${sc.key} · ${sc.name}`, e: orig.e, sh: sc.key });
+    setBusy("vgen");
+    try {
+      for (const o of opts) {
+        setEnergy(o.e); if (o.sh !== undefined) setSrcShown(o.sh);
+        await new Promise((r) => setTimeout(r, 150));
+        await latest.current!.saveVariant(o.name);
+      }
+      setMsg(t("Create {n} varianti ✓", { n: opts.length }));
+    } finally { setSrcEnergy(orig.e); setPowerMode(orig.pm); setSrcShown(orig.sh); setBusy(""); }
+  }
   async function downloadVariantsPdf() {
     const pname = projects.find((x) => x.id === projectId)?.name || "";
     const cname = clients.find((c) => c.id === clientId)?.name || "";
     setBusy("vpdf");
     try {
       const body = inLang(pdfLang, () => {
-        const cols = [{ name: tx("Attuale"), m: variantMetrics(), c: computoRows() }, ...variants.map((v) => ({ name: v.name, m: v.metrics, c: v.computo }))];
+        // nel PDF stanno lo stato attuale e le ultime 11 varianti
+        const cols = [{ name: tx("Attuale"), m: variantMetrics(), c: computoRows() }, ...variants.slice(-11).map((v) => ({ name: v.name, m: v.metrics, c: v.computo }))];
         const rows = variantRows().map(([label, fn, d, dir]) => ({ label, cells: cols.map((c, k) => {
           const v = fn(c.m); const df = k ? variantDiff(v, fn(cols[0].m), d, dir) : null;
           return { v: typeof v === "number" ? fx(v, { maximumFractionDigits: d }) : v, ...(df ? { d: df.txt, s: df.s } : {}) };
@@ -4590,7 +4733,16 @@ export default function Page() {
         {renderEnergyPick()}
         <div className="flex gap-2">
           <input className="field-input py-1 text-sm flex-1" value={variantName} placeholder={t("es. Pivot + FV, Lineari + vasca")} onChange={(e) => setVariantName(e.target.value)} />
-          <button className="btn-ghost text-[12px]" disabled={!projectId || busy === "variant"} onClick={saveVariant}>{t("Salva variante")}</button>
+          <button className="btn-ghost text-[12px]" disabled={!projectId || busy === "variant" || busy === "vgen"} onClick={() => saveVariant()}>{t("Salva variante")}</button>
+        </div>
+        <button className="btn-ghost w-full text-[12px]" disabled={!projectId || busy === "vgen" || (!pivots.length && !Object.keys(sysDesigns).length)} onClick={generateVariants}
+          title={t("Salva una variante per ogni alimentazione (rete, FV + generatore, FV + batterie) e, con la fonte d'acqua, per ogni altro schema possibile.")}>
+          {busy === "vgen" ? t("Preparo…") : t("Genera le varianti di alimentazione e di schema")}</button>
+        <div className="grid grid-cols-4 gap-1.5">
+          {([[t("Rete (€/kWh)"), costKwh, setCostKwh, 0.01], [t("Gasolio (€/l)"), costDiesel, setCostDiesel, 0.05], [t("Gasolio (l/kWh)"), dieselLkWh, setDieselLkWh, 0.01], [t("Quota generatore (%)"), genShare, setGenShare, 5]] as [string, number, (x: number) => void, number][]).map(([lab, v, set, st]) => (
+            <label key={lab} className="text-[10px] text-sage-dark leading-tight">{lab}
+              <input type="number" min={0} step={st} value={v} onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && x >= 0) set(x); }} className="field-input mt-0.5 py-0.5 text-xs" /></label>
+          ))}
         </div>
         <div className="overflow-x-auto">
           <table className="text-[11px] w-full">
@@ -5072,6 +5224,8 @@ export default function Page() {
     setWtwEta(num(fo.eta, 75)); setCanalSlope(num(fo.canalSlope, 0.3)); setBankSlope(num(fo.bankSlope, 2));
     setSettleMm(num(fo.settleMm, 0.1)); setFilterCap(num(fo.filterCap, 400)); setWellQ(num(fo.wellQ, 30));
     setSrcShown(typeof fo.shown === "string" ? fo.shown : null); setSrcElev(null); setCableM(num(fo.cableM, 50));
+    const co = (fo.costs ?? {}) as Record<string, unknown>;
+    setCostKwh(num(co.kwh, 0.22)); setCostDiesel(num(co.diesel, 1.6)); setDieselLkWh(num(co.lkwh, 0.3)); setGenShare(num(co.gen, 40));
   }
   // ---- Impostazioni di progetto salvate sul server ---------------------------
   // Produttore dei pivot e fonte d'acqua (presa, tracciato, livelli, parametri)
@@ -5080,7 +5234,7 @@ export default function Page() {
   const projSaved = useRef<string>("");
   const fonteState = () => ({ pt: srcPt, route: srcRoute, type: srcType, qmax: srcQmax, hours: srcHours, range: srcRange,
     sed: srcSediment, energy: srcEnergy, monthly: srcMonthly, sectors: srcSectors, resDepth, resDays, resEvapK, eta: wtwEta,
-    canalSlope, bankSlope, settleMm, filterCap, wellQ, shown: srcShown, cableM });
+    canalSlope, bankSlope, settleMm, filterCap, wellQ, shown: srcShown, cableM, costs: { kwh: costKwh, diesel: costDiesel, lkwh: dieselLkWh, gen: genShare } });
   useEffect(() => {
     if (projectId == null) { projLoaded.current = null; return; }
     if (projLoaded.current === projectId) return;
@@ -5115,7 +5269,7 @@ export default function Page() {
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, srcMonthly, srcSectors,
-    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, demModel, demSmooth, spanVmax, sysDesigns, cableM]);
+    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, demModel, demSmooth, spanVmax, sysDesigns, cableM, costKwh, costDiesel, dieselLkWh, genShare]);
   // ---- FONTE D'ACQUA → SCHEMI D'IMPIANTO ----------------------------------
   // L'utente indica la presa (fiume, canale, pozzo, invaso) e, se vuole, il
   // tracciato fino alla vasca. Con le quote del DEM (presa, profilo del
@@ -5276,7 +5430,7 @@ export default function Page() {
     const Qd = Vday / 3.6 / hd;                                           // l/s ai pivot
     const eRes = Math.max(0, resEvapK) * et0Peak;                          // mm/g evaporati dalla vasca
     const pMaxBar = pivots.length ? Math.max(...pivots.map((p) => pivotPressure(p))) : 0;
-    const Hd = Math.max(hydra ? hydra.headMax : pMaxBar * 10.2 + Math.max(0, psHeadExtra), sysTotals().headMax);   // prevalenza della distribuzione (pivot e altri sistemi)
+    const Hd = Math.max(hydraNow() ? hydraNow()!.headMax : pMaxBar * 10.2 + Math.max(0, psHeadExtra), sysTotals().headMax);   // prevalenza della distribuzione (pivot e altri sistemi)
     const E = srcElev && srcElev.key === elevKey(srcPt) ? srcElev : null;
     const zS = E?.zS ?? null, zR = E?.zR ?? null, zP = E?.zPmax ?? null;
     // Livello minimo: con i livelli mese per mese vale il più basso dei mesi
@@ -5827,7 +5981,7 @@ export default function Page() {
     const qDes = pivots.reduce((a, p) => a + pivotFlow(p), 0) + SY.qLs;              // l/s (pivot + altri sistemi)
     const irrHa = pivots.reduce((a, p) => a + pvAreaM2(p) / 10000, 0) + SY.ha;
     const pMaxBar = n ? Math.max(...pivots.map((p) => pivotPressure(p))) : 0;
-    const headFromNet = hydra ? hydra.headMax : null;
+    const headFromNet = hydraNow() ? hydraNow()!.headMax : null;
     const head = Math.max(headFromNet ?? (n ? pMaxBar * 10.2 + Math.max(0, psHeadExtra) : 0), SY.headMax) + Math.max(0, psLift);
     const clim = fields.map((f) => (f.lay as { climate?: { eto_month_mm?: number[]; rain_month_mm?: number[]; source?: string } } | null | undefined)?.climate)
       .find((c) => c && c.eto_month_mm?.length === 12 && c.rain_month_mm?.length === 12);
@@ -5917,7 +6071,7 @@ export default function Page() {
             ))}
           </tbody></table>
         )}
-        <p className="text-[10px] text-sage-dark leading-snug">{t("Pompe scelte dalle curve Caprari (le stesse di Ceres) per rendimento al punto di lavoro. Cavi interrati a 400 V con caduta di tensione entro il 4 %; i pivot sono alimentati dalla stazione che li serve. Tutto va nel computo e nel file .ceres per Mercurius.")}</p>
+        <p className="text-[10px] text-sage-dark leading-snug">{t("Pompe scelte dalle curve Caprari (le stesse di Ceres) per rendimento al punto di lavoro. Cavi interrati a 400 V con caduta di tensione entro il 4 %; i pivot sono alimentati dalla stazione che li serve, lungo le tubazioni. Tutto va nel computo e nel file .ceres per Mercurius.")}</p>
       </div>
     );
   }
