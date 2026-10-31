@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.187";
+const REV = "v0.6.188";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1275,6 +1275,8 @@ export default function Page() {
   const [pivotR, setPivotR] = useState(400);    // raggio pivot (parametro proprio della scheda Pivot)
   const [minPivotPct, setMinPivotPct] = useState(100);   // dimensione minima pivot di riempimento bordi (% del raggio); 100 = disattivato
   const [fillFull, setFillFull] = useState(false);       // riempie i vuoti con pivot interi fuori griglia
+  const [demModel, setDemModel] = useState<"COPERNICUS_30" | "COPERNICUS_90">("COPERNICUS_30");   // modello del terreno
+  const [demSmooth, setDemSmooth] = useState(100);       // base di levigatura della pendenza (m)
   const [designMode, setDesignMode] = useState<"standard" | "advanced">("standard"); // Systems: standard | avanzata (ottimizza raggio)
   const [advMinR, setAdvMinR] = useState(250);           // avanzata: raggio minimo del range (m)
   const [advMaxR, setAdvMaxR] = useState(450);           // avanzata: raggio massimo del range (m)
@@ -2743,6 +2745,7 @@ export default function Page() {
       only_suitable: s.onlySuitable, min_suitability: s.minSuit, date: date || null,
       overhang_pct: s.overhang, n_phases: s.nPhases, phase_order: s.phaseOrder,
       kc_peak: s.kc, efficiency: s.eff, hours_per_day: s.hours,
+      dem: demModel, dem_smooth_m: demSmooth,
     };
   }
   async function genLayout() {
@@ -3720,13 +3723,15 @@ export default function Page() {
     setWtwEta(num(fo.eta, 75)); setCanalSlope(num(fo.canalSlope, 0.3)); setBankSlope(num(fo.bankSlope, 2));
     setSettleMm(num(fo.settleMm, 0.1)); setFilterCap(num(fo.filterCap, 400)); setWellQ(num(fo.wellQ, 30));
     setSrcShown(typeof fo.shown === "string" ? fo.shown : null); setSrcElev(null);
-    projSaved.current = JSON.stringify({ pivot_brand: st.pivot_brand ?? null, fonte: st.fonte ?? null });
+    const te = (st as { terrain?: { dem?: string; smooth?: number } }).terrain ?? {};
+    setDemModel(te.dem === "COPERNICUS_90" ? "COPERNICUS_90" : "COPERNICUS_30"); setDemSmooth(num(te.smooth, 100));
+    projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
     projLoaded.current = projectId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, projects]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId) return;
-    const payload = { pivot_brand: pivotBrand, fonte: fonteState() };
+    const payload = { pivot_brand: pivotBrand, fonte: fonteState(), terrain: { dem: demModel, smooth: demSmooth } };
     const js = JSON.stringify(payload);
     if (js === projSaved.current) return;
     const pid = projectId;
@@ -3738,7 +3743,7 @@ export default function Page() {
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, srcMonthly, srcSectors,
-    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown]);
+    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, demModel, demSmooth]);
   // ---- FONTE D'ACQUA → SCHEMI D'IMPIANTO ----------------------------------
   // L'utente indica la presa (fiume, canale, pozzo, invaso) e, se vuole, il
   // tracciato fino alla vasca. Con le quote del DEM (presa, profilo del
@@ -5857,6 +5862,16 @@ export default function Page() {
                     {t("I pivot fuori griglia non sono allineati alle dorsali: la loro adduzione non entra nel calcolo della rete.")}
                   </p>
                 )}
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <label className="text-[11px] text-sage-dark">{t("Modello del terreno")}
+                    <select className="field-input mt-0.5 py-1 text-sm" value={demModel} onChange={(e) => setDemModel(e.target.value as "COPERNICUS_30" | "COPERNICUS_90")}>
+                      <option value="COPERNICUS_30">Copernicus 30 m</option><option value="COPERNICUS_90">Copernicus 90 m</option>
+                    </select></label>
+                  <label className="text-[11px] text-sage-dark">{t("Pendenza misurata su (m)")}
+                    <input type="number" min={0} max={500} step={20} value={demSmooth}
+                      onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) setDemSmooth(Math.max(0, Math.min(500, x))); }} className="field-input mt-0.5 py-1 text-sm" /></label>
+                </div>
+                <p className="text-[10px] text-sage-dark mt-1 leading-snug">{t("Il Copernicus DEM include alberi, edifici e argini: misurare la pendenza su 100 m o più evita di escludere terreno pianeggiante per falsi ripidi.")}</p>
               </div>
             )}
 

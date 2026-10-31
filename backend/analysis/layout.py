@@ -55,19 +55,39 @@ TRANSPORT_SLOPE = {
 }
 
 
-def _dem_grid(client, geom):
-    """DEM + pendenza(%) su griglia comune (cache per area)."""
+def dem_slope(dem: np.ndarray, res: float, smooth_m: float) -> np.ndarray:
+    """Pendenza (%) da un DEM. Il Copernicus DEM è un modello di SUPERFICIE
+    (alberi, edifici, argini, rumore radar): la pendenza grezza cella per cella
+    esplode su ogni ostacolo e su terreni pianeggianti segna pendenze che il
+    pivot non vede. Si leviga il DEM su una base di `smooth_m` metri (ordine di
+    una campata) prima del gradiente; i NaN non propagano."""
+    z = np.asarray(dem, dtype="float64")
+    ok = np.isfinite(z)
+    if smooth_m > 0 and res > 0:
+        from scipy.ndimage import gaussian_filter
+        sig = max(0.5, float(smooth_m) / float(res) / 2.0)
+        num = gaussian_filter(np.where(ok, z, 0.0), sig, mode="nearest")
+        den = gaussian_filter(ok.astype("float64"), sig, mode="nearest")
+        z = np.where(den > 1e-6, num / np.maximum(den, 1e-6), np.nan)
+    gy, gx = np.gradient(z, res, res)
+    return np.sqrt(gx ** 2 + gy ** 2) * 100.0
+
+
+def _dem_grid(client, geom, smooth_m: float = 100.0, dem_instance: str = "COPERNICUS_30"):
+    """DEM + pendenza(%) su griglia comune (cache per area, DEM e levigatura)."""
     epsg, minx, miny, maxx, maxy, to_wgs = _utm_bbox(geom)
     res, wp, hp, nx, ny = _plan_grid(minx, miny, maxx, maxy, max_dim=500, max_tiles=1)
     top = miny + hp * res
-    sig = hashlib.sha1(f"{epsg}|{round(minx)}|{round(miny)}|{wp}|{hp}".encode()).hexdigest()[:16]
+    sig = hashlib.sha1(f"{epsg}|{round(minx)}|{round(miny)}|{wp}|{hp}|{dem_instance}|{round(smooth_m)}".encode()).hexdigest()[:16]
     if sig in _DEM_CACHE:
         dem, slope = _DEM_CACHE[sig]
     else:
         south, east = top - hp * res, minx + wp * res
-        dem = client.fetch_dem([minx, south, east, top], epsg, wp, hp).astype("float64")
-        gy, gx = np.gradient(dem, res, res)
-        slope = np.sqrt(gx ** 2 + gy ** 2) * 100.0
+        try:
+            dem = client.fetch_dem([minx, south, east, top], epsg, wp, hp, dem_instance=dem_instance).astype("float64")
+        except TypeError:                                   # provider senza scelta del DEM
+            dem = client.fetch_dem([minx, south, east, top], epsg, wp, hp).astype("float64")
+        slope = dem_slope(dem, res, smooth_m)
         _DEM_CACHE[sig] = (dem, slope)
     # top/res/wp/hp = griglia DEM (per campionare pendenza e quota).
     # minx/miny/maxx/maxy = bbox VERO del poligono (per reticolo e canale).
@@ -129,7 +149,10 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     n_phases = max(1, int(params.get("n_phases", 1)))
     phase_order = params.get("phase_order", "canal_distance")   # canal_distance|suitability|rows
 
-    g = _dem_grid(client, geom)
+    dem_instance = params.get("dem", "COPERNICUS_30")
+    if dem_instance not in ("COPERNICUS_30", "COPERNICUS_90"):
+        dem_instance = "COPERNICUS_30"
+    g = _dem_grid(client, geom, smooth_m=max(0.0, min(500.0, float(params.get("dem_smooth_m", 100.0)))), dem_instance=dem_instance)
     epsg, res = g["epsg"], g["res"]
     to_utm = pyproj.Transformer.from_crs(4326, epsg, always_xy=True)
     to_wgs = g["to_wgs"]

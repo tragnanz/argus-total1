@@ -18,7 +18,7 @@ from .schemas import HealthOut
 from .security import decode_token
 
 # Revisione backend: allineala alla REV del frontend a ogni versione.
-REV = "0.6.187"
+REV = "0.6.188"
 
 app = FastAPI(title=settings.app_name, version=REV)
 

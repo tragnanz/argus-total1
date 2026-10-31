@@ -30,6 +30,7 @@ def layout(body: LayoutIn, client=Depends(get_client), user: User = Depends(get_
         "hours_per_day": body.hours_per_day,
         "roads": body.roads, "clear_road_m": body.clear_road_m,
         "min_pivot_pct": body.min_pivot_pct, "fill_full": body.fill_full,
+        "dem": body.dem, "dem_smooth_m": body.dem_smooth_m,
     }
     if body.slope_max_pct is not None:
         params["slope_max_pct"] = body.slope_max_pct

@@ -108,6 +108,8 @@ export type LayoutParams = {
   kc_peak: number; efficiency: number; hours_per_day: number;
   min_pivot_pct?: number;   // dimensione minima dei pivot di riempimento bordi (% del raggio)
   fill_full?: boolean;      // riempie i vuoti anche con pivot interi fuori griglia
+  dem?: "COPERNICUS_30" | "COPERNICUS_90";   // modello del terreno
+  dem_smooth_m?: number;    // base di levigatura della pendenza (m)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   roads?: any[] | null; clear_road_m?: number;
 };
