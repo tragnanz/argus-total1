@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.180";
+const REV = "v0.6.181";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -62,6 +62,7 @@ const TABS: { key: string; label: string }[] = [
   { key: "rilievo", label: "Rilievo" },
   { key: "impianti", label: "Impianti" },
   { key: "accessori", label: "Tubazioni" },
+  { key: "pompaggio", label: "Pompaggio" },
   { key: "strade", label: "Strade" },
   { key: "irrigazione", label: "Irrigazione" },
   { key: "export", label: "Esporta" },
@@ -1037,12 +1038,13 @@ const IcoNavRilievo = () => (<svg {...navProps}><path d="m3 20 6-9 4 5 3-4 5 8z"
 const IcoNavImpianti = () => (<svg {...navProps}><circle cx="12" cy="12" r="8" /><path d="M12 12h8" /><circle cx="12" cy="12" r="1.6" /></svg>);
 const IcoNavAccessori = () => (<svg {...navProps}><path d="M2 9h8" /><path d="M2 15h8" /><path d="M10 7v10" /><path d="M14 7v10" /><path d="M14 9h2a5 5 0 0 1 5 5v8" /><path d="M14 15h1a1 1 0 0 1 1 1v6" /></svg>);
 const IcoNavStrade = () => (<svg {...navProps}><path d="M8 3 4 21" /><path d="m16 3 4 18" /><path d="M12 4v3M12 10.5v3M12 17v3" /></svg>);
+const IcoNavPompaggio = () => (<svg {...navProps}><circle cx="10" cy="13" r="6" /><circle cx="10" cy="13" r="1.6" /><path d="M10 7V3h8v4" /><path d="M16 13h6" /><path d="M5 20h10" /></svg>);
 const IcoNavExport = () => (<svg {...navProps}><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M4 20h16" /></svg>);
 const IcoNavIrrigazione = () => (<svg {...navProps}><path d="M12 3s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z" /><path d="M10 13a2 2 0 0 0 4 0" /></svg>);
 const IcoNavInfo = () => (<svg {...navProps}><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 7.6v.6" /></svg>);
 const TAB_ICONS = {
   analisi: IcoNavAnalisi, rilievo: IcoNavRilievo, impianti: IcoNavImpianti,
-  accessori: IcoNavAccessori, strade: IcoNavStrade, irrigazione: IcoNavIrrigazione, export: IcoNavExport,
+  accessori: IcoNavAccessori, pompaggio: IcoNavPompaggio, strade: IcoNavStrade, irrigazione: IcoNavIrrigazione, export: IcoNavExport,
   informazioni: IcoNavInfo,
 };
 
@@ -1301,6 +1303,23 @@ export default function Page() {
   const [pvGcr, setPvGcr] = useState(45);                         // copertura del suolo (%)
   const [pvDod, setPvDod] = useState(80);                         // profondità di scarica batterie (%)
   const [pvBattEff, setPvBattEff] = useState(90);                 // rendimento di ciclo batterie (%)
+  // ---- Stazione di pompaggio: parametri del confronto CAPEX/OPEX ----
+  const [psLift, setPsLift] = useState(5);           // sollevamento dalla fonte (canale/pozzo) alla presa (m)
+  const [psHeadExtra, setPsHeadExtra] = useState(10); // margine/perdite in rete se i diametri non sono calcolati (m)
+  const [psSpares, setPsSpares] = useState(1);       // pompe di scorta
+  const [psPrice, setPsPrice] = useState(0.15);      // prezzo energia (€/kWh)
+  const [psC0, setPsC0] = useState(10000);           // costo fisso per gruppo installato (€)
+  const [psC100, setPsC100] = useState(40000);       // costo aggiuntivo di un gruppo da 100 kW (€)
+  const [psMaintPct, setPsMaintPct] = useState(2.5); // manutenzione (% del capex all'anno)
+  const [psMaintFix, setPsMaintFix] = useState(600); // manutenzione fissa per pompa (€/anno)
+  const [psYears, setPsYears] = useState(20);        // orizzonte di valutazione (anni)
+  const [psRate, setPsRate] = useState(6);           // tasso di attualizzazione (%)
+  const [psKcAvg, setPsKcAvg] = useState(85);        // Kc medio stagionale / Kc di punta (%)
+  const [psRainEff, setPsRainEff] = useState(75);    // quota di pioggia efficace (%)
+  const [psDaysFallback, setPsDaysFallback] = useState(180); // giorni di irrigazione/anno senza clima del sito
+  const [psMvExtra, setPsMvExtra] = useState(20000); // sovrapprezzo per motore ≥ 355 kW (media tensione, avviamento)
+  const [psTiePct, setPsTiePct] = useState(2);       // soluzioni entro questo % dal minimo = equivalenti
+  const [psOpen, setPsOpen] = useState(false);       // parametri economici aperti
   const [hoursDay, setHoursDay] = useState(20);      // ore di esercizio al giorno
   const [wetW, setWetW] = useState(20);              // larghezza bagnata degli irrigatori (m)
   const [pattern, setPattern] = useState("ellittica");  // forma del profilo di bagnatura
@@ -3536,6 +3555,200 @@ export default function Page() {
       </li>
     );
   }
+  // ---- STAZIONE DI POMPAGGIO: configurazione consigliata (CAPEX + OPEX) ----
+  // Portata di progetto = somma delle portate dei pivot (pagina Irrigazione).
+  // Prevalenza = prevalenza alla presa calcolata nella pagina Tubazioni (se c'è),
+  // altrimenti pressione del pivot più esigente + margine in rete; più il
+  // sollevamento dalla fonte. Volume annuo dal clima del sito mese per mese:
+  // (ET₀·Kc medio − pioggia efficace) / efficienza, sulla superficie irrigata.
+  // Per ogni N di pompe in servizio (+ scorte) si sceglie il motore standard e si
+  // calcolano capex, energia e manutenzione; vince il costo sul ciclo di vita.
+  const STD_KW = [0.75, 1.1, 1.5, 2.2, 3, 4, 5.5, 7.5, 11, 15, 18.5, 22, 30, 37, 45, 55, 75, 90, 110, 132, 160, 200, 250, 315, 355, 400, 450, 500, 560, 630, 710, 800, 900, 1000];
+  const DAYS_M = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  function pumpStation() {
+    const n = pivots.length;
+    const qDes = pivots.reduce((a, p) => a + pivotFlow(p), 0);                     // l/s
+    const irrHa = pivots.reduce((a, p) => a + Math.PI * p.r * p.r / 10000, 0);
+    const pMaxBar = n ? Math.max(...pivots.map((p) => pivotPressure(p))) : 0;
+    const headFromNet = hydra ? hydra.headMax : null;
+    const head = (headFromNet ?? (pMaxBar * 10.2 + Math.max(0, psHeadExtra))) + Math.max(0, psLift);
+    // volume annuo
+    const clim = fields.map((f) => (f.lay as { climate?: { eto_month_mm?: number[]; rain_month_mm?: number[]; source?: string } } | null | undefined)?.climate)
+      .find((c) => c && c.eto_month_mm?.length === 12 && c.rain_month_mm?.length === 12);
+    const kcAvg = (CROPS[cropKey] ?? 1.1) * Math.max(0.3, psKcAvg / 100);
+    const eff = Math.max(0.3, effPct / 100);
+    let netMm: number[] | null = null; let grossYearMm: number;
+    if (clim) {
+      netMm = clim.eto_month_mm!.map((e, i) => Math.max(0, e * kcAvg - (clim.rain_month_mm![i] * psRainEff) / 100));
+      grossYearMm = netMm.reduce((a, x) => a + x, 0) / eff;
+    } else {
+      grossYearMm = mm24 * Math.max(0, psDaysFallback);
+    }
+    // non si può pompare più di quanto la stazione eroga a pieno regime
+    const capYearMm = mm24 * 365;
+    grossYearMm = Math.min(grossYearMm, capYearMm);
+    const volYear = grossYearMm / 1000 * irrHa * 10000;                              // m³/anno
+    const hoursFull = qDes > 0 ? volYear / (qDes * 3.6) : 0;                         // ore equivalenti a piena portata
+    const AF = psRate > 0 ? (1 - Math.pow(1 + psRate / 100, -psYears)) / (psRate / 100) : psYears;
+    type Cfg = { nDuty: number; nTot: number; qU: number; pShaft: number; kW: number; etaP: number; etaM: number;
+      capex: number; kWhYear: number; energyEur: number; maintEur: number; opex: number; lcc: number };
+    const cfgs: Cfg[] = [];
+    if (qDes > 0 && head > 0) {
+      for (let nDuty = 1; nDuty <= 10; nDuty++) {
+        const qU = qDes / nDuty;
+        if (qU < 5) break;
+        const etaP = 0.87 - 0.12 * Math.exp(-qU / 80);                               // pompe piccole rendono meno
+        const pShaft = (qU * head * 9.81) / 1000 / etaP;                              // kW all'albero
+        const kW = STD_KW.find((k) => k >= pShaft * 1.1) ?? 0;
+        if (!kW) continue;                                                           // oltre 1 MW per pompa
+        const etaM = 0.965 - 0.06 * Math.exp(-kW / 25);
+        const nTot = nDuty + Math.max(0, psSpares);
+        const unit = psC0 + psC100 * Math.pow(kW / 100, 0.75) + (kW >= 355 ? psMvExtra : 0);
+        const capex = unit * nTot;
+        const kWhYear = (volYear * head) / 367 / (etaP * etaM);                      // ρg/3,6e6 = 1/367
+        const energyEur = kWhYear * psPrice;
+        const maintEur = capex * psMaintPct / 100 + psMaintFix * nTot;
+        const opex = energyEur + maintEur;
+        cfgs.push({ nDuty, nTot, qU, pShaft, kW, etaP, etaM, capex, kWhYear, energyEur, maintEur, opex, lcc: capex + AF * opex });
+      }
+    }
+    // Costo minimo sul ciclo di vita, poi regola progettuale: tra le soluzioni
+    // praticamente equivalenti (entro psTiePct %) si consiglia la più modulare
+    // (più pompe in servizio = scorta più piccola, avviamenti più leggeri,
+    // migliore aderenza alla domanda quando lavorano meno pivot).
+    const cheapest = cfgs.length ? cfgs.reduce((a, c) => (c.lcc < a.lcc ? c : a)) : null;
+    const band = cheapest ? cfgs.filter((c) => c.lcc <= cheapest.lcc * (1 + Math.max(0, psTiePct) / 100)) : [];
+    const best = band.length ? band.reduce((a, c) => (c.nDuty > a.nDuty ? c : a)) : null;
+    const bestCapex = cfgs.length ? cfgs.reduce((a, c) => (c.capex < a.capex ? c : a)) : null;
+    const bestOpex = cfgs.length ? cfgs.reduce((a, c) => (c.opex < a.opex ? c : a)) : null;
+    return { n, qDes, irrHa, head, headFromNet, pMaxBar, clim, netMm, grossYearMm, volYear, hoursFull, cfgs, best, cheapest, bandN: band.length, bestCapex, bestOpex, AF };
+  }
+  function renderPumpStation() {
+    const P = pumpStation();
+    const keur = (x: number) => `€ ${fmt(Math.round(x / 1000))}k`;
+    // Guida: cosa serve perché il dimensionamento sia affidabile, nell'ordine giusto.
+    const steps: { ok: boolean; warn?: boolean; text: string; tab?: string; action?: string }[] = [
+      { ok: P.n > 0, text: P.n ? t("Pivot posati: {n} · {a}", { n: P.n, a: uHa(P.irrHa) }) : t("Posa i pivot sul campo"), tab: "impianti", action: t("Impianti") },
+      { ok: Math.abs(mm24 - mm24Suggested) < 0.6, warn: true,
+        text: t("Fabbisogno {v} mm/g (consigliato {s})", { v: fmt(mm24, { maximumFractionDigits: 1 }), s: fmt(mm24Suggested, { maximumFractionDigits: 1 }) }), tab: "irrigazione", action: t("Irrigazione") },
+      { ok: !!P.clim, warn: true, text: P.clim ? t("Clima del sito mese per mese ({src})", { src: P.clim.source ?? "NASA POWER" }) : t("Clima del sito assente: consumo annuo stimato su {d} giorni", { d: psDaysFallback }), tab: "impianti", action: t("Rilancia il layout") },
+      { ok: P.headFromNet != null, warn: true, text: P.headFromNet != null ? t("Prevalenza dalla rete calcolata: {m} m", { m: fmt(Math.round(P.headFromNet)) }) : t("Prevalenza stimata: calcola i diametri delle tubazioni"), tab: "accessori", action: t("Tubazioni") },
+      { ok: true, text: t("Sollevamento dalla fonte: {m} m (canale ≈ 2–5 m, pozzo = livello dinamico)", { m: fmt(psLift) }) },
+    ];
+    const num = (label: string, v: number, set: (x: number) => void, step = 1, min = 0, max = 1e9) => (
+      <label className="text-[11px] text-sage-dark">{label}
+        <input type="number" min={min} max={max} step={step} value={v}
+          onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) set(Math.max(min, Math.min(max, x))); }} className="field-input mt-0.5 py-1 text-sm" /></label>
+    );
+    const sorted = [...P.cfgs].sort((a, b) => a.lcc - b.lcc).filter((c) => c !== P.best);
+    const second = sorted[0];
+    return (
+      <div className="space-y-3">
+        {/* 1 — guida */}
+        <div className="bg-panel rounded-lg p-2">
+          <div className="text-xs font-semibold text-brand-darker mb-1">{t("Prima di scegliere le pompe")}</div>
+          <ul className="space-y-0.5">
+            {steps.map((st, i) => (
+              <li key={i} className="flex items-center gap-1.5 text-[11px]">
+                <span className={st.ok ? "text-brand" : st.warn ? "text-amber" : "text-danger"}>{st.ok ? "✓" : st.warn ? "!" : "✕"}</span>
+                <span className="flex-1 text-brand-darker">{st.text}</span>
+                {!st.ok && st.tab && <button className="text-brand-mid shrink-0" onClick={() => goTab(st.tab!)}>{st.action} →</button>}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2">{num(t("Sollevamento dalla fonte (m)"), psLift, setPsLift, 1, 0, 300)}</div>
+        </div>
+
+        {!P.n ? <p className="text-[11px] text-sage-dark">{t("Posa i pivot per dimensionare la stazione di pompaggio.")}</p> : (<>
+          {/* 2 — dati di progetto */}
+          <div className="grid grid-cols-2 gap-2 text-center">
+            <div className="bg-panel rounded-lg p-2"><div className="text-lg font-semibold text-brand">{fmt(Math.round(P.qDes))}</div><div className="text-[11px] text-sage-dark">{t("Portata di progetto (l/s)")}</div></div>
+            <div className="bg-panel rounded-lg p-2"><div className="text-lg font-semibold text-brand">{fmt(Math.round(P.head))}</div><div className="text-[11px] text-sage-dark">{t("Prevalenza totale (m)")}</div></div>
+            <div className="bg-panel rounded-lg p-2"><div className="text-lg font-semibold text-brand">{fmt(Math.round(P.volYear / 1000))}</div><div className="text-[11px] text-sage-dark">{t("Volume annuo (migliaia di m³)")}</div></div>
+            <div className="bg-panel rounded-lg p-2"><div className="text-lg font-semibold text-brand">{fmt(Math.round(P.hoursFull))}</div><div className="text-[11px] text-sage-dark">{t("Ore/anno a piena portata")}</div></div>
+          </div>
+          {P.netMm && (
+            <div>
+              <div className="text-[11px] text-sage-dark mb-1">{t("Fabbisogno netto mensile (mm) dal clima del sito")}</div>
+              <div className="flex items-end gap-0.5 h-12">
+                {P.netMm.map((v, i) => {
+                  const mx = Math.max(1, ...P.netMm!);
+                  return <div key={i} className="flex-1 bg-brand/70 rounded-t" style={{ height: `${Math.max(2, (v / mx) * 100)}%` }}
+                    title={`${new Date(2026, i, 1).toLocaleString(lang, { month: "short" })}: ${fmt(Math.round(v))} mm`} />;
+                })}
+              </div>
+              <div className="flex gap-0.5 text-[9px] text-sage-dark">{P.netMm.map((_, i) => <div key={i} className="flex-1 text-center">{new Date(2026, i, 1).toLocaleString(lang, { month: "narrow" })}</div>)}</div>
+            </div>
+          )}
+
+          {/* 3 — consigliata */}
+          {P.best && (
+            <div className="rounded-lg p-2 border border-brand/40 bg-brand/5">
+              <div className="text-xs font-semibold text-brand-darker">{t("Configurazione consigliata")}</div>
+              <div className="text-[15px] font-semibold text-brand mt-0.5">
+                {P.best.nDuty} × {fmt(P.best.kW)} kW {t("in servizio")}{psSpares > 0 ? ` + ${psSpares} ${t("di scorta")}` : ""}
+              </div>
+              <div className="text-[11px] text-sage-dark leading-relaxed">
+                {fmt(Math.round(P.best.qU))} l/s · {fmt(Math.round(P.head))} m {t("per pompa")} · {t("rendimento")} {fmt(Math.round(P.best.etaP * P.best.etaM * 100))}%<br />
+                {t("Investimento")} <b>{keur(P.best.capex)}</b> · {t("Energia")} <b>{fmt(Math.round(P.best.kWhYear / 1000))} MWh/{t("anno")}</b> · {t("Esercizio")} <b>{keur(P.best.opex)}/{t("anno")}</b>
+                {P.cheapest && P.cheapest !== P.best ? (
+                  <><br />{t("Costo minimo assoluto: {c}, solo {d} in meno sul ciclo di vita ({p}%). Soluzioni entro il {t}% considerate equivalenti: si consiglia la più modulare.", { c: `${P.cheapest.nDuty}×${fmt(P.cheapest.kW)} kW`, d: keur(P.best.lcc - P.cheapest.lcc), p: fmt(((P.best.lcc - P.cheapest.lcc) / P.cheapest.lcc) * 100, { maximumFractionDigits: 1 }), t: fmt(psTiePct) })}</>
+                ) : second ? (
+                  <><br />{t("Risparmio sul ciclo di vita rispetto alla seconda scelta ({c}): {d}", { c: `${second.nDuty}×${fmt(second.kW)} kW`, d: keur(second.lcc - P.best.lcc) })}</>
+                ) : null}
+                {P.best.kW >= 355 && <><br /><span className="text-rust">{t("Motori ≥ 355 kW: di norma servono media tensione e avviamento dedicato (inclusi nel costo).")}</span></>}
+              </div>
+            </div>
+          )}
+
+          {/* 4 — confronto */}
+          <table className="w-full text-[11px] tabular-nums">
+            <thead><tr className="text-sage-dark border-b border-black/10 text-right">
+              <th className="text-left font-medium py-0.5">{t("Pompe")}</th><th className="font-medium">kW</th><th className="font-medium">l/s</th>
+              <th className="font-medium">{t("Capex")}</th><th className="font-medium">{t("Opex/anno")}</th><th className="font-medium">{t("{y} anni", { y: psYears })}</th>
+            </tr></thead>
+            <tbody>
+              {P.cfgs.map((c) => {
+                const isB = c === P.best;
+                return (
+                  <tr key={c.nDuty} className={"text-right " + (isB ? "font-semibold text-brand-darker bg-brand/10" : "")}>
+                    <td className="text-left py-0.5">{c.nDuty}+{c.nTot - c.nDuty}
+                      {c === P.cheapest && c !== P.best && <span className="ml-1 text-[9px] text-brand-mid" title={t("Costo minimo sul ciclo di vita")}>min</span>}
+                      {c === P.bestCapex && <span className="ml-1 text-[9px] text-brand-mid" title={t("Investimento più basso")}>€</span>}
+                      {c === P.bestOpex && <span className="ml-1 text-[9px] text-brand-mid" title={t("Esercizio più basso")}>⚡</span>}</td>
+                    <td>{fmt(c.kW)}</td><td>{fmt(Math.round(c.qU))}</td><td>{keur(c.capex)}</td><td>{keur(c.opex)}</td><td>{keur(c.lcc)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="text-[10px] text-sage-dark leading-snug">{t("Più pompe piccole: la scorta costa meno (vale 1/N della stazione) e si segue meglio la domanda, ma il rendimento scende e i costi fissi si moltiplicano. Poche pompe grandi: rendimento migliore, ma la scorta raddoppia l'investimento. € = investimento più basso · ⚡ = esercizio più basso.")}</p>
+          {powerMode === "solar" && <p className="text-[10px] text-rust leading-snug">{t("Alimentazione fotovoltaica: l'energia in esercizio costa quasi zero, quindi pesa soprattutto l'investimento. Imposta il prezzo dell'energia a 0 per confrontare.")}</p>}
+
+          {/* 5 — parametri */}
+          <button className="text-[11px] text-brand-mid" onClick={() => setPsOpen((o) => !o)}>{psOpen ? "▾" : "▸"} {t("Parametri economici e di calcolo")}</button>
+          {psOpen && (
+            <div className="grid grid-cols-2 gap-2">
+              {num(t("Pompe di scorta"), psSpares, setPsSpares, 1, 0, 4)}
+              {num(t("Prezzo energia (€/kWh)"), psPrice, setPsPrice, 0.01, 0, 2)}
+              {num(t("Costo fisso per gruppo (€)"), psC0, setPsC0, 500, 0)}
+              {num(t("Costo di un gruppo da 100 kW (€)"), psC100, setPsC100, 1000, 0)}
+              {num(t("Manutenzione (% capex/anno)"), psMaintPct, setPsMaintPct, 0.5, 0, 20)}
+              {num(t("Manutenzione per pompa (€/anno)"), psMaintFix, setPsMaintFix, 50, 0)}
+              {num(t("Orizzonte (anni)"), psYears, setPsYears, 1, 1, 40)}
+              {num(t("Tasso di attualizzazione (%)"), psRate, setPsRate, 0.5, 0, 30)}
+              {num(t("Sovrapprezzo motori ≥ 355 kW (€)"), psMvExtra, setPsMvExtra, 1000, 0)}
+              {num(t("Soluzioni equivalenti entro (%)"), psTiePct, setPsTiePct, 0.5, 0, 20)}
+              {num(t("Kc medio / Kc di punta (%)"), psKcAvg, setPsKcAvg, 1, 30, 100)}
+              {num(t("Pioggia efficace (%)"), psRainEff, setPsRainEff, 1, 0, 100)}
+              {P.headFromNet == null && num(t("Perdite in rete stimate (m)"), psHeadExtra, setPsHeadExtra, 1, 0, 200)}
+              {!P.clim && num(t("Giorni di irrigazione all'anno"), psDaysFallback, setPsDaysFallback, 5, 0, 365)}
+            </div>
+          )}
+        </>)}
+      </div>
+    );
+  }
   // ---- Fotovoltaico per i pivot: energia giornaliera e superficie necessaria ----
   // Energia di un pivot al giorno = pompaggio (volume lordo × prevalenza totale /
   // rendimento) + motori delle torri. Prevalenza = pressione al centro del pivot
@@ -5086,6 +5299,11 @@ export default function Page() {
               )}
             </div>
 
+          </section>
+
+          <section hidden={tab !== "pompaggio"}>
+            <SectionHead title={t("Stazione di pompaggio")} help={t("Dimensionamento consigliato della stazione di pompaggio: numero e potenza delle pompe, scorte e confronto tra investimento ed esercizio sul ciclo di vita. Usa portate e fabbisogno della pagina Irrigazione, la prevalenza calcolata nella pagina Tubazioni e il clima del sito mese per mese.")} />
+            {renderPumpStation()}
           </section>
 
           <section hidden={tab !== "irrigazione"}>

@@ -601,6 +601,11 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
             "climate_source": et["source"],
         },
         "solar": solar,
+        # clima mensile del sito (pluviometria + ET₀): serve al dimensionamento
+        # della stazione di pompaggio per il consumo ANNUO, non solo di punta
+        "climate": {"eto_month_mm": et.get("eto_month_mm"), "rain_month_mm": et.get("rain_month_mm"),
+                    "eto_year_mm": et.get("eto_year_mm"), "rain_year_mm": et.get("rain_year_mm"),
+                    "source": et.get("source")},
     }
     return {"geojson": {"type": "FeatureCollection", "features": features},
             "bounds": bounds, "meta": meta}
