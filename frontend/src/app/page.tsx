@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.186";
+const REV = "v0.6.187";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1310,12 +1310,8 @@ export default function Page() {
   const [pvDod, setPvDod] = useState(80);                         // profondità di scarica batterie (%)
   const [pvBattEff, setPvBattEff] = useState(90);                 // rendimento di ciclo batterie (%)
   // ---- Produttore dei pivot (per progetto, nel browser) ----
-  const [pivotBrand, setPivotBrandState] = useState<PivotBrand>("starpivot");
-  useEffect(() => {
-    try { const v = window.localStorage.getItem(`argus.pivotBrand.${projectId ?? 0}`) as PivotBrand | null;
-      setPivotBrandState(v && v in PIVOT_BRANDS ? v : "starpivot"); } catch { setPivotBrandState("starpivot"); }
-  }, [projectId]);
-  const setPivotBrand = (v: PivotBrand) => { setPivotBrandState(v); try { window.localStorage.setItem(`argus.pivotBrand.${projectId ?? 0}`, v); } catch { /* */ } };
+  // Salvato sul server con il progetto (impostazioni di progetto), vedi più sotto.
+  const [pivotBrand, setPivotBrand] = useState<PivotBrand>("starpivot");
   // ---- Fonte d'acqua e schema d'impianto ----
   type SrcType = "fiume" | "canale" | "pozzo" | "invaso";
   const [srcPt, setSrcPt] = useState<number[] | null>(null);          // [lng, lat] del punto di presa
@@ -1325,10 +1321,20 @@ export default function Page() {
   const [srcRange, setSrcRange] = useState(4);                       // escursione di livello (m) o livello dinamico del pozzo
   const [srcSediment, setSrcSediment] = useState(true);              // acqua con sedimenti
   const [srcEnergy, setSrcEnergy] = useState<"rete" | "fv-gen" | "fv-batt">("rete");
-  const [srcElev, setSrcElev] = useState<null | { zS: number | null; zR: number | null; zPmax: number | null; key: string }>(null);
+  type SrcElev = { zS: number | null; zR: number | null; zPmax: number | null; zPiv: (number | null)[];
+    prof: { d: number[]; z: (number | null)[] }; key: string };
+  const [srcElev, setSrcElev] = useState<SrcElev | null>(null);
+  const [srcRoute, setSrcRoute] = useState<number[][] | null>(null);   // tracciato disegnato presa → vasca ([lng, lat])
+  const [srcMonthly, setSrcMonthly] = useState<number[] | null>(null); // livello minimo mese per mese (m sotto il punto di presa)
+  const [srcSectors, setSrcSectors] = useState(0);                   // settori di rilancio (0 = automatico)
+  const [bankSlope, setBankSlope] = useState(2);                     // pendenza della sponda (orizzontale : verticale)
+  const [settleMm, setSettleMm] = useState(0.1);                     // particella da sedimentare (mm)
+  const [filterCap, setFilterCap] = useState(400);                   // portata di un filtro autopulente (m³/h)
+  const [wellQ, setWellQ] = useState(30);                            // portata di un pozzo (l/s)
   const [srcPicking, setSrcPicking] = useState(false);
   const [srcShown, setSrcShown] = useState<string | null>(null);     // schema disegnato sulla mappa
   const [srcOpen, setSrcOpen] = useState(false);                     // parametri aperti
+  const [srcDrawing, setSrcDrawing] = useState(false);               // tracciato in disegno
   const [resDepth, setResDepth] = useState(4);                       // profondità utile della vasca (m)
   const [resDays, setResDays] = useState(3);                         // giorni di scorta nella vasca
   const [resEvapK, setResEvapK] = useState(1.1);                     // evaporazione da specchio libero = k × ET₀
@@ -3685,30 +3691,113 @@ export default function Page() {
       </li>
     );
   }
+  // ---- Impostazioni di progetto salvate sul server ---------------------------
+  // Produttore dei pivot e fonte d'acqua (presa, tracciato, livelli, parametri)
+  // viaggiano con il progetto: si ritrovano su qualunque computer.
+  const projLoaded = useRef<number | null>(null);
+  const projSaved = useRef<string>("");
+  const fonteState = () => ({ pt: srcPt, route: srcRoute, type: srcType, qmax: srcQmax, hours: srcHours, range: srcRange,
+    sed: srcSediment, energy: srcEnergy, monthly: srcMonthly, sectors: srcSectors, resDepth, resDays, resEvapK, eta: wtwEta,
+    canalSlope, bankSlope, settleMm, filterCap, wellQ, shown: srcShown });
+  useEffect(() => {
+    if (projectId == null) { projLoaded.current = null; return; }
+    if (projLoaded.current === projectId) return;
+    const pr = projects.find((p) => p.id === projectId); if (!pr) return;
+    const st = (pr.settings ?? {}) as { pivot_brand?: string; fonte?: Record<string, unknown> };
+    let brand = st.pivot_brand as PivotBrand | undefined;
+    if (!brand) { try { brand = (window.localStorage.getItem(`argus.pivotBrand.${projectId}`) as PivotBrand | null) ?? undefined; } catch { /* */ } }
+    setPivotBrand(brand && brand in PIVOT_BRANDS ? brand : "starpivot");
+    const fo = (st.fonte ?? {}) as Record<string, unknown>;
+    const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+    const ty = (["fiume", "canale", "pozzo", "invaso"].includes(fo.type as string) ? fo.type : "fiume") as SrcType;
+    setSrcPt(Array.isArray(fo.pt) ? (fo.pt as number[]) : null);
+    setSrcRoute(Array.isArray(fo.route) ? (fo.route as number[][]) : null);
+    setSrcType(ty); setSrcQmax(num(fo.qmax, 0)); setSrcHours(num(fo.hours, 24)); setSrcRange(num(fo.range, SRC_RANGE_DEF[ty]));
+    setSrcSediment(typeof fo.sed === "boolean" ? fo.sed : ty === "fiume");
+    setSrcEnergy((["rete", "fv-gen", "fv-batt"].includes(fo.energy as string) ? fo.energy : "rete") as "rete" | "fv-gen" | "fv-batt");
+    setSrcMonthly(Array.isArray(fo.monthly) && (fo.monthly as unknown[]).length === 12 ? (fo.monthly as number[]) : null);
+    setSrcSectors(num(fo.sectors, 0)); setResDepth(num(fo.resDepth, 4)); setResDays(num(fo.resDays, 3)); setResEvapK(num(fo.resEvapK, 1.1));
+    setWtwEta(num(fo.eta, 75)); setCanalSlope(num(fo.canalSlope, 0.3)); setBankSlope(num(fo.bankSlope, 2));
+    setSettleMm(num(fo.settleMm, 0.1)); setFilterCap(num(fo.filterCap, 400)); setWellQ(num(fo.wellQ, 30));
+    setSrcShown(typeof fo.shown === "string" ? fo.shown : null); setSrcElev(null);
+    projSaved.current = JSON.stringify({ pivot_brand: st.pivot_brand ?? null, fonte: st.fonte ?? null });
+    projLoaded.current = projectId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, projects]);
+  useEffect(() => {
+    if (projectId == null || projLoaded.current !== projectId) return;
+    const payload = { pivot_brand: pivotBrand, fonte: fonteState() };
+    const js = JSON.stringify(payload);
+    if (js === projSaved.current) return;
+    const pid = projectId;
+    const h = window.setTimeout(() => {
+      api.updateProject(pid, { settings: payload } as Partial<api.Project>)
+        .then((pr) => { projSaved.current = js; setProjects((ps) => ps.map((p) => (p.id === pid ? { ...p, settings: pr.settings } : p))); })
+        .catch(() => { /* riprova alla prossima modifica */ });
+    }, 900);
+    return () => window.clearTimeout(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, srcMonthly, srcSectors,
+    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown]);
   // ---- FONTE D'ACQUA → SCHEMI D'IMPIANTO ----------------------------------
-  // L'utente indica la presa (fiume, canale, pozzo, invaso). Con le quote del DEM
-  // (presa, vasca, pivot più alto) si confrontano schemi alternativi:
+  // L'utente indica la presa (fiume, canale, pozzo, invaso) e, se vuole, il
+  // tracciato fino alla vasca. Con le quote del DEM (presa, profilo del
+  // tracciato, vasca, ogni pivot) si confrontano schemi alternativi:
   //  A pompaggio diretto in pressione · B sollevamento + vasca + rilancio ·
   //  C canale a gravità + vasca + rilancio (solo se la presa è abbastanza alta).
-  // Ogni schema è valutato per l'alimentazione scelta (rete/generatore, FV con
-  // generatore notturno, FV con batterie) con criteri solo tecnici.
+  // Il rilancio può essere diviso in settori (ognuno spinge solo fino al suo
+  // pivot più alto). Ogni schema è valutato per l'alimentazione scelta (rete,
+  // FV con generatore, FV con batterie) con criteri solo tecnici.
   const SRC_RANGE_DEF: Record<SrcType, number> = { fiume: 4, canale: 0.5, pozzo: 40, invaso: 3 };
   const llDist = (a: number[], b: number[]) => {
     const kx = 111320 * Math.cos((((a[1] + b[1]) / 2) * Math.PI) / 180), ky = 110540;
     return Math.hypot((a[0] - b[0]) * kx, (a[1] - b[1]) * ky);
   };
-  // Vasca di accumulo: accanto al pivot più vicino alla presa, verso la presa.
+  const lineLen = (ln: number[][]) => ln.reduce((a, p, i) => (i ? a + llDist(ln[i - 1], p) : 0), 0);
+  // Vasca di accumulo: in fondo al tracciato disegnato, altrimenti accanto al
+  // pivot più vicino alla presa, verso la presa.
   function reservoirSpot(src: number[]): number[] | null {
     if (!pivots.length) return null;
+    if (srcRoute && srcRoute.length >= 2) return srcRoute[srcRoute.length - 1];
     const near = pivots.reduce((a, p) => (llDist([p.lng, p.lat], src) < llDist([a.lng, a.lat], src) ? p : a));
     const d = llDist([near.lng, near.lat], src); if (d < 1) return [near.lng, near.lat];
     const off = Math.min(d * 0.9, near.r + 250);
     const t = off / d;
     return [near.lng + (src[0] - near.lng) * t, near.lat + (src[1] - near.lat) * t];
   }
+  // Tracciato presa → vasca: quello disegnato (con il primo punto sulla presa)
+  // oppure la linea retta.
+  function srcLine(src: number[]): number[][] | null {
+    const R = reservoirSpot(src); if (!R) return null;
+    return srcRoute && srcRoute.length >= 2 ? [src, ...srcRoute.slice(1)] : [src, R];
+  }
+  // Punti di campionamento del profilo lungo il tracciato (~60 tratti).
+  function samplePath(ln: number[][]): { pts: number[][]; d: number[] } {
+    const L = lineLen(ln), step = Math.max(25, L / 60);
+    const pts: number[][] = [ln[0]], d: number[] = [0];
+    let acc = 0;
+    for (let i = 1; i < ln.length; i++) {
+      const a = ln[i - 1], b = ln[i], seg = llDist(a, b);
+      for (let s2 = step - (acc % step); s2 < seg; s2 += step) {
+        const u = s2 / seg; pts.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]); d.push(acc + s2);
+      }
+      acc += seg; pts.push(b); d.push(acc);
+    }
+    return { pts, d };
+  }
+  const elevKey = (src: number[]) => JSON.stringify([src, srcRoute, pivots.map((p) => `${p.lng.toFixed(5)},${p.lat.toFixed(5)}`).join(";")]);
   function startPickSource() {
     setSrcPicking(true);
-    mapApi.current?.pickPoint((lat, lng) => { setSrcPicking(false); setSrcPt([lng, lat]); analyzeSource([lng, lat]); });
+    mapApi.current?.pickPoint((lat, lng) => { setSrcPicking(false); setSrcRoute(null); setSrcPt([lng, lat]); });
+  }
+  function startDrawRoute() {
+    if (!srcPt) return;
+    setSrcDrawing(true);
+    mapApi.current?.drawRoadManual((coords) => {
+      setSrcDrawing(false);
+      if (coords.length >= 2) setSrcRoute([srcPt, ...coords.slice(1)]);
+    });
+    setMsg(t("Traccia il percorso dalla presa alla vasca: clic per i vertici, doppio clic sulla posizione della vasca."));
   }
   useEffect(() => {
     if (!srcPicking) return;
@@ -3716,18 +3805,30 @@ export default function Page() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [srcPicking]);
-  async function analyzeSource(src: number[]) {
-    const R = reservoirSpot(src);
-    if (!R) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
+  // Quote: presa, vasca, ogni pivot e profilo del tracciato, in una sola richiesta.
+  useEffect(() => {
+    if (!srcPt || !pivots.length) return;
+    const key = elevKey(srcPt);
+    if (srcElev?.key === key) return;
+    const ln = srcLine(srcPt); if (!ln) return;
+    const R = ln[ln.length - 1];
+    const prof = samplePath(ln);
+    let stop = false;
     setBusy("fonte");
-    try {
-      const pts = [src, R, ...pivots.map((p) => [p.lng, p.lat])];
-      const res = await api.fetchElevation(pts);
-      const z = res.points.map((q) => (q.elev_m == null ? null : Number(q.elev_m)));
-      const zp = z.slice(2).filter((v): v is number => v != null);
-      setSrcElev({ zS: z[0], zR: z[1], zPmax: zp.length ? Math.max(...zp) : null, key: `${src.join(",")}|${pivots.length}` });
-    } catch (e) { showErr(e); setSrcElev(null); } finally { setBusy(""); }
-  }
+    api.fetchElevation([srcPt, R, ...pivots.map((p) => [p.lng, p.lat]), ...prof.pts])
+      .then((res) => {
+        if (stop) return;
+        const z = res.points.map((q) => (q.elev_m == null ? null : Number(q.elev_m)));
+        const zPiv = z.slice(2, 2 + pivots.length);
+        const zp = zPiv.filter((v): v is number => v != null);
+        setSrcElev({ zS: z[0], zR: z[1], zPmax: zp.length ? Math.max(...zp) : null, zPiv,
+          prof: { d: prof.d, z: z.slice(2 + pivots.length) }, key });
+      })
+      .catch((e) => { if (!stop) { showErr(e); setSrcElev(null); } })
+      .finally(() => { if (!stop) setBusy(""); });
+    return () => { stop = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcPt, srcRoute, pivots]);
   const DN_MAIN = [110, 125, 160, 200, 250, 315, 400, 500, 630, 710, 800, 900, 1000, 1200, 1400, 1600];
   function sizeMain(qLs: number, L: number) {
     const Q = qLs / 1000;
@@ -3741,15 +3842,36 @@ export default function Page() {
     const hf = (10.67 * L * Math.pow(q1, 1.852)) / (Math.pow(Math.max(60, hwC), 1.852) * Math.pow(D, 4.87));
     return { dn, n, hf };
   }
-  type Stage = { name: string; qLs: number; head: number; kW: number; hours: number };
+  // Settori di rilancio: k-medie sulle posizioni dei pivot (settori contigui).
+  function sectorize(k: number): number[] {
+    const n = pivots.length; if (k <= 1 || n <= 1) return pivots.map(() => 0);
+    const P2 = pivots.map((p) => [p.lng * Math.cos((p.lat * Math.PI) / 180), p.lat]);
+    // semi: il primo è il pivot più a ovest, poi il più lontano dai semi già scelti
+    const seeds = [P2.reduce((a, p, i) => (p[0] < P2[a][0] ? i : a), 0)];
+    while (seeds.length < Math.min(k, n)) {
+      let bi = 0, bd = -1;
+      P2.forEach((p, i) => { const d = Math.min(...seeds.map((s2) => Math.hypot(p[0] - P2[s2][0], p[1] - P2[s2][1]))); if (d > bd) { bd = d; bi = i; } });
+      seeds.push(bi);
+    }
+    let C = seeds.map((s2) => P2[s2].slice());
+    let lab = pivots.map(() => 0);
+    for (let it = 0; it < 30; it++) {
+      lab = P2.map((p) => C.reduce((a, c, j) => (Math.hypot(p[0] - c[0], p[1] - c[1]) < Math.hypot(p[0] - C[a][0], p[1] - C[a][1]) ? j : a), 0));
+      C = C.map((c, j) => { const m = P2.filter((_, i) => lab[i] === j); return m.length ? [m.reduce((a, p) => a + p[0], 0) / m.length, m.reduce((a, p) => a + p[1], 0) / m.length] : c; });
+    }
+    return lab;
+  }
+  type Stage = { name: string; qLs: number; head: number; kW: number; hours: number; hAvg?: number; share?: number };
+  type Sector = { i: number; n: number; qLs: number; head: number; kW: number; zTop: number | null; center: number[] };
   type Scheme = { key: "A" | "B" | "C"; name: string; ok: boolean; why?: string; stages: Stage[];
-    main?: { kind: "pipe" | "canal"; L: number; dn?: number; n?: number; hf?: number };
-    res?: { vol: number; ha: number; r: number; evap: number; days: number }; mwh: number; kWabs: number;
-    pvKwp: number; battKwh: number; solarPct: number; nStations: number };
+    main?: { kind: "pipe" | "canal"; L: number; dn?: number; n?: number; hf?: number; hiPt?: number; cutMax?: number; fillMax?: number };
+    res?: { vol: number; ha: number; r: number; evap: number; days: number }; sectors?: Sector[];
+    mwh: number; kWabs: number; pvKwp: number; battKwh: number; solarPct: number; nStations: number };
   function sourceSchemes() {
     if (!srcPt || !pivots.length) return null;
     const P = pumpStation();
-    const R = reservoirSpot(srcPt)!;
+    const ln = srcLine(srcPt)!;
+    const R = ln[ln.length - 1];
     const eta = Math.max(0.3, wtwEta / 100);
     const hd = Math.max(1, Math.min(24, hoursDay));
     // Fabbisogno di punta: ettari irrigati × ETc della coltura più esigente
@@ -3760,18 +3882,42 @@ export default function Page() {
     const eRes = Math.max(0, resEvapK) * et0Peak;                          // mm/g evaporati dalla vasca
     const pMaxBar = pivots.length ? Math.max(...pivots.map((p) => pivotPressure(p))) : 0;
     const Hd = hydra ? hydra.headMax : pMaxBar * 10.2 + Math.max(0, psHeadExtra);   // prevalenza della distribuzione ai pivot
-    const E = srcElev && srcElev.key === `${srcPt.join(",")}|${pivots.length}` ? srcElev : null;
+    const E = srcElev && srcElev.key === elevKey(srcPt) ? srcElev : null;
     const zS = E?.zS ?? null, zR = E?.zR ?? null, zP = E?.zPmax ?? null;
-    const drop = srcRange;                                                // livello minimo sotto il punto indicato (pozzo: livello dinamico)
+    // Livello minimo: con i livelli mese per mese vale il più basso dei mesi
+    // irrigui (fabbisogno netto > 0); altrimenti l'escursione unica.
+    const netMm = P.netMm;
+    const irrMonths = netMm ? netMm.map((x, i) => (x > 0 ? i : -1)).filter((i) => i >= 0) : [...Array(12).keys()];
+    const months = srcMonthly && srcMonthly.length === 12 ? srcMonthly : null;
+    const drop = months ? Math.max(...(irrMonths.length ? irrMonths : [...Array(12).keys()]).map((i) => months[i])) : srcRange;
+    // Quota media pesata sui volumi mensili: la prevalenza media cala quando il fiume è alto.
+    const wSum = netMm ? netMm.reduce((a, x) => a + x, 0) : 0;
+    const dropAvg = months ? (wSum > 0 ? months.reduce((a, d, i) => a + d * netMm![i], 0) / wSum : months.reduce((a, d) => a + d, 0) / 12) : drop;
     const zLow = zS != null ? zS - drop : null;
-    const L = llDist(srcPt, R) * 1.1;                                     // tracciato indicativo +10%
+    const L = srcRoute ? lineLen(ln) : lineLen(ln) * 1.1;                // linea retta: +10% di tracciato
+    const prof = E?.prof ?? null;
     const psh = Math.max(0.5, pvPsh ?? (fields.map((f) => (f.lay as { solar?: { psh_design?: number } } | null | undefined)?.solar?.psh_design).find((x) => x) ?? 6));
     const sunH = Math.max(1, Math.min(14, pvSunH));
     const solar = srcEnergy !== "rete";
-    const lift = (zTop: number | null) => (zLow != null && zTop != null ? Math.max(0, zTop - zLow) : Math.max(0, psLift));
     const kWof = (qLs: number, H: number) => (qLs * H * 9.81) / 1000 / eta;
     const mwhOf = (H: number) => (P.volYear * H) / 367 / eta / 1000;
     const qMaxOk = (q: number) => !(srcQmax > 0 && q > srcQmax * 1.0001);
+    // Prevalenza di una condotta in pressione dalla presa: la linea dei carichi
+    // deve restare ≥ 2 m sopra il profilo in ogni punto (colmi del tracciato),
+    // e arrivare alla quota zEnd con il carico residuo hEnd.
+    const pipeHead = (hf: number, zEnd: number | null, hEnd: number) => {
+      if (zLow == null || zEnd == null) return { H: Math.max(0, psLift) + hf + hEnd, hiPt: 0 };
+      let H = zEnd + hEnd + hf - zLow, hiPt = 0;
+      if (prof && prof.d.length > 1) {
+        const Lp = prof.d[prof.d.length - 1] || 1;
+        prof.z.forEach((z, i) => {
+          if (z == null) return;
+          const need = z + 2 + (hf * prof.d[i]) / Lp - zLow;
+          if (need > H) { H = need; hiPt = z; }
+        });
+      }
+      return { H: Math.max(0, H), hiPt };
+    };
     // Vasca: compenso giornaliero fra ore di riempimento e ore di irrigazione,
     // più i giorni di scorta (consumo + evaporazione). L'evaporazione dipende
     // dallo specchio d'acqua, che dipende dal volume: si itera.
@@ -3785,11 +3931,44 @@ export default function Page() {
       const areaM2 = (vol / depth) * 1.25;                                // + argini
       return { vol, ha: areaM2 / 10000, r: Math.sqrt(areaM2 / Math.PI), evap, days: Math.max(0, resDays) };
     };
+    // Rilancio dalla vasca diviso in k settori: ognuno spinge fino al proprio pivot più alto.
+    const zPiv = E?.zPiv ?? null;
+    const sectorsFor = (k: number): Sector[] => {
+      const lab = sectorize(k), kk = Math.max(...lab) + 1;
+      const out2: Sector[] = [];
+      for (let j = 0; j < kk; j++) {
+        const idx = pivots.map((_, i) => i).filter((i) => lab[i] === j); if (!idx.length) continue;
+        const flow = idx.reduce((a, i) => a + pivotFlow(pivots[i]), 0);
+        const qLs = (Qd * flow) / Math.max(1e-9, P.qDes);                 // quota del fabbisogno di punta
+        const zs = zPiv ? idx.map((i) => zPiv[i]).filter((v): v is number => v != null) : [];
+        const zTop = zs.length ? Math.max(...zs) : zP;
+        const head = Hd + (zTop != null && zR != null ? Math.max(0, zTop - zR) : 0);
+        out2.push({ i: out2.length + 1, n: idx.length, qLs, head, kW: kWof(qLs, head), zTop,
+          center: [idx.reduce((a, i) => a + pivots[i].lng, 0) / idx.length, idx.reduce((a, i) => a + pivots[i].lat, 0) / idx.length] });
+      }
+      return out2;
+    };
+    const kMax = Math.min(6, pivots.length);
+    const sectorOpts = Array.from({ length: kMax }, (_, i) => sectorsFor(i + 1));
+    const sEnergy = (ss: Sector[]) => ss.reduce((a, x) => a + x.qLs * x.head, 0);
+    // Automatico: il numero minimo di settori che dà almeno il 90% del risparmio
+    // massimo, purché il risparmio rispetto a un solo settore superi il 5%.
+    let kAuto = 1;
+    if (sectorOpts.length > 1) {
+      const e1 = sEnergy(sectorOpts[0]), eMin = Math.min(...sectorOpts.map(sEnergy));
+      if (e1 > 0 && (e1 - eMin) / e1 > 0.05) kAuto = sectorOpts.findIndex((ss) => e1 - sEnergy(ss) >= 0.9 * (e1 - eMin)) + 1;
+    }
+    const kUse = srcSectors > 0 ? Math.min(srcSectors, kMax) : kAuto;
+    const secs = sectorOpts[kUse - 1] ?? sectorsFor(1);
+    const secSave = sectorOpts.length ? 1 - sEnergy(secs) / Math.max(1e-9, sEnergy(sectorOpts[0])) : 0;
+    const boosterStages = (): Stage[] => secs.length > 1
+      ? secs.map((x) => ({ name: t("Rilancio settore {i} ({n} pivot)", { i: x.i, n: x.n }), qLs: x.qLs, head: x.head, kW: x.kW, hours: hd, share: x.qLs / Math.max(1e-9, Qd) }))
+      : [{ name: t("Rilancio dalla vasca ai pivot"), qLs: Qd, head: secs[0]?.head ?? Hd, kW: kWof(Qd, secs[0]?.head ?? Hd), hours: hd }];
     // energia: quota diurna (copribile dal FV) e notturna
     const finish = (sc: Omit<Scheme, "mwh" | "kWabs" | "pvKwp" | "battKwh" | "solarPct">): Scheme => {
       let mwh = 0, kWabs = 0, kWday = 0, eDayKwh = 0, eSunKwh = 0;
       for (const st of sc.stages) {
-        mwh += mwhOf(st.head); kWabs += st.kW; kWday += st.kW;
+        mwh += mwhOf(st.hAvg ?? st.head) * (st.share ?? 1);                // settori: quota del volume annuo kWabs += st.kW; kWday += st.kW;
         eDayKwh += st.kW * st.hours;                                       // kWh nel giorno di punta
         eSunKwh += st.kW * Math.min(st.hours, sunH);                       // di cui nelle ore di sole
       }
@@ -3813,14 +3992,15 @@ export default function Page() {
     {
       const hours = hd;
       const m = sizeMain(Qd, L);
-      const H = lift(zP) + m.hf + Hd + 2;
+      const ph = pipeHead(m.hf, zP, Hd + 2);
+      const H = ph.H;
       let ok = true, why: string | undefined;
       if (srcHours < hd) { ok = false; why = t("La fonte è disponibile {a} h al giorno, i pivot lavorano {b} h: serve un accumulo.", { a: fmt(srcHours), b: fmt(hd) }); }
       else if (!qMaxOk(Qd)) { ok = false; why = t("Servono {q} l/s, la fonte ne dà {m}.", { q: fmt(Math.round(Qd)), m: fmt(srcQmax) }); }
       else if (srcEnergy === "fv-gen" && hd > sunH) { why = t("Di notte le pompe vanno a generatore: senza accumulo il sole copre solo le ore diurne."); }
       out.push(finish({ key: "A", name: t("Pompaggio diretto in pressione"), ok, why, nStations: 1,
-        stages: [{ name: t("Stazione di presa e spinta"), qLs: Qd, head: H, kW: kWof(Qd, H), hours }],
-        main: { kind: "pipe", L, dn: m.dn, n: m.n, hf: m.hf } }));
+        stages: [{ name: t("Stazione di presa e spinta"), qLs: Qd, head: H, kW: kWof(Qd, H), hours, hAvg: H - (drop - dropAvg) }],
+        main: { kind: "pipe", L, dn: m.dn, n: m.n, hf: m.hf, hiPt: ph.hiPt } }));
     }
     // B — sollevamento + vasca + rilancio
     {
@@ -3828,65 +4008,122 @@ export default function Page() {
       const rB = res(h1);
       const q1 = (Vday + rB.evap) / 3.6 / Math.max(1, h1);                 // la presa reintegra anche l'evaporato
       const m = sizeMain(q1, L);
-      const H1 = lift(zR != null ? zR + 3 : null) + m.hf + 2;
-      const H2 = Hd + (zP != null && zR != null ? Math.max(0, zP - zR) : 0);
+      const ph = pipeHead(m.hf, zR != null ? zR + 3 : null, 2);
+      const H1 = ph.H;
       let ok = true, why: string | undefined;
       if (!qMaxOk(q1)) {
         const need = (Vday + rB.evap) / 3.6 / Math.max(1, srcQmax);
         if (need > srcHours) { ok = false; why = t("La fonte non basta: servono {h} h di prelievo al giorno a {m} l/s.", { h: fmt(Math.round(need)), m: fmt(srcQmax) }); }
         else why = t("Con {m} l/s disponibili la presa deve lavorare {h} h al giorno.", { m: fmt(srcQmax), h: fmt(Math.round(need)) });
       }
-      out.push(finish({ key: "B", name: t("Sollevamento, vasca di accumulo e rilancio"), ok, why, nStations: 2,
-        stages: [
-          { name: t("Presa e sollevamento alla vasca"), qLs: q1, head: H1, kW: kWof(q1, H1), hours: h1 },
-          { name: t("Rilancio dalla vasca ai pivot"), qLs: Qd, head: H2, kW: kWof(Qd, H2), hours: hd },
-        ],
-        main: { kind: "pipe", L, dn: m.dn, n: m.n, hf: m.hf }, res: rB }));
+      const bst = boosterStages();
+      out.push(finish({ key: "B", name: t("Sollevamento, vasca di accumulo e rilancio"), ok, why, nStations: 1 + bst.length,
+        stages: [{ name: t("Presa e sollevamento alla vasca"), qLs: q1, head: H1, kW: kWof(q1, H1), hours: h1, hAvg: H1 - (drop - dropAvg) }, ...bst],
+        main: { kind: "pipe", L, dn: m.dn, n: m.n, hf: m.hf, hiPt: ph.hiPt }, res: rB, sectors: secs.length > 1 ? secs : undefined }));
     }
     // C — canale a gravità + vasca + rilancio
     {
-      const need = L * Math.max(0.05, canalSlope) / 1000 + 1;              // dislivello minimo per il canale
+      const s = Math.max(0.05, canalSlope) / 1000;
+      const need = L * s + 1;                                              // dislivello minimo per il canale
       const avail = zLow != null && zR != null ? zLow - zR : null;
       const hIn = Math.min(srcHours, 24);
-      const H2 = Hd + (zP != null && zR != null ? Math.max(0, zP - zR) : 0);
+      // profilo: pelo libero da zLow con pendenza s; scavo dove il terreno è più
+      // alto (+ 0,5 m di franco), rilevato dove è più basso.
+      let cutMax = 0, fillMax = 0;
+      if (prof && zLow != null) prof.z.forEach((z, i) => {
+        if (z == null) return;
+        const wl = zLow - s * prof.d[i] * (L / Math.max(1, prof.d[prof.d.length - 1]));
+        cutMax = Math.max(cutMax, z - wl + 0.5); fillMax = Math.max(fillMax, wl + 0.5 - z);
+      });
       let ok = srcType !== "pozzo" && avail != null && avail >= need, why: string | undefined;
       if (srcType === "pozzo") why = t("Da pozzo non è possibile la gravità.");
       else if (avail == null) why = t("Quote non disponibili: indica di nuovo la fonte.");
       else if (!ok) why = t("Dislivello tra presa e vasca {d} m, ne servono almeno {n}: canale a gravità non possibile.", { d: fmt(Math.round(avail)), n: fmt(Math.round(need)) });
+      else if (cutMax > 6) { ok = false; why = t("Lungo il tracciato il canale andrebbe scavato fino a {m} m: serve un altro percorso o una condotta.", { m: fmt(Math.round(cutMax)) }); }
       const rC = res(hIn);
       const qc = (Vday + rC.evap) / 3.6 / Math.max(1, hIn);
       if (ok && !qMaxOk(qc)) { ok = false; why = t("Servono {q} l/s, la fonte ne dà {m}.", { q: fmt(Math.round(qc)), m: fmt(srcQmax) }); }
-      out.push(finish({ key: "C", name: t("Canale a gravità, vasca e rilancio"), ok, why, nStations: 1,
-        stages: [{ name: t("Rilancio dalla vasca ai pivot"), qLs: Qd, head: H2, kW: kWof(Qd, H2), hours: hd }],
-        main: { kind: "canal", L }, res: rC }));
+      const bst = boosterStages();
+      out.push(finish({ key: "C", name: t("Canale a gravità, vasca e rilancio"), ok, why, nStations: bst.length,
+        stages: bst, main: { kind: "canal", L, cutMax, fillMax }, res: rC, sectors: secs.length > 1 ? secs : undefined }));
     }
-    // consigliato: rete e FV+batterie → minor energia; FV+generatore → minor energia da generatore.
-    // Entro il 3% vince lo schema più semplice (meno stazioni).
+    // Consigliato — rete: minor energia; FV + generatore: minor energia da
+    // generatore; in entrambi entro il 3% vince lo schema con meno stazioni.
+    // FV + batterie: entro il 10% di energia vince lo schema con meno kWh di
+    // batterie (l'accumulo in acqua costa meno di quello elettrico), poi meno stazioni.
     const feas = out.filter((x) => x.ok);
     const score = (x: Scheme) => (srcEnergy === "fv-gen" ? x.mwh * (1 - x.solarPct / 100) : x.mwh);
     let best: Scheme | null = null;
     if (feas.length) {
       const mn = Math.min(...feas.map(score));
-      const band = feas.filter((x) => score(x) <= mn * 1.03 + 1);
-      best = band.reduce((a, x) => (x.nStations < a.nStations || (x.nStations === a.nStations && score(x) < score(a)) ? x : a));
+      if (srcEnergy === "fv-batt") {
+        const band = feas.filter((x) => score(x) <= mn * 1.10 + 1);
+        best = band.reduce((a, x) => (x.battKwh < a.battKwh * 0.97 || (x.battKwh <= a.battKwh * 1.03 && x.nStations < a.nStations) ? x : a));
+      } else {
+        const band = feas.filter((x) => score(x) <= mn * 1.03 + 1);
+        best = band.reduce((a, x) => (x.nStations < a.nStations || (x.nStations === a.nStations && score(x) < score(a)) ? x : a));
+      }
     }
-    return { schemes: out, best, Qd, Vday, irrHa: P.irrHa, eRes, Hd, L, zS, zR, zP, zLow, R, hasElev: !!E, psh, sunH };
+    return { schemes: out, best, Qd, Vday, irrHa: P.irrHa, eRes, Hd, L, zS, zR, zP, zLow, R, ln, hasElev: !!E, psh, sunH,
+      drop, dropAvg, months: !!months, kAuto, kUse, secSave, prof, netMm };
   }
-  // Montaggio della presa suggerito in base a fonte, escursione e sedimenti.
-  function intakeAdvice(): string[] {
-    const a: string[] = [];
-    if (srcType === "fiume" || srcType === "invaso") {
-      if (srcRange >= 2) a.push(t("Escursione di {m} m: pontone galleggiante con pompe ad asse orizzontale o sommergibili, collegato a riva con tubazione flessibile.", { m: fmt(srcRange) }));
-      else if (srcRange >= 0.5) a.push(t("Escursione di {m} m: pompa su slitta lungo la sponda inclinata, spostabile con il livello.", { m: fmt(srcRange) }));
-      else a.push(t("Livello stabile: pozzo di presa in sponda con pompe verticali o ad asse orizzontale sotto battente."));
-    } else if (srcType === "canale") {
-      a.push(t("Presa da canale con griglia e paratoia, pompe ad asse orizzontale in camera asciutta sotto battente."));
-    } else {
-      a.push(t("Pompe sommerse in pozzo, livello dinamico {m} m: prevedere un pozzo per pompa o un pozzo di riserva.", { m: fmt(srcRange) }));
+  // Montaggio della presa e trattamento dell'acqua, dimensionati sulla portata di presa.
+  function intakeAdvice(qIn: number, drop: number, qPiv: number, gravity: boolean): { text: string; rows: [string, string][] }[] {
+    const out: { text: string; rows: [string, string][] }[] = [];
+    if (gravity) {
+      out.push({ text: t("Presa a gravità: opera di presa con soglia, griglia e paratoia di regolazione all'imbocco del canale."),
+        rows: [[t("Griglia"), t("superficie lorda {a} m² (0,6 m/s, luce libera 50%), con sgrigliatore", { a: fmt(qIn / 1000 / 0.6 / 0.5, { maximumFractionDigits: 1 }) })]] });
     }
-    if (srcSediment && srcType !== "pozzo") a.push(t("Acqua con sedimenti: dissabbiatore o vasca di sedimentazione prima della presa, filtri autopulenti a monte dei pivot."));
-    if (srcType !== "pozzo" && srcRange > 5) a.push(t("Oltre 5 m di escursione le pompe in aspirazione non funzionano: solo soluzioni galleggianti o sommergibili."));
-    return a;
+    const Q = qIn / 1000;                                                  // m³/s
+    // pompe: in parallelo da ~250 l/s al massimo, più una di riserva
+    const nDuty = Math.max(1, Math.ceil(qIn / 250)), qP = Q / nDuty;
+    // campana di aspirazione a 1,0 m/s e sommergenza minima ANSI/HI 9.8: S = D (1 + 2,3 Fr)
+    const Db = Math.sqrt((4 * qP) / (Math.PI * 1.0));
+    const Fr = 1.0 / Math.sqrt(9.81 * Db);
+    const Smin = Db * (1 + 2.3 * Fr);
+    const depthMin = Smin + 0.5 * Db;                                      // + distanza dal fondo
+    const pumps: [string, string] = [t("Pompe"), t("{n} in servizio da {q} l/s + 1 di riserva", { n: nDuty, q: fmt(Math.round(qP * 1000)) })];
+    const subm: [string, string] = [t("Sommergenza minima (ANSI/HI 9.8)"), t("{s} m sopra la campana, fondale minimo {d} m al livello più basso", { s: fmt(Smin, { maximumFractionDigits: 1 }), d: fmt(depthMin, { maximumFractionDigits: 1 }) })];
+    if (gravity) { /* nessuna pompa alla presa */ } else if (srcType === "fiume" || srcType === "invaso") {
+      if (drop >= 2) {
+        out.push({ text: t("Escursione di {m} m: pontone galleggiante con pompe ad asse orizzontale o sommergibili, collegato a riva con tubazione flessibile.", { m: fmt(drop) }),
+          rows: [pumps, subm,
+            [t("Pontone"), t("circa {a} m² di coperta, ancorato a pali o con funi a riva", { a: fmt(Math.ceil(((nDuty + 1) * 12 + 20) / 5) * 5) })],
+            [t("Collegamento a riva"), t("tubazione flessibile o passerella snodata lunga almeno {l} m", { l: fmt(Math.ceil(drop * Math.sqrt(1 + bankSlope * bankSlope) + 10)) })]] });
+      } else if (drop >= 0.5) {
+        out.push({ text: t("Escursione di {m} m: pompa su slitta lungo la sponda inclinata, spostabile con il livello.", { m: fmt(drop) }),
+          rows: [pumps, subm,
+            [t("Binario della slitta"), t("{l} m lungo la sponda (pendenza {p}:1), con argano", { l: fmt(Math.ceil(drop * Math.sqrt(1 + bankSlope * bankSlope) + 3)), p: fmt(bankSlope) })]] });
+      } else {
+        const V = (900 * qP) / 10;                                         // vasca di presa: 10 avviamenti/h per pompa
+        out.push({ text: t("Livello stabile: pozzo di presa in sponda con pompe verticali o ad asse orizzontale sotto battente."),
+          rows: [pumps, subm, [t("Pozzo di presa"), t("volume utile minimo {v} m³ (10 avviamenti/h per pompa)", { v: fmt(Math.ceil(V)) })]] });
+      }
+      if (drop > 5) out.push({ text: t("Oltre 5 m di escursione le pompe in aspirazione non funzionano: solo soluzioni galleggianti o sommergibili."), rows: [] });
+    } else if (srcType === "canale") {
+      const Ag = Q / 0.6 / 0.5;                                            // griglia: 0,6 m/s, 50% di luce libera
+      out.push({ text: t("Presa da canale con griglia e paratoia, pompe ad asse orizzontale in camera asciutta sotto battente."),
+        rows: [pumps, subm, [t("Griglia"), t("superficie lorda {a} m² (0,6 m/s, luce libera 50%), con sgrigliatore", { a: fmt(Ag, { maximumFractionDigits: 1 }) })]] });
+    } else {
+      const nW = Math.max(1, Math.ceil(qIn / Math.max(1, wellQ)));
+      out.push({ text: t("Pompe sommerse in pozzo, livello dinamico {m} m: prevedere un pozzo per pompa o un pozzo di riserva.", { m: fmt(drop) }),
+        rows: [[t("Pozzi"), t("{n} in servizio da {q} l/s + 1 di riserva", { n: nW, q: fmt(Math.round(qIn / nW)) })],
+          [t("Pompe sommerse"), t("una per pozzo, installata almeno 5 m sotto il livello dinamico")]] });
+    }
+    if (srcSediment && srcType !== "pozzo") {
+      // Sedimentazione (Stokes, 20 °C): vs = g (ρs − ρ) d² / 18 μ; area = Q / vs × 1,5.
+      const d = Math.max(0.02, settleMm) / 1000;
+      const vs = (9.81 * 1650 * d * d) / (18 * 1.0e-3);
+      const A = (Q / vs) * 1.5, W = Math.sqrt(A / 4), Lb = 4 * W;
+      const h = Math.max(1.5, Q / (W * 0.3));                              // velocità orizzontale ≤ 0,3 m/s
+      out.push({ text: t("Acqua con sedimenti: dissabbiatore o vasca di sedimentazione prima della presa, filtri autopulenti a monte dei pivot."),
+        rows: [[t("Dissabbiatore"), t("{l} × {w} m, profondità {h} m: trattiene le particelle da {d} mm (velocità di caduta {v} mm/s)", { l: fmt(Math.ceil(Lb)), w: fmt(Math.ceil(W)), h: fmt(h, { maximumFractionDigits: 1 }), d: fmt(settleMm), v: fmt(vs * 1000, { maximumFractionDigits: 1 }) })]] });
+    }
+    const qh = (qPiv / 1000) * 3600;
+    const nF = Math.max(1, Math.ceil(qh / Math.max(10, filterCap)));
+    out.push({ text: t("Filtrazione a monte dei pivot"),
+      rows: [[t("Filtri autopulenti"), t("{n} da {c} m³/h in parallelo (portata ai pivot {q} m³/h)", { n: nF, c: fmt(filterCap), q: fmt(Math.round(qh)) })]] });
+    return out;
   }
   // Disegno dello schema scelto sulla mappa.
   useEffect(() => {
@@ -3897,14 +4134,47 @@ export default function Page() {
     const R = S?.R ?? null;
     m.setSourceScheme?.({
       src: srcPt,
-      line: sc && R ? [srcPt, R] : null,
+      line: sc && S ? S.ln : null,
       lineKind: sc?.main?.kind ?? "pipe",
       reservoir: sc?.res && R ? { center: R, r: sc.res.r } : null,
+      points: (sc?.sectors ?? []).map((x) => ({ pt: x.center, label: `S${x.i}` , tip: `${t("Settore")} ${x.i} · ${x.n} pivot · ${fmt(Math.round(x.qLs))} l/s · ${fmt(Math.round(x.head))} m` })),
       labels: { src: `${t("Fonte d'acqua")} · ${t(srcType)}`, res: sc?.res ? `${t("Vasca di accumulo")} · ${fmt(Math.round(sc.res.vol))} m³` : "",
         line: sc?.main ? (sc.main.kind === "canal" ? `${t("Canale a gravità")} · ${uKm(sc.main.L / 1000, 1)}` : `${t("Adduttrice")} · ${sc.main.n && sc.main.n > 1 ? `${sc.main.n}×` : ""}DN ${sc.main.dn} · ${uKm(sc.main.L / 1000, 1)}`) : "" },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srcPt, srcShown, srcElev, srcType, srcEnergy, srcHours, srcQmax, srcRange, pivots, mmDes, hoursDay, resDepth, resDays, resEvapK, et0Peak, wtwEta, canalSlope, lang]);
+  }, [srcPt, srcRoute, srcShown, srcElev, srcType, srcEnergy, srcHours, srcQmax, srcRange, srcMonthly, srcSectors, pivots, mmDes, hoursDay, resDepth, resDays, resEvapK, et0Peak, wtwEta, canalSlope, lang]);
+  // Profilo del tracciato (SVG): terreno, e linea dei carichi o pelo libero del canale.
+  function renderProfile(S: NonNullable<ReturnType<typeof sourceSchemes>>, sc: Scheme | undefined) {
+    const pr = S.prof; if (!pr || pr.d.length < 2 || !sc?.main) return null;
+    const pts = pr.d.map((d, i) => [d, pr.z[i]] as [number, number | null]).filter((p): p is [number, number] => p[1] != null);
+    if (pts.length < 2) return null;
+    const Lp = pr.d[pr.d.length - 1] || 1, Wd = 300, Ht = 90;
+    const lineY: [number, number][] = [];
+    if (S.zLow != null) {
+      if (sc.main.kind === "canal") {
+        const s = Math.max(0.05, canalSlope) / 1000 * (S.L / Lp);
+        lineY.push([0, S.zLow], [Lp, S.zLow - s * Lp]);
+      } else {
+        const st = sc.stages[0];
+        lineY.push([0, S.zLow + st.head], [Lp, S.zLow + st.head - (sc.main.hf ?? 0)]);
+      }
+    }
+    const ys = [...pts.map((p) => p[1]), ...lineY.map((p) => p[1]), ...(S.zLow != null ? [S.zLow] : [])];
+    const y0 = Math.min(...ys) - 2, y1 = Math.max(...ys) + 2;
+    const X = (d: number) => (d / Lp) * Wd, Y = (z: number) => Ht - ((z - y0) / Math.max(1, y1 - y0)) * Ht;
+    const ground = pts.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
+    return (
+      <div className="bg-panel rounded-lg p-2">
+        <div className="text-[11px] text-sage-dark mb-1">{t("Profilo del tracciato")} · {uKm(Lp / 1000, 1)} · {fmt(Math.round(y0 + 2))}–{fmt(Math.round(y1 - 2))} m</div>
+        <svg viewBox={`0 0 ${Wd} ${Ht}`} className="w-full h-[90px]" preserveAspectRatio="none">
+          <path d={`${ground}L${Wd},${Ht}L0,${Ht}Z`} fill="#c9b18a" fillOpacity={0.45} stroke="#8a6d3b" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          {lineY.length === 2 && <line x1={X(lineY[0][0])} y1={Y(lineY[0][1])} x2={X(lineY[1][0])} y2={Y(lineY[1][1])}
+            stroke={sc.main.kind === "canal" ? "#0284c7" : "#1d4ed8"} strokeWidth={1.6} strokeDasharray={sc.main.kind === "canal" ? "5,3" : undefined} vectorEffect="non-scaling-stroke" />}
+        </svg>
+        <div className="text-[10px] text-sage-dark">{sc.main.kind === "canal" ? t("Linea tratteggiata: pelo libero del canale.") : t("Linea blu: linea dei carichi della condotta (deve restare sopra il terreno).")}</div>
+      </div>
+    );
+  }
   function renderSource() {
     const S = sourceSchemes();
     const num = (label: string, v: number, set: (x: number) => void, step = 1, min = 0, max = 1e9) => (
@@ -3923,6 +4193,13 @@ export default function Page() {
             onClick={srcPicking ? () => { mapApi.current?.pickPoint(null); setSrcPicking(false); } : startPickSource}>
             {srcPicking ? t("Clicca sulla mappa… (Esc annulla)") : srcPt ? t("📍 Sposta il punto di presa") : t("📍 Indica la fonte sulla mappa")}
           </button>
+          {srcPt && (
+            <div className="flex gap-2">
+              <button className="btn-ghost flex-1 basis-0 text-[12px]" disabled={srcDrawing} onClick={startDrawRoute}>
+                {srcDrawing ? t("Traccia sulla mappa…") : srcRoute ? t("✏️ Ridisegna il tracciato") : t("✏️ Disegna il tracciato fino alla vasca")}</button>
+              {srcRoute && <button className="btn-ghost text-[12px]" onClick={() => setSrcRoute(null)} title={t("Torna al tracciato in linea retta")}>{t("Linea retta")}</button>}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <label className="text-[11px] text-sage-dark">{t("Tipo di fonte")}
               <select className="field-input mt-0.5 py-1 text-sm" value={srcType}
@@ -3939,15 +4216,31 @@ export default function Page() {
               <input type="checkbox" checked={srcSediment} onChange={(e) => setSrcSediment(e.target.checked)} />{t("Acqua con sedimenti")}
             </label>
           )}
+          {srcType !== "pozzo" && (
+            <label className="flex items-center gap-2 text-[11px] text-sage-dark">
+              <input type="checkbox" checked={!!srcMonthly} onChange={(e) => setSrcMonthly(e.target.checked ? Array(12).fill(srcRange) : null)} />
+              {t("Livello minimo mese per mese (m sotto il punto di presa)")}
+            </label>
+          )}
+          {srcMonthly && srcType !== "pozzo" && (
+            <div className="grid grid-cols-6 gap-1">
+              {srcMonthly.map((v, i) => (
+                <label key={i} className="text-[10px] text-sage-dark text-center">{new Date(2000, i, 1).toLocaleString(lang, { month: "short" })}
+                  <input type="number" min={0} max={50} step={0.1} value={v}
+                    onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) setSrcMonthly((m) => m ? m.map((y, k) => (k === i ? Math.max(0, Math.min(50, x)) : y)) : m); }}
+                    className="field-input mt-0.5 px-1 py-0.5 text-[11px] text-center" /></label>
+              ))}
+            </div>
+          )}
         </div>
 
         {S && (<>
           {/* 2 — dati */}
           <div className="text-[11px] text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
             {t("Superficie irrigata")} <b>{uHa(S.irrHa)}</b> · {t("ETc di punta")} <b>{fmt(etcMax, { maximumFractionDigits: 1 })} mm/{t("giorno")}</b> ({t(cropMax?.label ?? "Altro")}, Kc {fmt(kcMax, { maximumFractionDigits: 2 })}) · {t("lordo")} <b>{fmt(mmDes, { maximumFractionDigits: 1 })} mm</b><br />
-            {t("Distanza dalla presa ai campi")}: <b>{uKm(S.L / 1000, 1)}</b> · {t("Fabbisogno di punta")}: <b>{fmt(Math.round(S.Vday))} m³/{t("giorno")}</b> ({fmt(Math.round(S.Qd))} l/s)<br />
+            {srcRoute ? t("Tracciato disegnato") : t("Tracciato in linea retta (+10%)")}: <b>{uKm(S.L / 1000, 1)}</b> · {t("Fabbisogno di punta")}: <b>{fmt(Math.round(S.Vday))} m³/{t("giorno")}</b> ({fmt(Math.round(S.Qd))} l/s)<br />
             {S.hasElev && S.zLow != null && S.zR != null
-              ? <>{t("Livello minimo alla presa")} <b>{fmt(Math.round(S.zLow))} m</b> · {t("vasca")} <b>{fmt(Math.round(S.zR))} m</b>{S.zP != null && <> · {t("pivot più alto")} <b>{fmt(Math.round(S.zP))} m</b></>}</>
+              ? <>{t("Livello minimo alla presa")} <b>{fmt(Math.round(S.zLow))} m</b>{S.months && <> ({t("mesi irrigui")}; {t("medio")} −{fmt(S.dropAvg, { maximumFractionDigits: 1 })} m)</>} · {t("vasca")} <b>{fmt(Math.round(S.zR))} m</b>{S.zP != null && <> · {t("pivot più alto")} <b>{fmt(Math.round(S.zP))} m</b></>}</>
               : busy === "fonte" ? "…" : <span className="text-rust">{t("Quote non disponibili: indica di nuovo la fonte.")}</span>}
           </div>
 
@@ -3963,6 +4256,18 @@ export default function Page() {
 
           {/* 4 — schemi */}
           <div className="text-xs font-semibold text-brand-darker">{t("3 · Schemi d'impianto")}</div>
+          {pivots.length > 1 && (
+            <div className="flex items-center gap-2 text-[11px] text-sage-dark">
+              <label className="flex-1">{t("Settori di rilancio")}
+                <select className="field-input mt-0.5 py-1 text-sm" value={srcSectors} onChange={(e) => setSrcSectors(Number(e.target.value))}>
+                  <option value={0}>{t("Automatico ({n})", { n: S.kAuto })}</option>
+                  {Array.from({ length: Math.min(6, pivots.length) }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+                </select></label>
+              <span className="flex-1 leading-snug">{S.kUse > 1
+                ? t("{k} settori: il rilancio spinge ogni settore solo fino al suo pivot più alto ({p}% di energia di rilancio in meno).", { k: S.kUse, p: fmt(Math.round(S.secSave * 100)) })
+                : t("Un solo settore: le quote dei pivot sono simili, dividere non fa risparmiare.")}</span>
+            </div>
+          )}
           {S.schemes.map((sc) => {
             const isBest = S.best === sc; const shown = (srcShown ?? S.best?.key) === sc.key;
             return (
@@ -3979,8 +4284,8 @@ export default function Page() {
                       <div key={i}>• {st.name}: <b>{fmt(Math.round(st.qLs))} l/s</b> · {fmt(Math.round(st.head))} m · <b>{fmt(Math.round(st.kW))} kW</b> · {fmt(Math.round(st.hours))} h/{t("giorno")}</div>
                     ))}
                     {sc.main && (sc.main.kind === "canal"
-                      ? <div>• {t("Canale a gravità")}: {uKm(sc.main.L / 1000, 1)} · {t("pendenza")} {fmt(canalSlope, { maximumFractionDigits: 2 })}‰</div>
-                      : <div>• {t("Adduttrice")}: {sc.main.n && sc.main.n > 1 ? `${sc.main.n} × ` : ""}DN {sc.main.dn} · {uKm(sc.main.L / 1000, 1)} · {t("perdite")} {fmt(Math.round(sc.main.hf ?? 0))} m</div>)}
+                      ? <div>• {t("Canale a gravità")}: {uKm(sc.main.L / 1000, 1)} · {t("pendenza")} {fmt(canalSlope, { maximumFractionDigits: 2 })}‰{S.prof && <> · {t("scavo massimo")} {fmt(sc.main.cutMax ?? 0, { maximumFractionDigits: 1 })} m · {t("rilevato massimo")} {fmt(sc.main.fillMax ?? 0, { maximumFractionDigits: 1 })} m</>}</div>
+                      : <div>• {t("Adduttrice")}: {sc.main.n && sc.main.n > 1 ? `${sc.main.n} × ` : ""}DN {sc.main.dn} · {uKm(sc.main.L / 1000, 1)} · {t("perdite")} {fmt(Math.round(sc.main.hf ?? 0))} m{!!sc.main.hiPt && <> · {t("prevalenza decisa dal colmo a {z} m", { z: fmt(Math.round(sc.main.hiPt)) })}</>}</div>)}
                     {sc.res && <div>• {t("Vasca di accumulo")}: <b>{fmt(Math.round(sc.res.vol))} m³</b> · {uHa(sc.res.ha, 1)} · {t("profondità")} {fmt(resDepth)} m · {t("scorta")} {fmt(sc.res.days)} {t("giorni")} · {t("evaporazione")} {fmt(Math.round(sc.res.evap))} m³/{t("giorno")}</div>}
                     <div className="mt-0.5 text-brand-darker">{t("Potenza assorbita")} <b>{fmt(Math.round(sc.kWabs))} kW</b> · {t("Energia")} <b>{mwh(sc.mwh)} MWh/{t("anno")}</b>
                       {srcEnergy !== "rete" && <> · FV <b>{fmt(Math.round(sc.pvKwp))} kWp</b> ({fmt(Math.round(sc.solarPct))}% {t("dal sole")}){sc.battKwh > 0 && <> · {t("Batterie")} <b>{fmt(Math.round(sc.battKwh))} kWh</b></>}</>}
@@ -3993,6 +4298,7 @@ export default function Page() {
           {S.best && (
             <p className="text-[11px] text-brand-darker bg-panel rounded-lg p-2 leading-relaxed">
               {srcEnergy === "fv-gen" ? t("Consigliato lo schema con meno energia da generatore; a parità (entro il 3%) il più semplice.")
+                : srcEnergy === "fv-batt" ? t("Consigliato, entro il 10% di energia, lo schema con meno batterie: accumulare acqua in vasca è più semplice che accumulare elettricità.")
                 : t("Consigliato lo schema con il minor consumo di energia; a parità (entro il 3%) il più semplice, con meno stazioni.")}
               {S.best.key === "B" && srcEnergy !== "rete" && <> {t("La vasca fa da «batteria d'acqua»: si solleva l'acqua con il sole e si irriga anche di notte.")}</>}
             </p>
@@ -4006,11 +4312,30 @@ export default function Page() {
             }}>{t("Usa questo schema nella pagina Pompaggio →")}</button>
           )}
 
+          {renderProfile(S, S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)))}
+
           {/* 5 — presa */}
-          <div className="bg-panel rounded-lg p-2">
-            <div className="text-xs font-semibold text-brand-darker mb-1">{t("4 · Montaggio della presa")}</div>
-            <ul className="text-[11px] text-brand-darker space-y-1 list-disc pl-4">{intakeAdvice().map((x, i) => <li key={i}>{x}</li>)}</ul>
-          </div>
+          {(() => {
+            const sc = S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? S.schemes[0];
+            const qIn = sc.key === "B" ? sc.stages[0].qLs : sc.key === "C" ? (S.Vday + (sc.res?.evap ?? 0)) / 3.6 / Math.max(1, Math.min(srcHours, 24)) : S.Qd;
+            return (
+              <div className="bg-panel rounded-lg p-2">
+                <div className="text-xs font-semibold text-brand-darker mb-1">{t("4 · Montaggio della presa e trattamento")} <span className="font-normal text-sage-dark">({t("schema")} {sc.key} · {fmt(Math.round(qIn))} l/s)</span></div>
+                <div className="space-y-1.5">
+                  {intakeAdvice(qIn, S.drop, S.Qd, sc.key === "C").map((x, i) => (
+                    <div key={i} className="text-[11px] text-brand-darker">
+                      <div>• {x.text}</div>
+                      {!!x.rows.length && (
+                        <table className="w-full mt-0.5 ml-2"><tbody>
+                          {x.rows.map((r, k) => <tr key={k}><td className="text-sage-dark pr-2 align-top whitespace-nowrap">{r[0]}</td><td>{r[1]}</td></tr>)}
+                        </tbody></table>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           <button className="text-[11px] text-brand-mid" onClick={() => setSrcOpen((o) => !o)}>{srcOpen ? "▾" : "▸"} {t("Parametri di calcolo")}</button>
           {srcOpen && (
@@ -4021,9 +4346,13 @@ export default function Page() {
               {num(t("Rendimento pompa + motore (%)"), wtwEta, setWtwEta, 1, 30, 95)}
               {num(t("Pendenza del canale (‰)"), canalSlope, setCanalSlope, 0.05, 0.05, 5)}
               {num(t("Ore di pompaggio col sole"), pvSunH, setPvSunH, 0.5, 1, 14)}
+              {num(t("Pendenza della sponda (orizz. : vert.)"), bankSlope, setBankSlope, 0.5, 0.5, 10)}
+              {num(t("Particella da sedimentare (mm)"), settleMm, setSettleMm, 0.02, 0.02, 2)}
+              {num(t("Portata di un filtro (m³/h)"), filterCap, setFilterCap, 50, 10, 5000)}
+              {num(t("Portata di un pozzo (l/s)"), wellQ, setWellQ, 5, 1, 500)}
             </div>
           )}
-          <p className="text-[10px] text-sage-dark leading-snug">{t("Tracciati indicativi in linea retta. Portate e fabbisogno dalla pagina Irrigazione, prevalenza ai pivot dalla pagina Tubazioni, irraggiamento dal clima del sito.")}</p>
+          <p className="text-[10px] text-sage-dark leading-snug">{t("Se non disegni il tracciato si usa la linea retta + 10%. Portate e fabbisogno dalla pagina Irrigazione, prevalenza ai pivot dalla pagina Tubazioni, irraggiamento e mesi irrigui dal clima del sito.")}</p>
         </>)}
       </div>
     );

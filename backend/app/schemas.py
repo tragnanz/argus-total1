@@ -46,6 +46,8 @@ class ProjectPatch(BaseModel):
     client_id: int | None = None
     description: str | None = None
     crop: str | None = None
+    # Unite alle impostazioni esistenti; una chiave a null la rimuove.
+    settings: dict[str, Any] | None = None
 
 
 class ProjectOut(BaseModel):
@@ -55,6 +57,7 @@ class ProjectOut(BaseModel):
     name: str
     description: str | None = None
     crop: str | None = None
+    settings: dict[str, Any] = Field(default_factory=dict)
     created_at: dt.datetime
 
 

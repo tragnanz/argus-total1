@@ -66,7 +66,7 @@ export type MapHandle = {
   setCommentPins: (pins: { lat: number; lng: number; n: number; text: string; done?: boolean }[]) => void;
   // Fonte d'acqua e schema d'impianto (presa, adduttrice, vasca): solo disegno.
   setSourceScheme: (d: { src: number[] | null; line?: number[][] | null; lineKind?: "pipe" | "canal";
-    reservoir?: { center: number[]; r: number } | null; labels?: { src: string; res: string; line: string } } | null) => void;
+    reservoir?: { center: number[]; r: number } | null; points?: { pt: number[]; label: string; tip?: string }[]; labels?: { src: string; res: string; line: string } } | null) => void;
   startMeasure: (cb: (text: string) => void) => void;
   stopMeasure: () => void;
   // Cerchi dal centro: simulazione rapida di pivot (non crea macchine, solo misura).
@@ -849,6 +849,14 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         if (d.reservoir) {
           g.addLayer(L.circle([d.reservoir.center[1], d.reservoir.center[0]], { radius: d.reservoir.r,
             color: "#1d4ed8", weight: 2, fillColor: "#38bdf8", fillOpacity: 0.45 }).bindTooltip(d.labels?.res ?? "", { sticky: true }));
+        }
+        for (const p of d.points ?? []) {
+          const esc = (x: string) => x.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[ch] as string));
+          g.addLayer(L.marker([p.pt[1], p.pt[0]], {
+            icon: L.divIcon({ className: "", iconSize: [30, 20], iconAnchor: [15, 10],
+              html: `<div style="min-width:30px;height:20px;padding:0 5px;border-radius:10px;background:#1d4ed8;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);color:#fff;font:700 11px Inter,system-ui,sans-serif;display:grid;place-items:center">${esc(p.label)}</div>` }),
+            zIndexOffset: 1100,
+          }).bindTooltip(p.tip ?? p.label, { direction: "top", offset: [0, -10] }));
         }
         if (d.src) {
           g.addLayer(L.marker([d.src[1], d.src[0]], {

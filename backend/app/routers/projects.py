@@ -88,6 +88,10 @@ def get_project(project_id: int, db: Session = Depends(get_db), user: User = Dep
     return p
 
 
+def project_settings(p: Project) -> dict:
+    return dict(p.settings)
+
+
 @router.patch("/projects/{project_id}", response_model=ProjectOut)
 def update_project(project_id: int, body: ProjectPatch, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     p = own_project(db, user, project_id)
@@ -97,8 +101,20 @@ def update_project(project_id: int, body: ProjectPatch, db: Session = Depends(ge
             own_client(db, user, data["client_id"])
         except HTTPException:
             raise HTTPException(400, "Cliente inesistente") from None
+    patch_settings = data.pop("settings", None)
     for k, v in data.items():
         setattr(p, k, v)
+    if patch_settings is not None:
+        cur = project_settings(p)
+        for k, v in patch_settings.items():
+            if v is None:
+                cur.pop(k, None)
+            else:
+                cur[k] = v
+        raw = json.dumps(cur, ensure_ascii=False)
+        if len(raw) > 200_000:
+            raise HTTPException(413, "Impostazioni di progetto troppo grandi")
+        p.settings_json = raw
     db.commit(); db.refresh(p)
     return p
 

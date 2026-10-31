@@ -70,11 +70,24 @@ class Project(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Progetto agroindustriale: contesto sintetico utile alle milestone future.
     crop: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Impostazioni di progetto del frontend (JSON): produttore dei pivot, fonte
+    # d'acqua e schema d'impianto, ecc. Chiavi libere, unite a ogni PATCH.
+    settings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
     client: Mapped["Client | None"] = relationship(back_populates="projects")
     areas: Mapped[list["Area"]] = relationship(
         back_populates="project", cascade="all, delete-orphan")
+
+    @property
+    def settings(self) -> dict:
+        """Impostazioni di progetto come dizionario (vuoto se assenti o illeggibili)."""
+        import json
+        try:
+            v = json.loads(self.settings_json or "{}")
+            return v if isinstance(v, dict) else {}
+        except ValueError:
+            return {}
 
 
 class Area(Base):

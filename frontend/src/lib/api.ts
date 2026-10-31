@@ -35,6 +35,7 @@ export type Client = { id: number; name: string; notes?: string | null; created_
 export type Project = {
   id: number; client_id: number | null; name: string;
   description?: string | null; crop?: string | null; created_at: string;
+  settings?: Record<string, unknown>;   // impostazioni di progetto (produttore pivot, fonte d'acqua…)
 };
 export type Area = {
   id: number; project_id: number; name: string;
