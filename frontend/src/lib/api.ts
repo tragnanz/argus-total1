@@ -458,3 +458,5 @@ export async function olympusCall<T>(url: string, tok: { a: string; r: string } 
   }
   return data as T;
 }
+export const updateLayer = (id: number, body: { name?: string; data?: Record<string, unknown> }) =>
+  req<ProjectLayer>(`/api/layers/${id}`, { method: "PATCH", body: JSON.stringify(body) });

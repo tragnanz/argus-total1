@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "node tests/e2e/argus-e2e.mjs"
   },
   "dependencies": {
     "@geoman-io/leaflet-geoman-free": "^2.18.3",

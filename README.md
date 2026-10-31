@@ -204,3 +204,13 @@ sono complete. Possibili sviluppi successivi: export DOCX oltre al PDF, snapshot
 della mappa satellitare nella scheda, energia di pompaggio (prevalenza/kW dal
 DEM), salvataggio di layout e schede lato server, e gli altri prodotti della
 suite (Argus Explorer, Argus Vision).
+
+## Prove automatiche
+
+- **Backend** (PDF del confronto tra varianti): `cd backend && python -m pytest -q tests`
+- **Prova completa nel browser** (Playwright): con backend e frontend avviati,
+  `cd frontend && ARGUS_URL=http://localhost:3124 ARGUS_API=http://localhost:8011 npm run test:e2e`.
+  Crea un progetto di prova e controlla pompe Caprari e cavi, file `.ceres` con il computo
+  per Mercurius (tubi, pezzi speciali, quadri, pesi, planimetria), varianti generate con costi
+  e indicatori, variante scelta e rinomina, Excel e PDF. Su un database già usato servono
+  `ARGUS_EMAIL` e `ARGUS_PASSWORD` di un utente esistente.
