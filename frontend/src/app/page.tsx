@@ -15,7 +15,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.191";
+const REV = "v0.6.192";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -474,7 +474,8 @@ function pivotsFromFC(fc: any, defR: number): { pivots: PivotItem[]; lines: Pipe
       const cen = Array.isArray(pr.center) && pr.center.length === 2 ? pr.center : null;
       pivots.push({ lat: cen ? Number(cen[1]) : lat, lng: cen ? Number(cen[0]) : lng, r: pr.r ? Number(pr.r) : Math.round(r),
         conn: pr.connection, field: pr.field, q: pr.q, p: pr.p,
-        ...(pr.deg != null ? { deg: Number(pr.deg), az: Number(pr.az ?? 0) } : {}), ...(pr.gun ? { gun: Number(pr.gun) } : {}) });
+        ...(pr.deg != null ? { deg: Number(pr.deg), az: Number(pr.az ?? 0) } : {}), ...(pr.gun ? { gun: Number(pr.gun) } : {}),
+        ...(pr.fase ? { phase: Number(pr.fase) } : {}) });
     } else if (g?.type === "LineString") {
       lines.push({ kind: k, coords: g.coordinates, field: f?.properties?.field, dn: f?.properties?.dn, qs: f?.properties?.qs });
     }
@@ -490,7 +491,8 @@ function fcFromModel(pivots: PivotItem[], lines: { kind: string; coords: number[
       ...(pv.q != null ? { q: pv.q } : {}), ...(pv.p != null ? { p: pv.p } : {}),
       // centro e raggio espliciti: col settore il poligono non è più un cerchio
       center: [pv.lng, pv.lat], r: pv.r,
-      ...(pv.deg != null && pv.deg < 360 ? { deg: pv.deg, az: pv.az ?? 0 } : {}), ...(pv.gun ? { gun: pv.gun } : {}) },
+      ...(pv.deg != null && pv.deg < 360 ? { deg: pv.deg, az: pv.az ?? 0 } : {}), ...(pv.gun ? { gun: pv.gun } : {}),
+      ...(pv.phase && pv.phase > 1 ? { fase: pv.phase } : {}) },
     geometry: { type: "Polygon", coordinates: [sectorRing(pv.lat, pv.lng, pv.r, pv.deg ?? 360, pv.az ?? 0)] },
   }));
   for (const ln of lines) {
@@ -1307,6 +1309,10 @@ export default function Page() {
   const [pivotR, setPivotR] = useState(400);    // raggio pivot (parametro proprio della scheda Pivot)
   const [minPivotPct, setMinPivotPct] = useState(100);   // dimensione minima pivot di riempimento bordi (% del raggio); 100 = disattivato
   const [fillFull, setFillFull] = useState(false);       // riempie i vuoti con pivot interi fuori griglia
+  // fasi di realizzazione (vedi assignPhases)
+  const [phaseN, setPhaseN] = useState(2);
+  const [phaseOrderBy, setPhaseOrderBy] = useState<"fonte" | "ovest" | "sud">("fonte");
+  const [phaseColors, setPhaseColors] = useState(true);
   const [demModel, setDemModel] = useState<"COPERNICUS_30" | "COPERNICUS_90">("COPERNICUS_30");   // modello del terreno
   const [demSmooth, setDemSmooth] = useState(100);       // base di levigatura della pendenza (m)
   const [designMode, setDesignMode] = useState<"standard" | "advanced">("standard"); // Systems: standard | avanzata (ottimizza raggio)
@@ -1392,6 +1398,7 @@ export default function Page() {
   const [turnsDay, setTurnsDay] = useState(1);       // giri del pivot al giorno
   const [sprinkBar, setSprinkBar] = useState(1.4);   // pressione richiesta agli irrigatori
   const [latDN, setLatDN] = useState(168);           // diametro della condotta del pivot (mm)
+  const [pivotPointBar, setPivotPointBar] = useState(0.3);   // perdite al punto pivot (gomiti, valvola, giunto)
   const [pivP, setPivP] = useState(2.5);     // pressione richiesta al pivot (bar) — solo come ripiego
   const [vMax, setVMax] = useState(1.8);     // velocità massima in tubazione (m/s)
   const [hwC, setHwC] = useState(140);       // coefficiente di Hazen-Williams (PE/PVC ≈ 140)
@@ -2569,7 +2576,8 @@ export default function Page() {
     const visIdx = pivots.map((_, k) => k).filter((k) => !hiddenPivotFields.has(pivots[k].field ?? -1));
     const fed = fedPivotKeys(pivotLines);
     const visP = visIdx.map((k) => ({ ...pivots[k], unconn: pivotLines.some((l) => l.kind === "pipe") && !fed.has(pKey(pivots[k])),
-      label: pivotLabels ? `${uHa(pvAreaM2(pivots[k]) / 10000, 1)}<br>${fmt(Math.round(pivotFlow(pivots[k])))} l/s` : undefined }));
+      label: pivotLabels ? `${nPhases > 1 && phaseColors ? `F${pivots[k].phase ?? 1} · ` : ""}${uHa(pvAreaM2(pivots[k]) / 10000, 1)}<br>${fmt(Math.round(pivotFlow(pivots[k])))} l/s` : undefined,
+      phaseColor: nPhases > 1 && phaseColors }));
     // Le tubazioni hanno una visibilità propria (oggetto a sé); le altre linee
     // seguono la visibilità del gruppo pivot del loro campo.
     const visL = pivotLines.filter((l) => l.kind === "pipe"
@@ -2632,7 +2640,7 @@ export default function Page() {
       },
     }, pipeSelForShow, waterLinesLL());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pivots, pivotLines, pivotSel, pipeSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses, pivotLabels, mm24, mmDes, hoursDay, imperial]);
+  }, [pivots, pivotLines, pivotSel, pipeSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses, pivotLabels, mm24, mmDes, hoursDay, imperial, phaseColors]);
 
   // Operazioni sul singolo pivot selezionato.
   const selPivot = pivotSel.mode === "single" && pivotSel.idx >= 0 ? pivots[pivotSel.idx] : null;
@@ -3055,12 +3063,96 @@ export default function Page() {
   };
   // Pressione richiesta al centro del pivot: irrigatori + perdita nella condotta
   // del pivot (Hazen-Williams con fattore 0,36 per le uscite multiple).
-  const pivotPressure = (pv: { r: number; q?: number; p?: number }) => {
-    if (pv.p && pv.p > 0) return pv.p;
+  // Listino campate per diametro (indice tubo Ceres: 0 = 10", 1 = 8"5/8, 2 = 6"5/8)
+  // e sbracci per produttore. Zimmatic: nessun listino → si passa solo il raggio.
+  const SPAN_LIST: Record<PivotBrand, { d10: number[]; d8: number[]; d6: number[]; oh: number[] } | null> = {
+    starpivot: { d10: [42.3], d8: [54.0, 48.1, 42.3], d6: [59.8, 54.0, 48.1, 42.3], oh: [5.9, 11.7, 17.6, 23.4] },
+    reinke: { d10: [41.8, 36.0], d8: [53.3, 47.5, 41.8, 36.0], d6: [62.2, 59.1, 53.3, 47.5, 41.8, 36.0], oh: [0] },
+    valley: { d10: [42.7, 41.1, 35.1], d8: [54.9, 48.8, 42.7, 41.1, 35.1], d6: [68.6, 62.5, 57.0, 54.9, 48.8, 42.7, 41.1, 35.1], oh: [0] },
+    rkd: { d10: [41.7, 35.8], d8: [53.5, 47.6, 41.7, 35.8], d6: [65.3, 59.4, 53.5, 47.6, 41.7, 35.8], oh: [0] },
+    zimmatic: null,
+  };
+  // Diametri interni dei tubi delle campate (m) per il controllo della velocità.
+  const SPAN_ID = [0.2474, 0.2135, 0.1628];
+  type Span = { pipe: number; len: number };
+  type Comp = { spans: Span[]; oh: number; total: number };
+  // Campate da 6"5/8 per coprire esattamente S: minimo di scarto (m) + 2,5 per
+  // campata + 0,5 per lunghezza diversa (al più 3 lunghezze diverse).
+  function fillSpans(S: number, lens: number[]): { lens: number[]; tot: number; cost: number } | null {
+    if (S <= 1) return { lens: [], tot: 0, cost: Math.abs(S) };
+    const mx = Math.max(...lens), mn = Math.min(...lens);
+    let best: { lens: number[]; tot: number; cost: number } | null = null;
+    for (let n = Math.max(1, Math.floor(S / mx)); n <= Math.ceil(S / mn); n++)
+      for (let i1 = 0; i1 < lens.length; i1++) for (let i2 = i1; i2 < lens.length; i2++) for (let i3 = i2; i3 < lens.length; i3++)
+        for (let a = 0; a <= n; a++) for (let b = 0; a + b <= n; b++) {
+          const c = n - a - b;
+          if ((i2 === i1 && b) || (i3 === i2 && c)) continue;
+          const tot = a * lens[i1] + b * lens[i2] + c * lens[i3];
+          const kinds = (a ? 1 : 0) + (b ? 1 : 0) + (c ? 1 : 0);
+          const cost = Math.abs(tot - S) + 2.5 * n + 0.5 * kinds;
+          if (!best || cost < best.cost) best = { lens: [...Array(a).fill(lens[i1]), ...Array(b).fill(lens[i2]), ...Array(c).fill(lens[i3])].sort((x, y) => y - x), tot, cost };
+        }
+    return best;
+  }
+  // Composizione con i DIAMETRI: dal centro la portata che resta nel tubo è
+  // Q·(1 − (x/Rb)²) (Rb = raggio bagnato, con l'irrigatore finale); ogni campata
+  // prende il tubo più piccolo con velocità ≤ vMax all'ingresso. Prima i 10",
+  // poi gli 8"5/8 (campate più lunghe del listino), il resto in 6"5/8.
+  const spanMemo = useRef(new Map<string, Comp | null>());
+  // linear = macchina lineare alimentata in testa: la portata cala linearmente, Q·(1 − x/L).
+  function spanComposition(pv: { r: number; gun?: number; q?: number; deg?: number }, brand: PivotBrand, linear = false): Comp | null {
+    const Q = pivotFlow(pv) / 1000, R = Math.round(pv.r);
+    const mk = `${brand}|${R}|${Math.round((pv.gun ?? 0))}|${Q.toFixed(4)}|${spanVmax}|${linear ? 1 : 0}`;
+    if (spanMemo.current.has(mk)) return spanMemo.current.get(mk)!;
+    const L = SPAN_LIST[brand];
+    let res: Comp | null = null;
+    if (L) {
+      const Rb = R + Math.max(0, pv.gun ?? 0);
+      const cap = SPAN_ID.map((d) => spanVmax * Math.PI * d * d / 4);              // m³/s per diametro
+      const xNeed = (c: number) => (Q > c ? (linear ? Rb * (1 - c / Q) : Rb * Math.sqrt(1 - c / Q)) : 0);   // fin dove serve il tubo più grande
+      const x10 = xNeed(cap[1]), x8 = xNeed(cap[2]);
+      let best: (Comp & { cost: number }) | null = null;
+      for (const oh of L.oh) for (const l10 of L.d10) for (const l8 of L.d8) {
+        const spans: Span[] = []; let pos = 0;
+        while (pos < x10 && pos + oh < R - 1) { spans.push({ pipe: 0, len: l10 }); pos += l10; }
+        while (pos < x8 && pos + oh < R - 1) { spans.push({ pipe: 1, len: l8 }); pos += l8; }
+        const rest = fillSpans(R - oh - pos, L.d6); if (!rest) continue;
+        const tot = pos + rest.tot + oh;
+        const cost = Math.abs(tot - R) + 2.5 * (spans.length + rest.lens.length) + 0.5 * new Set(spans.map((x) => x.len)).size + (rest.cost - Math.abs(R - oh - pos - rest.tot) - 2.5 * rest.lens.length);
+        if (!best || cost < best.cost) best = { spans: [...spans, ...rest.lens.map((len) => ({ pipe: 2, len }))], oh, total: tot, cost };
+      }
+      if (best) res = { spans: best.spans, oh: best.oh, total: best.total };
+    }
+    spanMemo.current.set(mk, res);
+    return res;
+  }
+  // Pressione all'ingresso del pivot: irrigatori + perdite nelle campate (con i
+  // diametri veri del listino e la portata che cala lungo la macchina) + punto
+  // pivot (gomiti, valvola, giunto). Senza listino (Zimmatic): una condotta
+  // unica di diametro latDN con il fattore 0,36 delle uscite distribuite.
+  function pivotPressureParts(pv: { r: number; q?: number; p?: number; gun?: number; deg?: number }) {
     const Q = pivotFlow(pv) / 1000;                          // m³/s
-    const D = latDN / 1000;
-    const hf = 0.36 * (10.67 * pv.r * Math.pow(Q, 1.852)) / (Math.pow(130, 1.852) * Math.pow(D, 4.87));
-    return sprinkBar + hf / 10.2;                            // bar
+    let hf = 0, how: "spans" | "single" = "single";
+    const c = spanComposition(pv, pivotBrand);
+    if (c && Q > 0) {
+      const Rb = pv.r + Math.max(0, pv.gun ?? 0);
+      let x = 0; how = "spans";
+      for (const sp of c.spans) {
+        const xm = x + sp.len / 2, q = Q * Math.max(0, 1 - (xm / Rb) ** 2);
+        const D = SPAN_ID[sp.pipe];
+        hf += (10.67 * sp.len * Math.pow(q, 1.852)) / (Math.pow(130, 1.852) * Math.pow(D, 4.87));
+        x += sp.len;
+      }
+    } else if (Q > 0) {
+      const D = latDN / 1000;
+      hf = 0.36 * (10.67 * pv.r * Math.pow(Q, 1.852)) / (Math.pow(130, 1.852) * Math.pow(D, 4.87));
+    }
+    const spansBar = hf / 10.2;
+    return { sprink: sprinkBar, spans: spansBar, point: Math.max(0, pivotPointBar), total: sprinkBar + spansBar + Math.max(0, pivotPointBar), how };
+  }
+  const pivotPressure = (pv: { r: number; q?: number; p?: number; gun?: number; deg?: number }) => {
+    if (pv.p && pv.p > 0) return pv.p;
+    return pivotPressureParts(pv).total;                     // bar
   };
 
   // ---- IDRAULICA: diametri delle tubazioni --------------------------------
@@ -3491,87 +3583,28 @@ export default function Page() {
   // formato del link #m=). Campi "ff" e macchine "p" ad array posizionali.
   // Le campate sono composte con il listino del produttore e i diametri scelti
   // da Argus (velocità nei tubi), quindi marcate come scelte ([12] = 1).
-  // Listino campate per diametro (indice tubo Ceres: 0 = 10", 1 = 8"5/8, 2 = 6"5/8)
-  // e sbracci per produttore. Zimmatic: nessun listino → si passa solo il raggio.
-  const SPAN_LIST: Record<PivotBrand, { d10: number[]; d8: number[]; d6: number[]; oh: number[] } | null> = {
-    starpivot: { d10: [42.3], d8: [54.0, 48.1, 42.3], d6: [59.8, 54.0, 48.1, 42.3], oh: [5.9, 11.7, 17.6, 23.4] },
-    reinke: { d10: [41.8, 36.0], d8: [53.3, 47.5, 41.8, 36.0], d6: [62.2, 59.1, 53.3, 47.5, 41.8, 36.0], oh: [0] },
-    valley: { d10: [42.7, 41.1, 35.1], d8: [54.9, 48.8, 42.7, 41.1, 35.1], d6: [68.6, 62.5, 57.0, 54.9, 48.8, 42.7, 41.1, 35.1], oh: [0] },
-    rkd: { d10: [41.7, 35.8], d8: [53.5, 47.6, 41.7, 35.8], d6: [65.3, 59.4, 53.5, 47.6, 41.7, 35.8], oh: [0] },
-    zimmatic: null,
-  };
-  // Diametri interni dei tubi delle campate (m) per il controllo della velocità.
-  const SPAN_ID = [0.2474, 0.2135, 0.1628];
-  type Span = { pipe: number; len: number };
-  type Comp = { spans: Span[]; oh: number; total: number };
-  // Campate da 6"5/8 per coprire esattamente S: minimo di scarto (m) + 2,5 per
-  // campata + 0,5 per lunghezza diversa (al più 3 lunghezze diverse).
-  function fillSpans(S: number, lens: number[]): { lens: number[]; tot: number; cost: number } | null {
-    if (S <= 1) return { lens: [], tot: 0, cost: Math.abs(S) };
-    const mx = Math.max(...lens), mn = Math.min(...lens);
-    let best: { lens: number[]; tot: number; cost: number } | null = null;
-    for (let n = Math.max(1, Math.floor(S / mx)); n <= Math.ceil(S / mn); n++)
-      for (let i1 = 0; i1 < lens.length; i1++) for (let i2 = i1; i2 < lens.length; i2++) for (let i3 = i2; i3 < lens.length; i3++)
-        for (let a = 0; a <= n; a++) for (let b = 0; a + b <= n; b++) {
-          const c = n - a - b;
-          if ((i2 === i1 && b) || (i3 === i2 && c)) continue;
-          const tot = a * lens[i1] + b * lens[i2] + c * lens[i3];
-          const kinds = (a ? 1 : 0) + (b ? 1 : 0) + (c ? 1 : 0);
-          const cost = Math.abs(tot - S) + 2.5 * n + 0.5 * kinds;
-          if (!best || cost < best.cost) best = { lens: [...Array(a).fill(lens[i1]), ...Array(b).fill(lens[i2]), ...Array(c).fill(lens[i3])].sort((x, y) => y - x), tot, cost };
-        }
-    return best;
-  }
-  // Composizione con i DIAMETRI: dal centro la portata che resta nel tubo è
-  // Q·(1 − (x/Rb)²) (Rb = raggio bagnato, con l'irrigatore finale); ogni campata
-  // prende il tubo più piccolo con velocità ≤ vMax all'ingresso. Prima i 10",
-  // poi gli 8"5/8 (campate più lunghe del listino), il resto in 6"5/8.
-  const spanMemo = useRef(new Map<string, Comp | null>());
-  // linear = macchina lineare alimentata in testa: la portata cala linearmente, Q·(1 − x/L).
-  function spanComposition(pv: { r: number; gun?: number; q?: number; deg?: number }, brand: PivotBrand, linear = false): Comp | null {
-    const Q = pivotFlow(pv) / 1000, R = Math.round(pv.r);
-    const mk = `${brand}|${R}|${Math.round((pv.gun ?? 0))}|${Q.toFixed(4)}|${spanVmax}|${linear ? 1 : 0}`;
-    if (spanMemo.current.has(mk)) return spanMemo.current.get(mk)!;
-    const L = SPAN_LIST[brand];
-    let res: Comp | null = null;
-    if (L) {
-      const Rb = R + Math.max(0, pv.gun ?? 0);
-      const cap = SPAN_ID.map((d) => spanVmax * Math.PI * d * d / 4);              // m³/s per diametro
-      const xNeed = (c: number) => (Q > c ? (linear ? Rb * (1 - c / Q) : Rb * Math.sqrt(1 - c / Q)) : 0);   // fin dove serve il tubo più grande
-      const x10 = xNeed(cap[1]), x8 = xNeed(cap[2]);
-      let best: (Comp & { cost: number }) | null = null;
-      for (const oh of L.oh) for (const l10 of L.d10) for (const l8 of L.d8) {
-        const spans: Span[] = []; let pos = 0;
-        while (pos < x10 && pos + oh < R - 1) { spans.push({ pipe: 0, len: l10 }); pos += l10; }
-        while (pos < x8 && pos + oh < R - 1) { spans.push({ pipe: 1, len: l8 }); pos += l8; }
-        const rest = fillSpans(R - oh - pos, L.d6); if (!rest) continue;
-        const tot = pos + rest.tot + oh;
-        const cost = Math.abs(tot - R) + 2.5 * (spans.length + rest.lens.length) + 0.5 * new Set(spans.map((x) => x.len)).size + (rest.cost - Math.abs(R - oh - pos - rest.tot) - 2.5 * rest.lens.length);
-        if (!best || cost < best.cost) best = { spans: [...spans, ...rest.lens.map((len) => ({ pipe: 2, len }))], oh, total: tot, cost };
-      }
-      if (best) res = { spans: best.spans, oh: best.oh, total: best.total };
-    }
-    spanMemo.current.set(mk, res);
-    return res;
-  }
   // ---- COMPUTO METRICO (solo quantità) ---------------------------------------
   // Voci del progetto così com'è sulla mappa: pivot e campate, tubazioni per
   // diametro, canali, strade di servizio, pompe e opere della fonte d'acqua,
   // fotovoltaico. Niente prezzi: è il computo delle quantità.
   type CRow = { cat: string; item: string; qty: number | null; unit: string; note?: string };
-  function computoRows(): CRow[] {
+  // phase: solo le voci di quella fase di realizzazione; le opere comuni (rete,
+  // fonte d'acqua, stazioni, fotovoltaico) stanno nella fase 1.
+  function computoRows(phase?: number): CRow[] {
     const R: CRow[] = [];
+    const pvs = phase ? pivots.filter((p) => (p.phase ?? 1) === phase) : pivots;
+    const common = !phase || phase === 1;
     const lenOf = (ln: number[][]) => ln.reduce((a, p, i) => {
       if (!i) return 0; const q = ln[i - 1]; const kx = 111320 * Math.cos(((p[1] + q[1]) / 2) * Math.PI / 180);
       return a + Math.hypot((p[0] - q[0]) * kx, (p[1] - q[1]) * 110540);
     }, 0);
     const cPiv = tx("Pivot"), PIPE = ['10"', '8"5/8', '6"5/8'];
-    if (pivots.length) {
-      const ha = pivots.reduce((a, p) => a + pvAreaM2(p) / 10000, 0);
-      R.push({ cat: cPiv, item: `${tx("Pivot")} ${PIVOT_BRANDS[pivotBrand]}`, qty: pivots.length, unit: tx("n."), note: `${tx("Superficie irrigata")} ${fx(ha, { maximumFractionDigits: 1 })} ha` });
+    if (pvs.length) {
+      const ha = pvs.reduce((a, p) => a + pvAreaM2(p) / 10000, 0);
+      R.push({ cat: cPiv, item: `${tx("Pivot")} ${PIVOT_BRANDS[pivotBrand]}`, qty: pvs.length, unit: tx("n."), note: `${tx("Superficie irrigata")} ${fx(ha, { maximumFractionDigits: 1 })} ha` });
       const spans = new Map<string, number>(), ohs = new Map<number, number>();
       let mLen = 0, noComp = 0;
-      for (const pv of pivots) {
+      for (const pv of pvs) {
         const c = spanComposition(pv, pivotBrand);
         if (!c) { noComp++; mLen += pv.r; continue; }
         mLen += c.total;
@@ -3585,20 +3618,22 @@ export default function Page() {
       [...ohs.entries()].sort((a, b) => a[0] - b[0]).forEach(([len, n]) => R.push({ cat: cPiv, item: tx("Sbraccio da {l} m", { l: fx(len, { maximumFractionDigits: 1 }) }), qty: n, unit: tx("n.") }));
       if (noComp) R.push({ cat: cPiv, item: tx("Pivot da comporre in Ceres (listino non disponibile)"), qty: noComp, unit: tx("n.") });
       R.push({ cat: cPiv, item: tx("Lunghezza totale delle macchine"), qty: Math.round(mLen), unit: "m" });
-      const nGun = pivots.filter((p) => p.gun && p.gun > 0).length;
+      const nGun = pvs.filter((p) => p.gun && p.gun > 0).length;
       if (nGun) R.push({ cat: cPiv, item: tx("Irrigatore finale"), qty: nGun, unit: tx("n.") });
-      const nSec = pivots.filter((p) => (p.deg ?? 360) < 360).length;
+      const nSec = pvs.filter((p) => (p.deg ?? 360) < 360).length;
       if (nSec) R.push({ cat: cPiv, item: tx("Pivot a settore (con fermi di fine corsa)"), qty: nSec, unit: tx("n.") });
     }
     // Lineari, rotoloni e goccia salvati sui campi
     for (const [k, d] of Object.entries(sysDesigns)) {
       const f = fieldOfKey(k); if (!f) continue;
+      if (phase && (d.phase ?? 1) !== phase) continue;
       if (d.sys === "lineari") {
         const r = calcLin(f, d.p as LinP), cL = `${tx("Lineari")} · ${f.name}`;
         R.push({ cat: cL, item: `${tx("Lineari")} ${PIVOT_BRANDS[pivotBrand]}`, qty: r.machines.length, unit: tx("n."), note: `${fx(r.ha, { maximumFractionDigits: 1 })} ha · ${fx(Math.round(r.qLs))} l/s` });
         const spans = new Map<string, number>();
         for (const m of r.machines) {
           R.push({ cat: cL, item: `L${m.i}`, qty: Math.round(m.L), unit: "m", note: `${tx("corsa")} ${fx(Math.round(m.travel))} m` });
+          R.push({ cat: cL, item: tx("Condotta con idranti DN {d}", { d: m.dn }), qty: Math.round(m.travel), unit: "m", note: `${tx("Prevalenza all'ingresso del campo")} ${fx(Math.round(m.head))} m` });
           const c = spanComposition({ r: m.L, q: m.qLs }, pivotBrand, true);
           for (const sp of c?.spans ?? []) { const kk = `${sp.pipe}|${sp.len}`; spans.set(kk, (spans.get(kk) ?? 0) + 1); }
         }
@@ -3610,14 +3645,18 @@ export default function Page() {
         const p = d.p as RotP, r = calcRot(f, p), cR = `${tx("Rotoloni")} · ${f.name}`;
         R.push({ cat: cR, item: tx("Rotolone con tubo da {l} m e irrigatore da {q} m³/h", { l: fx(p.hoseLen), q: fx(p.gunQ) }), qty: r.nMach, unit: tx("n."), note: `${fx(r.coveredHa, { maximumFractionDigits: 1 })} ha · ${fx(r.lanes)} ${tx("corsie")} · ${fx(r.runs.length)} ${tx("tirate")}` });
         R.push({ cat: cR, item: tx("Portata totale"), qty: Math.round(r.qLs), unit: "l/s" });
+        R.push({ cat: cR, item: tx("Condotta di testata DN {d}", { d: r.dn }), qty: r.mainLen, unit: "m", note: `${tx("Prevalenza all'ingresso del campo")} ${fx(Math.round(r.head))} m` });
+        R.push({ cat: cR, item: tx("Idranti"), qty: r.hydrants, unit: tx("n.") });
       } else {
         const p = d.p as DripP, r = calcDrip(f, p), cD = `${tx("Goccia")} · ${f.name}`;
         R.push({ cat: cD, item: tx("Ali gocciolanti"), qty: Math.round(r.latM), unit: "m", note: `${tx("Interfila delle ali (m)")} ${fx(p.latSp)}` });
         R.push({ cat: cD, item: tx("Gocciolatori"), qty: Math.round(r.emitters), unit: tx("n."), note: `${fx(p.emQ)} l/h · ${fx(p.emSp)} m` });
-        R.push({ cat: cD, item: tx("Condotte secondarie"), qty: Math.round(r.subLen), unit: "m" });
+        R.push({ cat: cD, item: tx("Condotte secondarie"), qty: Math.round(r.subLen), unit: "m", note: `DN ${r.dnSub}` });
+        R.push({ cat: cD, item: tx("Gruppo di filtrazione e testata"), qty: 1, unit: tx("n."), note: `${fx(Math.round(r.qLs))} l/s · ${tx("Prevalenza all'ingresso del campo")} ${fx(Math.round(r.head))} m` });
         R.push({ cat: cD, item: tx("Valvole di settore"), qty: r.nSec, unit: tx("n."), note: `${fx(Math.round(r.qLs))} l/s ${tx("per settore")}` });
       }
     }
+    if (!common) return R;
     const cNet = tx("Rete di adduzione");
     if (hydra && hydra.byDn.length) {
       for (const [dn, m] of [...hydra.byDn].sort((a, b) => a[0] - b[0])) R.push({ cat: cNet, item: tx("Tubazione DN {d}", { d: dn }), qty: Math.round(m), unit: "m" });
@@ -3673,10 +3712,17 @@ export default function Page() {
     const today = new Date().toISOString().slice(0, 10);
     const sheet: (string | number | null)[][] = [
       [t("Computo metrico")], [`${cname ? cname + " · " : ""}${pname}`], [today], [],
-      [t("Categoria"), t("Voce"), t("Quantità"), t("Unità"), t("Note")],
-      ...rows.map((r) => [r.cat, r.item, r.qty, r.unit, r.note ?? ""]),
     ];
-    const blob = await buildXlsx(t("Computo metrico"), sheet, { boldRows: [0, 4], widths: [28, 52, 12, 8, 70] });
+    const bold = [0];
+    const block = (title: string, rr: CRow[]) => {
+      bold.push(sheet.length); sheet.push([title]);
+      bold.push(sheet.length); sheet.push([t("Categoria"), t("Voce"), t("Quantità"), t("Unità"), t("Note")]);
+      for (const r of rr) sheet.push([r.cat, r.item, r.qty, r.unit, r.note ?? ""]);
+      sheet.push([]);
+    };
+    if (nPhases > 1) for (let ph = 1; ph <= nPhases; ph++) block(`${t("Fase")} ${ph}${ph === 1 ? ` (${t("con le opere comuni")})` : ""}`, computoRows(ph));
+    block(nPhases > 1 ? t("Totale") : t("Computo metrico"), rows);
+    const blob = await buildXlsx(t("Computo metrico"), sheet, { boldRows: bold, widths: [28, 52, 12, 8, 70] });
     saveBlob(blob, `${safe(pname)}_computo.xlsx`);
   }
   function exportCeres() {
@@ -3902,7 +3948,7 @@ export default function Page() {
   type LinP = { maxLen: number; minTravel: number; az: number | null };
   type RotP = { throw: number; gunQ: number; spacingPct: number; hoseLen: number; depth: number; az: number | null };
   type DripP = { latSp: number; emSp: number; emQ: number; latMax: number; sectors: number; az: number | null };
-  type SysDesign = { sys: SysKind; p: LinP | RotP | DripP };
+  type SysDesign = { sys: SysKind; p: LinP | RotP | DripP; phase?: number };
   const LIN_DEF: LinP = { maxLen: 600, minTravel: 200, az: null };
   const ROT_DEF: RotP = { throw: 40, gunQ: 40, spacingPct: 70, hoseLen: 350, depth: 30, az: null };
   const DRIP_DEF: DripP = { latSp: 1.5, emSp: 0.3, emQ: 1.0, latMax: 120, sectors: 0, az: null };
@@ -3911,13 +3957,77 @@ export default function Page() {
   const [dripP, setDripP] = useState<DripP>(DRIP_DEF);
   const [sysDesigns, setSysDesigns] = useState<Record<string, SysDesign>>({});   // chiave: a<area salvata> o f<campo>
   const sysKey = (f: Field) => (f.savedId != null ? `a${f.savedId}` : `f${f.id}`);
+  // ---- FASI DI REALIZZAZIONE ----
+  // Pivot e sistemi dei campi si dividono in N fasi di superficie simile,
+  // nell'ordine scelto (dalla fonte d'acqua, da ovest a est, da sud a nord).
+  const nPhases = Math.max(1, ...pivots.map((p) => p.phase ?? 1), ...Object.values(sysDesigns).map((d) => d.phase ?? 1));
+  function assignPhases() {
+    type It = { kind: "pv" | "sys"; idx: number | string; pt: number[]; ha: number };
+    const items: It[] = pivots.map((p, i) => ({ kind: "pv", idx: i, pt: [p.lng, p.lat], ha: pvAreaM2(p) / 10000 }));
+    for (const [k, d] of Object.entries(sysDesigns)) {
+      const f = fieldOfKey(k); if (!f) continue;
+      const ring = f.geom.coordinates[0];
+      const c = [ring.reduce((a, q) => a + q[0], 0) / ring.length, ring.reduce((a, q) => a + q[1], 0) / ring.length];
+      items.push({ kind: "sys", idx: k, pt: c, ha: ringAreaHa(f.geom.coordinates) });
+      void d;
+    }
+    if (!items.length) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
+    const water = waterLinesLL();
+    const origin = srcPt ?? (water[0]?.[0] ?? null);
+    const key = (it: It) => phaseOrderBy === "ovest" ? it.pt[0] : phaseOrderBy === "sud" ? it.pt[1]
+      : origin ? Math.hypot((it.pt[0] - origin[0]) * Math.cos((it.pt[1] * Math.PI) / 180), it.pt[1] - origin[1]) : it.pt[0];
+    items.sort((a, b) => key(a) - key(b));
+    const tot = items.reduce((a, x) => a + x.ha, 0), n = Math.max(1, Math.min(10, phaseN));
+    let acc = 0;
+    const phOf = new Map<string, number>();
+    for (const it of items) {
+      const ph = Math.min(n, 1 + Math.floor(((acc + it.ha / 2) / Math.max(1e-9, tot)) * n));
+      acc += it.ha; phOf.set(`${it.kind}|${it.idx}`, ph);
+    }
+    commitPivots(pivots.map((p, i) => ({ ...p, phase: phOf.get(`pv|${i}`) ?? 1 })));
+    setSysDesigns((ds) => Object.fromEntries(Object.entries(ds).map(([k, d]) => [k, { ...d, phase: phOf.get(`sys|${k}`) ?? 1 }])));
+    setMsg(t("Divisi in {n} fasi ✓", { n }));
+  }
+  function phaseSummary() {
+    const out: { ph: number; nPiv: number; ha: number; qLs: number; sys: number }[] = [];
+    for (let ph = 1; ph <= nPhases; ph++) {
+      const pv = pivots.filter((p) => (p.phase ?? 1) === ph);
+      const ds = Object.entries(sysDesigns).filter(([, d]) => (d.phase ?? 1) === ph);
+      let ha = pv.reduce((a, p) => a + pvAreaM2(p) / 10000, 0), q = pv.reduce((a, p) => a + pivotFlow(p), 0);
+      for (const [k] of ds) { const f = fieldOfKey(k); if (f) { ha += ringAreaHa(f.geom.coordinates); } }
+      out.push({ ph, nPiv: pv.length, ha, qLs: q, sys: ds.length });
+    }
+    return out;
+  }
   const fieldOfKey = (k: string) => fields.find((f) => sysKey(f) === k) ?? null;
   const ringOf = (f: Field) => f.geom.coordinates[0] as SysLL[];
+  // Idraulica dei sistemi nel campo: diametro commerciale dalla velocità
+  // massima, perdite Hazen-Williams (F = fattore delle uscite distribuite).
+  const hwLoss = (qLs: number, Dm: number, Lm: number, C = hwC, F = 1) =>
+    qLs > 0 ? F * (10.67 * Lm * Math.pow(qLs / 1000, 1.852)) / (Math.pow(C, 1.852) * Math.pow(Dm, 4.87)) : 0;
+  const dnFor = (qLs: number) => {
+    const need = Math.sqrt((4 * (qLs / 1000)) / (Math.PI * vMax)) * 1000;
+    return DN_LIST.find((d) => d >= need) ?? DN_LIST[DN_LIST.length - 1];
+  };
+  const DN_ID = (dn: number) => dn * 0.88 / 1000;            // diametro interno PE/PVC ≈ 88% del DN
+  const r0 = (x: number) => Math.round(x);
   function calcLin(f: Field, p: LinP) {
     const L = linearLayout(ringOf(f), { maxLen: p.maxLen, minTravel: p.minTravel, az: p.az });
     const hd = Math.max(1, Math.min(24, hoursDay));
-    const machines = L.machines.map((m) => ({ ...m, qLs: (m.areaHa * 10000 * mmDes) / (hd * 3600) }));
-    return { ...L, machines, ha: machines.reduce((a, m) => a + m.areaHa, 0), qLs: machines.reduce((a, m) => a + m.qLs, 0) };
+    const machines = L.machines.map((m) => {
+      const qLs = (m.areaHa * 10000 * mmDes) / (hd * 3600);
+      // macchina: irrigatori + perdite nelle campate (portata che cala linearmente) + 0,3 bar
+      const c = spanComposition({ r: m.L, q: qLs }, pivotBrand, true);
+      let hfSpan = 0, x = 0;
+      if (c) for (const sp of c.spans) { const q = qLs * Math.max(0, 1 - (x + sp.len / 2) / m.L); hfSpan += hwLoss(q, SPAN_ID[sp.pipe], sp.len, 130); x += sp.len; }
+      else hfSpan = hwLoss(qLs, latDN / 1000, m.L, 130, 0.36);
+      const pMach = sprinkBar + hfSpan / 10.2 + pivotPointBar + 0.5;     // + 0,5 bar di tubo flessibile e attacco
+      // condotta con idranti lungo il bordo della corsa: caso peggiore, macchina in fondo
+      const dn = dnFor(qLs), hfMain = hwLoss(qLs, DN_ID(dn), m.travel);
+      return { ...m, qLs, pMach, dn, hfMain, head: pMach * 10.2 + hfMain };
+    });
+    return { ...L, machines, ha: machines.reduce((a, m) => a + m.areaHa, 0), qLs: machines.reduce((a, m) => a + m.qLs, 0),
+      head: machines.reduce((a, m) => Math.max(a, m.head), 0) };
   }
   function calcRot(f: Field, p: RotP) {
     const spacing = 2 * p.throw * p.spacingPct / 100;
@@ -3927,7 +4037,20 @@ export default function Page() {
     const runH = L.runs.map((r) => (r.areaHa * 10 * p.depth) / Math.max(1, p.gunQ));   // ore per tirata
     const totH = runH.reduce((a, x) => a + x, 0);
     const nMach = Math.max(1, Math.ceil(totH / (hd * cycleDays)));
-    return { ...L, spacing, cycleDays, totH, nMach, qLs: (nMach * p.gunQ) / 3.6, rateMmH: (p.gunQ / Math.max(1, Math.PI * p.throw * p.throw)) * 1000 };
+    const qLs = (nMach * p.gunQ) / 3.6, q1 = p.gunQ / 3.6;
+    // tubo PE della macchina: il più piccolo con velocità ≤ 2,5 m/s
+    const HOSE = [75, 82, 90, 100, 110, 120, 125, 140];
+    const hoseMm = HOSE.find((d) => (q1 / 1000) / (Math.PI * (d / 1000) ** 2 / 4) <= 2.5) ?? HOSE[HOSE.length - 1];
+    const hfHose = hwLoss(q1, hoseMm / 1000, p.hoseLen, 140);
+    const pGun = 4.5;                                                            // bar al cannone
+    const hHyd = pGun * 10.2 + hfHose + 10.2;                                    // + 1 bar di turbina e carrello
+    // condotta con idranti in testata: una per corsia, tutte le macchine in fondo (caso peggiore)
+    const mainLen = r0(L.lanes * spacing), dn = dnFor(qLs), hfMain = hwLoss(qLs, DN_ID(dn), mainLen);
+    const firsts = new Map<number, typeof L.runs[number]>();
+    for (const run of L.runs) { const f0 = firsts.get(run.lane); if (!f0 || run.y0 < f0.y0) firsts.set(run.lane, run); }
+    const headland = [...firsts.entries()].sort((a, b) => a[0] - b[0]).map(([, run]) => run.axis[0]);
+    return { ...L, spacing, cycleDays, totH, nMach, qLs, rateMmH: (p.gunQ / Math.max(1, Math.PI * p.throw * p.throw)) * 1000,
+      hoseMm, hfHose, pGun, hHyd, mainLen, dn, hfMain, head: hHyd + hfMain, hydrants: L.lanes, headland };
   }
   function calcDrip(f: Field, p: DripP) {
     const rate = p.emQ / Math.max(0.01, p.latSp * p.emSp);                      // mm/h
@@ -3938,8 +4061,19 @@ export default function Page() {
     const L = dripLayout(ringOf(f), { latMax: p.latMax, nSectors: nSec, az: p.az });
     const latM = (L.fieldHa * 10000) / Math.max(0.1, p.latSp);
     const maxSecHa = L.sectors.reduce((a, s) => Math.max(a, s.areaHa), 0);
-    return { ...L, rate, hSec, nSec, auto, latM, emitters: latM / Math.max(0.05, p.emSp), qLs: (maxSecHa * 10000 * rate) / 3600,
-      hoursUsed: hSec * nSec, ok: hSec * nSec <= hd + 1e-6 };
+    const qLs = (maxSecHa * 10000 * rate) / 3600;
+    // ala gocciolante Ø16 (interno 13,6 mm): perdite con F = 0,36 (uscite distribuite)
+    const qLat = (p.latMax / Math.max(0.05, p.emSp)) * p.emQ / 3600;           // l/s
+    const hfLat = hwLoss(qLat, 0.0136, p.latMax, 140, 0.36);
+    // secondaria: alimenta ali su due lati; portata del settore divisa tra le sue secondarie
+    const nSubSec = Math.max(1, Math.round(L.submains.length * maxSecHa / Math.max(1e-9, L.fieldHa)));
+    const qSub = qLs / nSubSec, subLen = L.submains.length ? L.subLen / L.submains.length : 0;
+    const dnSub = dnFor(qSub), hfSub = hwLoss(qSub, DN_ID(dnSub), subLen, 140, 0.36);
+    const dnMain = dnFor(qLs);
+    const pEm = 1.0;                                                             // bar al gocciolatore
+    const head = pEm * 10.2 + hfLat + hfSub + 7;                                 // + filtri 5 m e valvola di settore 2 m
+    return { ...L, rate, hSec, nSec, auto, latM, emitters: latM / Math.max(0.05, p.emSp), qLs,
+      hoursUsed: hSec * nSec, ok: hSec * nSec <= hd + 1e-6, qLat, hfLat, nSubSec, qSub, dnSub, hfSub, dnMain, pEm, head };
   }
   // Disegno: progetti salvati di tutti i campi + anteprima del campo attivo.
   function sysDrawItems(): { polys: { ring: number[][]; color: string; label?: string; dashed?: boolean }[]; lines: { coords: number[][]; color: string; dashed?: boolean; weight?: number }[] } {
@@ -3954,6 +4088,7 @@ export default function Page() {
       } else if (d.sys === "rotoloni") {
         const r = calcRot(f, d.p as RotP);
         for (const run of r.runs) { polys.push({ ring: run.ring, color: "#f0b429", dashed: preview }); lines.push({ coords: run.axis, color: "#b7791f", weight: 1.5 }); }
+        if (r.headland.length >= 2) lines.push({ coords: r.headland, color: "#1d4ed8", weight: 3 });
       } else {
         const r = calcDrip(f, d.p as DripP);
         const pal = ["#4CAF4F", "#20aae2", "#87bf59", "#f0b429", "#a855f7", "#ef4444"];
@@ -4018,10 +4153,12 @@ export default function Page() {
           [t("Superficie irrigata"), `${fmt(r.ha, { maximumFractionDigits: 1 })} ha / ${fmt(r.fieldHa, { maximumFractionDigits: 1 })} ha`],
           [t("Portata totale"), `${fmt(Math.round(r.qLs))} l/s`],
           [t("Direzione di marcia"), `${fmt(Math.round(r.az))}°`],
+          [t("Pressione alla macchina"), `${fmt(Math.max(...r.machines.map((m) => m.pMach), 0), { maximumFractionDigits: 2 })} bar`],
+          [t("Prevalenza all'ingresso del campo"), `${fmt(Math.round(r.head))} m`],
         ])}
         <div className="text-[11px] text-sage-dark space-y-0.5">
           {r.machines.map((m, i) => (
-            <div key={i}>• L{m.i}: <b>{fmt(Math.round(m.L))} m</b> × {t("corsa")} {fmt(Math.round(m.travel))} m · {fmt(m.areaHa, { maximumFractionDigits: 1 })} ha · {fmt(Math.round(m.qLs))} l/s{c[i] ? ` · ${c[i]!.spans.length} ${t("campate")}` : ""}</div>
+            <div key={i}>• L{m.i}: <b>{fmt(Math.round(m.L))} m</b> × {t("corsa")} {fmt(Math.round(m.travel))} m · {fmt(m.areaHa, { maximumFractionDigits: 1 })} ha · {fmt(Math.round(m.qLs))} l/s{c[i] ? ` · ${c[i]!.spans.length} ${t("campate")}` : ""} · {t("idranti")} DN {m.dn} ({t("perdite")} {fmt(Math.round(m.hfMain))} m)</div>
           ))}
         </div>
         <p className="text-[10px] text-sage-dark leading-snug">{t("Alimentazione da canale o tubo flessibile lungo un bordo della corsa (tratteggio blu). Le campate seguono il produttore scelto per i pivot.")}</p>
@@ -4046,6 +4183,10 @@ export default function Page() {
           [t("Rotoloni necessari"), fmt(r.nMach)],
           [t("Portata totale"), `${fmt(Math.round(r.qLs))} l/s`],
           [t("Intensità di pioggia"), `${fmt(r.rateMmH, { maximumFractionDigits: 1 })} mm/h`],
+          [t("Tubo della macchina"), `PE Ø${r.hoseMm} · ${t("perdite")} ${fmt(Math.round(r.hfHose))} m`],
+          [t("Prevalenza all'idrante"), `${fmt(Math.round(r.hHyd))} m (${t("cannone")} ${fmt(r.pGun)} bar)`],
+          [t("Condotta di testata"), `DN ${r.dn} · ${fmt(r.mainLen)} m · ${fmt(r.hydrants)} ${t("idranti")}`],
+          [t("Prevalenza all'ingresso del campo"), `${fmt(Math.round(r.head))} m`],
         ])}
         {r.rateMmH > infiltration && <p className="text-[11px] text-rust">{t("L'intensità supera l'assorbimento del terreno ({i} mm/h): rischio di ruscellamento, riduci la portata o aumenta la gittata.", { i: fmt(infiltration) })}</p>}
       </>);
@@ -4072,7 +4213,10 @@ export default function Page() {
           [t("Portata del settore più grande"), `${fmt(Math.round(r.qLs))} l/s`],
           [t("Ali gocciolanti"), `${fmt(Math.round(r.latM / 1000))} km`],
           [t("Gocciolatori"), fmt(Math.round(r.emitters))],
-          [t("Condotte secondarie"), `${fmt(Math.round(r.subLen))} m`],
+          [t("Condotte secondarie"), `${fmt(Math.round(r.subLen))} m · DN ${r.dnSub}`],
+          [t("Perdite: ala · secondaria"), `${fmt(r.hfLat, { maximumFractionDigits: 1 })} · ${fmt(r.hfSub, { maximumFractionDigits: 1 })} m`],
+          [t("Condotta di settore"), `DN ${r.dnMain}`],
+          [t("Prevalenza all'ingresso del campo"), `${fmt(Math.round(r.head))} m (${t("gocciolatori")} ${fmt(r.pEm)} bar + ${t("filtri e valvola")} 7 m)`],
         ])}
         {!r.ok && <p className="text-[11px] text-rust">{t("Con {n} settori servono {h} h al giorno, più delle ore di esercizio: riduci i settori o aumenta la portata dei gocciolatori.", { n: r.nSec, h: fmt(r.hoursUsed, { maximumFractionDigits: 1 }) })}</p>}
       </>);
@@ -4161,9 +4305,9 @@ export default function Page() {
   const lineLen = (ln: number[][]) => ln.reduce((a, p, i) => (i ? a + llDist(ln[i - 1], p) : 0), 0);
   // Vasca di accumulo: in fondo al tracciato disegnato, altrimenti accanto al
   // pivot più vicino alla presa, verso la presa.
-  function reservoirSpot(src: number[]): number[] | null {
+  function reservoirSpot(src: number[], ignoreRoute = false): number[] | null {
     if (!pivots.length) return null;
-    if (srcRoute && srcRoute.length >= 2) return srcRoute[srcRoute.length - 1];
+    if (!ignoreRoute && srcRoute && srcRoute.length >= 2) return srcRoute[srcRoute.length - 1];
     const near = pivots.reduce((a, p) => (llDist([p.lng, p.lat], src) < llDist([a.lng, a.lat], src) ? p : a));
     const d = llDist([near.lng, near.lat], src); if (d < 1) return [near.lng, near.lat];
     const off = Math.min(d * 0.9, near.r + 250);
@@ -4194,6 +4338,24 @@ export default function Page() {
   function startPickSource() {
     setSrcPicking(true);
     mapApi.current?.pickPoint((lat, lng) => { setSrcPicking(false); setSrcRoute(null); setSrcPt([lng, lat]); });
+  }
+  // Tracciato proposto dal sistema: condotta (strade e bordi dei campi, meno
+  // risalite, fuori dai cerchi) o canale a gravità (pendenza costante).
+  async function proposeRoute(kind: "pipe" | "canal") {
+    if (!srcPt) return;
+    const dst = srcRoute && srcRoute.length >= 2 ? srcRoute[srcRoute.length - 1] : reservoirSpot(srcPt, true);
+    if (!dst) return;
+    setBusy("route");
+    try {
+      const r = await api.autoRoute({ src: srcPt, dst, mode: kind,
+        roads: roads.filter((x) => !x.hidden && x.coords.length >= 2).map((x) => x.coords),
+        edges: fields.map((f) => f.geom.coordinates[0]),
+        circles: pivots.map((p) => [p.lng, p.lat, p.r]), target_permille: canalSlope });
+      setSrcRoute(r.coords);
+      setMsg(kind === "canal"
+        ? t("Canale proposto: {km} km, scavo massimo {c} m, rilevato massimo {f} m ✓", { km: fmt(r.length_m / 1000, { maximumFractionDigits: 2 }), c: fmt(r.cut_max_m, { maximumFractionDigits: 1 }), f: fmt(r.fill_max_m, { maximumFractionDigits: 1 }) })
+        : t("Condotta proposta: {km} km, quota massima {z} m ✓", { km: fmt(r.length_m / 1000, { maximumFractionDigits: 2 }), z: fmt(Math.round(r.z_max ?? 0)) }));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   function startDrawRoute() {
     if (!srcPt) return;
@@ -4286,7 +4448,7 @@ export default function Page() {
     const Qd = Vday / 3.6 / hd;                                           // l/s ai pivot
     const eRes = Math.max(0, resEvapK) * et0Peak;                          // mm/g evaporati dalla vasca
     const pMaxBar = pivots.length ? Math.max(...pivots.map((p) => pivotPressure(p))) : 0;
-    const Hd = hydra ? hydra.headMax : pMaxBar * 10.2 + Math.max(0, psHeadExtra);   // prevalenza della distribuzione ai pivot
+    const Hd = Math.max(hydra ? hydra.headMax : pMaxBar * 10.2 + Math.max(0, psHeadExtra), sysTotals().headMax);   // prevalenza della distribuzione (pivot e altri sistemi)
     const E = srcElev && srcElev.key === elevKey(srcPt) ? srcElev : null;
     const zS = E?.zS ?? null, zR = E?.zR ?? null, zP = E?.zPmax ?? null;
     // Livello minimo: con i livelli mese per mese vale il più basso dei mesi
@@ -4643,6 +4805,14 @@ export default function Page() {
               {srcRoute && <button className="btn-ghost text-[12px]" onClick={() => setSrcRoute(null)} title={t("Torna al tracciato in linea retta")}>{t("Linea retta")}</button>}
             </div>
           )}
+          {srcPt && (
+            <div className="flex gap-2">
+              <button className="btn-ghost flex-1 basis-0 text-[12px]" disabled={busy === "route"} onClick={() => proposeRoute("pipe")}
+                title={t("Percorso più corto che segue strade e bordi dei campi, evita i cerchi irrigati e le risalite.")}>{busy === "route" ? "…" : t("🧭 Proponi condotta")}</button>
+              <button className="btn-ghost flex-1 basis-0 text-[12px]" disabled={busy === "route" || srcType === "pozzo"} onClick={() => proposeRoute("canal")}
+                title={t("Canale a gravità con pendenza costante, scendendo dalla presa alla vasca: il minor scavo possibile.")}>{busy === "route" ? "…" : t("🧭 Proponi canale")}</button>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <label className="text-[11px] text-sage-dark">{t("Tipo di fonte")}
               <select className="field-input mt-0.5 py-1 text-sm" value={srcType}
@@ -4812,13 +4982,25 @@ export default function Page() {
   // minor potenza installata (scorte comprese), preferendo motori in bassa
   // tensione (≤ 315 kW); a parità, la più modulare.
   const STD_KW = [0.75, 1.1, 1.5, 2.2, 3, 4, 5.5, 7.5, 11, 15, 18.5, 22, 30, 37, 45, 55, 75, 90, 110, 132, 160, 200, 250, 315, 355, 400, 450, 500, 560, 630, 710, 800, 900, 1000];
+  // Lineari, rotoloni e goccia salvati: portata, superficie e prevalenza all'ingresso del campo.
+  function sysTotals() {
+    let qLs = 0, ha = 0, headMax = 0;
+    for (const [k, d] of Object.entries(sysDesigns)) {
+      const f = fieldOfKey(k); if (!f) continue;
+      const r = d.sys === "lineari" ? calcLin(f, d.p as LinP) : d.sys === "rotoloni" ? calcRot(f, d.p as RotP) : calcDrip(f, d.p as DripP);
+      qLs += r.qLs; headMax = Math.max(headMax, r.head);
+      ha += d.sys === "lineari" ? (r as ReturnType<typeof calcLin>).ha : d.sys === "rotoloni" ? (r as ReturnType<typeof calcRot>).coveredHa : (r as ReturnType<typeof calcDrip>).fieldHa;
+    }
+    return { qLs, ha, headMax };
+  }
   function pumpStation() {
     const n = pivots.length;
-    const qDes = pivots.reduce((a, p) => a + pivotFlow(p), 0);                     // l/s
-    const irrHa = pivots.reduce((a, p) => a + pvAreaM2(p) / 10000, 0);
+    const SY = sysTotals();
+    const qDes = pivots.reduce((a, p) => a + pivotFlow(p), 0) + SY.qLs;              // l/s (pivot + altri sistemi)
+    const irrHa = pivots.reduce((a, p) => a + pvAreaM2(p) / 10000, 0) + SY.ha;
     const pMaxBar = n ? Math.max(...pivots.map((p) => pivotPressure(p))) : 0;
     const headFromNet = hydra ? hydra.headMax : null;
-    const head = (headFromNet ?? (pMaxBar * 10.2 + Math.max(0, psHeadExtra))) + Math.max(0, psLift);
+    const head = Math.max(headFromNet ?? (n ? pMaxBar * 10.2 + Math.max(0, psHeadExtra) : 0), SY.headMax) + Math.max(0, psLift);
     const clim = fields.map((f) => (f.lay as { climate?: { eto_month_mm?: number[]; rain_month_mm?: number[]; source?: string } } | null | undefined)?.climate)
       .find((c) => c && c.eto_month_mm?.length === 12 && c.rain_month_mm?.length === 12);
     const kcAvg = (CROPS[cropKey] ?? 1.1) * Math.max(0.3, psKcAvg / 100);
@@ -5697,6 +5879,10 @@ export default function Page() {
                         onChange={(e) => updateSelPivot({ az: ((Number(e.target.value) % 360) + 360) % 360 })}
                         className="field-input mt-1" /></label>
                   </div>
+                  <label className="text-[11px] text-sage-dark block mt-2">{t("Fase di realizzazione")}
+                    <select className="field-input mt-1" value={selPivot.phase ?? 1} onChange={(e) => updateSelPivot({ phase: Number(e.target.value) })}>
+                      {Array.from({ length: Math.max(nPhases, phaseN) }, (_, i) => <option key={i + 1} value={i + 1}>{t("Fase")} {i + 1}</option>)}
+                    </select></label>
                   <div className="flex gap-2 mt-2 items-end">
                     <label className="flex items-center gap-2 text-[11px] text-sage-dark flex-1 pb-2">
                       <input type="checkbox" checked={!!selPivot.gun} onChange={(e) => updateSelPivot({ gun: e.target.checked ? 25 : undefined })} />
@@ -6657,10 +6843,23 @@ export default function Page() {
               <label className="text-[11px] text-sage-dark">{t("Pressione agli irrigatori (bar)")}
                 <input type="number" min={0.5} step={0.1} value={sprinkBar}
                   onChange={(e) => setSprinkBar(Math.max(0.5, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
-              <label className="text-[11px] text-sage-dark">{t("Condotta del pivot (mm)")}
+              <label className="text-[11px] text-sage-dark">{t("Perdite al punto pivot (bar)")}
+                <input type="number" min={0} step={0.05} value={pivotPointBar}
+                  onChange={(e) => setPivotPointBar(Math.max(0, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+              {!SPAN_LIST[pivotBrand] && <label className="text-[11px] text-sage-dark">{t("Condotta del pivot (mm)")}
                 <input type="number" min={100} step={1} value={latDN}
-                  onChange={(e) => setLatDN(Math.max(100, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+                  onChange={(e) => setLatDN(Math.max(100, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>}
             </div>
+            {pivots.length > 0 && (() => {
+              const big = pivots.reduce((a, p) => (pivotPressure(p) > pivotPressure(a) ? p : a), pivots[0]);
+              const pp = pivotPressureParts(big);
+              return (
+                <p className="text-[11px] text-sage-dark mt-1 leading-snug">
+                  {t("Pivot più esigente")}: <b className="text-brand-darker">{fmt(pp.total, { maximumFractionDigits: 2 })} bar</b> = {t("irrigatori")} {fmt(pp.sprink, { maximumFractionDigits: 2 })} + {t("campate")} {fmt(pp.spans, { maximumFractionDigits: 2 })} + {t("punto pivot")} {fmt(pp.point, { maximumFractionDigits: 2 })}
+                  {pp.how === "spans" ? ` (${t("diametri delle campate {b}", { b: PIVOT_BRANDS[pivotBrand] })})` : ""}. {t("Entra nella prevalenza della rete (pagina Tubazioni) e delle pompe.")}
+                </p>
+              );
+            })()}
 
             {pivots.length > 0 && (() => {
               const rMax = Math.max(...pivots.map((p) => p.r));
@@ -6779,6 +6978,32 @@ export default function Page() {
             </div>
             <button className="btn-ghost w-full mt-2" disabled={!pivots.length && !Object.values(sysDesigns).some((d) => d.sys === "lineari")} onClick={exportCeres}
               title={t("Campi e pivot con le campate del produttore scelto in Impianti, da aprire in Ceres con File › Apri file.")}>{t("Esporta per Ceres (.ceres)")}</button>
+            <div className="mt-3 bg-panel rounded-lg p-2 space-y-1.5">
+              <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Fasi di realizzazione")}</div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-[11px] text-sage-dark">{t("Numero di fasi")}
+                  <input type="number" min={1} max={10} step={1} value={phaseN} onChange={(e) => setPhaseN(Math.max(1, Math.min(10, Number(e.target.value) || 1)))} className="field-input mt-0.5 py-1 text-sm" /></label>
+                <label className="text-[11px] text-sage-dark">{t("Ordine")}
+                  <select className="field-input mt-0.5 py-1 text-sm" value={phaseOrderBy} onChange={(e) => setPhaseOrderBy(e.target.value as "fonte" | "ovest" | "sud")}>
+                    <option value="fonte">{t("dalla fonte d'acqua")}</option><option value="ovest">{t("da ovest a est")}</option><option value="sud">{t("da sud a nord")}</option>
+                  </select></label>
+              </div>
+              <div className="flex gap-2 items-center">
+                <button className="btn-ghost flex-1 text-[12px]" disabled={!pivots.length && !Object.keys(sysDesigns).length} onClick={assignPhases}>{t("Dividi in fasi")}</button>
+                {nPhases > 1 && <label className="flex items-center gap-1 text-[11px] text-sage-dark"><input type="checkbox" checked={phaseColors} onChange={(e) => setPhaseColors(e.target.checked)} />{t("Colori per fase")}</label>}
+              </div>
+              {nPhases > 1 && (
+                <table className="w-full text-[11px]"><tbody>
+                  {phaseSummary().map((r) => (
+                    <tr key={r.ph}><td className="text-brand-darker font-semibold">{t("Fase")} {r.ph}</td>
+                      <td className="text-right tabular-nums">{fmt(r.nPiv)} pivot{r.sys ? ` + ${fmt(r.sys)} ${t("campi")}` : ""}</td>
+                      <td className="text-right tabular-nums">{fmt(r.ha, { maximumFractionDigits: 1 })} ha</td>
+                      <td className="text-right tabular-nums">{fmt(Math.round(r.qLs))} l/s</td></tr>
+                  ))}
+                </tbody></table>
+              )}
+              <p className="text-[10px] text-sage-dark leading-snug">{t("Fasi di superficie simile. Rete principale, fonte d'acqua, stazioni e fotovoltaico vanno nella fase 1. Il computo in Excel ha un blocco per fase più il totale.")}</p>
+            </div>
             <div className="mt-3">
               <div className="flex items-center gap-2">
                 <button className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide flex-1 text-left" onClick={() => setComputoOpen((o) => !o)}>

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from ..deps import get_client
 from ..schemas import BranchIn, BranchOut, CanalIn, CanalOut
@@ -46,3 +47,27 @@ def branch(body: BranchIn, client=Depends(get_client)):
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Errore diramazioni: {e}")
     return BranchOut(**out)
+
+
+class RouteIn(BaseModel):
+    src: list[float]                                   # [lon, lat] presa
+    dst: list[float]                                   # [lon, lat] vasca
+    mode: str = "pipe"                                 # pipe | canal
+    roads: list[list[list[float]]] | None = None       # strade da seguire
+    edges: list[list[list[float]]] | None = None       # bordi dei campi
+    circles: list[list[float]] | None = None           # [lon, lat, r] da evitare
+    target_permille: float = 0.3
+    climb_m: float = 15.0                              # metri di percorso equivalenti a 1 m di risalita
+
+
+@router.post("/route")
+def auto_route_ep(body: RouteIn, client=Depends(get_client)):
+    """Tracciato automatico presa → vasca: condotta (strade, bordi, meno risalite) o canale a gravità."""
+    from analysis.route import auto_route
+    if len(body.src) != 2 or len(body.dst) != 2:
+        raise HTTPException(400, "Presa e vasca non valide.")
+    try:
+        return auto_route(client, body.src, body.dst, mode=body.mode, roads=body.roads, edges=body.edges,
+                          circles=body.circles, target_permille=body.target_permille, climb_m=body.climb_m)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Errore tracciato automatico: {e}")

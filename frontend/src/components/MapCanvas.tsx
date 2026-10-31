@@ -13,7 +13,9 @@ export type PivotItem = { lat: number; lng: number; r: number; conn?: string; fi
   q?: number; p?: number;     // portata (l/s) e pressione (bar) richieste dal pivot
   deg?: number;               // gradi irrigati (assente o 360 = cerchio intero)
   az?: number;                // inizio del settore, azimut da nord in senso orario
-  gun?: number };             // gittata dell'irrigatore finale (m); assente o 0 = senza
+  gun?: number;               // gittata dell'irrigatore finale (m); assente o 0 = senza
+  phase?: number;             // fase di realizzazione (1, 2, …)
+  phaseColor?: boolean };     // colora per fase sulla mappa
 // Settore (o cerchio) come anello [lat, lng] per Leaflet.
 function sectorLatLngs(lat: number, lng: number, r: number, deg = 360, az = 0): [number, number][] {
   const dLat = r / 111320, dLng = r / (111320 * Math.cos((lat * Math.PI) / 180) || 1e-9);
@@ -808,7 +810,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         const pvLabels: { tt: L.Tooltip; r: number; lat: number }[] = [];
         model.pivots.forEach((pv, i) => {
           const isSingle = sel.mode === "single" && sel.idx === i;
-          const base = pv.conn === "pipe" ? "#20aae2" : "#038037";
+          const PH = ["#4CAF4F", "#20aae2", "#f0b429", "#a855f7", "#ef4444", "#0f766e"];
+          const base = pv.phaseColor ? PH[((pv.phase ?? 1) - 1) % PH.length] : pv.conn === "pipe" ? "#20aae2" : "#038037";
           const style = isSingle
             ? { color: "#b23b1e", weight: 3, fillColor: "#f0b429", fillOpacity: 0.40 }
             : groupSel
@@ -834,7 +837,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             fillColor: pv.unconn ? "#fff" : "#0d3b26", fillOpacity: 1, interactive: false,
           }));
           c.on("click", (e) => { L.DomEvent.stop(e); cbs.onClick(i); });
-          c.bindTooltip(`#${i + 1} · r ${Math.round(pv.r)} m${deg < 359.5 ? ` · ${Math.round(deg)}°` : ""}${pv.gun ? ` · +${Math.round(pv.gun)} m` : ""}`, { direction: "top", sticky: true });
+          c.bindTooltip(`#${i + 1}${pv.phase && pv.phaseColor ? ` · F${pv.phase}` : ""} · r ${Math.round(pv.r)} m${deg < 359.5 ? ` · ${Math.round(deg)}°` : ""}${pv.gun ? ` · +${Math.round(pv.gun)} m` : ""}`, { direction: "top", sticky: true });
           g.addLayer(c);
           // Etichetta fissa sotto il centro (superficie · portata), se richiesta.
           if (pv.label) {
