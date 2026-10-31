@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.185";
+const REV = "v0.6.186";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1330,7 +1330,8 @@ export default function Page() {
   const [srcShown, setSrcShown] = useState<string | null>(null);     // schema disegnato sulla mappa
   const [srcOpen, setSrcOpen] = useState(false);                     // parametri aperti
   const [resDepth, setResDepth] = useState(4);                       // profondità utile della vasca (m)
-  const [resReserveH, setResReserveH] = useState(4);                 // riserva della vasca (ore di portata di progetto)
+  const [resDays, setResDays] = useState(3);                         // giorni di scorta nella vasca
+  const [resEvapK, setResEvapK] = useState(1.1);                     // evaporazione da specchio libero = k × ET₀
   const [wtwEta, setWtwEta] = useState(75);                          // rendimento complessivo pompa+motore (%)
   const [canalSlope, setCanalSlope] = useState(0.3);                 // pendenza del canale a gravità (‰)
   // ---- Stazione di pompaggio: parametri del confronto CAPEX/OPEX ----
@@ -2508,6 +2509,18 @@ export default function Page() {
     });
   }
   // Ridisegna i pivot sulla mappa a ogni cambio di modello/selezione.
+  // Coefficienti colturali (Kc di punta) e assorbimento tipico per suolo.
+  const CROPS: Record<string, number> = Object.fromEntries(CROP_LIST.map((c) => [c.key, c.kc]));
+  // Fabbisogno consigliato: ET₀ di punta × Kc, meno la pioggia utile, diviso
+  // l'efficienza dell'impianto.
+  // Coltura più esigente fra quelle scelte (globale o per campo con pivot): il
+  // dimensionamento di rete, stazioni e vasche si fa sulla sua ETc di punta.
+  const kcMax = Math.max(CROPS[cropKey] ?? 1.1, ...fields.filter((f) => pivots.some((p) => p.field === f.id)).map((f) => effSettings(f).kc || 0));
+  const cropMax = CROP_LIST.find((c) => Math.abs(c.kc - kcMax) < 1e-6 && c.key === cropKey) ?? CROP_LIST.find((c) => Math.abs(c.kc - kcMax) < 1e-6);
+  const etcMax = et0Peak * kcMax;                                                    // mm/g
+  const mm24Suggested = Math.max(0, etcMax - rainMm) / Math.max(0.3, effPct / 100);
+  // Fabbisogno di progetto: mai sotto quello della coltura più esigente.
+  const mmDes = Math.max(mm24, mm24Suggested);
   useEffect(() => {
     const api2 = mapApi.current; if (!api2) return;
     // Filtra i gruppi pivot nascosti (per campo) e rimappa gli indici visibili → reali.
@@ -2577,7 +2590,7 @@ export default function Page() {
       },
     }, pipeSelForShow, waterLinesLL());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pivots, pivotLines, pivotSel, pipeSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses, pivotLabels, mm24, hoursDay, imperial]);
+  }, [pivots, pivotLines, pivotSel, pipeSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses, pivotLabels, mm24, mmDes, hoursDay, imperial]);
 
   // Operazioni sul singolo pivot selezionato.
   const selPivot = pivotSel.mode === "single" && pivotSel.idx >= 0 ? pivots[pivotSel.idx] : null;
@@ -2964,16 +2977,11 @@ export default function Page() {
   // con un RAMO dedicato: un tratto nuovo dal centro del pivot fino alla
   // tubazione esistente, che resta com'è. Non si deforma la linea esistente
   // facendola passare per il pivot.
-  // Coefficienti colturali (Kc di punta) e assorbimento tipico per suolo.
-  const CROPS: Record<string, number> = Object.fromEntries(CROP_LIST.map((c) => [c.key, c.kc]));
-  // Fabbisogno consigliato: ET₀ di punta × Kc, meno la pioggia utile, diviso
-  // l'efficienza dell'impianto.
-  const mm24Suggested = Math.max(0, (et0Peak * (CROPS[cropKey] ?? 1.1) - rainMm)) / Math.max(0.3, effPct / 100);
   // Portata di UN pivot: 1 mm su 1 m² = 1 litro, quindi basta l'area del cerchio.
   const pivotFlow = (pv: { r: number; q?: number }) => {
     if (pv.q && pv.q > 0) return pv.q;                       // valore imposto a mano
     const area = Math.PI * pv.r * pv.r;                      // m²
-    return (area * mm24) / (Math.max(1, hoursDay) * 3600);   // l/s (mm24 è già lordo)
+    return (area * mmDes) / (Math.max(1, hoursDay) * 3600);  // l/s (fabbisogno lordo di progetto)
   };
   // ---- Intensità all'ESTREMITÀ del pivot -----------------------------------
   // È lì che si decide il ruscellamento: l'ultima torre percorre 2πR a ogni
@@ -3600,13 +3608,13 @@ export default function Page() {
         roads.map((r) => [r.id, r.owner ?? 0, r.hidden ? 1 : 0, r.width_m, r.coords]),
         watercourses.map((w) => [w.owner ?? 0, w.hidden ? 1 : 0]),
         pivots.map((p) => [Math.round(p.lat * 1e6), Math.round(p.lng * 1e6), p.r, p.field ?? 0, p.conn ?? "", p.q ?? 0]),
-        [mm24, hoursDay],                                   // cambiano la portata salvata dei pivot
+        [mmDes, hoursDay],                                  // cambiano la portata salvata dei pivot
         pivotLines.map((l) => [l.kind, l.field ?? 0, l.coords.length]),
         [...hiddenPivotFields].sort((a, b) => a - b),
         [...hiddenPipeFields].sort((a, b) => a - b),
       ]);
     } catch { return ""; }
-  }, [fields, canals, roads, watercourses, pivots, pivotLines, hiddenPivotFields, hiddenPipeFields, mm24, hoursDay]);
+  }, [fields, canals, roads, watercourses, pivots, pivotLines, hiddenPivotFields, hiddenPipeFields, mmDes, hoursDay]);
   latestSigRef.current = saveSig;
 
   // Esegue un salvataggio serializzato: se ne arriva un altro mentre salva, lo
@@ -3736,16 +3744,20 @@ export default function Page() {
   type Stage = { name: string; qLs: number; head: number; kW: number; hours: number };
   type Scheme = { key: "A" | "B" | "C"; name: string; ok: boolean; why?: string; stages: Stage[];
     main?: { kind: "pipe" | "canal"; L: number; dn?: number; n?: number; hf?: number };
-    res?: { vol: number; ha: number; r: number }; mwh: number; kWabs: number;
+    res?: { vol: number; ha: number; r: number; evap: number; days: number }; mwh: number; kWabs: number;
     pvKwp: number; battKwh: number; solarPct: number; nStations: number };
   function sourceSchemes() {
     if (!srcPt || !pivots.length) return null;
     const P = pumpStation();
     const R = reservoirSpot(srcPt)!;
     const eta = Math.max(0.3, wtwEta / 100);
-    const Qd = P.qDes;                                                    // l/s ai pivot
     const hd = Math.max(1, Math.min(24, hoursDay));
-    const Vday = Qd * 3.6 * hd;                                           // m³/giorno di punta
+    // Fabbisogno di punta: ettari irrigati × ETc della coltura più esigente
+    // (meno la pioggia utile, diviso l'efficienza); mai sotto le portate dei pivot.
+    const VdayCrop = P.irrHa * 10 * mm24Suggested;                        // m³/giorno
+    const Vday = Math.max(P.qDes * 3.6 * hd, VdayCrop);
+    const Qd = Vday / 3.6 / hd;                                           // l/s ai pivot
+    const eRes = Math.max(0, resEvapK) * et0Peak;                          // mm/g evaporati dalla vasca
     const pMaxBar = pivots.length ? Math.max(...pivots.map((p) => pivotPressure(p))) : 0;
     const Hd = hydra ? hydra.headMax : pMaxBar * 10.2 + Math.max(0, psHeadExtra);   // prevalenza della distribuzione ai pivot
     const E = srcElev && srcElev.key === `${srcPt.join(",")}|${pivots.length}` ? srcElev : null;
@@ -3760,10 +3772,18 @@ export default function Page() {
     const kWof = (qLs: number, H: number) => (qLs * H * 9.81) / 1000 / eta;
     const mwhOf = (H: number) => (P.volYear * H) / 367 / eta / 1000;
     const qMaxOk = (q: number) => !(srcQmax > 0 && q > srcQmax * 1.0001);
+    // Vasca: compenso giornaliero fra ore di riempimento e ore di irrigazione,
+    // più i giorni di scorta (consumo + evaporazione). L'evaporazione dipende
+    // dallo specchio d'acqua, che dipende dal volume: si itera.
     const res = (hIn: number) => {
-      const vol = Vday * (1 - Math.min(hIn, hd) / Math.max(hIn, hd)) + Qd * 3.6 * Math.max(0, resReserveH);
-      const areaM2 = (vol / Math.max(1, resDepth)) * 1.25;                // + argini
-      return { vol, ha: areaM2 / 10000, r: Math.sqrt(areaM2 / Math.PI) };
+      const depth = Math.max(1, resDepth);
+      let vol = Vday, evap = 0;
+      for (let k = 0; k < 8; k++) {
+        evap = (vol / depth) * eRes / 1000;                               // m³/g dallo specchio pieno
+        vol = (Vday + evap) * (1 - Math.min(hIn, hd) / Math.max(hIn, hd)) + Math.max(0, resDays) * (Vday + evap);
+      }
+      const areaM2 = (vol / depth) * 1.25;                                // + argini
+      return { vol, ha: areaM2 / 10000, r: Math.sqrt(areaM2 / Math.PI), evap, days: Math.max(0, resDays) };
     };
     // energia: quota diurna (copribile dal FV) e notturna
     const finish = (sc: Omit<Scheme, "mwh" | "kWabs" | "pvKwp" | "battKwh" | "solarPct">): Scheme => {
@@ -3805,13 +3825,14 @@ export default function Page() {
     // B — sollevamento + vasca + rilancio
     {
       const h1 = Math.min(srcHours, solar ? sunH : 22);
-      const q1 = Vday / 3.6 / Math.max(1, h1);
+      const rB = res(h1);
+      const q1 = (Vday + rB.evap) / 3.6 / Math.max(1, h1);                 // la presa reintegra anche l'evaporato
       const m = sizeMain(q1, L);
       const H1 = lift(zR != null ? zR + 3 : null) + m.hf + 2;
       const H2 = Hd + (zP != null && zR != null ? Math.max(0, zP - zR) : 0);
       let ok = true, why: string | undefined;
       if (!qMaxOk(q1)) {
-        const need = Vday / 3.6 / Math.max(1, srcQmax);
+        const need = (Vday + rB.evap) / 3.6 / Math.max(1, srcQmax);
         if (need > srcHours) { ok = false; why = t("La fonte non basta: servono {h} h di prelievo al giorno a {m} l/s.", { h: fmt(Math.round(need)), m: fmt(srcQmax) }); }
         else why = t("Con {m} l/s disponibili la presa deve lavorare {h} h al giorno.", { m: fmt(srcQmax), h: fmt(Math.round(need)) });
       }
@@ -3820,7 +3841,7 @@ export default function Page() {
           { name: t("Presa e sollevamento alla vasca"), qLs: q1, head: H1, kW: kWof(q1, H1), hours: h1 },
           { name: t("Rilancio dalla vasca ai pivot"), qLs: Qd, head: H2, kW: kWof(Qd, H2), hours: hd },
         ],
-        main: { kind: "pipe", L, dn: m.dn, n: m.n, hf: m.hf }, res: res(h1) }));
+        main: { kind: "pipe", L, dn: m.dn, n: m.n, hf: m.hf }, res: rB }));
     }
     // C — canale a gravità + vasca + rilancio
     {
@@ -3832,11 +3853,12 @@ export default function Page() {
       if (srcType === "pozzo") why = t("Da pozzo non è possibile la gravità.");
       else if (avail == null) why = t("Quote non disponibili: indica di nuovo la fonte.");
       else if (!ok) why = t("Dislivello tra presa e vasca {d} m, ne servono almeno {n}: canale a gravità non possibile.", { d: fmt(Math.round(avail)), n: fmt(Math.round(need)) });
-      const qc = Vday / 3.6 / Math.max(1, hIn);
+      const rC = res(hIn);
+      const qc = (Vday + rC.evap) / 3.6 / Math.max(1, hIn);
       if (ok && !qMaxOk(qc)) { ok = false; why = t("Servono {q} l/s, la fonte ne dà {m}.", { q: fmt(Math.round(qc)), m: fmt(srcQmax) }); }
       out.push(finish({ key: "C", name: t("Canale a gravità, vasca e rilancio"), ok, why, nStations: 1,
         stages: [{ name: t("Rilancio dalla vasca ai pivot"), qLs: Qd, head: H2, kW: kWof(Qd, H2), hours: hd }],
-        main: { kind: "canal", L }, res: res(hIn) }));
+        main: { kind: "canal", L }, res: rC }));
     }
     // consigliato: rete e FV+batterie → minor energia; FV+generatore → minor energia da generatore.
     // Entro il 3% vince lo schema più semplice (meno stazioni).
@@ -3848,7 +3870,7 @@ export default function Page() {
       const band = feas.filter((x) => score(x) <= mn * 1.03 + 1);
       best = band.reduce((a, x) => (x.nStations < a.nStations || (x.nStations === a.nStations && score(x) < score(a)) ? x : a));
     }
-    return { schemes: out, best, Qd, Vday, Hd, L, zS, zR, zP, zLow, R, hasElev: !!E, psh, sunH };
+    return { schemes: out, best, Qd, Vday, irrHa: P.irrHa, eRes, Hd, L, zS, zR, zP, zLow, R, hasElev: !!E, psh, sunH };
   }
   // Montaggio della presa suggerito in base a fonte, escursione e sedimenti.
   function intakeAdvice(): string[] {
@@ -3882,7 +3904,7 @@ export default function Page() {
         line: sc?.main ? (sc.main.kind === "canal" ? `${t("Canale a gravità")} · ${uKm(sc.main.L / 1000, 1)}` : `${t("Adduttrice")} · ${sc.main.n && sc.main.n > 1 ? `${sc.main.n}×` : ""}DN ${sc.main.dn} · ${uKm(sc.main.L / 1000, 1)}`) : "" },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srcPt, srcShown, srcElev, srcType, srcEnergy, srcHours, srcQmax, srcRange, pivots, mm24, hoursDay, resDepth, resReserveH, wtwEta, canalSlope, lang]);
+  }, [srcPt, srcShown, srcElev, srcType, srcEnergy, srcHours, srcQmax, srcRange, pivots, mmDes, hoursDay, resDepth, resDays, resEvapK, et0Peak, wtwEta, canalSlope, lang]);
   function renderSource() {
     const S = sourceSchemes();
     const num = (label: string, v: number, set: (x: number) => void, step = 1, min = 0, max = 1e9) => (
@@ -3922,6 +3944,7 @@ export default function Page() {
         {S && (<>
           {/* 2 — dati */}
           <div className="text-[11px] text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
+            {t("Superficie irrigata")} <b>{uHa(S.irrHa)}</b> · {t("ETc di punta")} <b>{fmt(etcMax, { maximumFractionDigits: 1 })} mm/{t("giorno")}</b> ({t(cropMax?.label ?? "Altro")}, Kc {fmt(kcMax, { maximumFractionDigits: 2 })}) · {t("lordo")} <b>{fmt(mmDes, { maximumFractionDigits: 1 })} mm</b><br />
             {t("Distanza dalla presa ai campi")}: <b>{uKm(S.L / 1000, 1)}</b> · {t("Fabbisogno di punta")}: <b>{fmt(Math.round(S.Vday))} m³/{t("giorno")}</b> ({fmt(Math.round(S.Qd))} l/s)<br />
             {S.hasElev && S.zLow != null && S.zR != null
               ? <>{t("Livello minimo alla presa")} <b>{fmt(Math.round(S.zLow))} m</b> · {t("vasca")} <b>{fmt(Math.round(S.zR))} m</b>{S.zP != null && <> · {t("pivot più alto")} <b>{fmt(Math.round(S.zP))} m</b></>}</>
@@ -3958,7 +3981,7 @@ export default function Page() {
                     {sc.main && (sc.main.kind === "canal"
                       ? <div>• {t("Canale a gravità")}: {uKm(sc.main.L / 1000, 1)} · {t("pendenza")} {fmt(canalSlope, { maximumFractionDigits: 2 })}‰</div>
                       : <div>• {t("Adduttrice")}: {sc.main.n && sc.main.n > 1 ? `${sc.main.n} × ` : ""}DN {sc.main.dn} · {uKm(sc.main.L / 1000, 1)} · {t("perdite")} {fmt(Math.round(sc.main.hf ?? 0))} m</div>)}
-                    {sc.res && <div>• {t("Vasca di accumulo")}: <b>{fmt(Math.round(sc.res.vol))} m³</b> · {uHa(sc.res.ha, 1)} · {t("profondità")} {fmt(resDepth)} m</div>}
+                    {sc.res && <div>• {t("Vasca di accumulo")}: <b>{fmt(Math.round(sc.res.vol))} m³</b> · {uHa(sc.res.ha, 1)} · {t("profondità")} {fmt(resDepth)} m · {t("scorta")} {fmt(sc.res.days)} {t("giorni")} · {t("evaporazione")} {fmt(Math.round(sc.res.evap))} m³/{t("giorno")}</div>}
                     <div className="mt-0.5 text-brand-darker">{t("Potenza assorbita")} <b>{fmt(Math.round(sc.kWabs))} kW</b> · {t("Energia")} <b>{mwh(sc.mwh)} MWh/{t("anno")}</b>
                       {srcEnergy !== "rete" && <> · FV <b>{fmt(Math.round(sc.pvKwp))} kWp</b> ({fmt(Math.round(sc.solarPct))}% {t("dal sole")}){sc.battKwh > 0 && <> · {t("Batterie")} <b>{fmt(Math.round(sc.battKwh))} kWh</b></>}</>}
                     </div>
@@ -3993,7 +4016,8 @@ export default function Page() {
           {srcOpen && (
             <div className="grid grid-cols-2 gap-2">
               {num(t("Profondità utile della vasca (m)"), resDepth, setResDepth, 0.5, 1, 15)}
-              {num(t("Riserva della vasca (ore)"), resReserveH, setResReserveH, 1, 0, 72)}
+              {num(t("Giorni di scorta nella vasca"), resDays, setResDays, 0.5, 0, 60)}
+              {num(t("Evaporazione della vasca (× ET₀)"), resEvapK, setResEvapK, 0.05, 0, 2)}
               {num(t("Rendimento pompa + motore (%)"), wtwEta, setWtwEta, 1, 30, 95)}
               {num(t("Pendenza del canale (‰)"), canalSlope, setCanalSlope, 0.05, 0.05, 5)}
               {num(t("Ore di pompaggio col sole"), pvSunH, setPvSunH, 0.5, 1, 14)}
@@ -4032,9 +4056,9 @@ export default function Page() {
       netMm = clim.eto_month_mm!.map((e, i) => Math.max(0, e * kcAvg - (clim.rain_month_mm![i] * psRainEff) / 100));
       grossYearMm = netMm.reduce((a, x) => a + x, 0) / eff;
     } else {
-      grossYearMm = mm24 * Math.max(0, psDaysFallback);
+      grossYearMm = mmDes * Math.max(0, psDaysFallback);
     }
-    grossYearMm = Math.min(grossYearMm, mm24 * 365);                                // non oltre la piena portata
+    grossYearMm = Math.min(grossYearMm, mmDes * 365);                                // non oltre la piena portata
     const volYear = grossYearMm / 1000 * irrHa * 10000;                              // m³/anno
     const hoursFull = qDes > 0 ? volYear / (qDes * 3.6) : 0;                         // ore equivalenti a piena portata
     type Cfg = { nDuty: number; nTot: number; qU: number; pShaft: number; kW: number; etaP: number; etaM: number;
@@ -4195,7 +4219,7 @@ export default function Page() {
     for (const pv of pivots) {
       const areaM2 = Math.PI * pv.r * pv.r;
       irrHa += areaM2 / 10000;
-      const vol = (areaM2 * mm24) / 1000;                           // m³/giorno (mm24 è lordo)
+      const vol = (areaM2 * mmDes) / 1000;                          // m³/giorno (lordo di progetto)
       const head = pivotPressure(pv) * 10.197 + Math.max(0, pvHead); // m
       ePump += (vol * head) / 367 / eta;                            // kWh/giorno (ρg/3,6e6 = 1/367)
       eTow += Math.ceil(pv.r / 55) * 0.55 * 0.5 * hRun;             // torri: ~0,55 kW, 50% di marcia
@@ -4407,7 +4431,7 @@ export default function Page() {
       pipeM, pipeN: pipes.length,
       grossHa, irrHa, todoHa: Math.max(0, grossHa - irrHa),
     };
-  }, [pivots, pivotLines, fields, canals, watercourses, mm24, hoursDay]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pivots, pivotLines, fields, canals, watercourses, mmDes, hoursDay]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Campi che finiranno nell'esportazione (tutti tranne quelli tolti a mano).
   const pdfPick = fields.filter((f) => !pdfSkip.has(f.id));
@@ -5778,6 +5802,9 @@ export default function Page() {
                 {t("Consigliato")}: {fmt(mm24Suggested, { maximumFractionDigits: 1 })}
               </button>
             </div>
+            {mm24 < mm24Suggested - 0.05 && (
+              <p className="text-[11px] text-amber mt-1">{t("Rete, stazioni e vasche sono dimensionate su {v} mm/g: ETc di punta della coltura più esigente ({c}, Kc {k}).", { v: fmt(mmDes, { maximumFractionDigits: 1 }), c: t(cropMax?.label ?? "Altro"), k: fmt(kcMax, { maximumFractionDigits: 2 }) })}</p>
+            )}
 
             <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2">{t("Assorbimento del terreno")}</h3>
             <div className="grid grid-cols-3 gap-2">
