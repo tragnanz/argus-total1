@@ -8,13 +8,14 @@ import { useI18n, LANGS, type Lang, translateError, translatorFor } from "@/lib/
 import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
 import { buildXlsx } from "@/lib/xlsx";
+import { linearLayout, reelLayout, dripLayout, type LL as SysLL } from "@/lib/systems";
 import type {
   Area, Client, Polygon, Project, Scene, ColorScale, SuitMeta, SuitWeights,
   LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea, Canal, GuidedResult, ProjectLayer, Watercourse, ElevationResult,
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.190";
+const REV = "v0.6.191";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3526,16 +3527,17 @@ export default function Page() {
   // prende il tubo più piccolo con velocità ≤ vMax all'ingresso. Prima i 10",
   // poi gli 8"5/8 (campate più lunghe del listino), il resto in 6"5/8.
   const spanMemo = useRef(new Map<string, Comp | null>());
-  function spanComposition(pv: { r: number; gun?: number; q?: number; deg?: number }, brand: PivotBrand): Comp | null {
+  // linear = macchina lineare alimentata in testa: la portata cala linearmente, Q·(1 − x/L).
+  function spanComposition(pv: { r: number; gun?: number; q?: number; deg?: number }, brand: PivotBrand, linear = false): Comp | null {
     const Q = pivotFlow(pv) / 1000, R = Math.round(pv.r);
-    const mk = `${brand}|${R}|${Math.round((pv.gun ?? 0))}|${Q.toFixed(4)}|${spanVmax}`;
+    const mk = `${brand}|${R}|${Math.round((pv.gun ?? 0))}|${Q.toFixed(4)}|${spanVmax}|${linear ? 1 : 0}`;
     if (spanMemo.current.has(mk)) return spanMemo.current.get(mk)!;
     const L = SPAN_LIST[brand];
     let res: Comp | null = null;
     if (L) {
       const Rb = R + Math.max(0, pv.gun ?? 0);
       const cap = SPAN_ID.map((d) => spanVmax * Math.PI * d * d / 4);              // m³/s per diametro
-      const xNeed = (c: number) => (Q > c ? Rb * Math.sqrt(1 - c / Q) : 0);         // fin dove serve il tubo più grande
+      const xNeed = (c: number) => (Q > c ? (linear ? Rb * (1 - c / Q) : Rb * Math.sqrt(1 - c / Q)) : 0);   // fin dove serve il tubo più grande
       const x10 = xNeed(cap[1]), x8 = xNeed(cap[2]);
       let best: (Comp & { cost: number }) | null = null;
       for (const oh of L.oh) for (const l10 of L.d10) for (const l8 of L.d8) {
@@ -3587,6 +3589,34 @@ export default function Page() {
       if (nGun) R.push({ cat: cPiv, item: tx("Irrigatore finale"), qty: nGun, unit: tx("n.") });
       const nSec = pivots.filter((p) => (p.deg ?? 360) < 360).length;
       if (nSec) R.push({ cat: cPiv, item: tx("Pivot a settore (con fermi di fine corsa)"), qty: nSec, unit: tx("n.") });
+    }
+    // Lineari, rotoloni e goccia salvati sui campi
+    for (const [k, d] of Object.entries(sysDesigns)) {
+      const f = fieldOfKey(k); if (!f) continue;
+      if (d.sys === "lineari") {
+        const r = calcLin(f, d.p as LinP), cL = `${tx("Lineari")} · ${f.name}`;
+        R.push({ cat: cL, item: `${tx("Lineari")} ${PIVOT_BRANDS[pivotBrand]}`, qty: r.machines.length, unit: tx("n."), note: `${fx(r.ha, { maximumFractionDigits: 1 })} ha · ${fx(Math.round(r.qLs))} l/s` });
+        const spans = new Map<string, number>();
+        for (const m of r.machines) {
+          R.push({ cat: cL, item: `L${m.i}`, qty: Math.round(m.L), unit: "m", note: `${tx("corsa")} ${fx(Math.round(m.travel))} m` });
+          const c = spanComposition({ r: m.L, q: m.qLs }, pivotBrand, true);
+          for (const sp of c?.spans ?? []) { const kk = `${sp.pipe}|${sp.len}`; spans.set(kk, (spans.get(kk) ?? 0) + 1); }
+        }
+        [...spans.entries()].sort((a, b) => a[0].localeCompare(b[0])).forEach(([kk, n]) => {
+          const [pi, len] = kk.split("|").map(Number);
+          R.push({ cat: cL, item: tx("Campata {d} da {l} m", { d: ['10"', '8"5/8', '6"5/8'][pi], l: fx(len, { maximumFractionDigits: 1 }) }), qty: n, unit: tx("n.") });
+        });
+      } else if (d.sys === "rotoloni") {
+        const p = d.p as RotP, r = calcRot(f, p), cR = `${tx("Rotoloni")} · ${f.name}`;
+        R.push({ cat: cR, item: tx("Rotolone con tubo da {l} m e irrigatore da {q} m³/h", { l: fx(p.hoseLen), q: fx(p.gunQ) }), qty: r.nMach, unit: tx("n."), note: `${fx(r.coveredHa, { maximumFractionDigits: 1 })} ha · ${fx(r.lanes)} ${tx("corsie")} · ${fx(r.runs.length)} ${tx("tirate")}` });
+        R.push({ cat: cR, item: tx("Portata totale"), qty: Math.round(r.qLs), unit: "l/s" });
+      } else {
+        const p = d.p as DripP, r = calcDrip(f, p), cD = `${tx("Goccia")} · ${f.name}`;
+        R.push({ cat: cD, item: tx("Ali gocciolanti"), qty: Math.round(r.latM), unit: "m", note: `${tx("Interfila delle ali (m)")} ${fx(p.latSp)}` });
+        R.push({ cat: cD, item: tx("Gocciolatori"), qty: Math.round(r.emitters), unit: tx("n."), note: `${fx(p.emQ)} l/h · ${fx(p.emSp)} m` });
+        R.push({ cat: cD, item: tx("Condotte secondarie"), qty: Math.round(r.subLen), unit: "m" });
+        R.push({ cat: cD, item: tx("Valvole di settore"), qty: r.nSec, unit: tx("n."), note: `${fx(Math.round(r.qLs))} l/s ${tx("per settore")}` });
+      }
     }
     const cNet = tx("Rete di adduzione");
     if (hydra && hydra.byDn.length) {
@@ -3650,7 +3680,8 @@ export default function Page() {
     saveBlob(blob, `${safe(pname)}_computo.xlsx`);
   }
   function exportCeres() {
-    if (!pivots.length) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
+    const hasLin = Object.values(sysDesigns).some((d) => d.sys === "lineari");
+    if (!pivots.length && !hasLin) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
     const r6 = (x: number) => Math.round(x * 1e6) / 1e6;
     const inRing = (lng: number, lat: number, ring: number[][]) => {
       let inside = false;
@@ -3668,6 +3699,8 @@ export default function Page() {
       return hit?.id ?? null;
     });
     const used = new Set(owner.filter((x): x is number => x != null));
+    const linFields = Object.entries(sysDesigns).filter(([, d]) => d.sys === "lineari").map(([k]) => fieldOfKey(k)).filter((f): f is Field => !!f);
+    for (const f of linFields) used.add(f.id);
     const ffSrc = fields.filter((f) => used.has(f.id));
     if (!ffSrc.length) { setMsg(t("Nessun pivot è dentro un campo: impossibile esportare per Ceres.")); return; }
     const idOf = new Map(ffSrc.map((f, i) => [f.id, i + 1]));
@@ -3692,6 +3725,16 @@ export default function Page() {
         : [r6(pv.lat), r6(pv.lng), Math.round(pv.r), deg, deg >= 360 ? 0 : az, gun, throwM, 0, 0, idOf.get(fid)!, 0, [], 0]);
     });
     const skipped = pivots.length - p.length;
+    // Lineari: tipo 1, punto di partenza = centro della macchina a inizio corsa,
+    // [4] direzione di marcia, [8] corsa.
+    for (const f of linFields) {
+      const d = Object.entries(sysDesigns).find(([k]) => fieldOfKey(k)?.id === f.id)?.[1]; if (!d) continue;
+      for (const m of calcLin(f, d.p as LinP).machines) {
+        const c = spanComposition({ r: m.L, q: m.qLs }, pivotBrand, true);
+        p.push([r6(m.start[1]), r6(m.start[0]), Math.round(c ? c.total : m.L), 0, Math.round(m.az) % 360, 0, 25, 1, Math.round(m.travel), idOf.get(f.id)!,
+          c ? Math.round(c.oh * 10) : 0, c ? c.spans.map((sp) => [sp.pipe, Math.round(sp.len * 10)]) : [], c ? 1 : 0]);
+      }
+    }
     const cname = clients.find((c) => c.id === clientId)?.name || "";
     const pname = projects.find((x) => x.id === projectId)?.name || "";
     const today = new Date(); const dt = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
@@ -3851,6 +3894,202 @@ export default function Page() {
       </li>
     );
   }
+  // ---- LINEARI · ROTOLONI · GOCCIA ---------------------------------------------
+  // Si progettano sul poligono attivo (area o campo). «Salva sul campo» li
+  // conserva nel progetto: compaiono sempre sulla mappa, nel computo e (i
+  // lineari) nel file .ceres.
+  type SysKind = "lineari" | "rotoloni" | "goccia";
+  type LinP = { maxLen: number; minTravel: number; az: number | null };
+  type RotP = { throw: number; gunQ: number; spacingPct: number; hoseLen: number; depth: number; az: number | null };
+  type DripP = { latSp: number; emSp: number; emQ: number; latMax: number; sectors: number; az: number | null };
+  type SysDesign = { sys: SysKind; p: LinP | RotP | DripP };
+  const LIN_DEF: LinP = { maxLen: 600, minTravel: 200, az: null };
+  const ROT_DEF: RotP = { throw: 40, gunQ: 40, spacingPct: 70, hoseLen: 350, depth: 30, az: null };
+  const DRIP_DEF: DripP = { latSp: 1.5, emSp: 0.3, emQ: 1.0, latMax: 120, sectors: 0, az: null };
+  const [linP, setLinP] = useState<LinP>(LIN_DEF);
+  const [rotP, setRotP] = useState<RotP>(ROT_DEF);
+  const [dripP, setDripP] = useState<DripP>(DRIP_DEF);
+  const [sysDesigns, setSysDesigns] = useState<Record<string, SysDesign>>({});   // chiave: a<area salvata> o f<campo>
+  const sysKey = (f: Field) => (f.savedId != null ? `a${f.savedId}` : `f${f.id}`);
+  const fieldOfKey = (k: string) => fields.find((f) => sysKey(f) === k) ?? null;
+  const ringOf = (f: Field) => f.geom.coordinates[0] as SysLL[];
+  function calcLin(f: Field, p: LinP) {
+    const L = linearLayout(ringOf(f), { maxLen: p.maxLen, minTravel: p.minTravel, az: p.az });
+    const hd = Math.max(1, Math.min(24, hoursDay));
+    const machines = L.machines.map((m) => ({ ...m, qLs: (m.areaHa * 10000 * mmDes) / (hd * 3600) }));
+    return { ...L, machines, ha: machines.reduce((a, m) => a + m.areaHa, 0), qLs: machines.reduce((a, m) => a + m.qLs, 0) };
+  }
+  function calcRot(f: Field, p: RotP) {
+    const spacing = 2 * p.throw * p.spacingPct / 100;
+    const L = reelLayout(ringOf(f), { spacing, hoseLen: p.hoseLen, throw: p.throw, az: p.az });
+    const hd = Math.max(1, Math.min(24, hoursDay));
+    const cycleDays = Math.max(1, p.depth / Math.max(0.1, mmDes));              // giorni fra due passaggi
+    const runH = L.runs.map((r) => (r.areaHa * 10 * p.depth) / Math.max(1, p.gunQ));   // ore per tirata
+    const totH = runH.reduce((a, x) => a + x, 0);
+    const nMach = Math.max(1, Math.ceil(totH / (hd * cycleDays)));
+    return { ...L, spacing, cycleDays, totH, nMach, qLs: (nMach * p.gunQ) / 3.6, rateMmH: (p.gunQ / Math.max(1, Math.PI * p.throw * p.throw)) * 1000 };
+  }
+  function calcDrip(f: Field, p: DripP) {
+    const rate = p.emQ / Math.max(0.01, p.latSp * p.emSp);                      // mm/h
+    const hSec = mmDes / Math.max(0.01, rate);                                  // ore per settore
+    const hd = Math.max(1, Math.min(24, hoursDay));
+    const auto = Math.max(1, Math.floor(hd / Math.max(0.1, hSec)));
+    const nSec = p.sectors > 0 ? p.sectors : auto;
+    const L = dripLayout(ringOf(f), { latMax: p.latMax, nSectors: nSec, az: p.az });
+    const latM = (L.fieldHa * 10000) / Math.max(0.1, p.latSp);
+    const maxSecHa = L.sectors.reduce((a, s) => Math.max(a, s.areaHa), 0);
+    return { ...L, rate, hSec, nSec, auto, latM, emitters: latM / Math.max(0.05, p.emSp), qLs: (maxSecHa * 10000 * rate) / 3600,
+      hoursUsed: hSec * nSec, ok: hSec * nSec <= hd + 1e-6 };
+  }
+  // Disegno: progetti salvati di tutti i campi + anteprima del campo attivo.
+  function sysDrawItems(): { polys: { ring: number[][]; color: string; label?: string; dashed?: boolean }[]; lines: { coords: number[][]; color: string; dashed?: boolean; weight?: number }[] } {
+    const polys: { ring: number[][]; color: string; label?: string; dashed?: boolean }[] = [];
+    const lines: { coords: number[][]; color: string; dashed?: boolean; weight?: number }[] = [];
+    const add = (f: Field, d: SysDesign, preview: boolean) => {
+      if (d.sys === "lineari") {
+        for (const m of calcLin(f, d.p as LinP).machines) {
+          polys.push({ ring: m.ring, color: "#4CAF4F", label: `L${m.i} · ${fmt(Math.round(m.L))}×${fmt(Math.round(m.travel))} m`, dashed: preview });
+          lines.push({ coords: m.feed, color: "#0284c7", dashed: true, weight: 3 });
+        }
+      } else if (d.sys === "rotoloni") {
+        const r = calcRot(f, d.p as RotP);
+        for (const run of r.runs) { polys.push({ ring: run.ring, color: "#f0b429", dashed: preview }); lines.push({ coords: run.axis, color: "#b7791f", weight: 1.5 }); }
+      } else {
+        const r = calcDrip(f, d.p as DripP);
+        const pal = ["#4CAF4F", "#20aae2", "#87bf59", "#f0b429", "#a855f7", "#ef4444"];
+        r.sectors.forEach((s, k) => polys.push({ ring: s.ring, color: pal[k % pal.length], label: `${t("Settore")} ${s.i} · ${fmt(s.areaHa, { maximumFractionDigits: 1 })} ha`, dashed: preview }));
+        for (const sm of r.submains) lines.push({ coords: sm, color: "#1d4ed8", weight: 2 });
+      }
+    };
+    for (const [k, d] of Object.entries(sysDesigns)) { const f = fieldOfKey(k); if (f && !(active && f.id === active.id && tab === "impianti" && irrigSys !== "pivot")) add(f, d, false); }
+    if (active && tab === "impianti" && irrigSys !== "pivot") {
+      add(active, { sys: irrigSys, p: irrigSys === "lineari" ? linP : irrigSys === "rotoloni" ? rotP : dripP }, !sysDesigns[sysKey(active)] || sysDesigns[sysKey(active)].sys !== irrigSys);
+    }
+    return { polys, lines };
+  }
+  useEffect(() => {
+    const m = mapApi.current; if (!m) return;
+    const it = sysDrawItems();
+    m.setDesign?.(it.polys.length || it.lines.length ? it : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sysDesigns, fields, active, tab, irrigSys, linP, rotP, dripP, mmDes, hoursDay, lang]);
+  // Apre i parametri salvati quando si passa a un campo che ne ha.
+  useEffect(() => {
+    if (!active) return;
+    const d = sysDesigns[sysKey(active)];
+    if (!d) return;
+    if (d.sys === "lineari") setLinP(d.p as LinP); else if (d.sys === "rotoloni") setRotP(d.p as RotP); else setDripP(d.p as DripP);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
+  function renderSystems() {
+    if (!active) return <p className="text-[12px] text-sage-dark bg-panel rounded-lg px-3 py-4 text-center">{t("Seleziona un'area o un campo a sinistra.")}</p>;
+    const sys = irrigSys as SysKind;
+    const key = sysKey(active), saved = sysDesigns[key];
+    const num = (label: string, v: number, set: (x: number) => void, step = 1, min = 0, max = 1e9) => (
+      <label className="text-[11px] text-sage-dark">{label}
+        <input type="number" min={min} max={max} step={step} value={v}
+          onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) set(Math.max(min, Math.min(max, x))); }} className="field-input mt-0.5 py-1 text-sm" /></label>
+    );
+    const azCtl = (az: number | null, set: (a: number | null) => void) => (
+      <div className="col-span-2 flex items-end gap-2">
+        <label className="flex items-center gap-2 text-[11px] text-sage-dark pb-1.5 flex-1">
+          <input type="checkbox" checked={az == null} onChange={(e) => set(e.target.checked ? null : 0)} />{t("Orientamento automatico (lato lungo)")}</label>
+        {az != null && <label className="text-[11px] text-sage-dark flex-1">{t("Azimut (°)")}
+          <input type="number" min={0} max={179} step={1} value={az} onChange={(e) => set(((Number(e.target.value) % 180) + 180) % 180)} className="field-input mt-0.5 py-1 text-sm" /></label>}
+      </div>
+    );
+    const box = (rows: [string, string][]) => (
+      <table className="w-full text-[11px] bg-panel rounded-lg"><tbody>
+        {rows.map((r, i) => <tr key={i}><td className="text-sage-dark px-2 py-0.5">{r[0]}</td><td className="text-right text-brand-darker font-semibold px-2 py-0.5 tabular-nums">{r[1]}</td></tr>)}
+      </tbody></table>
+    );
+    let body: React.ReactNode = null;
+    if (sys === "lineari") {
+      const r = calcLin(active, linP);
+      const c = r.machines.map((m) => spanComposition({ r: m.L, q: m.qLs }, pivotBrand, true));
+      body = (<>
+        <div className="grid grid-cols-2 gap-2">
+          {num(t("Lunghezza massima della macchina (m)"), linP.maxLen, (x) => setLinP({ ...linP, maxLen: x }), 10, 50, 1500)}
+          {num(t("Corsa minima (m)"), linP.minTravel, (x) => setLinP({ ...linP, minTravel: x }), 10, 0, 5000)}
+          {azCtl(linP.az, (a) => setLinP({ ...linP, az: a }))}
+        </div>
+        {box([
+          [t("Macchine"), fmt(r.machines.length)],
+          [t("Superficie irrigata"), `${fmt(r.ha, { maximumFractionDigits: 1 })} ha / ${fmt(r.fieldHa, { maximumFractionDigits: 1 })} ha`],
+          [t("Portata totale"), `${fmt(Math.round(r.qLs))} l/s`],
+          [t("Direzione di marcia"), `${fmt(Math.round(r.az))}°`],
+        ])}
+        <div className="text-[11px] text-sage-dark space-y-0.5">
+          {r.machines.map((m, i) => (
+            <div key={i}>• L{m.i}: <b>{fmt(Math.round(m.L))} m</b> × {t("corsa")} {fmt(Math.round(m.travel))} m · {fmt(m.areaHa, { maximumFractionDigits: 1 })} ha · {fmt(Math.round(m.qLs))} l/s{c[i] ? ` · ${c[i]!.spans.length} ${t("campate")}` : ""}</div>
+          ))}
+        </div>
+        <p className="text-[10px] text-sage-dark leading-snug">{t("Alimentazione da canale o tubo flessibile lungo un bordo della corsa (tratteggio blu). Le campate seguono il produttore scelto per i pivot.")}</p>
+      </>);
+    } else if (sys === "rotoloni") {
+      const r = calcRot(active, rotP);
+      body = (<>
+        <div className="grid grid-cols-2 gap-2">
+          {num(t("Gittata dell'irrigatore (m)"), rotP.throw, (x) => setRotP({ ...rotP, throw: x }), 1, 10, 80)}
+          {num(t("Portata dell'irrigatore (m³/h)"), rotP.gunQ, (x) => setRotP({ ...rotP, gunQ: x }), 1, 5, 200)}
+          {num(t("Interasse delle corsie (% del diametro bagnato)"), rotP.spacingPct, (x) => setRotP({ ...rotP, spacingPct: x }), 5, 40, 100)}
+          {num(t("Lunghezza del tubo (m)"), rotP.hoseLen, (x) => setRotP({ ...rotP, hoseLen: x }), 10, 50, 1000)}
+          {num(t("Altezza d'acqua per passaggio (mm)"), rotP.depth, (x) => setRotP({ ...rotP, depth: x }), 1, 5, 100)}
+          {azCtl(rotP.az, (a) => setRotP({ ...rotP, az: a }))}
+        </div>
+        {box([
+          [t("Corsie · tirate"), `${fmt(r.lanes)} · ${fmt(r.runs.length)}`],
+          [t("Interasse delle corsie"), `${fmt(Math.round(r.spacing))} m`],
+          [t("Superficie irrigata"), `${fmt(r.coveredHa, { maximumFractionDigits: 1 })} ha / ${fmt(r.fieldHa, { maximumFractionDigits: 1 })} ha`],
+          [t("Turno irriguo"), `${fmt(r.cycleDays, { maximumFractionDigits: 1 })} ${t("giorni")}`],
+          [t("Ore di lavoro per turno"), `${fmt(Math.round(r.totH))} h`],
+          [t("Rotoloni necessari"), fmt(r.nMach)],
+          [t("Portata totale"), `${fmt(Math.round(r.qLs))} l/s`],
+          [t("Intensità di pioggia"), `${fmt(r.rateMmH, { maximumFractionDigits: 1 })} mm/h`],
+        ])}
+        {r.rateMmH > infiltration && <p className="text-[11px] text-rust">{t("L'intensità supera l'assorbimento del terreno ({i} mm/h): rischio di ruscellamento, riduci la portata o aumenta la gittata.", { i: fmt(infiltration) })}</p>}
+      </>);
+    } else {
+      const r = calcDrip(active, dripP);
+      body = (<>
+        <div className="grid grid-cols-2 gap-2">
+          {num(t("Interfila delle ali (m)"), dripP.latSp, (x) => setDripP({ ...dripP, latSp: x }), 0.1, 0.2, 10)}
+          {num(t("Distanza tra gocciolatori (m)"), dripP.emSp, (x) => setDripP({ ...dripP, emSp: x }), 0.05, 0.1, 2)}
+          {num(t("Portata del gocciolatore (l/h)"), dripP.emQ, (x) => setDripP({ ...dripP, emQ: x }), 0.1, 0.3, 8)}
+          {num(t("Lunghezza massima dell'ala (m)"), dripP.latMax, (x) => setDripP({ ...dripP, latMax: x }), 10, 20, 500)}
+          <label className="text-[11px] text-sage-dark col-span-2">{t("Settori")}
+            <select className="field-input mt-0.5 py-1 text-sm" value={dripP.sectors} onChange={(e) => setDripP({ ...dripP, sectors: Number(e.target.value) })}>
+              <option value={0}>{t("Automatico ({n})", { n: r.auto })}</option>
+              {Array.from({ length: 24 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+            </select></label>
+          {azCtl(dripP.az, (a) => setDripP({ ...dripP, az: a }))}
+        </div>
+        {box([
+          [t("Superficie"), `${fmt(r.fieldHa, { maximumFractionDigits: 1 })} ha`],
+          [t("Intensità di erogazione"), `${fmt(r.rate, { maximumFractionDigits: 2 })} mm/h`],
+          [t("Ore per settore"), `${fmt(r.hSec, { maximumFractionDigits: 1 })} h`],
+          [t("Settori"), `${fmt(r.nSec)} (${fmt(r.hoursUsed, { maximumFractionDigits: 1 })} h/${t("giorno")})`],
+          [t("Portata del settore più grande"), `${fmt(Math.round(r.qLs))} l/s`],
+          [t("Ali gocciolanti"), `${fmt(Math.round(r.latM / 1000))} km`],
+          [t("Gocciolatori"), fmt(Math.round(r.emitters))],
+          [t("Condotte secondarie"), `${fmt(Math.round(r.subLen))} m`],
+        ])}
+        {!r.ok && <p className="text-[11px] text-rust">{t("Con {n} settori servono {h} h al giorno, più delle ore di esercizio: riduci i settori o aumenta la portata dei gocciolatori.", { n: r.nSec, h: fmt(r.hoursUsed, { maximumFractionDigits: 1 }) })}</p>}
+      </>);
+    }
+    return (
+      <div className="space-y-2">
+        <p className="text-[11px] text-sage-dark">{t("Campo")}: <b className="text-brand-darker">{active.name}</b> · {t("fabbisogno")} {fmt(mmDes, { maximumFractionDigits: 1 })} mm/{t("giorno")} · {fmt(hoursDay)} h/{t("giorno")}</p>
+        {body}
+        <div className="flex gap-2">
+          <button className="btn-primary flex-1 basis-0" onClick={() => setSysDesigns((d) => ({ ...d, [key]: { sys, p: sys === "lineari" ? linP : sys === "rotoloni" ? rotP : dripP } }))}>
+            {saved && saved.sys === sys ? t("Aggiorna sul campo") : t("Salva sul campo")}</button>
+          {saved && <button className="btn-ghost flex-1 basis-0" onClick={() => setSysDesigns((d) => { const n = { ...d }; delete n[key]; return n; })}>{t("Togli dal campo")}</button>}
+        </div>
+        {saved && saved.sys !== sys && <p className="text-[10px] text-sage-dark">{t("Su questo campo è salvato un altro sistema: salvando lo sostituisci.")}</p>}
+      </div>
+    );
+  }
   // ---- Impostazioni di progetto salvate sul server ---------------------------
   // Produttore dei pivot e fonte d'acqua (presa, tracciato, livelli, parametri)
   // viaggiano con il progetto: si ritrovano su qualunque computer.
@@ -3883,13 +4122,16 @@ export default function Page() {
     const te = (st as { terrain?: { dem?: string; smooth?: number } }).terrain ?? {};
     setDemModel(te.dem === "COPERNICUS_90" ? "COPERNICUS_90" : "COPERNICUS_30"); setDemSmooth(num(te.smooth, 100));
     setSpanVmax(num((st as { span_vmax?: number }).span_vmax, 3));
+    const sy = (st as { systems?: Record<string, SysDesign> }).systems;
+    setSysDesigns(sy && typeof sy === "object" ? sy : {});
     projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
     projLoaded.current = projectId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, projects]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId) return;
-    const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, fonte: fonteState(), terrain: { dem: demModel, smooth: demSmooth } };
+    const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, fonte: fonteState(), terrain: { dem: demModel, smooth: demSmooth },
+      systems: Object.fromEntries(Object.entries(sysDesigns).filter(([k]) => k.startsWith("a"))) };
     const js = JSON.stringify(payload);
     if (js === projSaved.current) return;
     const pid = projectId;
@@ -3901,7 +4143,7 @@ export default function Page() {
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, srcMonthly, srcSectors,
-    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, demModel, demSmooth, spanVmax]);
+    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, demModel, demSmooth, spanVmax, sysDesigns]);
   // ---- FONTE D'ACQUA → SCHEMI D'IMPIANTO ----------------------------------
   // L'utente indica la presa (fiume, canale, pozzo, invaso) e, se vuole, il
   // tracciato fino alla vasca. Con le quote del DEM (presa, profilo del
@@ -6005,9 +6247,7 @@ export default function Page() {
             </div>
 
             {irrigSys !== "pivot" ? (
-              <div className="text-[12px] text-sage-dark bg-panel rounded-lg px-3 py-6 text-center">
-                {t("Sistema non ancora disponibile: per ora si progettano i pivot.")}
-              </div>
+              renderSystems()
             ) : (<>
 
             <label className="text-xs text-sage-dark block mb-1">{t("Produttore dei pivot")}
@@ -6537,13 +6777,13 @@ export default function Page() {
               </button>
               <button className="btn-ghost flex-1 basis-0" disabled={!laid.length} onClick={downloadGeoJSON}>{t("Layout GeoJSON")}</button>
             </div>
-            <button className="btn-ghost w-full mt-2" disabled={!pivots.length} onClick={exportCeres}
+            <button className="btn-ghost w-full mt-2" disabled={!pivots.length && !Object.values(sysDesigns).some((d) => d.sys === "lineari")} onClick={exportCeres}
               title={t("Campi e pivot con le campate del produttore scelto in Impianti, da aprire in Ceres con File › Apri file.")}>{t("Esporta per Ceres (.ceres)")}</button>
             <div className="mt-3">
               <div className="flex items-center gap-2">
                 <button className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide flex-1 text-left" onClick={() => setComputoOpen((o) => !o)}>
                   {computoOpen ? "▾" : "▸"} {t("Computo metrico")}</button>
-                <button className="text-[11px] text-brand hover:underline" disabled={!pivots.length} onClick={downloadComputo}>{t("Scarica Excel")}</button>
+                <button className="text-[11px] text-brand hover:underline" disabled={!pivots.length && !Object.keys(sysDesigns).length} onClick={downloadComputo}>{t("Scarica Excel")}</button>
               </div>
               {computoOpen && (() => {
                 const rows = computoRows();

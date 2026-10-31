@@ -81,6 +81,8 @@ export type MapHandle = {
   // Fonte d'acqua e schema d'impianto (presa, adduttrice, vasca): solo disegno.
   setSourceScheme: (d: { src: number[] | null; line?: number[][] | null; lineKind?: "pipe" | "canal";
     reservoir?: { center: number[]; r: number } | null; points?: { pt: number[]; label: string; tip?: string }[]; labels?: { src: string; res: string; line: string } } | null) => void;
+  setDesign: (d: { polys: { ring: number[][]; color: string; label?: string; dashed?: boolean }[];
+    lines: { coords: number[][]; color: string; dashed?: boolean; weight?: number }[] } | null) => void;
   startMeasure: (cb: (text: string) => void) => void;
   stopMeasure: () => void;
   // Cerchi dal centro: simulazione rapida di pivot (non crea macchine, solo misura).
@@ -187,6 +189,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const pickRef = useRef<((lat: number, lng: number) => void) | null>(null);
   const commentsRef = useRef<L.LayerGroup | null>(null);
   const sourceRef = useRef<L.LayerGroup | null>(null);
+  const designRef = useRef<L.LayerGroup | null>(null);   // lineari, rotoloni, goccia
   // Etichette dei pivot (superficie · portata): visibili solo se il cerchio a
   // schermo è abbastanza grande da contenerle, altrimenti si sovrappongono.
   const pvLabelsRef = useRef<{ tt: L.Tooltip; r: number; lat: number }[]>([]);
@@ -888,6 +891,22 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
               html: '<div style="width:26px;height:26px;border-radius:13px 13px 13px 0;transform:rotate(-45deg);background:#1d4ed8;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);display:grid;place-items:center"><span style="transform:rotate(45deg);color:#fff;font:700 13px Inter,system-ui,sans-serif">≈</span></div>' }),
             zIndexOffset: 1200,
           }).bindTooltip(d.labels?.src ?? "", { direction: "top", offset: [0, -30] }));
+        }
+      },
+      setDesign(d) {
+        const map = mapRef.current; if (!map) return;
+        if (!designRef.current) designRef.current = L.layerGroup().addTo(map);
+        const g = designRef.current; g.clearLayers();
+        if (!d) return;
+        for (const p of d.polys) {
+          const ly = L.polygon(p.ring.map((q) => [q[1], q[0]] as [number, number]),
+            { color: p.color, weight: 1.5, fillColor: p.color, fillOpacity: p.dashed ? 0.12 : 0.22, dashArray: p.dashed ? "6,4" : undefined });
+          if (p.label) ly.bindTooltip(p.label, { sticky: true });
+          g.addLayer(ly);
+        }
+        for (const l of d.lines) {
+          g.addLayer(L.polyline(l.coords.map((q) => [q[1], q[0]] as [number, number]),
+            { color: l.color, weight: l.weight ?? 2, dashArray: l.dashed ? "6,4" : undefined, interactive: false }));
         }
       },
       setCommentPins(pins) {
