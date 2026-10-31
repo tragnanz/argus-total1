@@ -475,3 +475,18 @@ export async function techAnnex(doc: Record<string, unknown>): Promise<Blob> {
   }
   return res.blob();
 }
+// Relazione tecnica generale per il cliente (PDF, senza prezzi); bbox = foto di copertina
+export async function relazione(doc: Record<string, unknown>, bbox: number[] | null): Promise<Blob> {
+  const tok = getToken();
+  const res = await fetch(`${API_BASE}/api/project/relazione`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+    body: JSON.stringify({ doc, bbox }),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json())?.detail ?? detail; } catch { /* */ }
+    throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  return res.blob();
+}

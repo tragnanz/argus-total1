@@ -15,7 +15,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.197";
+const REV = "v0.6.198";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -4026,121 +4026,263 @@ export default function Page() {
       setOlyCust(res.items[0]?.id ?? "");
     } catch (e) { olyErr(e); }
   }
-  // ---- ALLEGATO TECNICO DELL'IMPIANTO (PDF) -----------------------------------------
-  // Documento tecnico da allegare all'offerta Mercurius: NON è un'offerta e non
-  // porta prezzi, costi o importi (il backend rifiuta qualunque «€»). Riferimento
-  // e revisione sono quelli dell'ultimo .ceres, così allegato e offerta si ritrovano.
-  async function downloadTechAnnex() {
+  // ---- RELAZIONE TECNICA GENERALE PER IL CLIENTE (PDF) -------------------------------
+  // Impostata come le relazioni tecniche Agrostar: copertina con la foto aerea del
+  // sito, capitoli numerati in prosa con tabelle e figure. Nessun prezzo: le
+  // condizioni economiche stanno solo nell'offerta Mercurius (il backend rifiuta «€»).
+  const [relBrand, setRelBrand] = useState<"agrostar" | "nabu">("agrostar");
+  async function downloadRelazione() {
     if (!projectId || (!pivots.length && !Object.keys(sysDesigns).length)) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
     const pid = projectId;
-    setBusy("annex");
+    setBusy("rel");
     try {
       ensureHydra(); await ensureProfile();
-      const lastRev = nextCeresRev() - 1;
+      const rev = Math.max(1, nextCeresRev() - 1);
+      const company = relBrand === "nabu" ? "Nabu srl" : "Agrostar srl";
+      let bbox: number[] | null = null;
       const doc = inLang(pdfLang, () => {
         const n0 = (x: number) => fx(Math.round(x)), n1 = (x: number) => fx(x, { maximumFractionDigits: 1 }), n2 = (x: number) => fx(x, { maximumFractionDigits: 2 });
-        const pname = projects.find((x) => x.id === pid)?.name || "Argus Total", cname = clients.find((c) => c.id === clientId)?.name || "—";
+        const pname = projects.find((x) => x.id === pid)?.name || "Argus Total", cname = clients.find((c) => c.id === clientId)?.name || "";
+        const d = new Date(), date = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
         const P = pumpStation(), VM = variantMetrics(), HY = hydraNow(), NF = netFittings(HY);
         const S = srcPt && pivots.length ? sourceSchemes() : null;
         const sc = S ? (S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? null) : null;
         const stations = pumpStationsList(), cabs = cableRuns(stations), G = powerGear(stations);
-        const ref = `ARGUS-${pid}${lastRev >= 1 ? ` · ${tx("revisione")} ${lastRev}` : ""}`;
-        const allPts = pivots.map((p) => [p.lng, p.lat]);
-        const ctr = allPts.length ? [allPts.reduce((a, q) => a + q[0], 0) / allPts.length, allPts.reduce((a, q) => a + q[1], 0) / allPts.length] : null;
+        const plan = mercuriusComputo(`ARGUS-${pid}`, rev).planimetria as { riquadro?: { ovest: number; sud: number; est: number; nord: number }; elementi?: { features?: { properties?: { tipo?: string } }[] } } | undefined;
+        const feats = plan?.elementi?.features ?? [];
+        if (plan?.riquadro) bbox = [plan.riquadro.ovest, plan.riquadro.sud, plan.riquadro.est, plan.riquadro.nord];
+        const usedF = fields.filter((f) => pivots.some((p) => p.field === f.id) || Object.keys(sysDesigns).some((k) => fieldOfKey(k)?.id === f.id));
+        const fieldsShown = usedF.length ? usedF : fields;
+        const gross = fieldsShown.reduce((a, f) => a + ringAreaHa(f.geom.coordinates), 0);
+        const pts = pivots.length ? pivots.map((p) => [p.lng, p.lat]) : fieldsShown.flatMap((f) => f.geom.coordinates[0]);
+        const lon = pts.reduce((a, q) => a + q[0], 0) / Math.max(1, pts.length), lat = pts.reduce((a, q) => a + q[1], 0) / Math.max(1, pts.length);
+        const dms = (v: number, pos: string, neg: string) => { const a = Math.abs(v), dd = Math.floor(a), mm = Math.floor((a - dd) * 60), ss = ((a - dd) * 60 - mm) * 60; return `${dd}°${String(mm).padStart(2, "0")}′${ss.toFixed(1)}″${v >= 0 ? pos : neg}`; };
         const PIPE_TXT = ['10"', '8"5/8', '6"5/8'];
-        const sections: Record<string, unknown>[] = [];
-        // 1 — dati di progetto
-        sections.push({ title: tx("Dati di progetto"), kv: [
-          [tx("Cliente"), cname], [tx("Progetto"), pname],
-          ...(ctr ? [[tx("Posizione (WGS84)"), `${ctr[1].toFixed(5)}, ${ctr[0].toFixed(5)}`]] : []),
-          [tx("Superficie irrigata"), `${n1(VM.ha)} ha`],
-          [tx("Pivot"), `${fx(pivots.length)} · ${PIVOT_BRANDS[pivotBrand]}`],
-          ...(Object.keys(sysDesigns).length ? [[tx("Campi con lineari, rotoloni o goccia"), fx(Object.keys(sysDesigns).length)]] : []),
-          [tx("Fabbisogno di progetto"), `${n1(mmDes)} mm/24h`],
-          [tx("Ore di funzionamento al giorno"), `${n1(hoursDay)} h`],
-          [tx("Portata totale"), `${n0(P.qDes)} l/s`],
-          [tx("Volume annuo"), `${n0(P.volYear)} m³`],
+        const cropLbl = tx(cropMax?.label ?? CROP_LIST.find((c) => c.key === cropKey)?.label ?? "");
+        const month = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(pdfLang, { month: "short" }); } catch { return String(i + 1); } };
+        const monthLong = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(pdfLang, { month: "long" }); } catch { return String(i + 1); } };
+        // Indice come le relazioni tecniche Agrostar (General Explanatory Note)
+        const ch: { title: string; blocks: Record<string, unknown>[] }[] = [];
+        const nSys = Object.keys(sysDesigns).length;
+        // 1 — Introduzione
+        ch.push({ title: tx("Introduzione"), blocks: [
+          { p: tx("La presente relazione tecnica generale descrive il progetto dell'impianto di irrigazione «{p}» per {c} e costituisce parte integrante della documentazione di progetto.", { p: pname, c: cname || tx("il committente") }) },
+          { p: tx("Il documento riassume le condizioni di partenza, le ipotesi di progetto e le soluzioni tecniche adottate: inquadramento del sito, clima e fabbisogno irriguo, portata di progetto, fonte d'acqua, disposizione delle macchine, rete di distribuzione, stazioni di pompaggio e alimentazione elettrica.") },
+          { p: tx("L'impianto irriga {ha} ha con {n} pivot e richiede una portata di progetto di {q} l/s.", { ha: n1(VM.ha), n: fx(pivots.length), q: n0(P.qDes) })
+            + (nSys ? " " + tx("Sono previsti inoltre {k} campi con sistemi lineari, a rotolone o a goccia.", { k: fx(nSys) }) : "") },
+          { p: tx("Il progetto si propone di:") },
+          { bullets: [tx("distribuire l'acqua in modo uniforme ed efficiente su tutta la superficie irrigata;"), tx("dimensionare rete, pompe e linee elettriche sulla domanda di punta della coltura più esigente;"),
+            tx("contenere i consumi di energia con pompe scelte per rendimento al punto di lavoro;"), tx("rendere l'impianto realizzabile per fasi e semplice da gestire e mantenere.")] },
+          { p: tx("Il documento è rivolto al committente, ai progettisti e ai soggetti coinvolti nella valutazione e nella realizzazione dell'impianto. Le condizioni economiche sono riportate nell'offerta.") },
         ] });
-        // 2 — macchine
-        if (pivots.length) sections.push({ title: tx("Macchine"), table: {
-          header: [tx("Pivot"), tx("Settore"), tx("Lunghezza") + " (m)", tx("Superficie") + " (ha)", tx("Campate"), tx("Sbraccio") + " (m)", tx("Irrigatore finale"), "l/s", "bar"],
-          widths: [8, 9, 11, 11, 22, 9, 11, 9, 10],
-          rows: pivots.map((pv, k) => {
-            const c = spanComposition(pv, pivotBrand), deg = pv.deg ?? 360;
-            const sp = new Map<string, number>(); for (const x of c?.spans ?? []) { const kk = `${PIPE_TXT[x.pipe]} ${n1(x.len)} m`; sp.set(kk, (sp.get(kk) ?? 0) + 1); }
-            return [`P${k + 1}`, deg >= 360 ? "360°" : `${Math.round(deg)}°`, n0(c ? c.total : pv.r), n2(pvAreaM2(pv) / 10000),
-              [...sp.entries()].map(([kk, n]) => `${n} × ${kk}`).join(", ") || "—", c?.oh ? n1(c.oh) : "—",
-              pv.gun && pv.gun > 0 ? `${n0(pv.gun)} m` : "—", n1(pivotFlow(pv)), n2(pivotPressure(pv))];
-          }) } });
-        // 3 — rete idraulica
-        if (HY?.byDn.length) {
-          const fitRows: string[][] = [];
-          if (NF) {
-            for (const [dn, n] of [...NF.air.entries()].sort((a, b) => a[0] - b[0])) if (dn) fitRows.push([`${tx("Sfiato d'aria")} DN ${dn}`, fx(n), NF.withProfile ? tx("sui colmi del profilo") : tx("ogni 500 m (senza quote)")]);
-            if (NF.drains) fitRows.push([tx("Scarico"), fx(NF.drains), ""]);
-            for (const [dn, n] of [...NF.tees.entries()].sort((a, b) => a[0] - b[0])) fitRows.push([`${tx("Tee")} DN ${dn}`, fx(n), ""]);
-            for (const [k, n] of NF.reds) fitRows.push([`${tx("Riduzione")} DN ${k.replace("x", " × ")}`, fx(n), ""]);
+        // 2 — Inquadramento geografico
+        ch.push({ title: tx("Inquadramento geografico"), blocks: [
+          { p: tx("Il sito di progetto si trova alle coordinate {lat}, {lon} (WGS84). L'area comprende {nf} appezzamenti per una superficie lorda di {g} ha, di cui {ha} ha irrigati.", { lat: dms(lat, "N", "S"), lon: dms(lon, "E", "W"), nf: fx(fieldsShown.length), g: n1(gross), ha: n1(VM.ha) }) },
+          { figure: "site", caption: tx("Inquadramento dell'area di progetto su ortofoto") },
+          { table: { header: [tx("Campo"), tx("Superficie lorda") + " (ha)", tx("Superficie irrigata") + " (ha)", tx("Pivot")], widths: [40, 20, 20, 20],
+            rows: fieldsShown.map((f) => { const pv = pivots.filter((p) => p.field === f.id); return [f.name, n1(ringAreaHa(f.geom.coordinates)), n1(pv.reduce((a, p) => a + pvAreaM2(p) / 10000, 0)), fx(pv.length)]; }) } },
+          { p: tx("Le superfici sono misurate sui confini digitalizzati dei campi; le quote del terreno derivano dal modello digitale del terreno Copernicus ({m} m).", { m: demModel === "COPERNICUS_90" ? "90" : "30" }) },
+        ] });
+        // dati climatici del sito (dal layout dei campi)
+        const clim = P.clim, eto = clim?.eto_month_mm ?? null, rain = clim?.rain_month_mm ?? null;
+        const re = Math.max(0, Math.min(100, psRainEff)) / 100;
+        // 3 — Inquadramento climatico
+        const c3: Record<string, unknown>[] = [];
+        if (eto && rain) {
+          const eY = eto.reduce((a, x) => a + x, 0), rY = rain.reduce((a, x) => a + x, 0);
+          const iMax = eto.indexOf(Math.max(...eto)), iRain = rain.indexOf(Math.max(...rain));
+          c3.push({ p: tx("Il clima del sito è descritto dalle serie mensili di evapotraspirazione di riferimento e di pioggia ({src}). L'ET₀ annua è di circa {e} mm e la pioggia annua di {r} mm: il rapporto fra pioggia ed evapotraspirazione è di {k}.", { src: clim?.source ?? "NASA POWER", e: n0(eY), r: n0(rY), k: n2(eY > 0 ? rY / eY : 0) }) });
+          c3.push({ p: tx("La domanda evaporativa è massima a {m} ({x} mm nel mese); la pioggia si concentra soprattutto a {mr} ({y} mm). Il deficit idrico estivo va coperto con l'irrigazione, che va dimensionata sulle condizioni di punta e non sulle medie annue.", { m: monthLong(iMax), x: n0(eto[iMax]), mr: monthLong(iRain), y: n0(rain[iRain]) }) });
+          c3.push({ table: { header: [tx("Mese"), "ET₀ (mm)", tx("Pioggia") + " (mm)", tx("Bilancio") + " (mm)"], widths: [25, 25, 25, 25],
+            rows: [...eto.map((e, i) => [month(i), n0(e), n0(rain[i]), n0(rain[i] - e)]), [tx("Anno"), n0(eY), n0(rY), n0(rY - eY)]] } });
+        } else {
+          c3.push({ p: tx("Per questo progetto non è disponibile una serie climatica mensile del sito: il fabbisogno è stimato dall'ET₀ di punta di {e} mm al giorno indicata in progetto. La serie climatica si ottiene generando il layout dei campi.", { e: n1(et0Peak) }) });
+        }
+        ch.push({ title: tx("Inquadramento climatico"), blocks: c3 });
+        // 4 — Piano colturale
+        const crops = [...new Map(fieldsShown.map((f) => { const kc = effSettings(f).kc || CROPS[cropKey] || 1.1; const c = Math.abs(kc - (CROPS[cropKey] ?? 0)) < 1e-6 ? cropOf(cropKey) : (CROP_LIST.find((x) => Math.abs(x.kc - kc) < 1e-6) ?? cropOf(cropKey)); return [c.key, c]; })).values()];
+        if (!crops.length) crops.push(cropOf(cropKey));
+        crops.sort((a, b) => b.kc - a.kc);
+        ch.push({ title: tx("Piano colturale"), blocks: [
+          { p: tx("Il piano colturale considerato per il dimensionamento comprende: {c}. L'impianto è dimensionato sulla coltura più esigente, {m}, in modo che rete, pompe e linee elettriche coprano la domanda di punta di ogni coltura della rotazione.", { c: crops.map((c) => `${tx(c.label)} (Kc ${n2(c.kc)})`).join(", "), m: tx(crops[0].label) }) },
+          { p: tx("Le colture con fabbisogno minore lavorano con turni più brevi o con dosi ridotte; l'alternanza delle colture distribuisce la domanda d'acqua nel corso della stagione e riduce i picchi sulla rete.") },
+        ] });
+        // 5 — Metodologia di stima dell'evapotraspirazione
+        const KC_STAGE: Record<string, [number, number, number]> = { canna: [0.4, 1.25, 0.75], mais: [0.3, 1.2, 0.6], medica: [0.4, 1.15, 1.1], cereali: [0.3, 1.15, 0.4], ortive: [0.6, 1.05, 0.9], altro: [0.5, 1.1, 0.8] };
+        ch.push({ title: tx("Metodologia di stima dell'evapotraspirazione"), blocks: [
+          { p: tx("Il fabbisogno idrico delle colture è stimato con la metodologia FAO-56, riferimento internazionale per la pianificazione irrigua. L'evapotraspirazione di riferimento (ET₀) esprime la domanda climatica dell'atmosfera ed è calcolata con l'equazione di Penman-Monteith, che integra temperatura, umidità, vento e radiazione solare. L'evapotraspirazione della coltura si ottiene come ETc = ET₀ × Kc, con coefficienti colturali che seguono le fasi di sviluppo: iniziale, di sviluppo, di piena copertura e finale.") },
+          { p: tx("Il fabbisogno irriguo netto (NIR) è la differenza fra ETc e pioggia efficace; il fabbisogno lordo (GIR) divide il netto per l'efficienza di applicazione del sistema irriguo.") },
+          ...crops.map((c) => { const k = KC_STAGE[c.key] ?? KC_STAGE.altro; return { bullets: [`${tx(c.label)}: ${tx("Kc iniziale {a}, di piena copertura {b}, finale {c}", { a: n2(k[0]), b: n2(k[1]), c: n2(k[2]) })}`] }; }),
+        ] });
+        // 6 — Pioggia e pioggia efficace
+        const c6: Record<string, unknown>[] = [{ p: tx("Nei climi con estati secche solo una parte della pioggia è utile alla coltura: la pioggia efficace è la frazione che resta nella zona delle radici, al netto di evaporazione immediata, ruscellamento e percolazione profonda. Per il dimensionamento è stimata in modo prudente.") }];
+        if (eto && rain) {
+          c6.push({ p: tx("È considerata efficace il {re} % della pioggia mensile. La tabella riporta pioggia totale ed efficace mese per mese.", { re: fx(psRainEff) }) });
+          c6.push({ table: { header: [tx("Mese"), tx("Pioggia") + " (mm)", tx("Pioggia efficace") + " (mm)"], widths: [34, 33, 33],
+            rows: [...rain.map((r, i) => [month(i), n1(r), n1(r * re)]), [tx("Anno"), n0(rain.reduce((a, x) => a + x, 0)), n0(rain.reduce((a, x) => a + x * re, 0))]] } });
+        } else {
+          c6.push({ p: tx("In progetto è considerata una pioggia utile di {r} mm al giorno nel periodo di punta.", { r: n1(rainMm) }) });
+        }
+        ch.push({ title: tx("Pioggia e pioggia efficace"), blocks: c6 });
+        // 7… — per ogni coltura: ETc, NIR, GIR sulla stagione irrigua
+        const effs = [0.85, 0.8, 0.75, 0.7];
+        for (const c of crops.slice(0, 3)) {
+          const k = KC_STAGE[c.key] ?? KC_STAGE.altro;
+          const cb: Record<string, unknown>[] = [];
+          if (eto && rain) {
+            const mx = Math.max(...eto), season = eto.map((e, i) => i).filter((i) => eto[i] >= mx * 0.4);
+            const n = season.length;
+            const kcOf = (j: number) => (j === 0 ? k[0] + (k[1] - k[0]) * 0.3 : j === n - 1 ? k[2] : j < n / 2 ? k[0] + (k[1] - k[0]) * Math.min(1, (j + 0.5) / Math.max(1, n / 2 - 0.5)) : k[1]);
+            const rows = season.map((i, j) => { const kc = kcOf(j); return { i, kc, etc: eto[i] * kc, pe: rain[i] * re }; });
+            const etcT = rows.reduce((a, r) => a + r.etc, 0), nirT = rows.reduce((a, r) => a + Math.max(0, r.etc - r.pe), 0);
+            const pk = rows.reduce((a, r) => (r.etc / 30.4 > a.etc / 30.4 ? r : a), rows[0]);
+            cb.push({ p: tx("La tabella riporta, per la stagione irrigua da {a} a {b}, l'ET₀ mensile, il coefficiente colturale e l'evapotraspirazione della coltura.", { a: monthLong(season[0]), b: monthLong(season[n - 1]) }) });
+            cb.push({ table: { header: [tx("Mese"), "ET₀ (mm)", "Kc", "ETc (mm)"], widths: [25, 25, 25, 25], rows: rows.map((r) => [month(r.i), n0(eto[r.i]), n2(r.kc), n0(r.etc)]) } });
+            cb.push({ p: tx("L'ETc stagionale è di circa {e} mm; la punta giornaliera cade a {m}, con circa {d} mm al giorno.", { e: n0(etcT), m: monthLong(pk.i), d: n1(pk.etc / 30.4) }) });
+            cb.push({ p: tx("Il fabbisogno irriguo netto (NIR) è l'ETc meno la pioggia efficace:") });
+            cb.push({ table: { header: [tx("Mese"), "ETc (mm)", tx("Pioggia") + " (mm)", tx("Pioggia efficace") + " (mm)", "NIR (mm)"], widths: [20, 20, 20, 20, 20],
+              rows: rows.map((r) => [month(r.i), n0(r.etc), n1(rain[r.i]), n1(r.pe), n1(Math.max(0, r.etc - r.pe))]) } });
+            cb.push({ p: tx("Il fabbisogno netto stagionale è di circa {n} mm: è l'acqua che deve arrivare alla coltura, escluse le perdite di applicazione. Il fabbisogno lordo (GIR) si ottiene dividendo il netto per l'efficienza di applicazione (Ea):", { n: n0(nirT) }) });
+            cb.push({ bullets: effs.map((e) => tx("Ea {e}: circa {g} mm", { e: fx(e, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), g: n0(nirT / e) })) });
+            cb.push({ p: tx("Con l'efficienza di progetto del {eff} % il fabbisogno lordo è di circa {g} mm; nei mesi di punta l'impianto deve poter distribuire {d} mm al giorno.", { eff: fx(effPct), g: n0(nirT / Math.max(0.3, effPct / 100)), d: n1(mmDes) }) });
+          } else {
+            cb.push({ p: tx("Senza serie climatica mensile, la domanda di punta della coltura è stimata in {etc} mm al giorno (ET₀ di punta {et0} mm × Kc {kc}); con l'efficienza di progetto del {eff} % la dose lorda è di {mm} mm ogni 24 ore.", { etc: n1(et0Peak * c.kc), et0: n1(et0Peak), kc: n2(c.kc), eff: fx(effPct), mm: n1(mmDes) }) });
           }
-          const mv = new Map<number, number>(); for (const pv of pivots) { const r = pivotRiser(pv); mv.set(r.mv, (mv.get(r.mv) ?? 0) + 1); }
-          for (const [dn, n] of [...mv.entries()].sort((a, b) => a[0] - b[0])) fitRows.push([`${tx("Idrovalvola e diffusore del pivot")} DN ${dn}`, fx(n), ""]);
-          sections.push({ title: tx("Rete idraulica"),
-            intro: tx("Tubazioni interrate in PE100 PN10, diametri scelti per velocità massima di {v} m/s; perdite di carico con Hazen-Williams (C = {c}).", { v: n1(vMax), c: fx(hwC) }),
-            kv: [[tx("Lunghezza della rete"), `${n2(HY.byDn.reduce((a, x) => a + x[1], 0) / 1000)} km`], [tx("Prevalenza richiesta alla presa"), `${n0(HY.headMax)} m`],
-              [tx("Perdita di carico massima su un tratto"), `${n2(HY.hlMax)} m`]],
-            table: { header: [tx("Voce"), tx("Quantità"), tx("Note")], widths: [50, 15, 35],
-              rows: [...[...HY.byDn].sort((a, b) => a[0] - b[0]).map(([dn, m]) => [`${tx("Tubazione DN {d}", { d: dn })}`, `${n0(m)} m`, ""]), ...fitRows] } });
+          ch.push({ title: tx("{c}: ETc, fabbisogno irriguo netto (NIR) e lordo (GIR)", { c: tx(c.label) }), blocks: cb });
         }
-        // 4 — fonte d'acqua
-        if (sc && S) sections.push({ title: tx("Fonte d'acqua"), kv: [
-          [tx("Tipo di fonte"), tx(srcType)], [tx("Schema della fonte"), `${sc.key} · ${sc.name}`],
-          ...(sc.main?.kind === "pipe" && sc.main.dn ? [[tx("Adduttrice"), `DN ${sc.main.dn} · ${n0(sc.main.L * (sc.main.n ?? 1))} m`]] : []),
-          ...(sc.main?.kind === "canal" ? [[tx("Canale a gravità"), `${n0(sc.main.L)} m`]] : []),
-          ...(sc.res ? [[tx("Vasca di accumulo"), `${n0(sc.res.vol)} m³ · ${n2(sc.res.ha)} ha · ${tx("profondità")} ${n1(resDepth)} m`]] : []),
+        // Portata nominale dell'impianto
+        const qMax = pivots.length ? Math.max(...pivots.map((p) => pivotFlow(p))) : 0;
+        ch.push({ title: tx("Portata nominale dell'impianto"), blocks: [
+          { p: tx("La portata nominale è dimensionata sulla dose di punta e non sui valori medi: la dose di progetto è di {mm} mm ogni 24 ore per la coltura più esigente ({crop}, Kc {kc}, ET₀ di punta {et0} mm al giorno), al netto della pioggia utile e dell'efficienza dell'impianto.", { mm: n1(mmDes), crop: cropLbl, kc: n2(kcMax), et0: n1(et0Peak) }) },
+          { p: tx("La portata di ogni pivot si ricava dalla superficie irrigata e dalla dose distribuita nelle ore di funzionamento giornaliere: Q = A × dose ÷ (ore × 3,6), con A in ettari, dose in millimetri e Q in litri al secondo.") },
+          { bullets: [tx("Dose di progetto: {mm} mm ogni 24 ore", { mm: n1(mmDes) }), tx("Ore di funzionamento: {h} h al giorno", { h: n1(hoursDay) }),
+            ...(pivots.length ? [tx("Portata del pivot più grande: {q} l/s", { q: n1(qMax) })] : []),
+            tx("Portata totale dell'impianto: {q} l/s ({m3} m³/h)", { q: n0(P.qDes), m3: n0(P.qDes * 3.6) }), tx("Volume annuo stimato: {v} m³", { v: n0(P.volYear) })] },
         ] });
-        // 5 — stazioni di pompaggio
-        if (stations.length) sections.push({ title: tx("Stazioni di pompaggio"),
-          intro: tx("Pompe scelte dalle curve Caprari per rendimento al punto di lavoro."),
-          table: { header: [tx("Stazione"), "l/s", "m", tx("Pompa"), tx("Motore") + " (kW)", "η (%)", tx("Potenza assorbita") + " (kW)"], widths: [24, 8, 8, 30, 10, 8, 12],
-            rows: stations.map((st) => [st.name, n0(st.qLs), n0(st.head), st.pick ? `${st.nTot > 1 ? `${st.nTot} × ` : ""}Caprari ${st.pick.model}` : "—",
-              st.pick ? n1(st.pick.motor) : n1(st.kW), st.pick ? n0(st.pick.eta) : "—", st.pick ? n1(st.pick.pAbs) : "—"]) } });
-        // 6 — energia
-        sections.push({ title: tx("Energia"), kv: [
-          [tx("Alimentazione"), VM.energy], [tx("Potenza installata"), `${n0(VM.kWinst)} kW`], [tx("Potenza assorbita"), `${n0(VM.kWabs)} kW`],
-          [tx("Energia"), `${n0(VM.mwh)} MWh/${tx("anno")}`],
-          ...(VM.pvKwp ? [[tx("Fotovoltaico"), `${n0(VM.pvKwp)} kWp`]] : []), ...(VM.battKwh ? [[tx("Batterie"), `${n0(VM.battKwh)} kWh`]] : []),
-          [tx("Energia per ettaro"), `${n0(VM.ha > 0 ? (VM.mwh * 1000) / VM.ha : 0)} kWh/ha`],
-          ...(VM.volYear ? [[tx("Energia per m³ pompato"), `${fx((VM.mwh * 1000) / VM.volYear, { maximumFractionDigits: 3 })} kWh/m³`]] : []),
-          [tx("Consegna dell'energia"), G.supply === "mt" ? `${tx("Cabina di trasformazione MT/BT")} ${fx(G.kva)} kVA` : G.supply === "bt" ? tx("Punto di consegna in bassa tensione")
-            : G.supply === "gen" ? `${tx("Gruppo elettrogeno")} ${fx(G.kva)} kVA` : tx("Fotovoltaico")],
-          ...G.panels.map((pn) => [`${tx("Quadro di comando delle pompe")} · ${pn.name}`, `${pn.n} × ${n1(pn.kWp)} kW${pn.inverter ? ` · ${tx("Inverter")}` : ""}`]),
-        ],
-          table: cabs.length ? { header: [tx("Linea"), "kW", tx("Cavo"), tx("Lunghezza") + " (m)", "ΔV (%)"], widths: [38, 12, 22, 16, 12],
-            rows: cabs.map((c) => [c.name, n1(c.kW), `${c.mat} 3 × ${n1(c.S)} mm²`, n0(c.L), n1(c.dv)]) } : undefined,
-          note: tx("Cavi interrati a 400 V, sezione scelta per corrente e caduta di tensione entro il 4 %; i pivot sono alimentati dalla stazione che li serve, lungo le tubazioni.") });
-        // 7 — computo delle quantità (senza prezzi)
-        const rows: string[][] = []; let last = "";
-        for (const r of computoRows()) {
-          if (r.cat !== last) { rows.push([r.cat, "", "", ""]); last = r.cat; }
-          rows.push([r.item, r.qty != null ? fx(r.qty) : "", r.unit, r.note ?? ""]);
+        // Fonte d'acqua: portata e disponibilità
+        const fb: Record<string, unknown>[] = [];
+        if (sc && S) {
+          fb.push({ p: tx("L'acqua è prelevata da {tipo}. La fonte deve garantire la portata di progetto di {q} l/s nelle ore di prelievo consentite ({h} h al giorno) anche nei mesi di punta.", { tipo: tx(srcType), q: n0(P.qDes), h: n1(srcHours) })
+            + (srcQmax > 0 ? " " + tx("La portata disponibile indicata in progetto è di {q} l/s.", { q: n0(srcQmax) }) : "") });
+          fb.push({ p: tx("L'escursione del livello alla presa considerata in progetto è di {r} m.", { r: n1(srcRange) }) });
+        } else {
+          fb.push({ p: tx("L'impianto è alimentato dalla rete esistente o dalla presa indicata in planimetria; la portata disponibile alla presa deve essere almeno pari alla portata di progetto di {q} l/s.", { q: n0(P.qDes) }) });
         }
-        sections.push({ title: tx("Quantità dell'impianto"), intro: tx("Elenco delle quantità dell'impianto, senza prezzi."),
-          table: { header: [tx("Voce"), tx("Quantità"), tx("Unità"), tx("Note")], widths: [42, 12, 8, 38], rows } });
-        const plan = mercuriusComputo(`ARGUS-${pid}`, Math.max(1, lastRev)).planimetria as { elementi?: { features?: unknown[] } } | undefined;
+        ch.push({ title: tx("Fonte d'acqua: portata e disponibilità"), blocks: fb });
+        // Infrastrutture idriche esistenti e opere di presa
+        const ib: Record<string, unknown>[] = [];
+        const nCan = canals.filter((c) => !c.hidden).length, nWat = watercourses.filter((w) => !w.hidden).length;
+        if (nCan || nWat) ib.push({ p: tx("Nell'area sono presenti {c} canali e {w} corsi d'acqua rilevati sulla mappa, considerati nel tracciato delle tubazioni e nelle prese.", { c: fx(nCan), w: fx(nWat) }) });
+        if (sc && S) {
+          let txt = tx("L'acqua raggiunge l'impianto secondo lo schema {k} – {name}.", { k: sc.key, name: sc.name });
+          if (sc.main?.kind === "pipe" && sc.main.dn) txt += " " + tx("L'adduttrice in PE100 DN {dn} è lunga {l} m.", { dn: sc.main.dn, l: n0(sc.main.L * (sc.main.n ?? 1)) });
+          if (sc.main?.kind === "canal") txt += " " + tx("Un canale a gravità di {l} m porta l'acqua alla vasca.", { l: n0(sc.main.L) });
+          ib.push({ p: txt });
+          if (sc.res) ib.push({ p: tx("La vasca di accumulo ha un volume utile di {v} m³ su {ha} ha, con una profondità utile di {d} m, e garantisce {g} giorni di scorta.", { v: n0(sc.res.vol), ha: n2(sc.res.ha), d: n1(resDepth), g: fx(resDays) }) });
+        }
+        if (!ib.length) ib.push({ p: tx("Il progetto non prevede opere sulle infrastrutture idriche esistenti oltre alla presa dell'impianto.") });
+        ch.push({ title: tx("Infrastrutture idriche esistenti e opere di presa"), blocks: ib });
+        // Nota tecnica sulle stime – metodologia
+        const cnum = ch.length + 1;
+        ch.push({ title: tx("Nota tecnica sulle stime – metodologia"), blocks: [
+          { p: tx("Le stime della relazione sono ottenute con criteri prudenti, adatti a una progettazione di massima, e vanno confermate con i rilievi in campo.") },
+          { h: `${cnum}.1 ${tx("Stima del fabbisogno idrico")}`, toc: true },
+          { p: tx("Il fabbisogno è calcolato con FAO-56 sui dati climatici del sito, con Kc per fase colturale e pioggia efficace prudenziale; la dose di progetto copre la punta della coltura più esigente.") },
+          { h: `${cnum}.2 ${tx("Dimensionamento idraulico della rete")}`, toc: true },
+          { p: tx("La rete è risolta come albero a partire dalla presa: la portata di ogni tratto è la somma delle portate a valle; il diametro è il più piccolo che rispetta la velocità massima di {v} m/s e le perdite di carico sono calcolate con Hazen-Williams (C = {c}).", { v: n1(vMax), c: fx(hwC) }) },
+          { h: `${cnum}.3 ${tx("Metodologia di progettazione dell'impianto irriguo")}`, toc: true },
+          { p: tx("I pivot sono disposti sul campo massimizzando la superficie irrigata nel rispetto delle pendenze ammesse; le campate sono composte dal listino del produttore con diametri scelti per la portata. Le pompe sono scelte sulle curve Caprari per il miglior rendimento e le linee elettriche per corrente e caduta di tensione.") },
+        ] });
+        // Struttura generale dell'impianto
+        const sb: Record<string, unknown>[] = [
+          { p: tx("L'impianto è organizzato in {nf} appezzamenti serviti da una rete di distribuzione unica; ogni pivot ha il proprio attacco con idrovalvola e la propria linea di alimentazione elettrica dalla stazione di pompaggio.", { nf: fx(fieldsShown.length) }) },
+        ];
+        const mRoad = roads.filter((r) => r.kind === "service" && !r.hidden).reduce((a, r) => a + r.coords.reduce((b, q, j, cc) => b + (j ? distM(cc[j - 1], q) : 0), 0), 0);
+        if (mRoad > 0) sb.push({ p: tx("Le strade di servizio previste misurano {l} m e danno accesso ai punti pivot, alle stazioni e alle opere di presa.", { l: n0(mRoad) }) });
+        if (nPhases > 1) {
+          sb.push({ p: tx("La realizzazione è suddivisa in {n} fasi di superficie simile; la rete principale, la fonte d'acqua, le stazioni di pompaggio e l'eventuale impianto fotovoltaico sono realizzati nella prima fase.", { n: fx(nPhases) }) });
+          sb.push({ table: { header: [tx("Fase"), tx("Pivot"), tx("Altri campi"), tx("Superficie") + " (ha)", "l/s"], widths: [16, 16, 20, 24, 24], rows: phaseSummary().map((r) => [fx(r.ph), fx(r.nPiv), fx(r.sys), n1(r.ha), n0(r.qLs)]) } });
+        }
+        ch.push({ title: tx("Struttura generale dell'impianto"), blocks: sb });
+        // Linee guida di progettazione dell'impianto irriguo
+        const lb: Record<string, unknown>[] = [];
+        if (pivots.length) {
+          const comp = pivots.map((pv) => spanComposition(pv, pivotBrand));
+          lb.push({ p: tx("L'impianto è composto da {n} pivot {b}, per una superficie irrigata di {ha} ha. Ogni macchina è formata da campate in acciaio zincato, con diametro e lunghezza scelti in funzione della portata, e dallo sbraccio terminale; dove il campo lo richiede i pivot lavorano a settore e montano l'irrigatore finale.",
+            { n: fx(pivots.length), b: PIVOT_BRANDS[pivotBrand], ha: n1(pivots.reduce((a, p) => a + pvAreaM2(p) / 10000, 0)) }) });
+          lb.push({ figure: "plan", caption: tx("Planimetria dell'impianto: pivot, tubazioni, linee elettriche e stazioni di pompaggio") });
+          lb.push({ table: { header: [tx("Pivot"), tx("Settore"), tx("Lunghezza") + " (m)", tx("Superficie") + " (ha)", tx("Campate"), tx("Sbraccio") + " (m)", tx("Irrigatore finale"), "l/s", "bar"], widths: [8, 9, 11, 11, 22, 9, 11, 9, 10],
+            rows: pivots.map((pv, k) => { const c = comp[k], deg = pv.deg ?? 360; const sp = new Map<string, number>(); for (const x of c?.spans ?? []) { const kk = `${PIPE_TXT[x.pipe]} ${n1(x.len)} m`; sp.set(kk, (sp.get(kk) ?? 0) + 1); }
+              return [`P${k + 1}`, deg >= 360 ? "360°" : `${Math.round(deg)}°`, n0(c ? c.total : pv.r), n2(pvAreaM2(pv) / 10000), [...sp.entries()].map(([kk, n]) => `${n} × ${kk}`).join(", ") || "—", c?.oh ? n1(c.oh) : "—", pv.gun && pv.gun > 0 ? `${n0(pv.gun)} m` : "—", n1(pivotFlow(pv)), n2(pivotPressure(pv))]; }) } });
+          lb.push({ bullets: [tx("Lunghezza totale delle macchine: {l} m", { l: n0(comp.reduce((a, c, k) => a + (c ? c.total : pivots[k].r), 0)) }), tx("Campate totali: {n}", { n: fx(comp.reduce((a, c) => a + (c?.spans.length ?? 0), 0)) }),
+            tx("Pressione massima all'ingresso dei pivot: {p} bar", { p: n2(P.pMaxBar) })] });
+        }
+        if (nSys) {
+          const cats = new Set([tx("Lineari"), tx("Rotoloni"), tx("Goccia")]);
+          const rr = computoRows().filter((r) => cats.has(r.cat.split(" · ")[0]));
+          lb.push({ p: tx("Sui campi non coperti dai pivot sono previsti sistemi lineari, a rotolone o a goccia, descritti nella tabella seguente.") });
+          lb.push({ table: { header: [tx("Campo"), tx("Voce"), tx("Quantità"), tx("Unità")], widths: [28, 44, 14, 14], rows: rr.map((r) => [r.cat, r.item, r.qty != null ? fx(r.qty) : "", r.unit]) } });
+        }
+        if (HY?.byDn.length) {
+          lb.push({ h: tx("Rete di distribuzione") });
+          lb.push({ p: tx("La distribuzione avviene con tubazioni interrate in PE100 PN10. I diametri sono scelti tratto per tratto in modo che la velocità non superi {v} m/s; le perdite di carico sono calcolate con la formula di Hazen-Williams (C = {c}).", { v: n1(vMax), c: fx(hwC) }) });
+          lb.push({ table: { header: [tx("Diametro"), tx("Lunghezza") + " (m)"], widths: [50, 50], rows: [...HY.byDn].sort((a, b) => a[0] - b[0]).map(([dn, m]) => [`DN ${dn}`, n0(m)]) } });
+          lb.push({ p: tx("La rete misura complessivamente {km} km e richiede alla presa una prevalenza di {h} m per garantire la pressione di esercizio al pivot più sfavorito.", { km: n2(HY.byDn.reduce((a, x) => a + x[1], 0) / 1000), h: n0(HY.headMax) }) });
+          if (NF) {
+            const fl: string[] = [];
+            for (const [dn, n] of [...NF.air.entries()].sort((a, b) => a[0] - b[0])) if (dn) fl.push(`${tx("Sfiato d'aria")} DN ${dn}: ${fx(n)}`);
+            if (NF.drains) fl.push(`${tx("Scarico")}: ${fx(NF.drains)}`);
+            for (const [dn, n] of [...NF.tees.entries()].sort((a, b) => a[0] - b[0])) fl.push(`${tx("Tee")} DN ${dn}: ${fx(n)}`);
+            for (const [k2, n] of NF.reds) fl.push(`${tx("Riduzione")} DN ${k2.replace("x", " × ")}: ${fx(n)}`);
+            const mv = new Map<number, number>(); for (const pv of pivots) { const r = pivotRiser(pv); mv.set(r.mv, (mv.get(r.mv) ?? 0) + 1); }
+            for (const [dn, n] of [...mv.entries()].sort((a, b) => a[0] - b[0])) fl.push(`${tx("Idrovalvola e diffusore del pivot")} DN ${dn}: ${fx(n)}`);
+            lb.push({ p: NF.withProfile ? tx("Gli sfiati sono posti sui punti alti del profilo del terreno e gli scarichi nei punti bassi; all'attacco di ogni pivot sono previsti idrovalvola master e diffusore.")
+              : tx("In assenza del profilo del terreno gli sfiati sono previsti ogni 500 m e all'inizio di ogni linea; all'attacco di ogni pivot sono previsti idrovalvola master e diffusore.") }, { bullets: fl });
+          }
+        }
+        if (stations.length) {
+          lb.push({ h: tx("Stazioni di pompaggio") });
+          lb.push({ p: tx("Le pompe sono scelte sulle curve caratteristiche Caprari per il miglior rendimento al punto di lavoro, cioè alla portata e alla prevalenza richieste dall'impianto. Ogni stazione ha il proprio quadro di comando e protezione.") });
+          lb.push({ table: { header: [tx("Stazione"), "l/s", "m", tx("Pompa"), tx("Motore") + " (kW)", "η (%)"], widths: [28, 9, 9, 32, 12, 10],
+            rows: stations.map((st) => [st.name, n0(st.qLs), n0(st.head), st.pick ? `${st.nTot > 1 ? `${st.nTot} × ` : ""}Caprari ${st.pick.model}` : "—", st.pick ? n1(st.pick.motor) : n1(st.kW), st.pick ? n0(st.pick.eta) : "—"]) } });
+        }
+        ch.push({ title: tx("Linee guida di progettazione dell'impianto irriguo"), blocks: lb });
+        // Alimentazione elettrica
+        const kp = stations.reduce((a, st) => a + (st.pick ? st.pick.motor * st.nTot : st.kW), 0);
+        const eb: Record<string, unknown>[] = [{ p: tx("L'alimentazione prevista è: {a}. La potenza installata complessiva è di {kw} kW, di cui {kp} kW per le pompe; il consumo annuo stimato è di {mwh} MWh, pari a {kwhha} kWh per ettaro.",
+          { a: VM.energy, kw: n0(G.kW), kp: n0(kp), mwh: n0(VM.mwh), kwhha: n0(VM.ha > 0 ? (VM.mwh * 1000) / VM.ha : 0) }) }];
+        if (G.supply === "mt") eb.push({ p: tx("Con la potenza installata è prevista una cabina di trasformazione MT/BT da {kva} kVA.", { kva: fx(G.kva) }) });
+        if (G.supply === "bt") eb.push({ p: tx("La fornitura è in bassa tensione, con un punto di consegna dotato di quadro generale.") });
+        if (G.supply === "gen") eb.push({ p: tx("Nelle ore senza sole l'energia è fornita da un gruppo elettrogeno da {kva} kVA.", { kva: fx(G.kva) }) });
+        if (VM.pvKwp) eb.push({ p: tx("Il campo fotovoltaico ha una potenza di {kwp} kWp", { kwp: n0(VM.pvKwp) }) + (VM.battKwh ? " " + tx("con un accumulo a batterie di {kwh} kWh.", { kwh: n0(VM.battKwh) }) : ".") });
+        eb.push({ p: tx("Le linee elettriche sono interrate, a 400 V; la sezione è scelta per la corrente di esercizio e una caduta di tensione non superiore al 4 %. I pivot sono alimentati dalla stazione che li serve, con le linee posate nella stessa trincea delle tubazioni.") });
+        if (cabs.length) eb.push({ table: { header: [tx("Linea"), "kW", tx("Cavo"), tx("Lunghezza") + " (m)", "ΔV (%)"], widths: [38, 12, 22, 16, 12], rows: cabs.map((c) => [c.name, n1(c.kW), `${c.mat} 3 × ${n1(c.S)} mm²`, n0(c.L), n1(c.dv)]) } });
+        if (G.panels.length) eb.push({ bullets: G.panels.map((pn) => `${tx("Quadro di comando delle pompe")} · ${pn.name}: ${pn.n} × ${n1(pn.kWp)} kW${pn.inverter ? ` · ${tx("Inverter")}` : ""}`) });
+        ch.push({ title: tx("Alimentazione elettrica"), blocks: eb });
+        // Gestione e funzionamento
+        ch.push({ title: tx("Gestione e funzionamento"), blocks: [
+          { p: tx("Nei mesi di punta l'impianto lavora {h} ore al giorno alla dose di progetto di {mm} mm. Il programma irriguo segue il fabbisogno della coltura, con turni assegnati ai pivot in modo da contenere la potenza impegnata e bilanciare le portate sulla rete.", { h: n1(hoursDay), mm: n1(mmDes) }) },
+          { p: tx("Le stazioni di pompaggio sono dotate di quadri di comando e protezione e, dove previsto, di inverter per regolare la portata. La manutenzione ordinaria riguarda pompe, valvole, sfiati e scarichi della rete e le macchine di irrigazione.") },
+        ] });
+        // Prossimi passi raccomandati
+        ch.push({ title: tx("Prossimi passi raccomandati"), blocks: [{ numbered: [
+          tx("Rilievo topografico di dettaglio lungo i tracciati delle tubazioni e nelle aree dei pivot."), tx("Verifica della portata disponibile alla fonte e del livello dell'acqua nei mesi di punta."),
+          tx("Analisi del suolo (tessitura, infiltrazione, salinità) per confermare dose e pluviometria."), tx("Verifica con il distributore di energia della potenza disponibile e del punto di consegna."),
+          tx("Conferma dei tracciati e delle interferenze (strade, canali, sottoservizi) prima della posa.")] }] });
+        // Note e limitazioni
+        ch.push({ title: tx("Note e limitazioni"), blocks: [{ p: tx("Le stime contenute in questa relazione si basano sui dati disponibili in fase di progetto: confini digitalizzati dei campi, modello digitale del terreno, dati climatici e parametri di progetto indicati. I valori vanno confermati con i rilievi e le verifiche in campo prima della realizzazione; quantità e condizioni economiche sono riportate nell'offerta.") }] });
+        const title = tx("Relazione tecnica generale"), revTxt = `Rev ${String(rev).padStart(2, "0")}`;
         return {
-          lang: pdfLang, title: tx("Allegato tecnico dell'impianto"),
-          subtitle: [cname !== "—" ? cname : "", pname].filter(Boolean).join(" · "),
-          client: cname, project: pname, reference: ref, date: new Date().toISOString().slice(0, 10),
-          cover_rows: [[tx("Cliente"), cname], [tx("Progetto"), pname], [tx("Riferimento"), ref], [tx("Data"), new Date().toISOString().slice(0, 10)],
-            [tx("Superficie irrigata"), `${n1(VM.ha)} ha`], [tx("Portata totale"), `${n0(P.qDes)} l/s`], [tx("Alimentazione"), VM.energy]],
-          cover_note: tx("Documento tecnico che descrive l'impianto: dati di progetto, planimetria, macchine, rete idraulica, pompaggio, energia e quantità. Non contiene prezzi: le condizioni economiche sono nell'offerta."),
-          plan: { title: tx("Planimetria"), features: plan?.elementi?.features ?? [],
-            legend: [["#2EE0A1", tx("Pivot")], ["#20AAE2", tx("Tubazioni")], ["#F0B429", tx("Linee elettriche")], ["#4CAF4F", tx("Stazione di pompaggio")]] },
-          sections,
+          lang: pdfLang, brand: relBrand,
+          cover_title: `${tx("Impianto di irrigazione")}${pivots.length ? `\n${tx("a pivot centrale")}` : ""}`,
+          title, revision: revTxt, date, client: cname || pname, recipient_label: tx("Alla cortese attenzione di"), recipient: cname ? [pname] : [],
+          header: `${company} <> ${cname || pname} – ${title} – ${revTxt} – ${date}`, toc_title: tx("Indice"), figure_label: tx("Figura"),
+          site: { features: feats.filter((f) => f.properties?.tipo === "campo") }, plan: { features: feats }, chapters: ch,
         };
       });
       const pname = projects.find((x) => x.id === pid)?.name || "progetto";
-      saveBlob(await api.techAnnex(doc), `${safe(pname)}_allegato_tecnico.pdf`);
-      setMsg(t("Allegato tecnico scaricato ✓"));
+      saveBlob(await api.relazione(doc, bbox), `${safe(pname)}_relazione_tecnica.pdf`);
+      setMsg(t("Relazione tecnica scaricata ✓"));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   function renderOlympus() {
@@ -8320,9 +8462,14 @@ export default function Page() {
             </div>
             <button className="btn-ghost w-full mt-2" disabled={!pivots.length && !Object.values(sysDesigns).some((d) => d.sys === "lineari")} onClick={exportCeres}
               title={t("Campi e pivot con le campate del produttore scelto in Impianti, da aprire in Ceres con File › Apri file. Contiene anche il computo per Mercurius (riferimento del progetto e revisione crescente).")}>{busy === "ceres" ? t("Preparo…") : t("Esporta per Ceres (.ceres)")}</button>
-            <button className="btn-ghost w-full mt-2" disabled={busy === "annex" || (!pivots.length && !Object.keys(sysDesigns).length)} onClick={downloadTechAnnex}
-              title={t("Documento tecnico da allegare all'offerta Mercurius, nella lingua di stampa scelta sopra: dati, planimetria su ortofoto, macchine, rete, pompaggio, energia e quantità. Senza prezzi.")}>
-              {busy === "annex" ? t("Preparo…") : t("Allegato tecnico dell'impianto (PDF)")}</button>
+            <div className="mt-2 flex gap-2 items-stretch">
+              <button className="btn-ghost flex-1" disabled={busy === "rel" || (!pivots.length && !Object.keys(sysDesigns).length)} onClick={downloadRelazione}
+                title={t("Relazione tecnica generale per il cliente, nella lingua di stampa scelta sopra: copertina con la foto del sito, capitoli su sito, clima e fabbisogno, portata, fonte, impianto, rete, pompaggio ed energia. Senza prezzi.")}>
+                {busy === "rel" ? t("Preparo…") : t("Relazione tecnica per il cliente (PDF)")}</button>
+              <select className="field-input text-sm w-28" value={relBrand} onChange={(e) => setRelBrand(e.target.value as "agrostar" | "nabu")} title={t("Intestazione")}>
+                <option value="agrostar">Agrostar</option><option value="nabu">Nabu</option>
+              </select>
+            </div>
             {renderOlympus()}
             <div className="mt-3 bg-panel rounded-lg p-2 space-y-1.5">
               <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Fasi di realizzazione")}</div>

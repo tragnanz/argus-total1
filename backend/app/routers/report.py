@@ -505,3 +505,36 @@ def tech_annex(body: TechAnnexIn, user: User = Depends(get_current_user)):
     finally:
         _EXPORT_LOCK.release(); _trim_memory()
     return Response(pdf, media_type="application/pdf")
+
+
+class RelazioneIn(BaseModel):
+    doc: dict[str, Any]
+    bbox: list[float] | None = None     # riquadro della foto di copertina (ovest, sud, est, nord)
+
+
+@router.post("/relazione")
+def relazione(body: RelazioneIn, user: User = Depends(get_current_user)):
+    """Relazione tecnica generale per il cliente (senza prezzi)."""
+    import base64
+    from analysis.explanatory_note import build_note
+    from analysis.variants_pdf import ortho_for_bbox
+    from ..main import REV
+    if not _EXPORT_LOCK.acquire(timeout=_EXPORT_WAIT_S):
+        raise HTTPException(503, "Export occupato, riprova fra poco.")
+    try:
+        cover = None
+        if body.bbox and len(body.bbox) == 4:
+            w, s, e, n = body.bbox
+            if -180 <= w < e <= 180 and -85 <= s < n <= 85 and (e - w) <= 0.6 and (n - s) <= 0.6:
+                try:
+                    o = ortho_for_bbox(w, s, e, n, ratio=595.0 / (0.56 * 842.0), width_px=1800, quality=82)
+                    if o:
+                        cover = base64.b64decode(o["immagine"].split(",", 1)[1])
+                except Exception:  # noqa: BLE001 — senza foto la copertina resta a tinta unita
+                    cover = None
+        pdf = build_note(body.doc, REV, cover)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    finally:
+        _EXPORT_LOCK.release(); _trim_memory()
+    return Response(pdf, media_type="application/pdf")
