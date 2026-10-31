@@ -15,7 +15,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.192";
+const REV = "v0.6.193";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1377,6 +1377,9 @@ export default function Page() {
   const [srcOpen, setSrcOpen] = useState(false);                     // parametri aperti
   const [srcDrawing, setSrcDrawing] = useState(false);               // tracciato in disegno
   const [computoOpen, setComputoOpen] = useState(false);
+  const [variants, setVariants] = useState<Variant[]>([]);             // varianti salvate del progetto (livelli «variant»)
+  const [variantName, setVariantName] = useState("");
+  const [variantsOpen, setVariantsOpen] = useState(false);
   const [resDepth, setResDepth] = useState(4);                       // profondità utile della vasca (m)
   const [resDays, setResDays] = useState(3);                         // giorni di scorta nella vasca
   const [resEvapK, setResEvapK] = useState(1.1);                     // evaporazione da specchio libero = k × ET₀
@@ -1622,9 +1625,15 @@ export default function Page() {
     suppressAutosaveRef.current = true;   // non salvare durante il caricamento (evita di sovrascrivere il progetto)
     clearAllFields();
     setCanals([]); setRoads([]); setWatercourses([]); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set()); setHiddenPipeFields(new Set());
+    setVariants([]);
     try {
       const [areasList, layersList] = await Promise.all([api.listAreas(pid), api.listLayers(pid)]);
       setAreas(areasList); setLayers(layersList);
+      setVariants(layersList.filter((l) => l.kind === "variant").map((l) => {
+        const d = (l.data ?? {}) as Record<string, unknown>;
+        return { id: l.id, name: l.name, created: String(d.created ?? ""), metrics: d.metrics as VarMetrics, computo: (d.computo ?? []) as CRow[],
+          snapshot: (d.snapshot ?? {}) as Record<string, unknown>, ceres: (d.ceres ?? null) as Record<string, unknown> | null };
+      }).filter((v) => v.metrics).sort((a, b) => a.id - b.id));
       // Ricostruisci l'albero: aree radice → campi; figlie «field-child» → poligoni
       // figli (famiglia, ricorsivo); figlie «macro» → sotto-aree del campo.
       const childrenOfArea = (aid: number) => areasList.filter((a) => a.parent_area_id === aid);
@@ -1724,6 +1733,7 @@ export default function Page() {
     suppressAutosaveRef.current = true;
     clearAllFields();
     setCanals([]); setRoads([]); setWatercourses([]); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set()); setHiddenPipeFields(new Set());
+    setVariants([]);
   }
   async function deleteCurrentClient() {
     const c = clients.find((x) => x.id === clientId); if (!c) return;
@@ -2183,6 +2193,15 @@ export default function Page() {
       };
       await saveNode(root, null);
       setFields((fs) => fs.map((x) => savedMap.has(x.id) ? { ...x, savedId: savedMap.get(x.id) } : x));
+      setSysDesigns((ds) => {
+        const out: typeof ds = {};
+        for (const [k, d] of Object.entries(ds)) {
+          const f = fields.find((x) => sysKey(x) === k);
+          const aid = f ? savedMap.get(f.id) : undefined;
+          out[aid != null ? `a${aid}` : k] = d;
+        }
+        return out;
+      });
       await refreshAreas(pid);
       setMsg(t("Famiglia salvata: {n} elementi ✓", { n: count + 1 }));
     } catch (e) { showErr(e); } finally { setBusy(""); }
@@ -2288,6 +2307,17 @@ export default function Page() {
       for (const a of stale.sort((x, y) => depth(y) - depth(x))) { try { await api.deleteArea(a.id); } catch { /* ignora */ } }
 
       fieldToAreaRef.current = fieldToArea;   // per costruire la config dei link di condivisione
+      // Le aree si ricreano a ogni salvataggio (id nuovi): i sistemi salvati sui
+      // campi (chiave a<id area>) seguono il loro campo.
+      setSysDesigns((ds) => {
+        const out: typeof ds = {};
+        for (const [k, d] of Object.entries(ds)) {
+          const f = fields.find((x) => sysKey(x) === k);
+          const aid = f ? fieldToArea.get(f.id) : undefined;
+          out[aid != null ? `a${aid}` : k] = d;
+        }
+        return out;
+      });
       setFields((fs) => fs.map((x) => fieldToArea.has(x.id) ? { ...x, savedId: fieldToArea.get(x.id) } : x));
       await Promise.all([refreshAreas(pid), refreshLayers(pid)]);
       setAutosave("saved");
@@ -3725,9 +3755,10 @@ export default function Page() {
     const blob = await buildXlsx(t("Computo metrico"), sheet, { boldRows: bold, widths: [28, 52, 12, 8, 70] });
     saveBlob(blob, `${safe(pname)}_computo.xlsx`);
   }
-  function exportCeres() {
+  // Il file .ceres completo (progetto Ceres in «m» + computo per Mercurius).
+  function ceresFile(riferimento: string, revisione: number): { err: string } | { file: Record<string, unknown>; name: string; n: number; nf: number; skipped: number } {
     const hasLin = Object.values(sysDesigns).some((d) => d.sys === "lineari");
-    if (!pivots.length && !hasLin) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
+    if (!pivots.length && !hasLin) return { err: t("Posa prima i pivot sul campo attivo.") };
     const r6 = (x: number) => Math.round(x * 1e6) / 1e6;
     const inRing = (lng: number, lat: number, ring: number[][]) => {
       let inside = false;
@@ -3748,7 +3779,7 @@ export default function Page() {
     const linFields = Object.entries(sysDesigns).filter(([, d]) => d.sys === "lineari").map(([k]) => fieldOfKey(k)).filter((f): f is Field => !!f);
     for (const f of linFields) used.add(f.id);
     const ffSrc = fields.filter((f) => used.has(f.id));
-    if (!ffSrc.length) { setMsg(t("Nessun pivot è dentro un campo: impossibile esportare per Ceres.")); return; }
+    if (!ffSrc.length) return { err: t("Nessun pivot è dentro un campo: impossibile esportare per Ceres.") };
     const idOf = new Map(ffSrc.map((f, i) => [f.id, i + 1]));
     const ff = ffSrc.map((f) => {
       const ring = f.geom.coordinates[0].slice();
@@ -3789,11 +3820,373 @@ export default function Page() {
     const json = JSON.stringify(obj);
     const m = btoa(unescape(encodeURIComponent(json)));
     // verifica: la decodifica deve restituire lo stesso JSON
-    if (decodeURIComponent(escape(atob(m))) !== json) { setMsg(t("Esportazione per Ceres non riuscita: verifica di codifica fallita.")); return; }
+    if (decodeURIComponent(escape(atob(m))) !== json) return { err: t("Esportazione per Ceres non riuscita: verifica di codifica fallita.") };
     const name = pname || cname || "Argus Total";
-    saveBlob(new Blob([JSON.stringify({ app: "ceres", ver: "78.16", name, m })], { type: "application/json" }), `${safe(name)}.ceres`);
-    setMsg(t("File .ceres esportato: {n} pivot in {f} campi.", { n: fmt(p.length), f: fmt(ff.length) })
-      + (skipped ? " " + t("{n} pivot fuori dai campi non esportati.", { n: fmt(skipped) }) : ""));
+    return { file: { app: "ceres", ver: "78.16", name, m, ...mercuriusComputo(riferimento, revisione) }, name, n: p.length, nf: ff.length, skipped };
+  }
+  function exportCeres() {
+    if (!projectId) { setMsg(t("Seleziona un progetto prima di creare il link.")); return; }
+    const pr = projects.find((x) => x.id === projectId);
+    const rev = Math.max(1, Math.round(Number((pr?.settings as { ceres_rev?: number } | undefined)?.ceres_rev ?? 0)) + 1);
+    const r = ceresFile(`ARGUS-${projectId}`, rev);
+    if ("err" in r) { setMsg(r.err); return; }
+    saveBlob(new Blob([JSON.stringify(r.file)], { type: "application/json" }), `${safe(r.name)}_rev${rev}.ceres`);
+    // la revisione successiva per Mercurius (stesso riferimento, revisione più alta)
+    const pid = projectId;
+    api.updateProject(pid, { settings: { ceres_rev: rev } } as Partial<api.Project>)
+      .then((p2) => setProjects((ps) => ps.map((p) => (p.id === pid ? { ...p, settings: p2.settings } : p)))).catch(() => { /* silenzioso */ });
+    setMsg(t("File .ceres esportato: {n} pivot in {f} campi.", { n: fmt(r.n), f: fmt(r.nf) })
+      + " " + t("Computo per Mercurius: riferimento {r}, revisione {v}.", { r: `ARGUS-${pid}`, v: rev })
+      + (r.skipped ? " " + t("{n} pivot fuori dai campi non esportati.", { n: fmt(r.skipped) }) : ""));
+  }
+  // ---- COMPUTO PER MERCURIUS (tracciato «ceres/computo-metrico» v1) ----------
+  // Va nello stesso file .ceres, accanto ad app/ver/name/m: Ceres lo ignora,
+  // Olympus/Mercurius lo importa e ne fa l'offerta. Righe a codice del catalogo
+  // Mercurius (senza prezzi); dove il catalogo non ha l'articolo il codice è
+  // ARGUS-… e la riga arriva «da prezzare». Descrizioni in italiano (catalogo).
+  type MRow = { codice: string; quantita: number; unita?: string; descrizione?: string; a_cura_cliente?: boolean };
+  function mercuriusComputo(riferimento: string, revisione: number) {
+    const sez: { titolo: string; righe: MRow[] }[] = [];
+    const add = (titolo: string, righe: MRow[]) => {
+      const ok = righe.filter((r) => r.quantita > 0).map((r) => ({ ...r, quantita: Math.round(r.quantita * 100) / 100 }));
+      if (ok.length) sez.push({ titolo: titolo.slice(0, 160), righe: ok });
+    };
+    const PIPE = ["10", "8-5-8", "6-5-8"], PIPE_TXT = ['10"', '8"5/8', '6"5/8'];
+    const BR = pivotBrand.toUpperCase();
+    const spanCode = (pi: number, len: number) => pivotBrand === "starpivot"
+      ? `SPAN-STARPIVOT-${PIPE[pi]}-${Math.round(len * 10)}-STD` : `ARGUS-SPAN-${BR}-${PIPE[pi]}-${Math.round(len * 10)}`;
+    const ohCode = (len: number) => pivotBrand === "starpivot" ? `OVER-STARPIVOT-${Math.round(len * 10)}` : `ARGUS-OVER-${BR}-${Math.round(len * 10)}`;
+    const it = (n: number, d = 0) => n.toLocaleString("it-IT", { maximumFractionDigits: d });
+    let nSpansTot = 0;
+    const pipeRows = (dn: number, m: number, cosa: string): MRow[] => [
+      { codice: `P-PIPE-U-PE-100-PN-10-${dn}`, quantita: Math.round(m), unita: "m", descrizione: `Tubo PE100 PN10 DN ${dn} — ${cosa}` },
+      { codice: `POSA-TRENCH-${dn}`, quantita: Math.round(m), unita: "m" },
+    ];
+    // Pivot
+    const macchine: Record<string, unknown>[] = [];
+    if (pivots.length) {
+      const R: MRow[] = [];
+      const spans = new Map<string, number>(), ohs = new Map<number, number>();
+      let noComp = 0;
+      pivots.forEach((pv, k) => {
+        const c = spanComposition(pv, pivotBrand);
+        if (!c) noComp++;
+        else { for (const sp of c.spans) { const kk = `${sp.pipe}|${sp.len}`; spans.set(kk, (spans.get(kk) ?? 0) + 1); } if (c.oh) ohs.set(c.oh, (ohs.get(c.oh) ?? 0) + 1); nSpansTot += c.spans.length; }
+        if (macchine.length < 50) macchine.push({ nome: `P${k + 1}`, tipo: (pv.deg ?? 360) < 360 ? "pivot a settore" : "pivot", superficie_ha: Math.round(pvAreaM2(pv) / 100) / 100,
+          lunghezza_m: Math.round(c ? c.total : pv.r), pluviometria_mm_24h: Math.round(mmDes * 10) / 10,
+          portata_ls: Math.round(pivotFlow(pv) * 10) / 10, pressione_bar: Math.round(pivotPressure(pv) * 100) / 100 });
+      });
+      R.push({ codice: pivotBrand === "starpivot" ? "PIV-POINT-FIX-STD" : `ARGUS-PIV-POINT-${BR}`, quantita: pivots.length, unita: "pz", descrizione: pivotBrand === "starpivot" ? undefined : `Punto pivot fisso ${PIVOT_BRANDS[pivotBrand]}` });
+      R.push({ codice: pivotBrand === "starpivot" ? "PANEL-EM" : `ARGUS-PANEL-${BR}`, quantita: pivots.length, unita: "pz", descrizione: pivotBrand === "starpivot" ? undefined : `Quadro elettromeccanico ${PIVOT_BRANDS[pivotBrand]}` });
+      [...spans.entries()].sort((a, b) => a[0].localeCompare(b[0])).forEach(([kk, n]) => {
+        const [pi, len] = kk.split("|").map(Number);
+        R.push({ codice: spanCode(pi, len), quantita: n, unita: "pz", descrizione: pivotBrand === "starpivot" ? undefined : `Campata ${PIVOT_BRANDS[pivotBrand]} ${PIPE_TXT[pi]} da ${it(len, 1)} m` });
+      });
+      [...ohs.entries()].sort((a, b) => a[0] - b[0]).forEach(([len, n]) => R.push({ codice: ohCode(len), quantita: n, unita: "pz", descrizione: pivotBrand === "starpivot" ? undefined : `Sbraccio ${PIVOT_BRANDS[pivotBrand]} da ${it(len, 1)} m` }));
+      if (noComp) R.push({ codice: `ARGUS-PIVOT-${BR}`, quantita: noComp, unita: "pz", descrizione: `Pivot ${PIVOT_BRANDS[pivotBrand]} da comporre (listino non disponibile)` });
+      R.push({ codice: "ENDGUN", quantita: pivots.filter((p) => p.gun && p.gun > 0).length, unita: "pz" });
+      R.push({ codice: "EOT-ARM", quantita: pivots.filter((p) => (p.deg ?? 360) < 360).length * 2, unita: "pz", descrizione: "Fermo di fine corsa (pivot a settore)" });
+      add(`Pivot ${PIVOT_BRANDS[pivotBrand]}`, R);
+    }
+    // Lineari, rotoloni, goccia
+    for (const [k, d] of Object.entries(sysDesigns)) {
+      const f = fieldOfKey(k); if (!f) continue;
+      const R: MRow[] = [];
+      if (d.sys === "lineari") {
+        const r = calcLin(f, d.p as LinP);
+        const spans = new Map<string, number>();
+        for (const m of r.machines) {
+          const c = spanComposition({ r: m.L, q: m.qLs }, pivotBrand, true);
+          for (const sp of c?.spans ?? []) { const kk = `${sp.pipe}|${sp.len}`; spans.set(kk, (spans.get(kk) ?? 0) + 1); nSpansTot++; }
+          if (c?.oh) R.push({ codice: ohCode(c.oh), quantita: 1, unita: "pz" });
+          R.push(...pipeRows(m.dn, m.travel, `condotta con idranti L${m.i}`));
+          if (macchine.length < 50) macchine.push({ nome: `${f.name} L${m.i}`.slice(0, 80), tipo: "lineare", superficie_ha: Math.round((m.L * m.travel) / 100) / 100,
+            lunghezza_m: Math.round(m.L), pluviometria_mm_24h: Math.round(mmDes * 10) / 10, portata_ls: Math.round(m.qLs * 10) / 10 });
+        }
+        R.unshift({ codice: "CART-LINEAR-HOSE-4W-STD", quantita: r.machines.length, unita: "pz" }, { codice: "WSUP-HOSE-4W", quantita: r.machines.length, unita: "pz" });
+        [...spans.entries()].sort((a, b) => a[0].localeCompare(b[0])).forEach(([kk, n]) => { const [pi, len] = kk.split("|").map(Number); R.splice(2, 0, { codice: spanCode(pi, len), quantita: n, unita: "pz" }); });
+        add(`Lineari · ${f.name}`, R);
+      } else if (d.sys === "rotoloni") {
+        const p = d.p as RotP, r = calcRot(f, p);
+        R.push({ codice: "ARGUS-ROTOLONE", quantita: r.nMach, unita: "pz", descrizione: `Rotolone con tubo da ${it(p.hoseLen)} m e irrigatore da ${it(p.gunQ)} m³/h` });
+        R.push(...pipeRows(r.dn, r.mainLen, "condotta di testata"));
+        R.push({ codice: "PT-HYDRANT", quantita: r.hydrants, unita: "pz" });
+        add(`Rotoloni · ${f.name}`, R);
+      } else {
+        const p = d.p as DripP, r = calcDrip(f, p);
+        R.push({ codice: "ARGUS-ALA-GOCCIOLANTE", quantita: Math.round(r.latM), unita: "m", descrizione: `Ala gocciolante, gocciolatori ${it(p.emQ, 1)} l/h ogni ${it(p.emSp, 2)} m` });
+        R.push(...pipeRows(r.dnSub, r.subLen, "condotte secondarie"));
+        R.push({ codice: "ARGUS-FILTRAZIONE", quantita: 1, unita: "pz", descrizione: `Gruppo di filtrazione e testata, ${it(r.qLs)} l/s` });
+        R.push({ codice: "ARGUS-VALVOLA-SETTORE", quantita: r.nSec, unita: "pz", descrizione: "Valvola di settore" });
+        add(`Goccia · ${f.name}`, R);
+      }
+    }
+    // Rete di adduzione
+    {
+      const R: MRow[] = [];
+      let tot = 0;
+      if (hydra) for (const [dn, m] of [...hydra.byDn].sort((a, b) => a[0] - b[0])) { R.push(...pipeRows(dn, m, "rete di adduzione")); tot += m; }
+      const lenOf = (ln: number[][]) => ln.reduce((a, q, i) => { if (!i) return 0; const o = ln[i - 1]; return a + Math.hypot((q[0] - o[0]) * 111320 * Math.cos(((q[1] + o[1]) / 2) * Math.PI / 180), (q[1] - o[1]) * 110540); }, 0);
+      if (!tot) {
+        tot = pivotLines.filter((l) => l.kind === "pipe").reduce((a, l) => a + lenOf(l.coords), 0);
+        R.push({ codice: "ARGUS-TUBAZIONE", quantita: Math.round(tot), unita: "m", descrizione: "Tubazione interrata (diametri da calcolare nella pagina Tubazioni di Argus Total)" });
+      }
+      if (tot > 0) R.push({ codice: "SCAVO-TRINCEA", quantita: Math.round(tot), unita: "m" });
+      const mCan = canals.filter((c) => !c.hidden && c.geojson?.coordinates?.length >= 2).reduce((a, c) => a + lenOf(c.geojson.coordinates), 0);
+      R.push({ codice: "ARGUS-CANALE", quantita: Math.round(mCan), unita: "m", descrizione: "Canale in terra" });
+      const mRoad = roads.filter((r) => r.kind === "service" && !r.hidden).reduce((a, r) => a + lenOf(r.coords), 0);
+      R.push({ codice: "ARGUS-STRADA-SERVIZIO", quantita: Math.round(mRoad), unita: "m", descrizione: "Strada di servizio" });
+      add("Rete di adduzione", R);
+    }
+    // Fonte d'acqua / pompaggio / energia
+    const S = srcPt && pivots.length ? sourceSchemes() : null;
+    const sc = S ? (S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? null) : null;
+    const P = pumpStation();
+    let scen = powerMode === "solar" ? "fotovoltaico" : "rete elettrica";
+    if (S && sc) {
+      const R: MRow[] = [];
+      for (const st of sc.stages) {
+        const kW = STD_KW.find((k) => k >= st.kW * 1.1) ?? Math.ceil(st.kW);
+        R.push({ codice: "PT-PUMP", quantita: 1, unita: "pz", descrizione: `${st.name}: ${it(kW, 1)} kW, ${it(st.qLs)} l/s, ${it(st.head)} m` });
+      }
+      if (sc.main?.kind === "pipe" && sc.main.dn) R.push(...pipeRows(sc.main.dn, sc.main.L * (sc.main.n ?? 1), "adduttrice"));
+      if (sc.main?.kind === "canal") R.push({ codice: "ARGUS-CANALE-GRAVITA", quantita: Math.round(sc.main.L), unita: "m", descrizione: `Canale a gravità, scavo massimo ${it(sc.main.cutMax ?? 0, 1)} m` });
+      if (sc.res) {
+        R.push({ codice: "PT-TANK", quantita: 1, unita: "pz", descrizione: `Vasca di accumulo ${it(sc.res.vol)} m³, profondità utile ${it(resDepth, 1)} m` });
+        R.push({ codice: "ARGUS-SCAVO-VASCA", quantita: Math.round(sc.res.vol * (1 + 0.5 / Math.max(1, resDepth))), unita: "m³", descrizione: "Scavo della vasca (volume utile + franco 0,5 m)" });
+      }
+      if (srcEnergy !== "rete") {
+        R.push({ codice: "ARGUS-FV", quantita: Math.round(sc.pvKwp), unita: "kWp", descrizione: "Campo fotovoltaico" });
+        R.push({ codice: "ARGUS-BATTERIE", quantita: Math.round(sc.battKwh), unita: "kWh", descrizione: "Accumulo a batterie" });
+        scen = srcEnergy === "fv-batt" ? "fotovoltaico con batterie" : "fotovoltaico con generatore";
+      } else scen = "rete elettrica / generatore";
+      add(`Fonte d'acqua · schema ${sc.key}`, R);
+    } else if (P.best) {
+      add("Stazione di pompaggio", [{ codice: "PT-PUMP", quantita: P.best.nTot, unita: "pz",
+        descrizione: `Pompa da ${it(P.best.kW, 1)} kW (${P.best.nDuty} in servizio + ${P.best.nTot - P.best.nDuty} di riserva), ${it(P.qDes)} l/s, ${it(P.head)} m` }]);
+    }
+    if (!sc && powerMode === "solar" && pivots.length) {
+      const So = solarSizing();
+      add("Fotovoltaico", [{ codice: "ARGUS-FV", quantita: Math.round(So.no.kwp), unita: "kWp", descrizione: "Campo fotovoltaico senza batterie" }]);
+    }
+    if (nSpansTot) add("Trasporto", [{ codice: "TRASP-TRUCK", quantita: Math.max(1, Math.ceil(nSpansTot / 7)), unita: "pz" }]);
+    // Scheda tecnica
+    const kWinst = sc ? sc.stages.reduce((a, st) => a + (STD_KW.find((k) => k >= st.kW * 1.1) ?? Math.ceil(st.kW)), 0) : P.best?.kWInst ?? 0;
+    const mwh = sc ? sc.mwh : P.best ? P.best.kWhYear / 1000 : 0;
+    const voci = [
+      ["Portata complessiva", `${it(P.qDes)} l/s`], ["Prevalenza", `${it(sc ? Math.max(...sc.stages.map((s2) => s2.head)) : P.head)} m`],
+      ["Fabbisogno di progetto", `${it(mmDes, 1)} mm/24h`], ["Potenza installata", `${it(kWinst)} kW`], ["Energia annua", `${it(mwh)} MWh`],
+      ...(sc ? [["Schema della fonte", `${sc.key} · ${sc.name}`]] : []),
+      ...(sc?.res ? [["Vasca di accumulo", `${it(sc.res.vol)} m³`]] : []),
+      ...(hydra ? [["Rete di adduzione", `${it(hydra.byDn.reduce((a, x) => a + x[1], 0) / 1000, 2)} km`]] : []),
+      ["Macchine", `${pivots.length} pivot${Object.keys(sysDesigns).length ? `, ${Object.keys(sysDesigns).length} campi con altri sistemi` : ""}`],
+    ].map(([etichetta, valore]) => ({ etichetta: etichetta.slice(0, 80), valore: valore.slice(0, 120) })).slice(0, 40);
+    // Planimetria come dati (senza foto): campi, impronte dei pivot, tubazioni
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const feats: any[] = [];
+    const usedF = new Set<number>([...pivots.map((p) => p.field).filter((x): x is number => x != null), ...Object.keys(sysDesigns).map((k) => fieldOfKey(k)?.id).filter((x): x is number => x != null)]);
+    for (const f of fields) if (usedF.has(f.id)) feats.push({ type: "Feature", properties: { tipo: "campo", nome: f.name }, geometry: { type: "Polygon", coordinates: f.geom.coordinates } });
+    pivots.forEach((pv, k) => {
+      const deg = pv.deg ?? 360, az = pv.az ?? 0;
+      feats.push({ type: "Feature", properties: { tipo: "impianto", impianto: `P${k + 1}`, macchina: "circle", raggio_m: Math.round(pv.r), angolo_gradi: deg,
+        ...(deg < 360 ? { settore_gradi: [az % 360, (az + deg) % 360] } : {}) }, geometry: { type: "Point", coordinates: [pv.lng, pv.lat] } });
+    });
+    for (const l of pivotLines) if (l.kind === "pipe" && l.coords.length >= 2) feats.push({ type: "Feature", properties: { tipo: "tubazione", posa: "interrata" }, geometry: { type: "LineString", coordinates: l.coords } });
+    if (sc?.main && srcRoute && srcRoute.length >= 2) feats.push({ type: "Feature", properties: { tipo: "tubazione", posa: "interrata", ...(sc.main.dn ? { DN: sc.main.dn } : {}), lunghezza_m: Math.round(sc.main.L) }, geometry: { type: "LineString", coordinates: srcRoute } });
+    if (srcPt) feats.push({ type: "Feature", properties: { tipo: "attrezzatura", sottotipo: "pump" }, geometry: { type: "Point", coordinates: srcPt } });
+    const xs: number[] = [], ys: number[] = [];
+    const walk = (c: unknown): void => { if (Array.isArray(c) && typeof c[0] === "number") { xs.push(c[0] as number); ys.push(c[1] as number); } else if (Array.isArray(c)) c.forEach(walk); };
+    feats.forEach((ft) => walk(ft.geometry.coordinates));
+    pivots.forEach((pv) => { const dl = pv.r / 110540, dg = pv.r / (111320 * Math.cos(pv.lat * Math.PI / 180)); xs.push(pv.lng - dg, pv.lng + dg); ys.push(pv.lat - dl, pv.lat + dl); });
+    const planimetria = xs.length ? (() => {
+      let w = Math.min(...xs), e = Math.max(...xs), s = Math.min(...ys), n = Math.max(...ys);
+      const mx = (e - w) * 0.06 || 0.002, my = (n - s) * 0.06 || 0.002; w -= mx; e += mx; s -= my; n += my;
+      return { formato: 1, riquadro: { ovest: w, sud: s, est: e, nord: n }, immagine: null, elementi: { type: "FeatureCollection", features: feats } };
+    })() : undefined;
+    const cname = clients.find((c) => c.id === clientId)?.name || "";
+    const pname = projects.find((x) => x.id === projectId)?.name || "Argus Total";
+    return {
+      tracciato: "ceres/computo-metrico", versione: 1,
+      progetto: { riferimento: riferimento.slice(0, 80), revisione: Math.max(1, Math.min(999, revisione)), nome: pname.slice(0, 200),
+        business_unit: "IRRIGAZIONE_MECCANIZZATA", generato_il: new Date().toISOString(), generato_da: `Argus Total ${REV}` },
+      ...(cname ? { cliente: { nome: cname.slice(0, 200) } } : {}),
+      tecnica: { superficie_ha: Math.round(P.irrHa * 100) / 100, fabbisogno_idrico_m3: Math.round(P.volYear), scenario_energetico: scen.slice(0, 40), macchine, voci },
+      sezioni: sez,
+      ...(planimetria ? { planimetria } : {}),
+    };
+  }
+  // ---- VARIANTI DEL PROGETTO ---------------------------------------------------
+  // Una variante è una fotografia del progetto (pivot e tubazioni, sistemi dei
+  // campi, fonte d'acqua, alimentazione) con i suoi numeri e il suo computo,
+  // salvata come livello «variant» del progetto. Si confrontano in tabella e si
+  // possono ricaricare.
+  type VarMetrics = { ha: number; qLs: number; head: number; kWinst: number; kWabs: number; mwh: number; pvKwp: number; battKwh: number;
+    resVol: number; netKm: number; mainKm: number; nPivots: number; nSpans: number; nSys: number; scheme: string; energy: string; mm: number };
+  type Variant = { id: number; name: string; created: string; metrics: VarMetrics; computo: CRow[]; snapshot: Record<string, unknown>; ceres: Record<string, unknown> | null };
+  function variantMetrics(): VarMetrics {
+    const P = pumpStation();
+    const S = srcPt && pivots.length ? sourceSchemes() : null;
+    const sc = S ? (S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? null) : null;
+    let nSpans = 0;
+    for (const pv of pivots) nSpans += spanComposition(pv, pivotBrand)?.spans.length ?? 0;
+    for (const [k, d] of Object.entries(sysDesigns)) { const f = fieldOfKey(k); if (f && d.sys === "lineari") for (const m of calcLin(f, d.p as LinP).machines) nSpans += spanComposition({ r: m.L, q: m.qLs }, pivotBrand, true)?.spans.length ?? 0; }
+    let kWinst = 0, kWabs = 0, mwh = 0, head = P.head, pvKwp = 0, battKwh = 0;
+    if (sc) {
+      for (const st of sc.stages) { kWabs += st.kW; kWinst += STD_KW.find((k) => k >= st.kW * 1.1) ?? Math.ceil(st.kW); }
+      mwh = sc.mwh; head = Math.max(...sc.stages.map((st) => st.head));
+      if (srcEnergy !== "rete") { pvKwp = sc.pvKwp; battKwh = sc.battKwh; }
+    } else if (P.best) {
+      kWinst = P.best.kWInst; kWabs = P.best.pAbs; mwh = P.best.kWhYear / 1000;
+    }
+    if (!sc && powerMode === "solar" && pivots.length) { const So = solarSizing(); pvKwp = So.no.kwp; }
+    return { ha: P.irrHa, qLs: P.qDes, head, kWinst, kWabs, mwh, pvKwp, battKwh, resVol: sc?.res?.vol ?? 0,
+      netKm: hydra ? hydra.byDn.reduce((a, x) => a + x[1], 0) / 1000 : 0, mainKm: sc?.main ? (sc.main.L * (sc.main.n ?? 1)) / 1000 : 0,
+      nPivots: pivots.length, nSpans, nSys: Object.keys(sysDesigns).length,
+      scheme: sc ? `${sc.key} · ${sc.name}` : "—",
+      energy: sc ? (srcEnergy === "rete" ? tx("Rete / generatore") : srcEnergy === "fv-gen" ? tx("FV + generatore") : tx("FV + batterie")) : (powerMode === "solar" ? tx("Fotovoltaico") : tx("Rete / generatore")),
+      mm: mmDes };
+  }
+  function variantSnapshot(): Record<string, unknown> {
+    const centroid = (f: Field) => { const r = f.geom.coordinates[0]; return [r.reduce((a, q) => a + q[0], 0) / r.length, r.reduce((a, q) => a + q[1], 0) / r.length]; };
+    return {
+      pivots: pivots.map((p) => ({ ...p, field: undefined, unconn: undefined, label: undefined, phaseColor: undefined })),
+      lines: pivotLines.map((l) => ({ ...l, field: undefined })),
+      systems: Object.entries(sysDesigns).map(([k, d]) => { const f = fieldOfKey(k); return { d, name: f?.name ?? "", c: f ? centroid(f) : null }; }),
+      fonte: fonteState(), powerMode, pivotBrand, spanVmax, mm24, hoursDay, sprinkBar, pivotPointBar, hydra,
+    };
+  }
+  async function saveVariant() {
+    if (!projectId) { setMsg(t("Seleziona un progetto prima di creare il link.")); return; }
+    const name = variantName.trim() || t("Variante {n}", { n: variants.length + 1 });
+    setBusy("variant");
+    try {
+      // il .ceres della variante: riferimento proprio (ogni variante è un'offerta a sé), revisione 1
+      const cf = ceresFile(`ARGUS-${projectId}-V${Date.now().toString(36).toUpperCase()}`, 1);
+      const ceres = "err" in cf ? null : { ...cf.file, name: `${cf.name} · ${name}`, progetto: { ...(cf.file.progetto as object), nome: `${cf.name} · ${name}`.slice(0, 200) } };
+      const data = { metrics: variantMetrics(), computo: computoRows(), snapshot: variantSnapshot(), created: new Date().toISOString(), ceres };
+      const l = await api.createLayer({ project_id: projectId, kind: "variant", name, data });
+      setVariants((vs) => [...vs, { id: l.id, name, created: data.created, metrics: data.metrics, computo: data.computo, snapshot: data.snapshot, ceres }]);
+      setVariantName("");
+      setMsg(t("Variante «{n}» salvata ✓", { n: name }));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  async function deleteVariant(v: Variant) {
+    if (!confirm(t("Eliminare la variante «{n}»?", { n: v.name }))) return;
+    try { await api.deleteLayer(v.id); setVariants((vs) => vs.filter((x) => x.id !== v.id)); } catch (e) { showErr(e); }
+  }
+  function loadVariant(v: Variant) {
+    if (!confirm(t("Caricare la variante «{n}»? Il progetto sulla mappa viene sostituito: salva prima una variante dello stato attuale se ti serve.", { n: v.name }))) return;
+    const sn = v.snapshot as { pivots?: PivotItem[]; lines?: PipeLine[]; systems?: { d: SysDesign; name: string; c: number[] | null }[];
+      fonte?: Record<string, unknown>; powerMode?: "grid" | "solar"; pivotBrand?: PivotBrand; spanVmax?: number; mm24?: number; hoursDay?: number;
+      sprinkBar?: number; pivotPointBar?: number; hydra?: typeof hydra };
+    const inRing = (lng: number, lat: number, ring: number[][]) => {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const [xi, yi] = ring[i], [xj, yj] = ring[j];
+        if ((yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+      }
+      return inside;
+    };
+    const fieldAt = (lng: number, lat: number) => fields.filter((f) => inRing(lng, lat, f.geom.coordinates[0]))
+      .sort((a, b) => ringAreaHa(a.geom.coordinates) - ringAreaHa(b.geom.coordinates))[0]?.id;
+    const pv = (sn.pivots ?? []).map((p) => ({ ...p, field: fieldAt(p.lng, p.lat) }));
+    const ln = (sn.lines ?? []).map((l) => ({ ...l, field: l.coords?.[0] ? fieldAt(l.coords[0][0], l.coords[0][1]) : undefined }));
+    commitPivots(pv); setPivotLines(ln);
+    const sys: Record<string, SysDesign> = {};
+    for (const s2 of sn.systems ?? []) {
+      const f = (s2.c ? fields.find((x) => x.id === fieldAt(s2.c![0], s2.c![1])) : undefined) ?? fields.find((x) => x.name === s2.name);
+      if (f) sys[sysKey(f)] = s2.d;
+    }
+    setSysDesigns(sys);
+    if (sn.fonte) applyFonte(sn.fonte);
+    if (sn.powerMode) setPowerMode(sn.powerMode);
+    if (sn.pivotBrand) setPivotBrand(sn.pivotBrand);
+    if (sn.spanVmax) setSpanVmax(sn.spanVmax);
+    if (sn.mm24) setMm24(sn.mm24);
+    if (sn.hoursDay) setHoursDay(sn.hoursDay);
+    if (sn.sprinkBar) setSprinkBar(sn.sprinkBar);
+    if (sn.pivotPointBar != null) setPivotPointBar(sn.pivotPointBar);
+    setHydra(sn.hydra ?? null);
+    setMsg(t("Variante «{n}» caricata ✓", { n: v.name }));
+  }
+  // Righe del confronto: [etichetta, valore per metrica, decimali, unità]
+  // Righe del confronto: [etichetta, valore (numero o testo), decimali]; 0 → «—» dove l'opera manca
+  function variantRows(): [string, (m: VarMetrics) => number | string, number][] {
+    const opt = (x: number) => (x ? x : "—");
+    return [
+      [t("Superficie irrigata") + " (ha)", (m) => m.ha, 1],
+      [t("Pivot"), (m) => m.nPivots, 0],
+      [t("Campi con lineari, rotoloni o goccia"), (m) => m.nSys, 0],
+      [t("Campate"), (m) => m.nSpans, 0],
+      [t("Portata totale") + " (l/s)", (m) => m.qLs, 0],
+      [t("Prevalenza") + " (m)", (m) => m.head, 0],
+      [t("Schema della fonte"), (m) => m.scheme, 0],
+      [t("Alimentazione"), (m) => m.energy, 0],
+      [t("Potenza installata") + " (kW)", (m) => m.kWinst, 0],
+      [t("Potenza assorbita") + " (kW)", (m) => m.kWabs, 0],
+      [t("Energia") + " (MWh/" + t("anno") + ")", (m) => m.mwh, 0],
+      [t("Fotovoltaico") + " (kWp)", (m) => opt(m.pvKwp), 0],
+      [t("Batterie") + " (kWh)", (m) => opt(m.battKwh), 0],
+      [t("Vasca di accumulo") + " (m³)", (m) => opt(m.resVol), 0],
+      [t("Adduttrice") + " (km)", (m) => opt(m.mainKm), 1],
+      [t("Rete di adduzione") + " (km)", (m) => opt(m.netKm), 1],
+    ];
+  }
+  async function downloadVariants() {
+    const cols = [{ name: t("Attuale"), m: variantMetrics(), c: computoRows() }, ...variants.map((v) => ({ name: v.name, m: v.metrics, c: v.computo }))];
+    const sheet: (string | number | null)[][] = [[t("Confronto tra varianti")], [projects.find((x) => x.id === projectId)?.name ?? ""], []];
+    const bold = [0, 3];
+    sheet.push(["", ...cols.map((c) => c.name)]);
+    const rnd = (v: number | string, d: number) => (typeof v === "number" ? Math.round(v * 10 ** d) / 10 ** d : v);
+    for (const [lab, fn, d] of variantRows()) sheet.push([lab, ...cols.map((c) => rnd(fn(c.m), d))]);
+    sheet.push([]);
+    // quantità: tutte le voci del computo, una colonna per variante
+    bold.push(sheet.length); sheet.push([t("Computo metrico"), ...cols.map((c) => c.name)]);
+    const keys: string[] = []; const label = new Map<string, string>();
+    for (const c of cols) for (const r of c.c) { const k = `${r.cat}|${r.item}|${r.unit}`; if (!label.has(k)) { keys.push(k); label.set(k, `${r.cat} · ${r.item} (${r.unit})`); } }
+    for (const k of keys) sheet.push([label.get(k)!, ...cols.map((c) => { const r = c.c.find((x) => `${x.cat}|${x.item}|${x.unit}` === k); return r?.qty ?? (r ? r.note ?? "" : ""); })]);
+    const blob = await buildXlsx(t("Confronto tra varianti"), sheet, { boldRows: bold, widths: [60, ...cols.map(() => 22)] });
+    saveBlob(blob, `${safe(projects.find((x) => x.id === projectId)?.name || "progetto")}_varianti.xlsx`);
+  }
+  function renderVariants() {
+    if (!variantsOpen) return (
+      <div className="mt-3"><button className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide w-full text-left" onClick={() => setVariantsOpen(true)}>
+        ▸ {t("Varianti del progetto")}{variants.length ? ` (${variants.length})` : ""}</button></div>);
+    const cur = variantMetrics();
+    const cols = [{ id: 0, name: t("Attuale"), m: cur }, ...variants.map((v) => ({ id: v.id, name: v.name, m: v.metrics, v }))];
+    return (
+      <div className="mt-3 bg-panel rounded-lg p-2 space-y-1.5">
+        <div className="flex items-center gap-2">
+          <button className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide flex-1 text-left" onClick={() => setVariantsOpen(false)}>▾ {t("Varianti del progetto")}</button>
+          {variants.length > 0 && <button className="text-[11px] text-brand hover:underline" onClick={downloadVariants}>{t("Scarica Excel")}</button>}
+        </div>
+        <div className="flex gap-2">
+          <input className="field-input py-1 text-sm flex-1" value={variantName} placeholder={t("es. Pivot + FV, Lineari + vasca")} onChange={(e) => setVariantName(e.target.value)} />
+          <button className="btn-ghost text-[12px]" disabled={!projectId || busy === "variant"} onClick={saveVariant}>{t("Salva variante")}</button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="text-[11px] w-full">
+            <thead><tr><th />{cols.map((c) => (
+              <th key={c.id} className="text-right px-1 align-bottom">
+                <div className="text-brand-darker font-semibold">{c.name}</div>
+                {"v" in c && c.v && <div className="font-normal whitespace-nowrap">
+                  <button className="text-brand-mid" title={t("Carica")} onClick={() => loadVariant(c.v!)}>↺</button>{" "}
+                  {c.v.ceres && <button className="text-brand-mid" title={t("Scarica .ceres (Ceres e Mercurius)")} onClick={() => saveBlob(new Blob([JSON.stringify(c.v!.ceres)], { type: "application/json" }), `${safe(c.v!.name)}.ceres`)}>⬇</button>}{" "}
+                  <button className="text-danger" title={t("Elimina")} onClick={() => deleteVariant(c.v!)}>✕</button></div>}
+              </th>))}</tr></thead>
+            <tbody>
+              {variantRows().map(([lab, fn, d]) => (
+                <tr key={lab} className="border-t border-black/5">
+                  <td className="text-sage-dark pr-1">{lab}</td>
+                  {cols.map((c) => { const v = fn(c.m); return <td key={c.id} className="text-right tabular-nums px-1 text-brand-darker">{typeof v === "number" ? fmt(v, { maximumFractionDigits: d, minimumFractionDigits: 0 }) : v}</td>; })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[10px] text-sage-dark leading-snug">{t("Ogni variante salva pivot, tubazioni, sistemi dei campi, fonte d'acqua e alimentazione con i suoi numeri e il suo computo. ↺ la ricarica sulla mappa. L'Excel mette a confronto anche tutte le quantità.")}</p>
+      </div>
+    );
   }
   function downloadGeoJSON() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -4234,6 +4627,20 @@ export default function Page() {
       </div>
     );
   }
+  function applyFonte(fo: Record<string, unknown>) {
+    const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+    const ty = (["fiume", "canale", "pozzo", "invaso"].includes(fo.type as string) ? fo.type : "fiume") as SrcType;
+    setSrcPt(Array.isArray(fo.pt) ? (fo.pt as number[]) : null);
+    setSrcRoute(Array.isArray(fo.route) ? (fo.route as number[][]) : null);
+    setSrcType(ty); setSrcQmax(num(fo.qmax, 0)); setSrcHours(num(fo.hours, 24)); setSrcRange(num(fo.range, SRC_RANGE_DEF[ty]));
+    setSrcSediment(typeof fo.sed === "boolean" ? fo.sed : ty === "fiume");
+    setSrcEnergy((["rete", "fv-gen", "fv-batt"].includes(fo.energy as string) ? fo.energy : "rete") as "rete" | "fv-gen" | "fv-batt");
+    setSrcMonthly(Array.isArray(fo.monthly) && (fo.monthly as unknown[]).length === 12 ? (fo.monthly as number[]) : null);
+    setSrcSectors(num(fo.sectors, 0)); setResDepth(num(fo.resDepth, 4)); setResDays(num(fo.resDays, 3)); setResEvapK(num(fo.resEvapK, 1.1));
+    setWtwEta(num(fo.eta, 75)); setCanalSlope(num(fo.canalSlope, 0.3)); setBankSlope(num(fo.bankSlope, 2));
+    setSettleMm(num(fo.settleMm, 0.1)); setFilterCap(num(fo.filterCap, 400)); setWellQ(num(fo.wellQ, 30));
+    setSrcShown(typeof fo.shown === "string" ? fo.shown : null); setSrcElev(null);
+  }
   // ---- Impostazioni di progetto salvate sul server ---------------------------
   // Produttore dei pivot e fonte d'acqua (presa, tracciato, livelli, parametri)
   // viaggiano con il progetto: si ritrovano su qualunque computer.
@@ -4250,19 +4657,8 @@ export default function Page() {
     let brand = st.pivot_brand as PivotBrand | undefined;
     if (!brand) { try { brand = (window.localStorage.getItem(`argus.pivotBrand.${projectId}`) as PivotBrand | null) ?? undefined; } catch { /* */ } }
     setPivotBrand(brand && brand in PIVOT_BRANDS ? brand : "starpivot");
-    const fo = (st.fonte ?? {}) as Record<string, unknown>;
+    applyFonte((st.fonte ?? {}) as Record<string, unknown>);
     const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
-    const ty = (["fiume", "canale", "pozzo", "invaso"].includes(fo.type as string) ? fo.type : "fiume") as SrcType;
-    setSrcPt(Array.isArray(fo.pt) ? (fo.pt as number[]) : null);
-    setSrcRoute(Array.isArray(fo.route) ? (fo.route as number[][]) : null);
-    setSrcType(ty); setSrcQmax(num(fo.qmax, 0)); setSrcHours(num(fo.hours, 24)); setSrcRange(num(fo.range, SRC_RANGE_DEF[ty]));
-    setSrcSediment(typeof fo.sed === "boolean" ? fo.sed : ty === "fiume");
-    setSrcEnergy((["rete", "fv-gen", "fv-batt"].includes(fo.energy as string) ? fo.energy : "rete") as "rete" | "fv-gen" | "fv-batt");
-    setSrcMonthly(Array.isArray(fo.monthly) && (fo.monthly as unknown[]).length === 12 ? (fo.monthly as number[]) : null);
-    setSrcSectors(num(fo.sectors, 0)); setResDepth(num(fo.resDepth, 4)); setResDays(num(fo.resDays, 3)); setResEvapK(num(fo.resEvapK, 1.1));
-    setWtwEta(num(fo.eta, 75)); setCanalSlope(num(fo.canalSlope, 0.3)); setBankSlope(num(fo.bankSlope, 2));
-    setSettleMm(num(fo.settleMm, 0.1)); setFilterCap(num(fo.filterCap, 400)); setWellQ(num(fo.wellQ, 30));
-    setSrcShown(typeof fo.shown === "string" ? fo.shown : null); setSrcElev(null);
     const te = (st as { terrain?: { dem?: string; smooth?: number } }).terrain ?? {};
     setDemModel(te.dem === "COPERNICUS_90" ? "COPERNICUS_90" : "COPERNICUS_30"); setDemSmooth(num(te.smooth, 100));
     setSpanVmax(num((st as { span_vmax?: number }).span_vmax, 3));
@@ -6977,7 +7373,7 @@ export default function Page() {
               <button className="btn-ghost flex-1 basis-0" disabled={!laid.length} onClick={downloadGeoJSON}>{t("Layout GeoJSON")}</button>
             </div>
             <button className="btn-ghost w-full mt-2" disabled={!pivots.length && !Object.values(sysDesigns).some((d) => d.sys === "lineari")} onClick={exportCeres}
-              title={t("Campi e pivot con le campate del produttore scelto in Impianti, da aprire in Ceres con File › Apri file.")}>{t("Esporta per Ceres (.ceres)")}</button>
+              title={t("Campi e pivot con le campate del produttore scelto in Impianti, da aprire in Ceres con File › Apri file. Contiene anche il computo per Mercurius (riferimento del progetto e revisione crescente).")}>{t("Esporta per Ceres (.ceres)")}</button>
             <div className="mt-3 bg-panel rounded-lg p-2 space-y-1.5">
               <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Fasi di realizzazione")}</div>
               <div className="grid grid-cols-2 gap-2">
@@ -7004,6 +7400,7 @@ export default function Page() {
               )}
               <p className="text-[10px] text-sage-dark leading-snug">{t("Fasi di superficie simile. Rete principale, fonte d'acqua, stazioni e fotovoltaico vanno nella fase 1. Il computo in Excel ha un blocco per fase più il totale.")}</p>
             </div>
+            {renderVariants()}
             <div className="mt-3">
               <div className="flex items-center gap-2">
                 <button className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide flex-1 text-left" onClick={() => setComputoOpen((o) => !o)}>
