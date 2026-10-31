@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.181";
+const REV = "v0.6.182";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1307,18 +1307,10 @@ export default function Page() {
   const [psLift, setPsLift] = useState(5);           // sollevamento dalla fonte (canale/pozzo) alla presa (m)
   const [psHeadExtra, setPsHeadExtra] = useState(10); // margine/perdite in rete se i diametri non sono calcolati (m)
   const [psSpares, setPsSpares] = useState(1);       // pompe di scorta
-  const [psPrice, setPsPrice] = useState(0.15);      // prezzo energia (€/kWh)
-  const [psC0, setPsC0] = useState(10000);           // costo fisso per gruppo installato (€)
-  const [psC100, setPsC100] = useState(40000);       // costo aggiuntivo di un gruppo da 100 kW (€)
-  const [psMaintPct, setPsMaintPct] = useState(2.5); // manutenzione (% del capex all'anno)
-  const [psMaintFix, setPsMaintFix] = useState(600); // manutenzione fissa per pompa (€/anno)
-  const [psYears, setPsYears] = useState(20);        // orizzonte di valutazione (anni)
-  const [psRate, setPsRate] = useState(6);           // tasso di attualizzazione (%)
   const [psKcAvg, setPsKcAvg] = useState(85);        // Kc medio stagionale / Kc di punta (%)
   const [psRainEff, setPsRainEff] = useState(75);    // quota di pioggia efficace (%)
   const [psDaysFallback, setPsDaysFallback] = useState(180); // giorni di irrigazione/anno senza clima del sito
-  const [psMvExtra, setPsMvExtra] = useState(20000); // sovrapprezzo per motore ≥ 355 kW (media tensione, avviamento)
-  const [psTiePct, setPsTiePct] = useState(2);       // soluzioni entro questo % dal minimo = equivalenti
+  const [psTolPct, setPsTolPct] = useState(3);       // tolleranza sul consumo di energia rispetto al minimo (%)
   const [psOpen, setPsOpen] = useState(false);       // parametri economici aperti
   const [hoursDay, setHoursDay] = useState(20);      // ore di esercizio al giorno
   const [wetW, setWetW] = useState(20);              // larghezza bagnata degli irrigatori (m)
@@ -3555,16 +3547,18 @@ export default function Page() {
       </li>
     );
   }
-  // ---- STAZIONE DI POMPAGGIO: configurazione consigliata (CAPEX + OPEX) ----
+  // ---- STAZIONE DI POMPAGGIO: configurazione consigliata in base alla potenza ----
   // Portata di progetto = somma delle portate dei pivot (pagina Irrigazione).
   // Prevalenza = prevalenza alla presa calcolata nella pagina Tubazioni (se c'è),
-  // altrimenti pressione del pivot più esigente + margine in rete; più il
+  // altrimenti pressione del pivot più esigente + perdite stimate; più il
   // sollevamento dalla fonte. Volume annuo dal clima del sito mese per mese:
   // (ET₀·Kc medio − pioggia efficace) / efficienza, sulla superficie irrigata.
-  // Per ogni N di pompe in servizio (+ scorte) si sceglie il motore standard e si
-  // calcolano capex, energia e manutenzione; vince il costo sul ciclo di vita.
+  // Per ogni N di pompe in servizio (+ scorte): motore standard IEC, rendimento,
+  // potenza assorbita e installata, energia annua. Criterio solo tecnico:
+  // tra le soluzioni con consumo entro psTolPct % dal minimo vince quella con la
+  // minor potenza installata (scorte comprese), preferendo motori in bassa
+  // tensione (≤ 315 kW); a parità, la più modulare.
   const STD_KW = [0.75, 1.1, 1.5, 2.2, 3, 4, 5.5, 7.5, 11, 15, 18.5, 22, 30, 37, 45, 55, 75, 90, 110, 132, 160, 200, 250, 315, 355, 400, 450, 500, 560, 630, 710, 800, 900, 1000];
-  const DAYS_M = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   function pumpStation() {
     const n = pivots.length;
     const qDes = pivots.reduce((a, p) => a + pivotFlow(p), 0);                     // l/s
@@ -3572,7 +3566,6 @@ export default function Page() {
     const pMaxBar = n ? Math.max(...pivots.map((p) => pivotPressure(p))) : 0;
     const headFromNet = hydra ? hydra.headMax : null;
     const head = (headFromNet ?? (pMaxBar * 10.2 + Math.max(0, psHeadExtra))) + Math.max(0, psLift);
-    // volume annuo
     const clim = fields.map((f) => (f.lay as { climate?: { eto_month_mm?: number[]; rain_month_mm?: number[]; source?: string } } | null | undefined)?.climate)
       .find((c) => c && c.eto_month_mm?.length === 12 && c.rain_month_mm?.length === 12);
     const kcAvg = (CROPS[cropKey] ?? 1.1) * Math.max(0.3, psKcAvg / 100);
@@ -3584,14 +3577,11 @@ export default function Page() {
     } else {
       grossYearMm = mm24 * Math.max(0, psDaysFallback);
     }
-    // non si può pompare più di quanto la stazione eroga a pieno regime
-    const capYearMm = mm24 * 365;
-    grossYearMm = Math.min(grossYearMm, capYearMm);
+    grossYearMm = Math.min(grossYearMm, mm24 * 365);                                // non oltre la piena portata
     const volYear = grossYearMm / 1000 * irrHa * 10000;                              // m³/anno
     const hoursFull = qDes > 0 ? volYear / (qDes * 3.6) : 0;                         // ore equivalenti a piena portata
-    const AF = psRate > 0 ? (1 - Math.pow(1 + psRate / 100, -psYears)) / (psRate / 100) : psYears;
     type Cfg = { nDuty: number; nTot: number; qU: number; pShaft: number; kW: number; etaP: number; etaM: number;
-      capex: number; kWhYear: number; energyEur: number; maintEur: number; opex: number; lcc: number };
+      pAbs: number; kWInst: number; kWhYear: number };
     const cfgs: Cfg[] = [];
     if (qDes > 0 && head > 0) {
       for (let nDuty = 1; nDuty <= 10; nDuty++) {
@@ -3599,34 +3589,25 @@ export default function Page() {
         if (qU < 5) break;
         const etaP = 0.87 - 0.12 * Math.exp(-qU / 80);                               // pompe piccole rendono meno
         const pShaft = (qU * head * 9.81) / 1000 / etaP;                              // kW all'albero
-        const kW = STD_KW.find((k) => k >= pShaft * 1.1) ?? 0;
-        if (!kW) continue;                                                           // oltre 1 MW per pompa
+        const kW = STD_KW.find((k) => k >= pShaft * 1.1) ?? 0;                        // motore standard, margine 10%
+        if (!kW) continue;
         const etaM = 0.965 - 0.06 * Math.exp(-kW / 25);
         const nTot = nDuty + Math.max(0, psSpares);
-        const unit = psC0 + psC100 * Math.pow(kW / 100, 0.75) + (kW >= 355 ? psMvExtra : 0);
-        const capex = unit * nTot;
-        const kWhYear = (volYear * head) / 367 / (etaP * etaM);                      // ρg/3,6e6 = 1/367
-        const energyEur = kWhYear * psPrice;
-        const maintEur = capex * psMaintPct / 100 + psMaintFix * nTot;
-        const opex = energyEur + maintEur;
-        cfgs.push({ nDuty, nTot, qU, pShaft, kW, etaP, etaM, capex, kWhYear, energyEur, maintEur, opex, lcc: capex + AF * opex });
+        const pAbs = (pShaft * nDuty) / etaM;                                         // kW elettrici in servizio
+        cfgs.push({ nDuty, nTot, qU, pShaft, kW, etaP, etaM, pAbs, kWInst: kW * nTot,
+          kWhYear: (volYear * head) / 367 / (etaP * etaM) });                         // ρg/3,6e6 = 1/367
       }
     }
-    // Costo minimo sul ciclo di vita, poi regola progettuale: tra le soluzioni
-    // praticamente equivalenti (entro psTiePct %) si consiglia la più modulare
-    // (più pompe in servizio = scorta più piccola, avviamenti più leggeri,
-    // migliore aderenza alla domanda quando lavorano meno pivot).
-    const cheapest = cfgs.length ? cfgs.reduce((a, c) => (c.lcc < a.lcc ? c : a)) : null;
-    const band = cheapest ? cfgs.filter((c) => c.lcc <= cheapest.lcc * (1 + Math.max(0, psTiePct) / 100)) : [];
-    const best = band.length ? band.reduce((a, c) => (c.nDuty > a.nDuty ? c : a)) : null;
-    const bestCapex = cfgs.length ? cfgs.reduce((a, c) => (c.capex < a.capex ? c : a)) : null;
-    const bestOpex = cfgs.length ? cfgs.reduce((a, c) => (c.opex < a.opex ? c : a)) : null;
-    return { n, qDes, irrHa, head, headFromNet, pMaxBar, clim, netMm, grossYearMm, volYear, hoursFull, cfgs, best, cheapest, bandN: band.length, bestCapex, bestOpex, AF };
+    const minE = cfgs.length ? cfgs.reduce((a, c) => (c.kWhYear < a.kWhYear ? c : a)) : null;
+    const minInst = cfgs.length ? cfgs.reduce((a, c) => (c.kWInst < a.kWInst ? c : a)) : null;
+    let band = minE ? cfgs.filter((c) => c.kWhYear <= minE.kWhYear * (1 + Math.max(0, psTolPct) / 100)) : [];
+    if (band.some((c) => c.kW < 355)) band = band.filter((c) => c.kW < 355);       // bassa tensione se possibile
+    const best = band.length ? band.reduce((a, c) => (c.kWInst < a.kWInst || (c.kWInst === a.kWInst && c.nDuty > a.nDuty) ? c : a)) : null;
+    return { n, qDes, irrHa, head, headFromNet, pMaxBar, clim, netMm, grossYearMm, volYear, hoursFull, cfgs, best, minE, minInst };
   }
   function renderPumpStation() {
     const P = pumpStation();
-    const keur = (x: number) => `€ ${fmt(Math.round(x / 1000))}k`;
-    // Guida: cosa serve perché il dimensionamento sia affidabile, nell'ordine giusto.
+    const mwh = (x: number) => fmt(Math.round(x / 1000));
     const steps: { ok: boolean; warn?: boolean; text: string; tab?: string; action?: string }[] = [
       { ok: P.n > 0, text: P.n ? t("Pivot posati: {n} · {a}", { n: P.n, a: uHa(P.irrHa) }) : t("Posa i pivot sul campo"), tab: "impianti", action: t("Impianti") },
       { ok: Math.abs(mm24 - mm24Suggested) < 0.6, warn: true,
@@ -3640,8 +3621,7 @@ export default function Page() {
         <input type="number" min={min} max={max} step={step} value={v}
           onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) set(Math.max(min, Math.min(max, x))); }} className="field-input mt-0.5 py-1 text-sm" /></label>
     );
-    const sorted = [...P.cfgs].sort((a, b) => a.lcc - b.lcc).filter((c) => c !== P.best);
-    const second = sorted[0];
+    const B = P.best;
     return (
       <div className="space-y-3">
         {/* 1 — guida */}
@@ -3682,21 +3662,22 @@ export default function Page() {
           )}
 
           {/* 3 — consigliata */}
-          {P.best && (
+          {B && (
             <div className="rounded-lg p-2 border border-brand/40 bg-brand/5">
               <div className="text-xs font-semibold text-brand-darker">{t("Configurazione consigliata")}</div>
               <div className="text-[15px] font-semibold text-brand mt-0.5">
-                {P.best.nDuty} × {fmt(P.best.kW)} kW {t("in servizio")}{psSpares > 0 ? ` + ${psSpares} ${t("di scorta")}` : ""}
+                {B.nDuty} × {fmt(B.kW)} kW {t("in servizio")}{psSpares > 0 ? ` + ${psSpares} ${t("di scorta")}` : ""}
               </div>
               <div className="text-[11px] text-sage-dark leading-relaxed">
-                {fmt(Math.round(P.best.qU))} l/s · {fmt(Math.round(P.head))} m {t("per pompa")} · {t("rendimento")} {fmt(Math.round(P.best.etaP * P.best.etaM * 100))}%<br />
-                {t("Investimento")} <b>{keur(P.best.capex)}</b> · {t("Energia")} <b>{fmt(Math.round(P.best.kWhYear / 1000))} MWh/{t("anno")}</b> · {t("Esercizio")} <b>{keur(P.best.opex)}/{t("anno")}</b>
-                {P.cheapest && P.cheapest !== P.best ? (
-                  <><br />{t("Costo minimo assoluto: {c}, solo {d} in meno sul ciclo di vita ({p}%). Soluzioni entro il {t}% considerate equivalenti: si consiglia la più modulare.", { c: `${P.cheapest.nDuty}×${fmt(P.cheapest.kW)} kW`, d: keur(P.best.lcc - P.cheapest.lcc), p: fmt(((P.best.lcc - P.cheapest.lcc) / P.cheapest.lcc) * 100, { maximumFractionDigits: 1 }), t: fmt(psTiePct) })}</>
-                ) : second ? (
-                  <><br />{t("Risparmio sul ciclo di vita rispetto alla seconda scelta ({c}): {d}", { c: `${second.nDuty}×${fmt(second.kW)} kW`, d: keur(second.lcc - P.best.lcc) })}</>
+                {fmt(Math.round(B.qU))} l/s · {fmt(Math.round(P.head))} m {t("per pompa")} · {t("rendimento")} {fmt(Math.round(B.etaP * B.etaM * 100))}%<br />
+                {t("Potenza installata")} <b>{fmt(B.kWInst)} kW</b> ({t("di cui in servizio")} {fmt(B.kW * B.nDuty)} kW) · {t("Assorbimento")} <b>{fmt(Math.round(B.pAbs))} kW</b><br />
+                {t("Energia")} <b>{mwh(B.kWhYear)} MWh/{t("anno")}</b>
+                {P.minE && P.minE !== B ? (
+                  <><br />{t("Consumo entro il {t}% del minimo ({c}: {d} MWh/anno in meno): si sceglie la soluzione con meno potenza installata.", { t: fmt(psTolPct), c: `${P.minE.nDuty}×${fmt(P.minE.kW)} kW`, d: mwh(B.kWhYear - P.minE.kWhYear) })}</>
+                ) : P.minInst === B ? (
+                  <><br />{t("Soluzione con il minor consumo e la minor potenza installata.")}</>
                 ) : null}
-                {P.best.kW >= 355 && <><br /><span className="text-rust">{t("Motori ≥ 355 kW: di norma servono media tensione e avviamento dedicato (inclusi nel costo).")}</span></>}
+                {B.kW >= 355 && <><br /><span className="text-rust">{t("Motori ≥ 355 kW: di norma servono media tensione e avviamento dedicato.")}</span></>}
               </div>
             </div>
           )}
@@ -3705,40 +3686,29 @@ export default function Page() {
           <table className="w-full text-[11px] tabular-nums">
             <thead><tr className="text-sage-dark border-b border-black/10 text-right">
               <th className="text-left font-medium py-0.5">{t("Pompe")}</th><th className="font-medium">kW</th><th className="font-medium">l/s</th>
-              <th className="font-medium">{t("Capex")}</th><th className="font-medium">{t("Opex/anno")}</th><th className="font-medium">{t("{y} anni", { y: psYears })}</th>
+              <th className="font-medium">η</th><th className="font-medium">{t("kW installati")}</th><th className="font-medium">MWh/{t("anno")}</th>
             </tr></thead>
             <tbody>
-              {P.cfgs.map((c) => {
-                const isB = c === P.best;
-                return (
-                  <tr key={c.nDuty} className={"text-right " + (isB ? "font-semibold text-brand-darker bg-brand/10" : "")}>
-                    <td className="text-left py-0.5">{c.nDuty}+{c.nTot - c.nDuty}
-                      {c === P.cheapest && c !== P.best && <span className="ml-1 text-[9px] text-brand-mid" title={t("Costo minimo sul ciclo di vita")}>min</span>}
-                      {c === P.bestCapex && <span className="ml-1 text-[9px] text-brand-mid" title={t("Investimento più basso")}>€</span>}
-                      {c === P.bestOpex && <span className="ml-1 text-[9px] text-brand-mid" title={t("Esercizio più basso")}>⚡</span>}</td>
-                    <td>{fmt(c.kW)}</td><td>{fmt(Math.round(c.qU))}</td><td>{keur(c.capex)}</td><td>{keur(c.opex)}</td><td>{keur(c.lcc)}</td>
-                  </tr>
-                );
-              })}
+              {P.cfgs.map((c) => (
+                <tr key={c.nDuty} className={"text-right " + (c === B ? "font-semibold text-brand-darker bg-brand/10" : "")}>
+                  <td className="text-left py-0.5">{c.nDuty}+{c.nTot - c.nDuty}
+                    {c === P.minE && <span className="ml-1 text-[9px] text-brand-mid" title={t("Minor consumo di energia")}>⚡</span>}
+                    {c === P.minInst && <span className="ml-1 text-[9px] text-brand-mid" title={t("Minor potenza installata")}>▼</span>}</td>
+                  <td>{fmt(c.kW)}</td><td>{fmt(Math.round(c.qU))}</td><td>{fmt(Math.round(c.etaP * c.etaM * 100))}%</td>
+                  <td>{fmt(c.kWInst)}</td><td>{mwh(c.kWhYear)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
-          <p className="text-[10px] text-sage-dark leading-snug">{t("Più pompe piccole: la scorta costa meno (vale 1/N della stazione) e si segue meglio la domanda, ma il rendimento scende e i costi fissi si moltiplicano. Poche pompe grandi: rendimento migliore, ma la scorta raddoppia l'investimento. € = investimento più basso · ⚡ = esercizio più basso.")}</p>
-          {powerMode === "solar" && <p className="text-[10px] text-rust leading-snug">{t("Alimentazione fotovoltaica: l'energia in esercizio costa quasi zero, quindi pesa soprattutto l'investimento. Imposta il prezzo dell'energia a 0 per confrontare.")}</p>}
+          <p className="text-[10px] text-sage-dark leading-snug">{t("Più pompe piccole: la scorta pesa meno sulla potenza installata (vale 1/N della stazione) e si segue meglio la domanda, ma il rendimento scende. Poche pompe grandi: rendimento migliore, ma la scorta raddoppia la potenza installata. ⚡ = minor consumo · ▼ = minor potenza installata.")}</p>
+          {powerMode === "solar" && <p className="text-[10px] text-rust leading-snug">{t("Con alimentazione fotovoltaica conta soprattutto la potenza: campo FV e inverter si dimensionano sulla potenza assorbita dalle pompe.")}</p>}
 
           {/* 5 — parametri */}
-          <button className="text-[11px] text-brand-mid" onClick={() => setPsOpen((o) => !o)}>{psOpen ? "▾" : "▸"} {t("Parametri economici e di calcolo")}</button>
+          <button className="text-[11px] text-brand-mid" onClick={() => setPsOpen((o) => !o)}>{psOpen ? "▾" : "▸"} {t("Parametri di calcolo")}</button>
           {psOpen && (
             <div className="grid grid-cols-2 gap-2">
               {num(t("Pompe di scorta"), psSpares, setPsSpares, 1, 0, 4)}
-              {num(t("Prezzo energia (€/kWh)"), psPrice, setPsPrice, 0.01, 0, 2)}
-              {num(t("Costo fisso per gruppo (€)"), psC0, setPsC0, 500, 0)}
-              {num(t("Costo di un gruppo da 100 kW (€)"), psC100, setPsC100, 1000, 0)}
-              {num(t("Manutenzione (% capex/anno)"), psMaintPct, setPsMaintPct, 0.5, 0, 20)}
-              {num(t("Manutenzione per pompa (€/anno)"), psMaintFix, setPsMaintFix, 50, 0)}
-              {num(t("Orizzonte (anni)"), psYears, setPsYears, 1, 1, 40)}
-              {num(t("Tasso di attualizzazione (%)"), psRate, setPsRate, 0.5, 0, 30)}
-              {num(t("Sovrapprezzo motori ≥ 355 kW (€)"), psMvExtra, setPsMvExtra, 1000, 0)}
-              {num(t("Soluzioni equivalenti entro (%)"), psTiePct, setPsTiePct, 0.5, 0, 20)}
+              {num(t("Tolleranza sul consumo di energia (%)"), psTolPct, setPsTolPct, 0.5, 0, 20)}
               {num(t("Kc medio / Kc di punta (%)"), psKcAvg, setPsKcAvg, 1, 30, 100)}
               {num(t("Pioggia efficace (%)"), psRainEff, setPsRainEff, 1, 0, 100)}
               {P.headFromNet == null && num(t("Perdite in rete stimate (m)"), psHeadExtra, setPsHeadExtra, 1, 0, 200)}
@@ -5302,7 +5272,7 @@ export default function Page() {
           </section>
 
           <section hidden={tab !== "pompaggio"}>
-            <SectionHead title={t("Stazione di pompaggio")} help={t("Dimensionamento consigliato della stazione di pompaggio: numero e potenza delle pompe, scorte e confronto tra investimento ed esercizio sul ciclo di vita. Usa portate e fabbisogno della pagina Irrigazione, la prevalenza calcolata nella pagina Tubazioni e il clima del sito mese per mese.")} />
+            <SectionHead title={t("Stazione di pompaggio")} help={t("Dimensionamento consigliato della stazione di pompaggio in base alla potenza: numero e potenza delle pompe, scorte, potenza installata e consumo annuo di energia. Usa portate e fabbisogno della pagina Irrigazione, la prevalenza calcolata nella pagina Tubazioni e il clima del sito mese per mese.")} />
             {renderPumpStation()}
           </section>
 
