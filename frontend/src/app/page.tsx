@@ -15,7 +15,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.199";
+const REV = "v0.6.200";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -54,6 +54,7 @@ const CROP_LIST: { key: string; label: string; kc: number }[] = [
   { key: "ortive", label: "Ortive", kc: 1.05 },
   { key: "altro", label: "Altro", kc: 1.1 },
 ];
+const DEFAULT_KC = 1.15;   // Kc di partenza delle impostazioni del campo (finché non si sceglie la coltura)
 const cropOf = (k: string) => CROP_LIST.find((x) => x.key === k) ?? CROP_LIST[5];
 const PIVOT_WET_W = 40;   // larghezza bagnata del pacchetto irriguo (m), assunzione
 
@@ -92,7 +93,7 @@ const DEFAULTS: Settings = {
   layoutCfg: "staggered", radius: 400, gap: 0, transport: "buried",
   orientMode: "auto", azimuth: 0, canalFlip: false,
   onlySuitable: false, minSuit: 60, overhang: 0,
-  nPhases: 1, phaseOrder: "canal_distance", kc: 1.15, eff: 0.85, hours: 20,
+  nPhases: 1, phaseOrder: "canal_distance", kc: DEFAULT_KC, eff: 0.85, hours: 20,
 };
 
 // Sotto-area (macro-area) inscritta in un campo.
@@ -1362,6 +1363,9 @@ export default function Page() {
   const [srcRange, setSrcRange] = useState(4);                       // escursione di livello (m) o livello dinamico del pozzo
   const [srcSediment, setSrcSediment] = useState(true);              // acqua con sedimenti
   const [srcEnergy, setSrcEnergy] = useState<"rete" | "fv-gen" | "fv-batt">("rete");
+  // Azionamento delle pompe di superficie: motore elettrico (2 o 4 poli, 1450/2900 giri)
+  // o motore diesel (motopompa: velocità intermedie e serie MEC-MG solo a motore termico)
+  const [pumpDrive, setPumpDrive] = useState<"el" | "diesel">("el");
   type SrcElev = { zS: number | null; zR: number | null; zPmax: number | null; zPiv: (number | null)[];
     prof: { d: number[]; z: (number | null)[] }; key: string };
   const [srcElev, setSrcElev] = useState<SrcElev | null>(null);
@@ -2603,8 +2607,22 @@ export default function Page() {
   // l'efficienza dell'impianto.
   // Coltura più esigente fra quelle scelte (globale o per campo con pivot): il
   // dimensionamento di rete, stazioni e vasche si fa sulla sua ETc di punta.
-  const kcMax = Math.max(CROPS[cropKey] ?? 1.1, ...fields.filter((f) => pivots.some((p) => p.field === f.id)).map((f) => effSettings(f).kc || 0));
-  const cropMax = CROP_LIST.find((c) => Math.abs(c.kc - kcMax) < 1e-6 && c.key === cropKey) ?? CROP_LIST.find((c) => Math.abs(c.kc - kcMax) < 1e-6);
+  // Una sola fonte per le colture: ogni campo ha la coltura scelta (il Kc del campo
+  // uguale a quello della coltura di progetto, o il Kc di partenza mai cambiato,
+  // vale la coltura di progetto); il dimensionamento usa la più esigente.
+  const cropOfField = (f: Field) => {
+    const kc = effSettings(f).kc;
+    if (!kc || Math.abs(kc - (CROPS[cropKey] ?? 0)) < 1e-6 || Math.abs(kc - DEFAULT_KC) < 1e-6) return cropOf(cropKey);
+    return CROP_LIST.find((c) => Math.abs(c.kc - kc) < 1e-6) ?? { key: "altro", label: "Altro", kc };
+  };
+  const cropsOf = (fs: Field[]) => {
+    const out = [...new Map(fs.map((f) => { const c = cropOfField(f); return [c.key, c] as const; })).values()];
+    if (!out.length) out.push(cropOf(cropKey));
+    return out.sort((a, b) => b.kc - a.kc);
+  };
+  const designCrops = cropsOf(fields.filter((f) => pivots.some((p) => p.field === f.id)));
+  const cropMax = designCrops[0];
+  const kcMax = cropMax.kc;
   const etcMax = et0Peak * kcMax;                                                    // mm/g
   const mm24Suggested = Math.max(0, etcMax - rainMm) / Math.max(0.3, effPct / 100);
   // Fabbisogno di progetto: mai sotto quello della coltura più esigente.
@@ -4058,7 +4076,7 @@ export default function Page() {
         const lon = pts.reduce((a, q) => a + q[0], 0) / Math.max(1, pts.length), lat = pts.reduce((a, q) => a + q[1], 0) / Math.max(1, pts.length);
         const dms = (v: number, pos: string, neg: string) => { const a = Math.abs(v), dd = Math.floor(a), mm = Math.floor((a - dd) * 60), ss = ((a - dd) * 60 - mm) * 60; return `${dd}°${String(mm).padStart(2, "0")}′${ss.toFixed(1)}″${v >= 0 ? pos : neg}`; };
         const PIPE_TXT = ['10"', '8"5/8', '6"5/8'];
-        const cropLbl = tx(cropMax?.label ?? CROP_LIST.find((c) => c.key === cropKey)?.label ?? "");
+        const cropLbl = tx((pivots.length ? designCrops : cropsOf(fieldsShown))[0].label);
         const month = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(pdfLang, { month: "short" }); } catch { return String(i + 1); } };
         const monthLong = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(pdfLang, { month: "long" }); } catch { return String(i + 1); } };
         // Indice come le relazioni tecniche Agrostar (General Explanatory Note)
@@ -4100,9 +4118,8 @@ export default function Page() {
         }
         ch.push({ title: tx("Inquadramento climatico"), blocks: c3 });
         // 4 — Piano colturale
-        const crops = [...new Map(fieldsShown.map((f) => { const kc = effSettings(f).kc || CROPS[cropKey] || 1.1; const c = Math.abs(kc - (CROPS[cropKey] ?? 0)) < 1e-6 ? cropOf(cropKey) : (CROP_LIST.find((x) => Math.abs(x.kc - kc) < 1e-6) ?? cropOf(cropKey)); return [c.key, c]; })).values()];
-        if (!crops.length) crops.push(cropOf(cropKey));
-        crops.sort((a, b) => b.kc - a.kc);
+        // stesse colture del dimensionamento (cropMax è la prima)
+        const crops = pivots.length ? designCrops : cropsOf(fieldsShown);
         ch.push({ title: tx("Piano colturale"), blocks: [
           { p: tx("Il piano colturale considerato per il dimensionamento comprende: {c}. L'impianto è dimensionato sulla coltura più esigente, {m}, in modo che rete, pompe e linee elettriche coprano la domanda di punta di ogni coltura della rotazione.", { c: crops.map((c) => `${tx(c.label)} (Kc ${n2(c.kc)})`).join(", "), m: tx(crops[0].label) }) },
           { p: tx("Le colture con fabbisogno minore lavorano con turni più brevi o con dosi ridotte; l'alternanza delle colture distribuisce la domanda d'acqua nel corso della stagione e riduce i picchi sulla rete.") },
@@ -4210,7 +4227,9 @@ export default function Page() {
           // livelli mese per mese
           if (S.months && srcMonthly && srcType !== "pozzo") {
             fb.push({ h: tx("Livelli della fonte mese per mese") });
-            fb.push({ p: tx("Il livello della fonte varia nel corso dell'anno: la tabella riporta l'abbassamento minimo del pelo libero sotto il punto di presa mese per mese e il fabbisogno irriguo netto dello stesso mese. Il dimensionamento delle pompe considera l'abbassamento peggiore dei mesi irrigui ({d} m); il consumo di energia usa la media pesata sui volumi ({a} m).", { d: n1(S.drop), a: n1(S.dropAvg) }) });
+            fb.push({ p: S.netMm
+              ? tx("Il livello della fonte varia nel corso dell'anno: la tabella riporta l'abbassamento minimo del pelo libero sotto il punto di presa mese per mese e il fabbisogno irriguo netto dello stesso mese. Il dimensionamento delle pompe considera l'abbassamento peggiore dei mesi irrigui ({d} m); il consumo di energia usa la media pesata sui volumi ({a} m).", { d: n1(S.drop), a: n1(S.dropAvg) })
+              : tx("Il livello della fonte varia nel corso dell'anno: la tabella riporta l'abbassamento minimo del pelo libero sotto il punto di presa mese per mese. Senza i dati climatici del sito il dimensionamento delle pompe considera l'abbassamento peggiore dell'anno ({d} m) e il consumo di energia la media dei dodici mesi ({a} m).", { d: n1(S.drop), a: n1(S.dropAvg) }) });
             const f1 = (x: number) => fx(x, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), nm = S.netMm;
             const hd = [tx("Mese"), tx("Abbassamento (m)"), ...(S.zS != null ? [tx("Quota del pelo libero (m s.l.m.)")] : []), ...(nm ? [tx("Fabbisogno netto (mm)"), tx("Mese irriguo")] : [])];
             const mr = srcMonthly.map((d, i) => [monthLong(i), f1(d), ...(S.zS != null ? [f1(S.zS! - d)] : []), ...(nm ? [n0(Math.max(0, nm[i])), nm[i] > 0 ? tx("sì") : tx("no")] : [])]);
@@ -4317,9 +4336,13 @@ export default function Page() {
         }
         ch.push({ title: tx("Linee guida di progettazione dell'impianto irriguo"), blocks: lb });
         // Alimentazione elettrica
-        const kp = stations.reduce((a, st) => a + (st.pick ? st.pick.motor * st.nTot : st.kW), 0);
+        const kp = stations.reduce((a, st) => a + (st.pick && !st.pick.diesel ? st.pick.motor * st.nTot : st.pick ? 0 : st.kW), 0);
         const eb: Record<string, unknown>[] = [{ p: tx("L'alimentazione prevista è: {a}. La potenza installata complessiva è di {kw} kW, di cui {kp} kW per le pompe; il consumo annuo stimato è di {mwh} MWh, pari a {kwhha} kWh per ettaro.",
           { a: VM.energy, kw: n0(G.kW), kp: n0(kp), mwh: n0(VM.mwh), kwhha: n0(VM.ha > 0 ? (VM.mwh * 1000) / VM.ha : 0) }) }];
+        const dst = stations.filter((st) => st.pick?.diesel);
+        if (dst.length) eb.push({ p: tx("Le pompe di superficie sono motopompe con motore diesel accoppiato tramite flangia SAE e giunto elastico: {l}. Il consumo stimato di gasolio è di {g} litri all'anno.", {
+          l: dst.map((st) => `${st.name} (${st.nTot > 1 ? `${st.nTot} × ` : ""}${n0(st.pick!.motor)} kW, ${n0(st.pick!.rpm)} ${tx("giri/min")})`).join("; "),
+          g: n0((VM.dieselMwh ?? 0) * 1000 * dieselLkWh) }) });
         if (G.supply === "mt") eb.push({ p: tx("Con la potenza installata è prevista una cabina di trasformazione MT/BT da {kva} kVA.", { kva: fx(G.kva) }) });
         if (G.supply === "bt") eb.push({ p: tx("La fornitura è in bassa tensione, con un punto di consegna dotato di quadro generale.") });
         if (G.supply === "gen") eb.push({ p: tx("Nelle ore senza sole l'energia è fornita da un gruppo elettrogeno da {kva} kVA.", { kva: fx(G.kva) }) });
@@ -4419,7 +4442,10 @@ export default function Page() {
   useEffect(() => {
     fetch("/caprari.json").then((r) => (r.ok ? r.json() : null)).then((d) => { if (Array.isArray(d)) { capRef.current = d; setCapReady(true); } }).catch(() => { /* senza curve resta la stazione generica */ });
   }, []);
-  type PumpPick = { model: string; fam: string; rpm: number; n: number; motor: number; pAbs: number; eta: number; H: number; q: number };
+  type PumpPick = { model: string; fam: string; rpm: number; n: number; motor: number; pAbs: number; eta: number; H: number; q: number; diesel?: boolean };
+  // Curve a motore elettrico: 2 o 4 poli a 50 Hz; le velocità intermedie e la serie
+  // MEC-MG (flangia SAE per motori diesel) vanno solo con il motore termico.
+  const electricRpm = (model: string, rpm: number) => (rpm === 1450 || rpm === 2900) && !/^MEC-MG/i.test(model);
   // La pompa con il rendimento migliore che dà almeno la prevalenza richiesta
   // (fino a +12 %, poi +25 %) alla portata di una pompa; nFix fissa quante
   // pompe lavorano in parallelo, altrimenti si prova da 1 a 4.
@@ -4433,6 +4459,8 @@ export default function Page() {
         const q = (qLs * 3.6) / n;
         for (const [fam, model, rpm, mkw, pts] of db) {
           if (!fams.includes(fam)) continue;
+          const diesel = fam === "horiz" && pumpDrive === "diesel";
+          if (fam === "horiz" && !diesel && !electricRpm(model, rpm)) continue;
           const P = pts.filter((p) => p[0] != null && p[1] != null) as number[][];
           if (P.length < 2 || q < P[0][0] || q > P[P.length - 1][0]) continue;
           let i = 1; while (i < P.length - 1 && P[i][0] < q) i++;
@@ -4442,9 +4470,10 @@ export default function Page() {
           const pw = a[3] != null && b[3] != null ? a[3] + (b[3] - a[3]) * f : null;
           const eta = pw && pw > 0 ? Math.min(0.9, (q * H) / 367 / pw) : 0.6;
           const pA = pw && pw > 0 ? pw : (q * H) / 367 / 0.6;
-          const motor = mkw ?? (STD_KW.find((k) => k >= pA * 1.1) ?? Math.ceil(pA * 1.1));
+          // diesel: potenza continua del motore con il 20 % di margine (altitudine, temperatura, giri)
+          const motor = diesel ? Math.ceil(pA * 1.2) : mkw ?? (STD_KW.find((k) => k >= pA * 1.1) ?? Math.ceil(pA * 1.1));
           const score = eta * 100 - n * 2 - (H / head - 1) * 30;
-          if (score > bestScore) { bestScore = score; best = { model, fam, rpm, n, motor, pAbs: pA * n, eta: eta * 100, H, q }; }
+          if (score > bestScore) { bestScore = score; best = { model, fam, rpm, n, motor, pAbs: pA * n, eta: eta * 100, H, q, diesel }; }
         }
       }
       if (best) break;
@@ -4554,6 +4583,7 @@ export default function Page() {
     const route = netPaths();
     const st = stations ?? pumpStationsList();
     for (const s of st) {
+      if (s.pick?.diesel) continue;                                  // motopompa: niente linea elettrica
       const kW = s.pick ? s.pick.motor * s.nDuty : s.kW;
       if (!(kW > 0) || !(cableM > 0)) continue;
       out.push({ name: `${tx("alimentazione")} · ${s.name}`, kW, L: Math.round(cableM), ...cableFor(kW, cableM) });
@@ -4673,12 +4703,13 @@ export default function Page() {
   const KVA = [100, 160, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500];
   function powerGear(stations: PStation[]) {
     const solar = powerMode === "solar" || srcEnergy !== "rete";
-    const panels = stations.map((st) => {
+    const elec = stations.filter((st) => !st.pick?.diesel);           // le motopompe hanno il loro quadro motore
+    const panels = elec.map((st) => {
       const kWp = st.pick ? st.pick.motor : st.kW / Math.max(1, st.nDuty);
       return { name: st.name, n: st.nTot, kWp, inverter: solar || kWp >= 15 };
     });
     const pivKW = pivots.reduce((a, pv) => a + (spanComposition(pv, pivotBrand)?.spans.length ?? Math.max(1, Math.round(pv.r / 50))) * 0.75 + (pv.gun && pv.gun > 0 ? 1.5 : 0), 0);
-    const kW = stations.reduce((a, st) => a + (st.pick ? st.pick.motor * st.nDuty : st.kW), 0) + pivKW;
+    const kW = elec.reduce((a, st) => a + (st.pick ? st.pick.motor * st.nDuty : st.kW), 0) + pivKW;
     const kva = KVA.find((k) => k >= kW / 0.85 / 0.8) ?? Math.ceil(kW / 0.85 / 0.8);
     const supply = srcEnergy === "fv-gen" ? "gen" : srcEnergy === "fv-batt" && powerMode === "solar" ? "pv" : kW > 100 ? "mt" : "bt";
     return { panels, kW, kva, supply };
@@ -4860,12 +4891,15 @@ export default function Page() {
       : { codice: `ARGUS-V-CHECK-${dn}`, quantita: 1, unita: "pz", descrizione: `Valvola di non ritorno · DN ${dn}` };
     const famTxt: Record<string, string> = { vert: "verticale sommersa", subm: "elettropompa sommersa", horiz: "ad asse orizzontale" };
     const stationDesc = (st: PStation) => `${st.name}: ` + (st.pick
-      ? `${st.nTot > 1 ? st.nTot + " × " : ""}pompa Caprari ${st.pick.model} (${famTxt[st.pick.fam] ?? st.pick.fam}), motore ${it(st.pick.motor, 1)} kW, ${it(st.qLs)} l/s, ${it(st.head)} m`
+      ? `${st.nTot > 1 ? st.nTot + " × " : ""}pompa Caprari ${st.pick.model} (${famTxt[st.pick.fam] ?? st.pick.fam}), ${st.pick.diesel ? `motore diesel ${it(st.pick.motor, 1)} kW a ${it(st.pick.rpm)} giri/min` : `motore ${it(st.pick.motor, 1)} kW`}, ${it(st.qLs)} l/s, ${it(st.head)} m`
       : `${it(st.kW, 1)} kW, ${it(st.qLs)} l/s, ${it(st.head)} m`);
+    // motopompa: il motore diesel non è nel listino Caprari, resta da prezzare
+    const dieselRows = (st: PStation): MRow[] => st.pick?.diesel ? [{ codice: "ARGUS-MOTORE-DIESEL", quantita: st.nTot, unita: "pz",
+      descrizione: `Motore diesel ${it(st.pick.motor)} kW a ${it(st.pick.rpm)} giri/min, flangia SAE e volano, quadro motore e serbatoio · ${st.name}` }] : [];
     let scen = powerMode === "solar" ? "fotovoltaico" : "rete elettrica";
     if (S && sc) {
       const R: MRow[] = [];
-      stations.forEach((st, i) => { R.push({ codice: "PT-PUMP", quantita: 1, unita: "pz", descrizione: stationDesc(st) });
+      stations.forEach((st, i) => { R.push({ codice: "PT-PUMP", quantita: 1, unita: "pz", descrizione: stationDesc(st) }, ...dieselRows(st));
         const dn = i === 0 && sc.key !== "C" && sc.main?.kind === "pipe" && sc.main.dn ? sc.main.dn : netMaxDn; if (dn) R.push(checkRow(dn)); });
       if (sc.main?.kind === "pipe" && sc.main.dn) R.push(...pipeRows(sc.main.dn, sc.main.L * (sc.main.n ?? 1), "adduttrice"));
       if (sc.main?.kind === "canal") R.push({ codice: "ARGUS-CANALE-GRAVITA", quantita: Math.round(sc.main.L), unita: "m", descrizione: `Canale a gravità, scavo massimo ${it(sc.main.cutMax ?? 0, 1)} m` });
@@ -4880,7 +4914,7 @@ export default function Page() {
       } else scen = "rete elettrica / generatore";
       add(`Fonte d'acqua · schema ${sc.key}`, R);
     } else if (P.best && stations.length) {
-      add("Stazione di pompaggio", stations.flatMap((st) => [{ codice: "PT-PUMP", quantita: 1, unita: "pz", descrizione: stationDesc(st) } as MRow, ...(netMaxDn ? [checkRow(netMaxDn)] : [])]));
+      add("Stazione di pompaggio", stations.flatMap((st) => [{ codice: "PT-PUMP", quantita: 1, unita: "pz", descrizione: stationDesc(st) } as MRow, ...dieselRows(st), ...(netMaxDn ? [checkRow(netMaxDn)] : [])]));
     }
     if (!sc && powerMode === "solar" && pivots.length) {
       const So = solarSizing();
@@ -4958,7 +4992,7 @@ export default function Page() {
       feats.push({ type: "Feature", geometry: { type: "Point", coordinates: st.pt }, properties: {
         tipo: "attrezzatura", sottotipo: "pump", nome: st.name.slice(0, 80), portata_ls: Math.round(st.qLs * 10) / 10, prevalenza_m: Math.round(st.head * 10) / 10,
         famiglia: pk ? pk.fam : st.well ? "vert" : "horiz", motore_kw: Math.round(st.kW * 10) / 10,
-        ...(pk ? { pompa_modello: pk.model, pompe_n: st.nTot, pompe_serie: 1, giri_min: pk.rpm, poli: pk.rpm > 2000 ? 2 : 4, motore_pompa_kw: pk.motor,
+        ...(pk ? { pompa_modello: pk.model, pompe_n: st.nTot, pompe_serie: 1, giri_min: pk.rpm, ...(pk.diesel ? { azionamento: "diesel" } : { poli: pk.rpm > 2000 ? 2 : 4 }), motore_pompa_kw: pk.motor,
           rendimento_pct: Math.round(pk.eta), prevalenza_pompa_m: Math.round(pk.H * 10) / 10, portata_pompa_m3h: Math.round(pk.q * 10) / 10,
           potenza_assorbita_kw: Math.round(pk.pAbs * 10) / 10 } : {}),
         ...(st.well ? { livello_m: Math.round(srcRange * 10) / 10, profondita_posa_m: Math.round(srcRange + 5) } : {}) } });
@@ -4993,7 +5027,7 @@ export default function Page() {
   // salvata come livello «variant» del progetto. Si confrontano in tabella e si
   // possono ricaricare.
   type VarMetrics = { ha: number; qLs: number; head: number; kWinst: number; kWabs: number; mwh: number; pvKwp: number; battKwh: number;
-    resVol: number; netKm: number; mainKm: number; nPivots: number; nSpans: number; nSys: number; scheme: string; energy: string; mm: number; ek?: string; volYear?: number };
+    resVol: number; netKm: number; mainKm: number; nPivots: number; nSpans: number; nSys: number; scheme: string; energy: string; mm: number; ek?: string; volYear?: number; dieselMwh?: number };
   type Variant = { id: number; name: string; created: string; metrics: VarMetrics; computo: CRow[]; snapshot: Record<string, unknown>; ceres: Record<string, unknown> | null; chosen?: boolean };
   function variantMetrics(): VarMetrics {
     const P = pumpStation();
@@ -5011,12 +5045,24 @@ export default function Page() {
       kWinst = P.best.kWInst; kWabs = P.best.pAbs; mwh = P.best.kWhYear / 1000;
     }
     if (!sc && powerMode === "solar" && pivots.length) { const So = solarSizing(); if (srcEnergy === "fv-batt") { pvKwp = So.bat.kwp; battKwh = So.bat.battKwh; } else pvKwp = So.no.kwp; }
+    // Motopompe diesel: la loro quota di energia va a gasolio (stadi senza pozzo,
+    // pesati su potenza × ore); fotovoltaico e batterie restano per il resto.
+    let dieselMwh = 0;
+    if (pumpDrive === "diesel") {
+      const fr = sc ? (() => {
+        const w = sc.stages.map((st, i) => st.kW * st.hours * (i === 0 && sc.key !== "C" && srcType === "pozzo" ? 0 : 1));
+        const tot = sc.stages.reduce((a, st) => a + st.kW * st.hours, 0);
+        return tot > 0 ? w.reduce((a, x) => a + x, 0) / tot : 0;
+      })() : P.best ? 1 : 0;
+      dieselMwh = mwh * fr; mwh -= dieselMwh; pvKwp *= 1 - fr; battKwh *= 1 - fr;
+    }
     return { ha: P.irrHa, qLs: P.qDes, head, kWinst, kWabs, mwh, pvKwp, battKwh, resVol: sc?.res?.vol ?? 0,
       netKm: hydraNow() ? hydraNow()!.byDn.reduce((a, x) => a + x[1], 0) / 1000 : 0, mainKm: sc?.main ? (sc.main.L * (sc.main.n ?? 1)) / 1000 : 0,
       nPivots: pivots.length, nSpans, nSys: Object.keys(sysDesigns).length,
       scheme: sc ? `${sc.key} · ${sc.name}` : "—",
-      energy: sc ? (srcEnergy === "rete" ? tx("Rete / generatore") : srcEnergy === "fv-gen" ? tx("FV + generatore") : tx("FV + batterie")) : (powerMode === "solar" ? (srcEnergy === "fv-batt" ? tx("FV + batterie") : srcEnergy === "fv-gen" ? tx("FV + generatore") : tx("Fotovoltaico")) : tx("Rete / generatore")),
-      mm: mmDes, ek: powerMode === "solar" || sc ? srcEnergy : "rete", volYear: P.volYear };
+      energy: sc ? (srcEnergy === "rete" ? tx("Rete / generatore") : srcEnergy === "fv-gen" ? tx("FV + generatore") : tx("FV + batterie")) : (powerMode === "solar" ? (srcEnergy === "fv-batt" ? tx("FV + batterie") : srcEnergy === "fv-gen" ? tx("FV + generatore") : tx("Fotovoltaico")) : tx("Rete / generatore"))
+        + (pumpDrive === "diesel" ? ` · ${tx("motopompe diesel")}` : ""),
+      mm: mmDes, ek: powerMode === "solar" || sc ? srcEnergy : "rete", volYear: P.volYear, dieselMwh };
   }
   function variantSnapshot(): Record<string, unknown> {
     const centroid = (f: Field) => { const r = f.geom.coordinates[0]; return [r.reduce((a, q) => a + q[0], 0) / r.length, r.reduce((a, q) => a + q[1], 0) / r.length]; };
@@ -5114,13 +5160,14 @@ export default function Page() {
       [tx("Alimentazione"), (m) => m.energy, 0, 0],
       [tx("Potenza installata") + " (kW)", (m) => m.kWinst, 0, -1],
       [tx("Potenza assorbita") + " (kW)", (m) => m.kWabs, 0, -1],
-      [tx("Energia") + " (MWh/" + tx("anno") + ")", (m) => m.mwh, 0, -1],
+      [tx("Energia") + " (MWh/" + tx("anno") + ")", (m) => m.mwh + (m.dieselMwh || 0), 0, -1],
+      [tx("Gasolio delle motopompe") + " (l/" + tx("anno") + ")", (m) => (m.dieselMwh ? m.dieselMwh * 1000 * dieselLkWh : "—"), 0, -1],
       [tx("Costo dell'energia") + " (€/" + tx("anno") + ")", (m) => Math.round(energyCost(m)), 0, -1],
       [tx("Manutenzione e ricambi") + " (€/" + tx("anno") + ")", (m) => Math.round(maintCost(m)), 0, -1],
       [tx("Costo di esercizio") + " (€/" + tx("anno") + ")", (m) => Math.round(opexCost(m)), 0, -1],
-      [tx("Energia per ettaro") + " (kWh/ha)", (m) => (m.ha > 0 ? (m.mwh * 1000) / m.ha : "—"), 0, -1],
+      [tx("Energia per ettaro") + " (kWh/ha)", (m) => (m.ha > 0 ? ((m.mwh + (m.dieselMwh || 0)) * 1000) / m.ha : "—"), 0, -1],
       [tx("Costo di esercizio per ettaro") + " (€/ha)", (m) => (m.ha > 0 ? opexCost(m) / m.ha : "—"), 0, -1],
-      [tx("Energia per m³ pompato") + " (kWh/m³)", (m) => (m.volYear && m.volYear > 0 ? (m.mwh * 1000) / m.volYear : "—"), 3, -1],
+      [tx("Energia per m³ pompato") + " (kWh/m³)", (m) => (m.volYear && m.volYear > 0 ? ((m.mwh + (m.dieselMwh || 0)) * 1000) / m.volYear : "—"), 3, -1],
       [tx("Fotovoltaico") + " (kWp)", (m) => opt(m.pvKwp), 0, 0],
       [tx("Batterie") + " (kWh)", (m) => opt(m.battKwh), 0, 0],
       [tx("Vasca di accumulo") + " (m³)", (m) => opt(m.resVol), 0, 0],
@@ -5132,7 +5179,8 @@ export default function Page() {
   // impostata va a gasolio (l/kWh × €/l); FV + batterie: nessun acquisto di energia.
   function energyCost(m: VarMetrics): number {
     const kWh = (m.mwh || 0) * 1000, ek = m.ek ?? "rete";
-    return ek === "fv-batt" ? 0 : ek === "fv-gen" ? kWh * (genShare / 100) * dieselLkWh * costDiesel : kWh * costKwh;
+    const el = ek === "fv-batt" ? 0 : ek === "fv-gen" ? kWh * (genShare / 100) * dieselLkWh * costDiesel : kWh * costKwh;
+    return el + (m.dieselMwh || 0) * 1000 * dieselLkWh * costDiesel;    // motopompe: gasolio sull'energia all'albero
   }
   // Manutenzione e ricambi all'anno: pompe e quadri (€/kW installato), FV (€/kWp),
   // batterie da sostituire a fine vita (€/kWh ÷ anni). Niente prezzi degli impianti.
@@ -5734,6 +5782,7 @@ export default function Page() {
     setSrcType(ty); setSrcQmax(num(fo.qmax, 0)); setSrcHours(num(fo.hours, 24)); setSrcRange(num(fo.range, SRC_RANGE_DEF[ty]));
     setSrcSediment(typeof fo.sed === "boolean" ? fo.sed : ty === "fiume");
     setSrcEnergy((["rete", "fv-gen", "fv-batt"].includes(fo.energy as string) ? fo.energy : "rete") as "rete" | "fv-gen" | "fv-batt");
+    setPumpDrive(fo.drive === "diesel" ? "diesel" : "el");
     setSrcMonthly(Array.isArray(fo.monthly) && (fo.monthly as unknown[]).length === 12 ? (fo.monthly as number[]) : null);
     setSrcSectors(num(fo.sectors, 0)); setResDepth(num(fo.resDepth, 4)); setResDays(num(fo.resDays, 3)); setResEvapK(num(fo.resEvapK, 1.1));
     setWtwEta(num(fo.eta, 75)); setCanalSlope(num(fo.canalSlope, 0.3)); setBankSlope(num(fo.bankSlope, 2));
@@ -5749,7 +5798,7 @@ export default function Page() {
   const projLoaded = useRef<number | null>(null);
   const projSaved = useRef<string>("");
   const fonteState = () => ({ pt: srcPt, route: srcRoute, type: srcType, qmax: srcQmax, hours: srcHours, range: srcRange,
-    sed: srcSediment, energy: srcEnergy, monthly: srcMonthly, sectors: srcSectors, resDepth, resDays, resEvapK, eta: wtwEta,
+    sed: srcSediment, energy: srcEnergy, drive: pumpDrive, monthly: srcMonthly, sectors: srcSectors, resDepth, resDays, resEvapK, eta: wtwEta,
     canalSlope, bankSlope, settleMm, filterCap, wellQ, shown: srcShown, cableM, costs: { kwh: costKwh, diesel: costDiesel, lkwh: dieselLkWh, gen: genShare, mkw: costMaintKw, pvom: costPvOm, batt: costBattKwh, blife: battLife } });
   useEffect(() => {
     if (projectId == null) { projLoaded.current = null; return; }
@@ -5784,7 +5833,7 @@ export default function Page() {
     }, 900);
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, srcMonthly, srcSectors,
+  }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
     resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, demModel, demSmooth, spanVmax, sysDesigns, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   // ---- FONTE D'ACQUA → SCHEMI D'IMPIANTO ----------------------------------
   // L'utente indica la presa (fiume, canale, pozzo, invaso) e, se vuole, il
@@ -6563,11 +6612,17 @@ export default function Page() {
       <div className="bg-panel rounded-lg p-2 space-y-1.5">
         <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Pompe e linee elettriche")}</div>
         {!capReady && <p className="text-[11px] text-sage-dark">{t("Carico le curve delle pompe…")}</p>}
+        <div className="text-[11px] text-sage-dark">{t("Pompe di superficie")}</div>
+        <div className="seg">
+          <div className="seg-item" data-active={pumpDrive === "el"} onClick={() => setPumpDrive("el")}>{t("Motore elettrico")}</div>
+          <div className="seg-item" data-active={pumpDrive === "diesel"} onClick={() => setPumpDrive("diesel")}>{t("Motore diesel")}</div>
+        </div>
+        {pumpDrive === "diesel" && <p className="text-[11px] text-sage-dark">{t("Motopompe: anche le pompe a velocità intermedia e la serie MEC-MG; niente linee elettriche né quadri per queste pompe, consumo a gasolio.")}</p>}
         {st.map((x, i) => (
           <div key={i} className="text-[11px] leading-snug">
             <div className="text-brand-darker font-semibold">{x.name}</div>
             <div className="text-sage-dark">{fmt(Math.round(x.qLs))} l/s · {fmt(Math.round(x.head))} m{x.pick
-              ? <> · <b className="text-brand-darker">{x.nTot > 1 ? `${x.nTot} × ` : ""}Caprari {x.pick.model}</b> ({famTxt[x.pick.fam] ?? x.pick.fam}) · {t("motore")} {fmt(x.pick.motor, { maximumFractionDigits: 1 })} kW · η {fmt(Math.round(x.pick.eta))} %</>
+              ? <> · <b className="text-brand-darker">{x.nTot > 1 ? `${x.nTot} × ` : ""}Caprari {x.pick.model}</b> ({famTxt[x.pick.fam] ?? x.pick.fam}) · {x.pick.diesel ? t("motore diesel") : t("motore")} {fmt(x.pick.motor, { maximumFractionDigits: 1 })} kW{x.pick.diesel ? <> · {fmt(x.pick.rpm)} {t("giri/min")}</> : null} · η {fmt(Math.round(x.pick.eta))} %</>
               : capReady ? <> · {t("nessuna pompa a catalogo per questo punto di lavoro")}</> : null}</div>
           </div>
         ))}

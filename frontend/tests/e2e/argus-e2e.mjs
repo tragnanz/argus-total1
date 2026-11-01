@@ -115,6 +115,19 @@ try {
   ok(xlsx.subarray(0, 2).toString() === "PK", "Varianti: Excel");
   const pdf = await readBytes(await download(() => page.locator('button:has-text("Scarica PDF")').last().click()));
   ok(pdf.subarray(0, 4).toString() === "%PDF", "Varianti: PDF di confronto");
+  // motopompe diesel: pompe di superficie col motore termico, niente linea elettrica della stazione
+  await page.locator('button:has-text("Pompaggio")').first().click(); await page.waitForTimeout(1500);
+  await page.locator('.seg-item:has-text("Motore diesel")').first().click(); await page.waitForTimeout(2500);
+  const pd = await section();
+  ok(/motore diesel [\d.,]+ kW · [\d.,]+ giri\/min/.test(pd), "Pompaggio: motopompa diesel con potenza e giri");
+  ok(!/alimentazione · (?!P\d)/.test(pd) && /alimentazione · P1/.test(pd), "Pompaggio: linee elettriche solo per i pivot, non per le motopompe");
+  await page.locator('[title="Esporta"], button:has-text("Esporta")').first().click(); await page.waitForTimeout(800);
+  const cd = await readJson(await download(() => page.locator('button:has-text("Esporta per Ceres")').click()));
+  const pumpF = (cd.planimetria?.elementi?.features ?? []).find((f) => f.properties?.sottotipo === "pump");
+  ok(pumpF?.properties?.azionamento === "diesel" && (cd.sezioni ?? []).flatMap((x) => x.righe).some((r) => r.codice === "ARGUS-MOTORE-DIESEL"),
+    ".ceres: motopompa diesel con il motore da prezzare");
+  await page.locator('button:has-text("Pompaggio")').first().click(); await page.waitForTimeout(1000);
+  await page.locator('.seg-item:has-text("Motore elettrico")').first().click(); await page.waitForTimeout(1500);
   ok(errors.length === 0, `nessun errore nella pagina${errors.length ? ": " + errors.join(" | ") : ""}`);
 } catch (e) {
   fails.push(String(e)); console.log("✕", e);
