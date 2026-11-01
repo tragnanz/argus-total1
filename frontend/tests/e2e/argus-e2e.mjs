@@ -52,7 +52,7 @@ async function seed() {
   // fonte d'acqua: presa su un fiume a ovest dei campi, portata limitata e livelli mese per mese
   await post(`/projects/${p.id}`, { settings: { fonte: { pt: [lon0 - 0.004, lat0 + dy * 0.5], type: "fiume", qmax: 400, hours: 22, range: 3,
     monthly: [1.0, 1.0, 0.8, 0.6, 0.8, 1.4, 2.2, 2.6, 2.0, 1.4, 1.0, 1.0], sed: true },
-    crops: { base: "canna", fields: { [a2.id]: "mais" } } } }, tok, "PATCH");
+    crops: { base: "canna", fields: { [a2.id]: ["mais", "cereali"] } } } }, tok, "PATCH");
   return { tok };
 }
 
@@ -100,8 +100,8 @@ try {
   if (process.env.ARGUS_SAVE) await rel.saveAs(process.env.ARGUS_SAVE);
   const relTxt = (await import("node:child_process")).execFileSync("pdftotext", ["-layout", await rel.path(), "-"]).toString();
   ok(/Dati della fonte d'acqua/.test(relTxt) && /Livelli della fonte mese per mese/.test(relTxt) && /400 l\/s/.test(relTxt), "Relazione: fonte d'acqua con portata disponibile e livelli mese per mese");
-  ok(/Campo 1\s+[\d,]+\s+Canna da zucchero/.test(relTxt) && /Campo 2\s+[\d,]+\s+Mais/.test(relTxt) && /Mais: ETc/.test(relTxt),
-    "Relazione: colture diverse per campo nella stessa azienda");
+  ok(/Campo 1\s+[\d,]+\s+Canna da zucchero/.test(relTxt) && /Campo 2\s+[\d,]+\s+Mais, Cereali/.test(relTxt) && /Mais: ETc/.test(relTxt) && /Cereali: ETc/.test(relTxt),
+    "Relazione: più colture per campo nella stessa azienda");
   ok(/Opera di presa e trattamento dell'acqua/.test(relTxt) && /Dissabbiatore/.test(relTxt), "Relazione: opera di presa e dissabbiatore dalla fonte d'acqua");
   ok(!/€|EUR\b/.test(relTxt.split("\n").filter((l) => !/Capitale Sociale/.test(l)).join("\n")), "Relazione: nessun prezzo");
   await page.locator('button:has-text("Varianti del progetto")').click(); await page.waitForTimeout(600);
