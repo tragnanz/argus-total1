@@ -15,7 +15,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.202";
+const REV = "v0.6.203";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -6688,11 +6688,14 @@ export default function Page() {
   // Il dimensionamento della rete usa la più esigente, i consumi la media pesata sugli ettari.
   function cropChips(sel: string[], onToggle: (k: string) => void, dim = false) {
     return (
-      <div className="flex flex-wrap gap-1 mt-1">
+      <div className="flex flex-wrap gap-1.5 mt-1.5">
         {CROP_LIST.map((cp) => {
           const on = sel.includes(cp.key);
-          return <button key={cp.key} type="button" onClick={() => onToggle(cp.key)}
-            className={"px-2 py-0.5 rounded-full border text-[11px] " + (on ? (dim ? "border-brand-mid text-brand-mid" : "bg-brand-mid border-brand-mid text-white") : "border-sage-light text-sage-dark")}>
+          return <button key={cp.key} type="button" onClick={() => onToggle(cp.key)} aria-pressed={on}
+            title={`Kc ${fmt(cp.kc, { maximumFractionDigits: 2 })}`}
+            className={"px-2.5 py-1 rounded-full border text-[11px] font-medium leading-none transition-colors " + (on
+              ? (dim ? "bg-brand/10 border-brand/30 text-brand-dark" : "bg-brand border-brand text-white shadow-sm")
+              : "bg-white border-black/10 text-sage-dark hover:border-brand/40 hover:text-brand-dark")}>
             {t(cp.label)}</button>;
         })}
       </div>
@@ -6706,7 +6709,8 @@ export default function Page() {
   });
   function renderFarmCrops() {
     return (
-      <div className="text-xs text-sage-dark">{fields.length > 1 ? t("Colture dell'azienda") : t("Colture")}
+      <div>
+        <div className="text-xs text-sage-dark">{fields.length > 1 ? t("Colture dell'azienda") : t("Colture")}</div>
         {cropChips(farmCrops, toggleFarmCrop)}
       </div>
     );
@@ -6715,7 +6719,7 @@ export default function Page() {
     if (fields.length < 2) return null;
     const ha = (f: Field) => pivots.filter((p) => p.field === f.id).reduce((a, p) => a + pvAreaM2(p) / 10000, 0);
     return (
-      <div className="mt-2 bg-panel rounded-lg p-2 space-y-1.5">
+      <div className="mt-3 space-y-1.5">
         <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Colture per campo")}</div>
         {fields.map((f) => {
           const own = fieldCrops[cropFKey(f)] ?? [];
@@ -6725,15 +6729,18 @@ export default function Page() {
             const out = { ...m }; if (n.length) out[cropFKey(f)] = n; else delete out[cropFKey(f)]; return out;
           });
           return (
-            <div key={f.id} className="text-[11px] text-sage-dark">
-              <div className="flex gap-2"><span className="flex-1 min-w-0 truncate text-brand-darker">{f.name}{ha(f) > 0 ? ` · ${uHa(ha(f))}` : ""}</span>
-                {own.length ? <button type="button" className="text-brand-mid" onClick={() => setFieldCrops((m) => { const o = { ...m }; delete o[cropFKey(f)]; return o; })}>{t("Come l'azienda")}</button>
-                  : <span>{t("Come l'azienda")}</span>}</div>
+            <div key={f.id} className="rounded-lg border border-black/5 bg-white px-2.5 py-2 text-[11px] text-sage-dark">
+              <div className="flex items-baseline gap-2">
+                <span className="flex-1 min-w-0 truncate font-semibold text-brand-darker">{f.name}</span>
+                {ha(f) > 0 && <span className="tabular-nums">{uHa(ha(f))}</span>}
+                {own.length ? <button type="button" className="text-brand-dark hover:underline" onClick={() => setFieldCrops((m) => { const o = { ...m }; delete o[cropFKey(f)]; return o; })}>{t("Come l'azienda")}</button>
+                  : <span className="italic">{t("Come l'azienda")}</span>}
+              </div>
               {cropChips(own.length ? own : cropsOfField(f).map((c) => c.key), toggle, !own.length)}
             </div>
           );
         })}
-        {designCrops.length > 1 && <p className="text-[11px] text-sage-dark">{t("Rete, pompe e vasche sono dimensionate sulla coltura più esigente ({c}): con la rotazione le colture cambiano campo; i consumi annui usano il Kc medio pesato sugli ettari ({k}).", { c: t(cropMax.label), k: fmt(kcAreaAvg, { maximumFractionDigits: 2 }) })}</p>}
+        {designCrops.length > 1 && <p className="text-[11px] leading-snug text-sage-dark text-justify">{t("Rete, pompe e vasche sono dimensionate sulla coltura più esigente ({c}): con la rotazione le colture cambiano campo; i consumi annui usano il Kc medio pesato sugli ettari ({k}).", { c: t(cropMax.label), k: fmt(kcAreaAvg, { maximumFractionDigits: 2 }) })}</p>}
       </div>
     );
   }
@@ -8018,14 +8025,12 @@ export default function Page() {
             {/* Basta la coltura: Kc, efficienza e ore sono parametri di secondo
                 livello e vivono in Irrigazione. Qui accanto compare subito il
                 piano irriguo che ne deriva. */}
-            <div className="flex gap-2 items-end">
-              <div className="flex-1 basis-0 min-w-0">{renderFarmCrops()}</div>
-              <div className="flex-1 basis-0 min-w-0">
-                <div className="text-xs text-sage-dark">{t("Piano irriguo consigliato")}</div>
-                <div className="field-input mt-1 flex items-baseline gap-1 bg-panel">
-                  <b className="text-brand-darker tabular-nums">{fmt(mm24Suggested, { maximumFractionDigits: 1 })}</b>
-                  <span className="text-xs text-sage-dark">mm/24h</span>
-                </div>
+            {renderFarmCrops()}
+            <div className="mt-2.5 flex items-center justify-between gap-3 rounded-lg bg-panel px-3 py-2">
+              <div className="text-xs text-sage-dark">{t("Piano irriguo consigliato")}</div>
+              <div className="flex items-baseline gap-1">
+                <b className="text-lg text-brand-darker tabular-nums leading-none">{fmt(mm24Suggested, { maximumFractionDigits: 1 })}</b>
+                <span className="text-xs text-sage-dark">mm/24h</span>
               </div>
             </div>
             <div className="text-[11px] text-sage-dark mt-1">
