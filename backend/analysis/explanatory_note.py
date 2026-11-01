@@ -6,6 +6,11 @@ Relazione – Rev – data» e marchio in ogni pagina, piè di pagina con i dati
 societari, capitoli numerati in prosa giustificata con tabelle, elenchi e
 figure (inquadramento e planimetria su ortofoto).
 
+Grafica dalla libreria Nabu-Agrostar-UI-Library.html: palette del marchio,
+titoli ed etichette in Plus Jakarta Sans 700 (Poppins per Nabu), testo in
+Inter, etichette MAIUSCOLE in colore primario con spaziatura 0,1 em, loghi
+originali della libreria.
+
 Nessun prezzo, costo o importo: i prezzi stanno solo nell'offerta Mercurius
 (il controllo rifiuta qualunque «€» nei contenuti; i dati societari del piè di
 pagina restano fuori dal controllo perche' sono carta intestata).
@@ -23,15 +28,20 @@ BRANDS = {
     "agrostar": {
         "company": "Agrostar srl",
         "logo": "agrostar-logo.png", "logo_ratio": 571 / 537,
+        # palette Agrostar della libreria grafica (Nabu-Agrostar-UI-Library.html)
         "primary": "#009FE3", "dark": "#001A33", "accent": "#009640", "soft": "#F0F4FA", "border": "#BEC7D2", "muted": "#5C636A",
-        "head_font": ("PJS-800", "PlusJakartaSans-800.ttf"), "head_font2": ("PJS-700", "PlusJakartaSans-700.ttf"),
+        "text": "#001A33", "heading": "#001A33",
+        # titoli, etichette e numeri in Plus Jakarta Sans (libreria, 700), testo in Inter
+        "head_font": ("PJS-700", "PlusJakartaSans-700.ttf"), "head_font2": ("PJS-700", "PlusJakartaSans-700.ttf"),
         "footer": ["AGROSTAR S.r.l.  |  Via F.lli Corradini 54  |  42021 Bibbiano (RE)  |  Italia  |  Tel. +39 0522 577741  |  info@agrostar.it  |  www.agrostar.it",
                    "P.IVA e C.F. 02918960358  |  Registro Imprese di Reggio Emilia n. 02918960358  |  Capitale Sociale € 541.310,00 i.v."],
     },
     "nabu": {
         "company": "Nabu srl",
-        "logo": "nabu-logo-color.png", "logo_ratio": None,
+        "logo": "nabu-logo-library.jpg", "logo_ratio": 1.0,
+        # palette Nabu della libreria grafica
         "primary": "#4CAF4F", "dark": "#0F172A", "accent": "#4CAF4F", "soft": "#FAFAFA", "border": "#E2E8F0", "muted": "#737373",
+        "text": "#525252", "heading": "#1A1D21",
         "head_font": ("Poppins-Bold", "Poppins-Bold.ttf"), "head_font2": ("Poppins-Bold", "Poppins-Bold.ttf"),
         "footer": ["NABU S.r.l.  |  Via Fratelli Manfredi 4  |  42124 Reggio Emilia (RE)  |  Italia  |  info@nabugroup.it  |  www.nabugroup.it",
                    "P.IVA e C.F. 12674660019  |  Codice SDI M5UXCR1  |  Capitale Sociale € 34.000,00 i.v."],
@@ -91,6 +101,34 @@ def build_note(doc: dict, rev: str, cover_jpeg: bytes | None = None) -> bytes:
         except Exception:  # noqa: BLE001
             return h, h
 
+    dark_rgb = tuple(int(B["dark"][i:i + 2], 16) / 255 for i in (1, 3, 5))
+    LBL = FH2 if lang in _LATIN_HEAD else FONTB
+
+    def caps(cv, x, y, text, size=8.5):
+        """Etichetta MAIUSCOLA della libreria: 700, spaziatura 0,1 em, colore primario."""
+        if not text:
+            return
+        cv.saveState(); cv.setFillColor(C(B["primary"]))
+        t = cv.beginText(x, y); t.setFont(LBL, size); t.setCharSpace(size * 0.1)
+        t.textOut(_shape(lang, str(text).upper())); cv.drawText(t); cv.restoreState()
+
+    from reportlab.platypus.flowables import Flowable
+
+    class CapsLabel(Flowable):
+        def __init__(self, text):
+            super().__init__(); self.text = text
+
+        def wrap(self, aw, ah):
+            self.aw = aw
+            return aw, (5 * mm if self.text else 0)
+
+        def draw(self):
+            if rtl:
+                self.canv.saveState(); self.canv.setFillColor(C(B["primary"])); self.canv.setFont(LBL, 8.5)
+                self.canv.drawRightString(self.aw, 1.2 * mm, _shape(lang, str(self.text).upper())); self.canv.restoreState()
+            else:
+                caps(self.canv, 0, 1.2 * mm, self.text)
+
     # ---------------- copertina (disegnata sul canvas) ----------------
     def cover(cv, _d):
         cv.saveState()
@@ -102,7 +140,7 @@ def build_note(doc: dict, rev: str, cover_jpeg: bytes | None = None) -> bytes:
         # velo scuro in basso per leggere il titolo
         for i in range(40):
             a = 0.62 * (i / 39) ** 1.6
-            cv.setFillColor(colors.Color(0, 0.08, 0.16, alpha=a))
+            cv.setFillColor(colors.Color(*dark_rgb, alpha=a))
             cv.rect(0, H - ph + (39 - i) * ph * 0.012, W, ph * 0.012 + 0.5, stroke=0, fill=1)
         cv.setFillColor(colors.white); cv.setFont(FH, 34)
         lines = [l for l in str(doc.get("cover_title", "")).upper().split("\n") if l.strip()]
@@ -114,7 +152,8 @@ def build_note(doc: dict, rev: str, cover_jpeg: bytes | None = None) -> bytes:
         cv.setFont(FONT, 8); cv.setFillColor(colors.white)
         cv.drawString(0, 0, _shape(lang, f"{doc.get('revision', '')} – {doc.get('date', '')}")); cv.restoreState()
         # titolo del documento e destinatario
-        cv.setFillColor(C(B["accent"])); cv.setFont(FH, 22)
+        caps(cv, M, H - ph - 11 * mm, doc.get("label", ""))
+        cv.setFillColor(C(B["heading"])); cv.setFont(FH, 22)
         cv.drawString(M, H - ph - 20 * mm, _shape(lang, str(doc.get("title", ""))))
         cv.setFillColor(C(B["muted"])); cv.setFont(FONT, 10)
         cv.drawString(M, H - ph - 28 * mm, _shape(lang, f"{doc.get('revision', '')} – {doc.get('date', '')}"))
@@ -157,13 +196,13 @@ def build_note(doc: dict, rev: str, cover_jpeg: bytes | None = None) -> bytes:
         PageTemplate(id="cover", frames=[Frame(M, M, W - 2 * M, 10 * mm, id="fc")], onPage=cover),
         PageTemplate(id="body", frames=[Frame(M, 20 * mm, W - 2 * M, H - 41 * mm, id="fb")], onPage=page),
     ])
-    st_h1 = ParagraphStyle("h1", fontName=FH, fontSize=15, leading=19, textColor=C(B["dark"]), spaceBefore=4, spaceAfter=7, alignment=al)
+    st_h1 = ParagraphStyle("h1", fontName=FH, fontSize=15, leading=19, textColor=C(B["heading"]), spaceBefore=2, spaceAfter=7, alignment=al)
     st_h2 = ParagraphStyle("h2", fontName=FH2, fontSize=11, leading=14, textColor=C(B["primary"]), spaceBefore=8, spaceAfter=4, alignment=al)
-    st_p = ParagraphStyle("p", fontName=FONT, fontSize=9.6, leading=13.6, textColor=C("#222222"), alignment=TA_JUSTIFY, spaceAfter=6)
+    st_p = ParagraphStyle("p", fontName=FONT, fontSize=9.6, leading=13.6, textColor=C(B["text"]), alignment=TA_JUSTIFY, spaceAfter=6)
     st_li = ParagraphStyle("li", parent=st_p, spaceAfter=1.5)
     st_cap = ParagraphStyle("cap", fontName=FONT, fontSize=8, leading=10.5, textColor=C(B["muted"]), alignment=TA_LEFT, spaceBefore=3, spaceAfter=8)
-    st_th = ParagraphStyle("th", fontName=FONTB, fontSize=8.5, leading=11, textColor=colors.white, alignment=al)
-    st_td = ParagraphStyle("td", fontName=FONT, fontSize=8.5, leading=11, textColor=C("#222222"), alignment=al)
+    st_th = ParagraphStyle("th", fontName=FH2 if FH2 != FONTB else FONTB, fontSize=8.5, leading=11, textColor=colors.white, alignment=al)
+    st_td = ParagraphStyle("td", fontName=FONT, fontSize=8.5, leading=11, textColor=C(B["text"]), alignment=al)
     st_tn = ParagraphStyle("tn", parent=st_td, alignment=TA_RIGHT)
     st_toc = ParagraphStyle("toc", fontName=FONT, fontSize=10, leading=17, textColor=C(B["dark"]), alignment=al)
     num = re.compile(r"^[\s\d.,+−\-×x/%°]+$")
@@ -196,7 +235,12 @@ def build_note(doc: dict, rev: str, cover_jpeg: bytes | None = None) -> bytes:
     def figure(kind):
         if kind not in figs:
             feats = (doc.get(kind) or {}).get("features") or []
-            figs[kind] = plan_png(feats, 2400, 1500) if feats else None
+            png = plan_png(feats, 2400, 1500) if feats else None
+            if png:   # ortofoto: in JPEG il PDF pesa un decimo che in PNG
+                from PIL import Image
+                with Image.open(io.BytesIO(png)) as im:
+                    jb = io.BytesIO(); im.convert("RGB").save(jb, "JPEG", quality=85, optimize=True); png = jb.getvalue()
+            figs[kind] = png
         return figs[kind]
 
     story = [NextPageTemplate("body"), PageBreak()]
@@ -217,7 +261,7 @@ def build_note(doc: dict, rev: str, cover_jpeg: bytes | None = None) -> bytes:
         if i:
             story.append(PageBreak() if ch.get("new_page") else CondPageBreak(70 * mm))
             story.append(Spacer(1, 4 * mm))
-        first = [Paragraph(S(f"{i + 1}. {ch.get('title', '')}"), st_h1)]
+        first = [CapsLabel(f"{doc.get('chapter_label', '')} {i + 1}".strip()), Paragraph(S(ch.get("title", "")), st_h1)]
         for b in ch.get("blocks") or []:
             if "p" in b:
                 el = [Paragraph(S(b["p"]), st_p)]

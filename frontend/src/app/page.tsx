@@ -15,7 +15,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.198";
+const REV = "v0.6.199";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -4159,14 +4159,67 @@ export default function Page() {
             ...(pivots.length ? [tx("Portata del pivot più grande: {q} l/s", { q: n1(qMax) })] : []),
             tx("Portata totale dell'impianto: {q} l/s ({m3} m³/h)", { q: n0(P.qDes), m3: n0(P.qDes * 3.6) }), tx("Volume annuo stimato: {v} m³", { v: n0(P.volYear) })] },
         ] });
-        // Fonte d'acqua: portata e disponibilità
+        // Fonte d'acqua: i dati del modulo Fonte d'acqua (presa, portate, livelli, quote)
         const fb: Record<string, unknown>[] = [];
+        const srcName = tx(srcType), asl = tx("m s.l.m.");
+        const qIn = sc && S ? (sc.key === "B" ? sc.stages[0].qLs : sc.key === "C" ? (S.Vday + (sc.res?.evap ?? 0)) / 3.6 / Math.max(1, Math.min(srcHours, 24)) : S.Qd) : P.qDes;
+        if (srcPt) {
+          const zTxt = S?.zS != null ? " " + tx("La quota della presa sul modello digitale del terreno è di {z} m s.l.m.", { z: n1(S.zS) }) : "";
+          fb.push({ p: tx("L'acqua è prelevata da {tipo}; il punto di presa si trova alle coordinate {lat}, {lon} (WGS84).", { tipo: srcName, lat: dms(srcPt[1], "N", "S"), lon: dms(srcPt[0], "E", "W") }) + zTxt });
+          // corso d'acqua rilevato vicino alla presa (NDWI): larghezza e sviluppo
+          const kx = 111320 * Math.cos((srcPt[1] * Math.PI) / 180), ky = 110540;
+          const flat = (c: unknown): number[][] => (Array.isArray(c) && typeof c[0] === "number" ? [c as number[]] : Array.isArray(c) ? (c as unknown[]).flatMap(flat) : []);
+          let near: { w: WaterL; d: number } | null = null;
+          for (const w of watercourses.filter((x) => !x.hidden)) {
+            const d = Math.min(...flat(w.geojson.coordinates).map((q) => Math.hypot((q[0] - srcPt[0]) * kx, (q[1] - srcPt[1]) * ky)));
+            if (d < 500 && (!near || d < near.d)) near = { w, d };
+          }
+          if (near && (srcType === "fiume" || srcType === "canale" || srcType === "invaso")) {
+            const w = near.w;
+            const bits = [w.mean_width_m ? tx("larghezza media {w} m", { w: n0(w.mean_width_m) }) : "", w.length_m ? tx("sviluppo di {l} km nell'area rilevata", { l: n1(w.length_m / 1000) }) : "",
+              w.area_ha ? tx("superficie d'acqua di {a} ha", { a: n1(w.area_ha) }) : ""].filter(Boolean);
+            if (bits.length) fb.push({ p: tx("Il corso d'acqua alla presa è stato rilevato dalle immagini Sentinel-2 (indice NDWI) e dal modello del terreno: {d}.", { d: bits.join(", ") }) });
+          }
+        }
         if (sc && S) {
-          fb.push({ p: tx("L'acqua è prelevata da {tipo}. La fonte deve garantire la portata di progetto di {q} l/s nelle ore di prelievo consentite ({h} h al giorno) anche nei mesi di punta.", { tipo: tx(srcType), q: n0(P.qDes), h: n1(srcHours) })
-            + (srcQmax > 0 ? " " + tx("La portata disponibile indicata in progetto è di {q} l/s.", { q: n0(srcQmax) }) : "") });
-          fb.push({ p: tx("L'escursione del livello alla presa considerata in progetto è di {r} m.", { r: n1(srcRange) }) });
+          fb.push({ p: tx("Il fabbisogno di punta dell'impianto è di {v} m³ al giorno, pari a {q} l/s ai pivot; la presa preleva {qi} l/s nelle ore consentite ({h} h al giorno).", { v: n0(S.Vday), q: n0(S.Qd), qi: n0(qIn), h: n1(srcHours) })
+            + " " + (srcQmax > 0 ? tx("La portata disponibile della fonte è di {q} l/s: il prelievo ne impegna il {p}%.", { q: n0(srcQmax), p: n0((qIn / srcQmax) * 100) }) : tx("Nel progetto la portata della fonte non è limitata: va verificata con l'ente gestore e con le misure di portata nei mesi di magra.")) });
+          if (!sc.ok && sc.why) fb.push({ p: tx("Attenzione: {w}", { w: sc.why }) });
+          const rows: string[][] = [[tx("Tipo di fonte"), srcName]];
+          if (srcPt) rows.push([tx("Coordinate della presa"), `${dms(srcPt[1], "N", "S")}, ${dms(srcPt[0], "E", "W")}`]);
+          if (S.zS != null) rows.push([tx("Quota della presa"), `${n1(S.zS)} ${asl}`]);
+          rows.push([tx("Portata disponibile"), srcQmax > 0 ? `${n0(srcQmax)} l/s` : tx("non limitata")]);
+          rows.push([tx("Ore di prelievo consentite"), `${n1(srcHours)} h/${tx("giorno")}`]);
+          rows.push([tx("Fabbisogno di punta"), `${n0(S.Vday)} m³/${tx("giorno")} (${n0(S.Qd)} l/s)`]);
+          rows.push([tx("Portata prelevata alla presa"), `${n0(qIn)} l/s (${n0(qIn * 3.6)} m³/h)`]);
+          rows.push([tx("Volume annuo stimato"), `${n0(P.volYear)} m³`]);
+          if (srcType === "pozzo") {
+            const nW = Math.max(1, Math.ceil(qIn / Math.max(1, wellQ)));
+            rows.push([tx("Livello dinamico del pozzo"), `${n1(S.drop)} m`], [tx("Portata di un pozzo"), `${n0(wellQ)} l/s`], [tx("Pozzi"), tx("{n} in servizio da {q} l/s + 1 di riserva", { n: nW, q: n0(qIn / nW) })]);
+          } else {
+            rows.push([tx("Abbassamento massimo del livello nei mesi irrigui"), `${n1(S.drop)} m`]);
+            if (S.months) rows.push([tx("Abbassamento medio pesato sui volumi"), `${n1(S.dropAvg)} m`]);
+            if (S.zLow != null) rows.push([tx("Livello minimo di progetto alla presa"), `${n1(S.zLow)} ${asl}`]);
+          }
+          if (S.zR != null) rows.push([tx("Quota della vasca o del punto di consegna"), `${n1(S.zR)} ${asl}`]);
+          if (S.zP != null) rows.push([tx("Quota del pivot più alto"), `${n1(S.zP)} ${asl}`]);
+          rows.push([tx("Distanza presa – impianto"), `${n0(S.L)} m`]);
+          if (srcType !== "pozzo") rows.push([tx("Acqua con sedimenti"), srcSediment ? tx("sì") : tx("no")]);
+          fb.push({ h: tx("Dati della fonte d'acqua") });
+          fb.push({ table: { header: [tx("Parametro"), tx("Valore")], rows, widths: [0.55, 0.45] } });
+          // livelli mese per mese
+          if (S.months && srcMonthly && srcType !== "pozzo") {
+            fb.push({ h: tx("Livelli della fonte mese per mese") });
+            fb.push({ p: tx("Il livello della fonte varia nel corso dell'anno: la tabella riporta l'abbassamento minimo del pelo libero sotto il punto di presa mese per mese e il fabbisogno irriguo netto dello stesso mese. Il dimensionamento delle pompe considera l'abbassamento peggiore dei mesi irrigui ({d} m); il consumo di energia usa la media pesata sui volumi ({a} m).", { d: n1(S.drop), a: n1(S.dropAvg) }) });
+            const f1 = (x: number) => fx(x, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), nm = S.netMm;
+            const hd = [tx("Mese"), tx("Abbassamento (m)"), ...(S.zS != null ? [tx("Quota del pelo libero (m s.l.m.)")] : []), ...(nm ? [tx("Fabbisogno netto (mm)"), tx("Mese irriguo")] : [])];
+            const mr = srcMonthly.map((d, i) => [monthLong(i), f1(d), ...(S.zS != null ? [f1(S.zS! - d)] : []), ...(nm ? [n0(Math.max(0, nm[i])), nm[i] > 0 ? tx("sì") : tx("no")] : [])]);
+            fb.push({ table: { header: hd, rows: mr } });
+          } else if (srcType !== "pozzo") {
+            fb.push({ p: tx("In assenza di misure mese per mese il progetto considera un'escursione unica del livello di {r} m per tutto l'anno; con le misure di magra della fonte il calcolo delle pompe va aggiornato.", { r: n1(srcRange) }) });
+          }
         } else {
-          fb.push({ p: tx("L'impianto è alimentato dalla rete esistente o dalla presa indicata in planimetria; la portata disponibile alla presa deve essere almeno pari alla portata di progetto di {q} l/s.", { q: n0(P.qDes) }) });
+          fb.push({ p: tx("Il punto di presa non è ancora stato indicato nel modulo Fonte d'acqua: la portata disponibile alla presa deve essere almeno pari alla portata di progetto di {q} l/s ({m3} m³/h) per {h} ore al giorno.", { q: n0(P.qDes), m3: n0(P.qDes * 3.6), h: n1(hoursDay) }) });
         }
         ch.push({ title: tx("Fonte d'acqua: portata e disponibilità"), blocks: fb });
         // Infrastrutture idriche esistenti e opere di presa
@@ -4179,6 +4232,22 @@ export default function Page() {
           if (sc.main?.kind === "canal") txt += " " + tx("Un canale a gravità di {l} m porta l'acqua alla vasca.", { l: n0(sc.main.L) });
           ib.push({ p: txt });
           if (sc.res) ib.push({ p: tx("La vasca di accumulo ha un volume utile di {v} m³ su {ha} ha, con una profondità utile di {d} m, e garantisce {g} giorni di scorta.", { v: n0(sc.res.vol), ha: n2(sc.res.ha), d: n1(resDepth), g: fx(resDays) }) });
+          // schemi valutati
+          if (S.schemes.length > 1) {
+            ib.push({ h: tx("Schemi di adduzione valutati") });
+            ib.push({ table: { header: [tx("Schema"), tx("Stazioni"), tx("Potenza (kW)"), tx("Energia (MWh/anno)"), tx("Esito")],
+              rows: S.schemes.map((x) => [`${x.key} – ${x.name}`, fx(x.nStations), n0(x.kWabs), n0(x.mwh), x.key === sc.key ? tx("adottato") : x.ok ? tx("fattibile") : tx("non fattibile")]),
+              widths: [0.44, 0.12, 0.14, 0.16, 0.14] } });
+          }
+          // stazioni dello schema
+          if (sc.stages.length) ib.push({ table: { header: [tx("Stazione"), tx("Portata (l/s)"), tx("Prevalenza (m)"), tx("Potenza (kW)"), tx("Ore al giorno")],
+            rows: sc.stages.map((st) => [st.name, n0(st.qLs), n0(st.head), n0(st.kW), n0(st.hours)]), widths: [0.44, 0.14, 0.14, 0.14, 0.14] } });
+          // opere di presa e trattamento
+          ib.push({ h: tx("Opera di presa e trattamento dell'acqua") });
+          for (const blk of intakeAdvice(qIn, S.drop, S.Qd, sc.key === "C")) {
+            ib.push({ p: blk.text });
+            if (blk.rows.length) ib.push({ table: { header: [tx("Elemento"), tx("Caratteristiche")], rows: blk.rows.map(([k, v]) => [k, v]), widths: [0.3, 0.7] } });
+          }
         }
         if (!ib.length) ib.push({ p: tx("Il progetto non prevede opere sulle infrastrutture idriche esistenti oltre alla presa dell'impianto.") });
         ch.push({ title: tx("Infrastrutture idriche esistenti e opere di presa"), blocks: ib });
@@ -4276,7 +4345,7 @@ export default function Page() {
           lang: pdfLang, brand: relBrand,
           cover_title: `${tx("Impianto di irrigazione")}${pivots.length ? `\n${tx("a pivot centrale")}` : ""}`,
           title, revision: revTxt, date, client: cname || pname, recipient_label: tx("Alla cortese attenzione di"), recipient: cname ? [pname] : [],
-          header: `${company} <> ${cname || pname} – ${title} – ${revTxt} – ${date}`, toc_title: tx("Indice"), figure_label: tx("Figura"),
+          header: `${company} <> ${cname || pname} – ${title} – ${revTxt} – ${date}`, toc_title: tx("Indice"), figure_label: tx("Figura"), chapter_label: tx("Capitolo"), label: pname,
           site: { features: feats.filter((f) => f.properties?.tipo === "campo") }, plan: { features: feats }, chapters: ch,
         };
       });

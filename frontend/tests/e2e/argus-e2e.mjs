@@ -44,6 +44,9 @@ async function seed() {
   // tubazione che passa dai centri dei pivot (ogni centro è un vertice: la rete li alimenta)
   feats.push({ type: "Feature", properties: { kind: "pipe", field: a.id }, geometry: { type: "LineString", coordinates: [[lon0 - 0.002, lat0 + dy * 0.5], ...centers] } });
   await post("/layers", { project_id: p.id, kind: "pivots", name: "Pivot", data: { geojson: { type: "FeatureCollection", features: feats }, meta: { radius_m: 280 } } }, tok);
+  // fonte d'acqua: presa su un fiume a ovest dei campi, portata limitata e livelli mese per mese
+  await post(`/projects/${p.id}`, { settings: { fonte: { pt: [lon0 - 0.004, lat0 + dy * 0.5], type: "fiume", qmax: 400, hours: 22, range: 3,
+    monthly: [1.0, 1.0, 0.8, 0.6, 0.8, 1.4, 2.2, 2.6, 2.0, 1.4, 1.0, 1.0], sed: true } } }, tok, "PATCH");
   return { tok };
 }
 
@@ -89,6 +92,10 @@ try {
   const relPdf = await readBytes(rel);
   ok(relPdf.subarray(0, 4).toString() === "%PDF" && relPdf.length > 200000, "Relazione tecnica per il cliente: PDF con copertina e planimetria");
   if (process.env.ARGUS_SAVE) await rel.saveAs(process.env.ARGUS_SAVE);
+  const relTxt = (await import("node:child_process")).execFileSync("pdftotext", ["-layout", await rel.path(), "-"]).toString();
+  ok(/Dati della fonte d'acqua/.test(relTxt) && /Livelli della fonte mese per mese/.test(relTxt) && /400 l\/s/.test(relTxt), "Relazione: fonte d'acqua con portata disponibile e livelli mese per mese");
+  ok(/Opera di presa e trattamento dell'acqua/.test(relTxt) && /Dissabbiatore/.test(relTxt), "Relazione: opera di presa e dissabbiatore dalla fonte d'acqua");
+  ok(!/€|EUR\b/.test(relTxt.split("\n").filter((l) => !/Capitale Sociale/.test(l)).join("\n")), "Relazione: nessun prezzo");
   await page.locator('button:has-text("Varianti del progetto")').click(); await page.waitForTimeout(600);
   await page.locator('button:has-text("Genera le varianti")').click(); await page.waitForTimeout(15000);
   const vt = await section();
