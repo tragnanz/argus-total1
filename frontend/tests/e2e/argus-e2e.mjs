@@ -36,17 +36,23 @@ async function seed() {
   const lon0 = 9.0, lat0 = 45.0, dx = 1500 / (111320 * Math.cos((lat0 * Math.PI) / 180)), dy = 600 / 110540;
   const ring = [[lon0, lat0], [lon0 + dx, lat0], [lon0 + dx, lat0 + dy], [lon0, lat0 + dy], [lon0, lat0]];
   const a = await post("/areas", { project_id: p.id, name: "Campo 1", geojson: { type: "Polygon", coordinates: [ring] }, area_ha: 90 }, tok);
+  // secondo campo della stessa azienda, a est, con un pivot e un'altra coltura
+  const ring2 = ring.map(([x, y]) => [x + dx, y]);
+  const a2 = await post("/areas", { project_id: p.id, name: "Campo 2", geojson: { type: "Polygon", coordinates: [ring2] }, area_ha: 90 }, tok);
   const circ = (lng, lat, r) => Array.from({ length: 33 }, (_, i) => { const t = (i * 2 * Math.PI) / 32; return [lng + (r * Math.sin(t)) / (111320 * Math.cos((lat * Math.PI) / 180)), lat + (r * Math.cos(t)) / 110540]; });
   const feats = [];
   const centers = [0.2, 0.5, 0.8].map((f) => [lon0 + dx * f, lat0 + dy * 0.5]);
+  const c2 = [lon0 + dx * 1.5, lat0 + dy * 0.5];
+  feats.push({ type: "Feature", properties: { kind: "pivot", center: c2, r: 280, field: a2.id }, geometry: { type: "Polygon", coordinates: [circ(c2[0], c2[1], 280)] } });
   centers.forEach(([lng, lat], i) => feats.push({ type: "Feature", properties: { kind: "pivot", center: [lng, lat], r: 280, field: a.id, ...(i === 2 ? { deg: 180, az: 0, gun: 20 } : {}) },
     geometry: { type: "Polygon", coordinates: [circ(lng, lat, 280)] } }));
   // tubazione che passa dai centri dei pivot (ogni centro è un vertice: la rete li alimenta)
-  feats.push({ type: "Feature", properties: { kind: "pipe", field: a.id }, geometry: { type: "LineString", coordinates: [[lon0 - 0.002, lat0 + dy * 0.5], ...centers] } });
+  feats.push({ type: "Feature", properties: { kind: "pipe", field: a.id }, geometry: { type: "LineString", coordinates: [[lon0 - 0.002, lat0 + dy * 0.5], ...centers, c2] } });
   await post("/layers", { project_id: p.id, kind: "pivots", name: "Pivot", data: { geojson: { type: "FeatureCollection", features: feats }, meta: { radius_m: 280 } } }, tok);
   // fonte d'acqua: presa su un fiume a ovest dei campi, portata limitata e livelli mese per mese
   await post(`/projects/${p.id}`, { settings: { fonte: { pt: [lon0 - 0.004, lat0 + dy * 0.5], type: "fiume", qmax: 400, hours: 22, range: 3,
-    monthly: [1.0, 1.0, 0.8, 0.6, 0.8, 1.4, 2.2, 2.6, 2.0, 1.4, 1.0, 1.0], sed: true } } }, tok, "PATCH");
+    monthly: [1.0, 1.0, 0.8, 0.6, 0.8, 1.4, 2.2, 2.6, 2.0, 1.4, 1.0, 1.0], sed: true },
+    crops: { base: "canna", fields: { [a2.id]: "mais" } } } }, tok, "PATCH");
   return { tok };
 }
 
@@ -94,6 +100,8 @@ try {
   if (process.env.ARGUS_SAVE) await rel.saveAs(process.env.ARGUS_SAVE);
   const relTxt = (await import("node:child_process")).execFileSync("pdftotext", ["-layout", await rel.path(), "-"]).toString();
   ok(/Dati della fonte d'acqua/.test(relTxt) && /Livelli della fonte mese per mese/.test(relTxt) && /400 l\/s/.test(relTxt), "Relazione: fonte d'acqua con portata disponibile e livelli mese per mese");
+  ok(/Campo 1\s+[\d,]+\s+Canna da zucchero/.test(relTxt) && /Campo 2\s+[\d,]+\s+Mais/.test(relTxt) && /Mais: ETc/.test(relTxt),
+    "Relazione: colture diverse per campo nella stessa azienda");
   ok(/Opera di presa e trattamento dell'acqua/.test(relTxt) && /Dissabbiatore/.test(relTxt), "Relazione: opera di presa e dissabbiatore dalla fonte d'acqua");
   ok(!/€|EUR\b/.test(relTxt.split("\n").filter((l) => !/Capitale Sociale/.test(l)).join("\n")), "Relazione: nessun prezzo");
   await page.locator('button:has-text("Varianti del progetto")').click(); await page.waitForTimeout(600);

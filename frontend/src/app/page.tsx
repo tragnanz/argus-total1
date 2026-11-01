@@ -15,7 +15,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.200";
+const REV = "v0.6.201";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1326,7 +1326,10 @@ export default function Page() {
   const [pivotLines, setPivotLines] = useState<PipeLine[]>([]);
   // Parametri idraulici di progetto (il singolo pivot può avere i suoi).
   // ---- Irrigazione: il fabbisogno decide la portata di OGNI pivot ----
-  const [cropKey, setCropKey] = useState("canna");   // coltura → coefficiente Kc
+  const [cropKey, setCropKey] = useState("canna");   // coltura dell'azienda → coefficiente Kc
+  // Colture diverse nella stessa azienda: coltura per campo (id del campo → chiave); i campi
+  // senza scelta seguono la coltura dell'azienda. Salvate con il progetto.
+  const [fieldCrops, setFieldCrops] = useState<Record<string, string>>({});
   // Pagina Impianti: sistema irriguo scelto. Per ora è implementato il pivot;
   // gli altri sono predisposti e restano vuoti finché non arrivano.
   const [irrigSys, setIrrigSys] = useState<"pivot" | "lineari" | "rotoloni" | "goccia">("pivot");
@@ -2610,7 +2613,11 @@ export default function Page() {
   // Una sola fonte per le colture: ogni campo ha la coltura scelta (il Kc del campo
   // uguale a quello della coltura di progetto, o il Kc di partenza mai cambiato,
   // vale la coltura di progetto); il dimensionamento usa la più esigente.
+  // chiave stabile del campo: l'id dell'area salvata nel progetto
+  const cropFKey = (f: Field) => (f.savedId != null ? String(f.savedId) : `f${f.id}`);
   const cropOfField = (f: Field) => {
+    const own = fieldCrops[cropFKey(f)];
+    if (own && CROP_LIST.some((c) => c.key === own)) return cropOf(own);
     const kc = effSettings(f).kc;
     if (!kc || Math.abs(kc - (CROPS[cropKey] ?? 0)) < 1e-6 || Math.abs(kc - DEFAULT_KC) < 1e-6) return cropOf(cropKey);
     return CROP_LIST.find((c) => Math.abs(c.kc - kc) < 1e-6) ?? { key: "altro", label: "Altro", kc };
@@ -2621,6 +2628,12 @@ export default function Page() {
     return out.sort((a, b) => b.kc - a.kc);
   };
   const designCrops = cropsOf(fields.filter((f) => pivots.some((p) => p.field === f.id)));
+  // Kc medio dell'azienda pesato sulla superficie irrigata dai pivot (consumi annui)
+  const kcAreaAvg = (() => {
+    let a = 0, w = 0;
+    for (const p of pivots) { const f = fields.find((x) => x.id === p.field); const ha = pvAreaM2(p); a += (f ? cropOfField(f).kc : cropOf(cropKey).kc) * ha; w += ha; }
+    return w > 0 ? a / w : cropOf(cropKey).kc;
+  })();
   const cropMax = designCrops[0];
   const kcMax = cropMax.kc;
   const etcMax = et0Peak * kcMax;                                                    // mm/g
@@ -4120,8 +4133,13 @@ export default function Page() {
         // 4 — Piano colturale
         // stesse colture del dimensionamento (cropMax è la prima)
         const crops = pivots.length ? designCrops : cropsOf(fieldsShown);
+        const haOf = (f: Field) => pivots.filter((p) => p.field === f.id).reduce((a, p) => a + pvAreaM2(p) / 10000, 0);
+        const cropTable = fieldsShown.length > 1 || crops.length > 1
+          ? [{ table: { header: [tx("Campo"), tx("Superficie irrigata") + " (ha)", tx("Coltura"), "Kc"], widths: [34, 22, 30, 14],
+              rows: fieldsShown.map((f) => { const c = cropOfField(f); return [f.name, n1(haOf(f)), tx(c.label), n2(c.kc)]; }) } }] : [];
         ch.push({ title: tx("Piano colturale"), blocks: [
           { p: tx("Il piano colturale considerato per il dimensionamento comprende: {c}. L'impianto è dimensionato sulla coltura più esigente, {m}, in modo che rete, pompe e linee elettriche coprano la domanda di punta di ogni coltura della rotazione.", { c: crops.map((c) => `${tx(c.label)} (Kc ${n2(c.kc)})`).join(", "), m: tx(crops[0].label) }) },
+          ...cropTable,
           { p: tx("Le colture con fabbisogno minore lavorano con turni più brevi o con dosi ridotte; l'alternanza delle colture distribuisce la domanda d'acqua nel corso della stagione e riduce i picchi sulla rete.") },
         ] });
         // 5 — Metodologia di stima dell'evapotraspirazione
@@ -5070,7 +5088,7 @@ export default function Page() {
       pivots: pivots.map((p) => ({ ...p, field: undefined, unconn: undefined, label: undefined, phaseColor: undefined })),
       lines: pivotLines.map((l) => ({ ...l, field: undefined })),
       systems: Object.entries(sysDesigns).map(([k, d]) => { const f = fieldOfKey(k); return { d, name: f?.name ?? "", c: f ? centroid(f) : null }; }),
-      fonte: fonteState(), powerMode, pivotBrand, spanVmax, mm24, hoursDay, sprinkBar, pivotPointBar, hydra: hydraNow(),
+      fonte: fonteState(), crops: { base: cropKey, fields: fieldCrops }, powerMode, pivotBrand, spanVmax, mm24, hoursDay, sprinkBar, pivotPointBar, hydra: hydraNow(),
     };
   }
   async function saveVariant(nameOverride?: string) {
@@ -5113,7 +5131,7 @@ export default function Page() {
   function loadVariant(v: Variant) {
     if (!confirm(t("Caricare la variante «{n}»? Il progetto sulla mappa viene sostituito: salva prima una variante dello stato attuale se ti serve.", { n: v.name }))) return;
     const sn = v.snapshot as { pivots?: PivotItem[]; lines?: PipeLine[]; systems?: { d: SysDesign; name: string; c: number[] | null }[];
-      fonte?: Record<string, unknown>; powerMode?: "grid" | "solar"; pivotBrand?: PivotBrand; spanVmax?: number; mm24?: number; hoursDay?: number;
+      fonte?: Record<string, unknown>; crops?: { base?: string; fields?: Record<string, string> }; powerMode?: "grid" | "solar"; pivotBrand?: PivotBrand; spanVmax?: number; mm24?: number; hoursDay?: number;
       sprinkBar?: number; pivotPointBar?: number; hydra?: typeof hydra };
     const inRing = (lng: number, lat: number, ring: number[][]) => {
       let inside = false;
@@ -5135,6 +5153,8 @@ export default function Page() {
     }
     setSysDesigns(sys);
     if (sn.fonte) applyFonte(sn.fonte);
+    if (sn.crops?.base) setCropKey(sn.crops.base);
+    if (sn.crops?.fields) setFieldCrops(sn.crops.fields);
     if (sn.powerMode) setPowerMode(sn.powerMode);
     if (sn.pivotBrand) setPivotBrand(sn.pivotBrand);
     if (sn.spanVmax) setSpanVmax(sn.spanVmax);
@@ -5813,6 +5833,9 @@ export default function Page() {
     const te = (st as { terrain?: { dem?: string; smooth?: number } }).terrain ?? {};
     setDemModel(te.dem === "COPERNICUS_90" ? "COPERNICUS_90" : "COPERNICUS_30"); setDemSmooth(num(te.smooth, 100));
     setSpanVmax(num((st as { span_vmax?: number }).span_vmax, 3));
+    const cr = (st as { crops?: { base?: string; fields?: Record<string, string> } }).crops;
+    if (cr?.base && CROP_LIST.some((c) => c.key === cr.base)) setCropKey(cr.base);
+    setFieldCrops(cr?.fields && typeof cr.fields === "object" ? Object.fromEntries(Object.entries(cr.fields).filter(([, v]) => CROP_LIST.some((c) => c.key === v))) : {});
     const sy = (st as { systems?: Record<string, SysDesign> }).systems;
     setSysDesigns(sy && typeof sy === "object" ? sy : {});
     projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
@@ -5822,6 +5845,7 @@ export default function Page() {
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId) return;
     const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, fonte: fonteState(), terrain: { dem: demModel, smooth: demSmooth },
+      crops: { base: cropKey, fields: fieldCrops },
       systems: Object.fromEntries(Object.entries(sysDesigns).filter(([k]) => k.startsWith("a"))) };
     const js = JSON.stringify(payload);
     if (js === projSaved.current) return;
@@ -5834,7 +5858,7 @@ export default function Page() {
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
-    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, demModel, demSmooth, spanVmax, sysDesigns, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
+    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, demModel, demSmooth, spanVmax, sysDesigns, cropKey, fieldCrops, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   // ---- FONTE D'ACQUA → SCHEMI D'IMPIANTO ----------------------------------
   // L'utente indica la presa (fiume, canale, pozzo, invaso) e, se vuole, il
   // tracciato fino alla vasca. Con le quote del DEM (presa, profilo del
@@ -6550,7 +6574,7 @@ export default function Page() {
     const head = Math.max(headFromNet ?? (n ? pMaxBar * 10.2 + Math.max(0, psHeadExtra) : 0), SY.headMax) + Math.max(0, psLift);
     const clim = fields.map((f) => (f.lay as { climate?: { eto_month_mm?: number[]; rain_month_mm?: number[]; source?: string } } | null | undefined)?.climate)
       .find((c) => c && c.eto_month_mm?.length === 12 && c.rain_month_mm?.length === 12);
-    const kcAvg = (CROPS[cropKey] ?? 1.1) * Math.max(0.3, psKcAvg / 100);
+    const kcAvg = kcAreaAvg * Math.max(0.3, psKcAvg / 100);
     const eff = Math.max(0.3, effPct / 100);
     let netMm: number[] | null = null; let grossYearMm: number;
     if (clim) {
@@ -6643,6 +6667,28 @@ export default function Page() {
           </tbody></table>
         )}
         <p className="text-[10px] text-sage-dark leading-snug">{t("Pompe scelte dalle curve Caprari (le stesse di Ceres) per rendimento al punto di lavoro. Cavi interrati a 400 V con caduta di tensione entro il 4 %; i pivot sono alimentati dalla stazione che li serve, lungo le tubazioni. Tutto va nel computo e nel file .ceres per Mercurius.")}</p>
+      </div>
+    );
+  }
+  // Colture per campo: la stessa azienda può avere colture diverse; il dimensionamento
+  // della rete usa la più esigente (rotazione), i consumi la media pesata sugli ettari.
+  function renderFieldCrops() {
+    if (fields.length < 2) return null;
+    const ha = (f: Field) => pivots.filter((p) => p.field === f.id).reduce((a, p) => a + pvAreaM2(p) / 10000, 0);
+    return (
+      <div className="mt-2 bg-panel rounded-lg p-2 space-y-1">
+        <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Colture per campo")}</div>
+        {fields.map((f) => (
+          <label key={f.id} className="flex items-center gap-2 text-[11px] text-sage-dark">
+            <span className="flex-1 min-w-0 truncate">{f.name}{ha(f) > 0 ? ` · ${uHa(ha(f))}` : ""}</span>
+            <select className="field-input py-1 px-2 text-xs w-40" value={fieldCrops[cropFKey(f)] ?? ""}
+              onChange={(e) => setFieldCrops((m) => { const n = { ...m }; if (e.target.value) n[cropFKey(f)] = e.target.value; else delete n[cropFKey(f)]; return n; })}>
+              <option value="">{t("Come l'azienda")} ({t(cropOf(cropKey).label)})</option>
+              {CROP_LIST.map((cp) => <option key={cp.key} value={cp.key}>{t(cp.label)}</option>)}
+            </select>
+          </label>
+        ))}
+        {designCrops.length > 1 && <p className="text-[11px] text-sage-dark">{t("Rete, pompe e vasche sono dimensionate sulla coltura più esigente ({c}): con la rotazione le colture cambiano campo; i consumi annui usano il Kc medio pesato sugli ettari ({k}).", { c: t(cropMax.label), k: fmt(kcAreaAvg, { maximumFractionDigits: 2 }) })}</p>}
       </div>
     );
   }
@@ -7928,7 +7974,7 @@ export default function Page() {
                 livello e vivono in Irrigazione. Qui accanto compare subito il
                 piano irriguo che ne deriva. */}
             <div className="flex gap-2 items-end">
-              <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Coltura")}
+              <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{fields.length > 1 ? t("Coltura dell'azienda") : t("Coltura")}
                 <select className="field-input mt-1 w-full px-2" value={cropKey}
                   onChange={(e) => { setCropKey(e.target.value); patch({ kc: cropOf(e.target.value).kc }); }}>
                   {CROP_LIST.map((cp) => <option key={cp.key} value={cp.key}>{t(cp.label)}</option>)}
@@ -7947,6 +7993,7 @@ export default function Page() {
               {rainMm > 0 ? ` · ${t("pioggia")} ${fmt(rainMm, { maximumFractionDigits: 1 })} mm` : ""}
               {" · "}{t("efficienza")} {fmt(effPct, { maximumFractionDigits: 0 })}%
             </div>
+            {renderFieldCrops()}
           </section>
 
           <section hidden={tab !== "rilievo"} className="border-t border-black/5 pt-3">
@@ -8383,7 +8430,7 @@ export default function Page() {
           <section hidden={tab !== "irrigazione"}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Fabbisogno e portate")}</h3>
             <div className="grid grid-cols-2 gap-2">
-              <label className="text-[11px] text-sage-dark">{t("Coltura")}
+              <label className="text-[11px] text-sage-dark">{fields.length > 1 ? t("Coltura dell'azienda") : t("Coltura")}
                 <select className="field-input mt-0.5 px-2 py-1.5 text-sm" value={cropKey}
                   onChange={(e) => { setCropKey(e.target.value); patch({ kc: cropOf(e.target.value).kc }); }}>
                   {CROP_LIST.map((cp) => <option key={cp.key} value={cp.key}>{t(cp.label)}</option>)}
@@ -8418,6 +8465,7 @@ export default function Page() {
             {mm24 < mm24Suggested - 0.05 && (
               <p className="text-[11px] text-amber mt-1">{t("Rete, stazioni e vasche sono dimensionate su {v} mm/g: ETc di punta della coltura più esigente ({c}, Kc {k}).", { v: fmt(mmDes, { maximumFractionDigits: 1 }), c: t(cropMax?.label ?? "Altro"), k: fmt(kcMax, { maximumFractionDigits: 2 }) })}</p>
             )}
+            {renderFieldCrops()}
 
             <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2">{t("Assorbimento del terreno")}</h3>
             <div className="grid grid-cols-3 gap-2">
