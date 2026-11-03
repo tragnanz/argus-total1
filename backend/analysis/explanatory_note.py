@@ -319,6 +319,16 @@ def build_note(doc: dict, rev: str, cover_jpeg: bytes | None = None) -> bytes:
         return figs[kind]
 
     story = [NextPageTemplate("body"), PageBreak()]
+    # elenco degli elaborati del progetto (codifica dei documenti), prima dell'indice
+    el = doc.get("elaborati") or None
+    if el and el.get("rows"):
+        story.append(Paragraph(S(el.get("title", "")), st_h1))
+        if el.get("intro"):
+            story.append(Paragraph(S(el["intro"]), st_p))
+        story.append(table({"header": el.get("header") or [], "rows": el["rows"], "widths": el.get("widths")}))
+        if el.get("note"):
+            story += [Spacer(1, 4 * mm), Paragraph(S(el["note"]), st_cap)]
+        story.append(PageBreak())
     # indice
     chapters = doc.get("chapters") or []
     if doc.get("toc_title"):

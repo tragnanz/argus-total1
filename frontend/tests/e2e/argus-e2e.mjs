@@ -62,7 +62,8 @@ const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 }, a
 const page = await ctx.newPage();
 const errors = []; page.on("pageerror", (e) => errors.push(e.message)); page.on("dialog", (d) => d.accept());
 const section = async () => (await page.locator("section:not([hidden])").allInnerTexts()).pop() ?? "";
-const download = async (click) => { const [d] = await Promise.all([page.waitForEvent("download", { timeout: 90000 }), click()]); return d; };
+const download = async (click, label) => { const t0 = Date.now(); const [d] = await Promise.all([page.waitForEvent("download", { timeout: 180000 }), click()]);
+  if (label) console.log(`⏱ ${label}: ${((Date.now() - t0) / 1000).toFixed(1)} s`); return d; };
 const readJson = async (d) => JSON.parse(await (await import("node:fs/promises")).readFile(await d.path(), "utf8"));
 const readBytes = async (d) => (await import("node:fs/promises")).readFile(await d.path());
 try {
@@ -94,7 +95,7 @@ try {
   ok(feats.some((f) => f.properties?.tipo === "attrezzatura" && f.properties?.pompa_modello), ".ceres: planimetria con la pompa consigliata");
   ok(feats.filter((f) => f.properties?.tipo === "cavo").every((f) => f.geometry.coordinates.length >= 3), ".ceres: cavi dei pivot lungo le tubazioni");
 
-  const tav = await download(() => page.locator('button:has-text("Tavole di progetto")').click());
+  const tav = await download(() => page.locator('button:has-text("Tavole di progetto")').click(), "tavole");
   if (process.env.ARGUS_SAVE_TAV) await tav.saveAs(process.env.ARGUS_SAVE_TAV);
   const tavPdf = await readBytes(tav), cp = await import("node:child_process");
   const tavPages = Number(/Pages:\s+(\d+)/.exec(cp.execFileSync("pdfinfo", [await tav.path()]).toString())?.[1] ?? 0);
@@ -102,13 +103,30 @@ try {
   ok(tavPdf.subarray(0, 4).toString() === "%PDF" && tavPages >= 4, `Tavole (vista accorpata): PDF di ${tavPages} pagine`);
   ok(/Planimetria generale/.test(tavTxt) && /Tavola delle tubazioni/.test(tavTxt) && /Tavola delle linee elettriche/.test(tavTxt), "Tavole: planimetria, tubazioni e linee elettriche");
   ok(/Tratti delle tubazioni/.test(tavTxt) && /T1\b/.test(tavTxt) && /Valvole e apparecchiature/.test(tavTxt) && /Sezioni tipo di scavo/.test(tavTxt) && /Schema unifilare/.test(tavTxt), "Tavole: tratti, valvole, sezioni di scavo e schema unifilare");
-  const prj = await download(() => page.locator('button:has-text("Progetto esecutivo completo")').click());
+  const prj = await download(() => page.locator('button:has-text("Progetto esecutivo completo")').click(), "progetto esecutivo");
   if (process.env.ARGUS_SAVE_PRJ) await prj.saveAs(process.env.ARGUS_SAVE_PRJ);
-  const prjPages = Number(/Pages:\s+(\d+)/.exec(cp.execFileSync("pdfinfo", [await prj.path()]).toString())?.[1] ?? 0);
-  const prjTxt = cp.execFileSync("pdftotext", ["-layout", await prj.path(), "-"]).toString();
+  const fsx = await import("node:fs"), osx = await import("node:os"), pthx = await import("node:path");
+  const zdir = fsx.mkdtempSync(pthx.join(osx.tmpdir(), "argus-zip-"));
+  cp.execFileSync("unzip", ["-q", "-o", await prj.path(), "-d", zdir]);
+  const zf = fsx.readdirSync(zdir), pdfF = zf.find((f) => f.endsWith(".pdf"));
+  ok(!!pdfF && zf.some((f) => f.endsWith("_computo.xlsx")) && zf.some((f) => f.endsWith(".ceres")) && zf.some((f) => f.endsWith(".geojson")),
+    `Progetto esecutivo: ZIP con PDF, computo .xlsx, .ceres e GeoJSON (${zf.length} file)`);
+  const prjPdf = pthx.join(zdir, pdfF ?? "x.pdf");
+  if (process.env.ARGUS_SAVE_PRJ_PDF) fsx.copyFileSync(prjPdf, process.env.ARGUS_SAVE_PRJ_PDF);
+  const prjPages = Number(/Pages:\s+(\d+)/.exec(cp.execFileSync("pdfinfo", [prjPdf]).toString())?.[1] ?? 0);
+  const prjTxt = cp.execFileSync("pdftotext", ["-layout", prjPdf, "-"]).toString();
   ok(prjPages >= tavPages + 8 && /Relazione tecnica generale/.test(prjTxt) && /Tavole esecutive/.test(prjTxt) && /Tav\. 01 · Planimetria generale/.test(prjTxt) && /Tav\. 03 · Tavola delle linee elettriche/.test(prjTxt),
     `Progetto esecutivo: relazione + tavole in un PDF di ${prjPages} pagine, con l'elenco delle tavole`);
-  const rel = await download(() => page.locator('button:has-text("Relazione tecnica per il cliente")').click());
+  ok(/Elenco degli elaborati/.test(prjTxt) && /ARGUS-\d+-REL-01/.test(prjTxt) && /ARGUS-\d+-TAV-0\d/.test(prjTxt), "Progetto esecutivo: elenco degli elaborati con la codifica");
+  ok(/Particolari costruttivi tipo/.test(prjTxt) && /Attacco del pivot/.test(prjTxt) && /Pozzetto di sfiato/.test(prjTxt), "Progetto esecutivo: particolari costruttivi");
+  ok(/Curve delle pompe e punto di lavoro/.test(prjTxt) && /Composizione delle campate dei pivot/.test(prjTxt), "Progetto esecutivo: schede tecniche di pompe e pivot");
+  ok(/Computo metrico delle opere/.test(prjTxt) && /Tav\. 02 · T\d/.test(prjTxt) && /Tav\. 03 · C\d/.test(prjTxt), "Progetto esecutivo: computo metrico con le sigle delle tavole");
+  await page.locator('button:has-text("Dividi in fasi")').click();
+  await page.waitForTimeout(400);
+  const tav2 = await download(() => page.locator('button:has-text("Tavole di progetto")').click(), "tavole con le fasi");
+  const tav2Txt = cp.execFileSync("pdftotext", ["-layout", await tav2.path(), "-"]).toString();
+  ok(/Tav\. 04 · Fasi di realizzazione/.test(tav2Txt) && /Fase 2/.test(tav2Txt), "Tavole: tavola delle fasi di realizzazione");
+  const rel = await download(() => page.locator('button:has-text("Relazione tecnica per il cliente")').click(), "relazione");
   const relPdf = await readBytes(rel);
   ok(relPdf.subarray(0, 4).toString() === "%PDF" && relPdf.length > 200000, "Relazione tecnica per il cliente: PDF con copertina e planimetria");
   if (process.env.ARGUS_SAVE) await rel.saveAs(process.env.ARGUS_SAVE);

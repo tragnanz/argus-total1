@@ -11,7 +11,7 @@ import { jsPDF } from "jspdf";
 export type LL = [number, number];                     // [lat, lng]
 export type RGB = [number, number, number];
 export type TvPivot = { lat: number; lng: number; r: number; deg: number; az: number; ring: LL[]; gunRing?: LL[] | null;
-  spans?: number[]; line1: string; line2?: string };
+  spans?: number[]; line1: string; line2?: string; fill?: RGB };
 export type TvLine = { id: string; pts: LL[]; color: string; dash?: boolean; width?: number; lab?: string; labColor?: RGB };
 export type TvPoint = { pt: LL; color: string; square?: boolean; resR?: number; resLab?: string; lab?: string };
 export type TvNode = { pt: LL; lab: string };
@@ -25,12 +25,21 @@ export type TvDraw =
   | { kind: "trench"; title: string; items: TvTrenchItem[] }
   | { kind: "profile"; title: string; sub?: string; L: number; pts: { d: number; z: number; hgl: number }[]; highs: { d: number; z: number }[]; lows: { d: number; z: number }[];
       labT: string; labH: string; labA: string; labD: string }
-  | { kind: "unif"; title: string; note?: string; srcs: { cap: string; name: string; info?: string; loads: { name: string; info?: string; cab?: string; cab2?: string }[] }[] };
+  | { kind: "unif"; title: string; note?: string; srcs: { cap: string; name: string; info?: string; loads: { name: string; info?: string; cab?: string; cab2?: string }[] }[] }
+  // scheda della pompa: curva H-Q del catalogo, rendimento, curva dell'impianto e punto di lavoro
+  | { kind: "curve"; title: string; labQ: string; labH: string; labEta: string; labSys: string; labDuty: string;
+      items: { name: string; sub: string; pts: number[][]; q: number; H: number }[] }
+  // composizione delle campate di ogni pivot (schema in pianta lungo il raggio)
+  | { kind: "spans"; title: string; labTower: string; labOh: string; labGun: string;
+      items: { name: string; info: string; spans: { len: number; d: string; w: number }[]; oh: number; gun: number }[] }
+  // particolari costruttivi tipo (schemi a richiami numerati)
+  | { kind: "details"; title: string; items: { key: "pivot" | "air" | "drain" | "station" | "pond"; title: string; notes: string[]; n?: number }[] };
 export type TvSheet = {
   title: string;                                       // nel cartiglio: «Planimetria generale», «Tavola delle tubazioni», …
   fields: { pts: LL[] }[]; pivots: TvPivot[]; lines: TvLine[]; points: TvPoint[];
   nodes?: TvNode[]; app?: TvApp[]; vertices?: boolean;
   column: { title: string; items: TvColItem[] }[];      // colonna dei dati a destra
+  noMap?: boolean;                                      // solo pagine tecniche e disegni (computo, schede, particolari)
   cells: [string, string][];                            // celle del cartiglio (etichetta, valore)
   tech?: TvTech[]; draw?: TvDraw[];
 };
@@ -105,9 +114,12 @@ export async function buildTavole(sheets: TvSheet[], C: TvCommon): Promise<Blob>
   const satCache = new Map<string, Sat | null>();
   const frame = () => { setDraw(18, 53, 36); doc.setLineWidth(0.6); doc.rect(6, 6, W - 12, H - 12, "S"); doc.setLineWidth(0.2); doc.rect(7.5, 7.5, W - 15, H - 15, "S"); };
 
+  let pagesUsed = false;   // jsPDF nasce con una pagina vuota: la usa il primo foglio
   for (let si = 0; si < sheets.length; si++) {
     const sh = sheets[si];
-    if (si) doc.addPage();
+    if (!sh.noMap) {
+    if (pagesUsed) doc.addPage();
+    pagesUsed = true;
     frame();
     const allPts: LL[] = sh.fields.flatMap((f) => f.pts);
     const COLW = fmtId === "a3" ? 58 : 50, TBH = 28, tbY = H - TBH, colX = W - COLW;
@@ -163,11 +175,11 @@ export async function buildTavole(sheets: TvSheet[], C: TvCommon): Promise<Blob>
       const mm = p.ring.map((a) => P(a[0], a[1]));
       if (p.gunRing && p.gunRing.length > 2) {
         const gmm = p.gunRing.map((a) => P(a[0], a[1]));
-        gOp(sat ? 0.11 : 0.13); setFill(46, 224, 160); poly(gmm, "F"); gOp(1);
-        setDraw(46, 224, 160); doc.setLineWidth(0.25); doc.setLineDashPattern([1, 0.8], 0); poly(gmm, "S"); doc.setLineDashPattern([], 0);
+        gOp(sat ? 0.11 : 0.13); setFill(...(p.fill ?? [46, 224, 160])); poly(gmm, "F"); gOp(1);
+        setDraw(...(p.fill ?? [46, 224, 160])); doc.setLineWidth(0.25); doc.setLineDashPattern([1, 0.8], 0); poly(gmm, "S"); doc.setLineDashPattern([], 0);
       }
-      gOp(sat ? 0.18 : 0.22); setFill(46, 224, 160); poly(mm, "F"); gOp(1);
-      setDraw(46, 224, 160); doc.setLineWidth(0.4); poly(mm, "S");
+      gOp(sat ? (p.fill ? 0.38 : 0.18) : (p.fill ? 0.4 : 0.22)); setFill(...(p.fill ?? [46, 224, 160])); poly(mm, "F"); gOp(1);
+      setDraw(...(p.fill ?? [46, 224, 160])); doc.setLineWidth(p.fill ? 0.6 : 0.4); poly(mm, "S");
       if (p.spans && p.spans.length) {
         setDraw(237, 243, 238); doc.setLineWidth(0.18); doc.setLineDashPattern([0.7, 1.1], 0);
         let acc = 0;
@@ -309,6 +321,7 @@ export async function buildTavole(sheets: TvSheet[], C: TvCommon): Promise<Blob>
     doc.text(T(C.footer.replace("{d}", dstr)), tbx0, H - 5, { maxWidth: tbx1 - tbx0 });
     setText(120, 140, 128); doc.setFont("helvetica", "italic"); doc.setFontSize(5);
     doc.text(T(C.disclaimer), tbx0, H - 2.4, { maxWidth: tbx1 - tbx0 });
+    }
 
     // ===== pagine tecniche (tabelle) e disegni =====
     // Separata: una pagina per tabella e una per disegno, come Ceres.
@@ -321,7 +334,7 @@ export async function buildTavole(sheets: TvSheet[], C: TvCommon): Promise<Blob>
     const txt = (s: string, x: number, yy: number, o?: Record<string, unknown>) => doc.text(T(s), x, yy, o || {});
     const f2 = (v: number, d = 2) => v.toLocaleString("it-IT", { minimumFractionDigits: d, maximumFractionDigits: d });
     let y = 28, pageTitle = "";
-    const newPg = (pt: string) => { pageTitle = pt; doc.addPage(); frame(); title(pt); y = 28; };
+    const newPg = (pt: string) => { pageTitle = pt; if (pagesUsed) doc.addPage(); pagesUsed = true; frame(); title(pt); y = 28; };
     const ensure = (need: number) => { if (y + need > bottom) { footer(); newPg(pageTitle); } };
     const heading = (s: string) => {   // titolo di sezione nella vista accorpata
       setText(18, 53, 36); doc.setFont("helvetica", "bold"); doc.setFontSize(10.5); doc.text(T(s), M, y);
@@ -407,18 +420,176 @@ export async function buildTavole(sheets: TvSheet[], C: TvCommon): Promise<Blob>
           yy = Math.max(yy + bh, busY1 + lb / 2) + 8;
         });
         setText(92, 99, 106); doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); txt(pg.note || "", X0, Y1 - 1, { maxWidth: X1 - X0 });
+      } else if (pg.kind === "curve") {
+        const n = pg.items.length, cols = Math.min(2, n), rows = Math.ceil(n / cols), cw = (X1 - X0) / cols, ch = (Y1 - Y0) / rows;
+        pg.items.forEach((it, k) => {
+          const cx0 = X0 + (k % cols) * cw, cy0 = Y0 + Math.floor(k / cols) * ch;
+          setText(0, 26, 51); doc.setFont("helvetica", "bold"); doc.setFontSize(9); txt(it.name, cx0, cy0 + 3);
+          setText(92, 99, 106); doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); txt(it.sub, cx0, cy0 + 7, { maxWidth: cw - 6 });
+          const P2 = it.pts.filter((q) => q[0] != null && q[1] != null);
+          if (P2.length < 2) return;
+          const px0 = cx0 + 14, px1 = cx0 + cw - 18, py0 = cy0 + 12, py1 = cy0 + ch - 14;
+          const qMax = Math.max(it.q * 1.25, P2[P2.length - 1][0]) * 1.02, hMax = Math.max(...P2.map((q) => q[1]), it.H) * 1.12;
+          const X = (q: number) => px0 + ((px1 - px0) * q) / qMax, Y = (h: number) => py1 - ((py1 - py0) * h) / hMax, YE = (e: number) => py1 - ((py1 - py0) * e) / 100;
+          doc.setLineWidth(0.1); setDraw(205, 212, 220); doc.setFontSize(5.8); setText(92, 99, 106);
+          const qs = niceStep(qMax / 7), hs = niceStep(hMax / 6);
+          for (let q = 0; q <= qMax; q += qs) { doc.line(X(q), py0, X(q), py1); txt(String(q), X(q), py1 + 3, { align: "center" }); }
+          for (let h = 0; h <= hMax; h += hs) { doc.line(px0, Y(h), px1, Y(h)); txt(String(h), px0 - 1.2, Y(h) + 1, { align: "right" }); }
+          for (let e = 0; e <= 100; e += 20) { setText(0, 150, 64); txt(String(e), px1 + 1.2, YE(e) + 1); }
+          setDraw(0, 26, 51); doc.setLineWidth(0.3); doc.line(px0, py1, px1, py1); doc.line(px0, py0, px0, py1); setDraw(0, 150, 64); doc.line(px1, py0, px1, py1);
+          setText(0, 26, 51); doc.setFontSize(6.2); txt(pg.labQ, (px0 + px1) / 2, py1 + 7, { align: "center" });
+          txt(pg.labH, px0 - 10, (py0 + py1) / 2, { angle: 90, align: "center" }); setText(0, 150, 64); txt(pg.labEta, px1 + 9, (py0 + py1) / 2, { angle: 90, align: "center" });
+          // curva dell'impianto (parabola per il punto di lavoro)
+          setDraw(0, 26, 51); doc.setLineWidth(0.35); doc.setLineDashPattern([1.2, 1], 0);
+          const sysP: number[][] = []; for (let i = 0; i <= 24; i++) { const q = (qMax * i) / 24, h = it.H * (q / it.q) ** 2; if (h > hMax) break; sysP.push([X(q), Y(h)]); }
+          polyOpen(sysP); doc.setLineDashPattern([], 0);
+          // curva H-Q e rendimento
+          setDraw(0, 123, 182); doc.setLineWidth(0.9); polyOpen(P2.map((q) => [X(q[0]), Y(q[1])]));
+          const E = P2.filter((q) => q[3] != null && q[3] > 0 && q[0] > 0).map((q) => [q[0], Math.min(95, (q[0] * q[1]) / 367 / q[3] * 100)]);
+          if (E.length > 1) { setDraw(0, 150, 64); doc.setLineWidth(0.6); polyOpen(E.map((q) => [X(q[0]), YE(q[1])])); }
+          // punto di lavoro
+          setFill(225, 29, 72); setDraw(255, 255, 255); doc.setLineWidth(0.3); doc.circle(X(it.q), Y(it.H), 1.4, "FD");
+          setDraw(225, 29, 72); doc.setLineWidth(0.2); doc.setLineDashPattern([0.6, 0.6], 0); doc.line(X(it.q), Y(it.H), X(it.q), py1); doc.line(px0, Y(it.H), X(it.q), Y(it.H)); doc.setLineDashPattern([], 0);
+          const lab = `${pg.labDuty}: Q ${f2(it.q, 1)} m3/h · H ${f2(it.H, 1)} m`; doc.setFont("helvetica", "bold"); doc.setFontSize(6.4); const tw = doc.getTextWidth(T(lab));
+          const lx = Math.min(X(it.q) + 2.5, px1 - tw - 2), ly = Math.max(py0 + 4, Y(it.H) - 3);
+          setFill(255, 255, 255); doc.rect(lx - 0.8, ly - 2.8, tw + 1.6, 3.8, "F"); setText(225, 29, 72); txt(lab, lx, ly);
+          // legenda
+          doc.setFont("helvetica", "normal"); doc.setFontSize(6); let gx = px0 + 2; const gy = py0 + 2.5;
+          const leg = (rgb: number[], l: string, dash = false) => { setDraw(rgb[0], rgb[1], rgb[2]); doc.setLineWidth(0.6); if (dash) doc.setLineDashPattern([1.2, 1], 0); doc.line(gx, gy - 1, gx + 5, gy - 1); doc.setLineDashPattern([], 0); setText(0, 26, 51); txt(l, gx + 6.2, gy); gx += 9 + doc.getTextWidth(T(l)) + 3; };
+          leg([0, 123, 182], "H-Q"); if (E.length > 1) leg([0, 150, 64], pg.labEta.split(" (")[0]); leg([0, 26, 51], pg.labSys, true);
+        });
+      } else if (pg.kind === "spans") {
+        const LW = 46, nI = pg.items.length, rowH = Math.min(22, (Y1 - Y0 - 6) / Math.max(1, nI));
+        const maxL = Math.max(...pg.items.map((it) => it.spans.reduce((a, s2) => a + s2.len, 0) + it.oh + it.gun), 1);
+        const sx = (X1 - X0 - LW - 8) / maxL;
+        pg.items.forEach((it, k) => {
+          const ry = Y0 + 4 + k * rowH, my = ry + rowH * 0.45, x0 = X0 + LW;
+          if (k % 2 === 1) { setFill(244, 248, 245); doc.rect(X0, ry - 2, X1 - X0, rowH, "F"); }
+          setText(0, 26, 51); doc.setFont("helvetica", "bold"); doc.setFontSize(8.4); txt(it.name, X0 + 1, my - 1);
+          setText(92, 99, 106); doc.setFont("helvetica", "normal"); doc.setFontSize(6); txt(it.info, X0 + 1, my + 2.6, { maxWidth: LW - 3 });
+          setFill(0, 26, 51); doc.rect(x0 - 1.4, my - 1.4, 2.8, 2.8, "F");
+          let x = x0;
+          it.spans.forEach((sp2) => {
+            const xe = x + sp2.len * sx; setDraw(0, 123, 182); doc.setLineWidth(sp2.w); doc.line(x, my, xe, my);
+            setFill(0, 26, 51); doc.triangle(xe - 1.2, my + 2.4, xe + 1.2, my + 2.4, xe, my, "F");
+            doc.setFontSize(5.4); setText(0, 123, 182); txt(sp2.d, (x + xe) / 2, my - 1.6, { align: "center" }); setText(92, 99, 106); txt(f2(sp2.len, 1), (x + xe) / 2, my + 4, { align: "center" });
+            x = xe;
+          });
+          if (it.oh > 0) { const xe = x + it.oh * sx; setDraw(0, 123, 182); doc.setLineWidth(0.4); doc.setLineDashPattern([1, 0.7], 0); doc.line(x, my, xe, my); doc.setLineDashPattern([], 0); doc.setFontSize(5.4); setText(92, 99, 106); txt(`${pg.labOh} ${f2(it.oh, 1)}`, (x + xe) / 2, my + 4, { align: "center" }); x = xe; }
+          if (it.gun > 0) { const xe = x + it.gun * sx; setDraw(0, 150, 64); doc.setLineWidth(0.3); doc.setLineDashPattern([0.5, 0.8], 0); doc.line(x, my, xe, my); doc.setLineDashPattern([], 0); setFill(0, 150, 64); doc.circle(x, my, 0.8, "F"); doc.setFontSize(5.4); setText(0, 150, 64); txt(`${pg.labGun} ${f2(it.gun, 0)} m`, (x + xe) / 2, my - 1.6, { align: "center" }); }
+        });
+        doc.setFontSize(6.2); setText(92, 99, 106); let lx = X0 + 1;
+        setFill(0, 26, 51); doc.triangle(lx, Y1 - 1, lx + 2.4, Y1 - 1, lx + 1.2, Y1 - 3.4, "F"); txt(pg.labTower, lx + 3.6, Y1 - 1.2); lx += 8 + doc.getTextWidth(T(pg.labTower));
+        setDraw(0, 123, 182); doc.setLineWidth(1.2); doc.line(lx, Y1 - 2.2, lx + 6, Y1 - 2.2); txt('10"', lx + 7, Y1 - 1.2); lx += 14; doc.setLineWidth(0.8); doc.line(lx, Y1 - 2.2, lx + 6, Y1 - 2.2); txt('8"5/8', lx + 7, Y1 - 1.2); lx += 17; doc.setLineWidth(0.5); doc.line(lx, Y1 - 2.2, lx + 6, Y1 - 2.2); txt('6"5/8', lx + 7, Y1 - 1.2);
+      } else if (pg.kind === "details") {
+        const n = pg.items.length, cols = Math.min(3, n), rows = Math.ceil(n / cols), cw = (X1 - X0) / cols, ch = (Y1 - Y0) / rows;
+        pg.items.forEach((it, k) => {
+          const bx0 = X0 + (k % cols) * cw + 1, by0 = Y0 + Math.floor(k / cols) * ch, bw = cw - 4, bh = ch - 3;
+          setDraw(200, 214, 204); doc.setLineWidth(0.25); doc.roundedRect(bx0, by0, bw, bh, 1.5, 1.5, "S");
+          setText(0, 123, 182); doc.setFont("helvetica", "bold"); doc.setFontSize(8.2); txt(it.title, bx0 + 3, by0 + 5, { maxWidth: bw - 6 });
+          const dw = bw * 0.6, dh = bh - 30, dx = bx0 + 3, dy = by0 + 9;      // disegno a sinistra, sotto le note
+          drawDetail(it.key, dx, dy, dw, dh, it.n ?? 2);
+          // note numerate a destra (richiami 1, 2, 3 …)
+          let ny = by0 + 11; doc.setFont("helvetica", "normal"); doc.setFontSize(6);
+          it.notes.forEach((nt, i) => {
+            const nx = bx0 + dw + 6; setFill(0, 123, 182); doc.circle(nx + 1.3, ny - 1.1, 1.4, "F"); setText(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(5.4); txt(String(i + 1), nx + 1.3, ny - 0.4, { align: "center" });
+            setText(0, 26, 51); doc.setFont("helvetica", "normal"); doc.setFontSize(6);
+            const ls: string[] = doc.splitTextToSize(T(nt), bw - dw - 12); ls.forEach((l2, j) => txt(l2, nx + 3.8, ny + j * 2.6)); ny += ls.length * 2.6 + 1.6;
+          });
+        });
+      }
+    };
+    // ---- particolari costruttivi: schemi vettoriali con i richiami numerati ----
+    const callout = (n: number, x: number, yy: number, tx2: number, ty2: number) => {
+      setDraw(0, 123, 182); doc.setLineWidth(0.15); doc.line(x, yy, tx2, ty2); setFill(0, 123, 182); doc.circle(tx2, ty2, 1.4, "F");
+      setText(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(5.4); doc.text(String(n), tx2, ty2 + 0.7, { align: "center" });
+    };
+    const valve = (x: number, yy: number, s2: number, vert = false) => {   // saracinesca / idrovalvola: farfalla
+      setFill(255, 255, 255); setDraw(0, 26, 51); doc.setLineWidth(0.3);
+      if (vert) { doc.triangle(x - s2, yy - s2, x + s2, yy - s2, x, yy, "FD"); doc.triangle(x - s2, yy + s2, x + s2, yy + s2, x, yy, "FD"); }
+      else { doc.triangle(x - s2, yy - s2, x - s2, yy + s2, x, yy, "FD"); doc.triangle(x + s2, yy - s2, x + s2, yy + s2, x, yy, "FD"); }
+    };
+    const hatch = (x: number, yy: number, w: number, h: number) => {
+      setFill(214, 214, 208); setDraw(120, 120, 112); doc.setLineWidth(0.2); doc.rect(x, yy, w, h, "FD"); doc.setLineWidth(0.1);
+      for (let d = -h; d < w; d += 1.6) { const xa = Math.max(x, x + d), ya = yy + (xa - (x + d)), xb = Math.min(x + w, x + d + h), yb = yy + (xb - (x + d)); if (xb > xa) doc.line(xa, ya, xb, yb); }
+    };
+    const ground = (x0: number, x1: number, yy: number) => { setDraw(92, 99, 106); doc.setLineWidth(0.4); doc.line(x0, yy, x1, yy); doc.setLineWidth(0.15); for (let x = x0; x < x1; x += 2.2) doc.line(x, yy, x - 1.2, yy + 1.2); };
+    const pipeH = (x0: number, x1: number, yy: number, r: number) => { setFill(214, 236, 248); setDraw(0, 123, 182); doc.setLineWidth(0.4); doc.rect(x0, yy - r, x1 - x0, 2 * r, "FD"); };
+    const pipeV = (x: number, y0: number, y1: number, r: number) => { setFill(214, 236, 248); setDraw(0, 123, 182); doc.setLineWidth(0.4); doc.rect(x - r, Math.min(y0, y1), 2 * r, Math.abs(y1 - y0), "FD"); };
+    const drawDetail = (key: string, x: number, yy: number, w: number, h: number, nP: number) => {
+      const gy = yy + h * 0.38;
+      if (key === "pivot") {
+        ground(x, x + w, gy);
+        const py = gy + h * 0.32, r = Math.max(1.4, h * 0.035), cx = x + w * 0.55;
+        pipeH(x + 2, cx + r, py, r); pipeV(cx, py + r, gy - h * 0.2, r);
+        hatch(cx - r - 3.5, py - r, 3.5, 2 * r + 3); hatch(cx - r - 2, py + r, 2 * r + 4, 3);
+        valve(cx, gy - h * 0.12, 2.4, true); setDraw(0, 26, 51); doc.setLineWidth(0.3); doc.line(cx, gy - h * 0.12, cx + 4, gy - h * 0.12); doc.rect(cx + 4, gy - h * 0.12 - 1.2, 2.4, 2.4, "S");
+        const ty = gy - h * 0.2; setDraw(0, 26, 51); doc.setLineWidth(0.5); doc.line(cx, ty, cx, yy + 1); doc.line(cx - w * 0.22, gy, cx, yy + 4); doc.line(cx + w * 0.22, gy, cx, yy + 4);
+        hatch(cx - w * 0.22 - 2, gy, 4, 2.6); hatch(cx + w * 0.22 - 2, gy, 4, 2.6);
+        callout(1, x + 8, py, x + 4, py + 6); callout(2, cx - r - 2, py + 1, x + 10, py + 9); callout(3, cx + 2, gy - h * 0.12, cx + 10, gy - h * 0.06); callout(4, cx + 4, gy - h * 0.12, cx + 12, gy - h * 0.2);
+        callout(5, cx, yy + 6, cx - 9, yy + 3); callout(6, cx + w * 0.22, gy + 1, cx + w * 0.22 + 4, gy + 6);
+      } else if (key === "air" || key === "drain") {
+        ground(x, x + w, gy);
+        const pw = w * 0.5, px = x + w * 0.25, by = gy + h * 0.42, r = Math.max(1.4, h * 0.04);
+        hatch(px - 2, gy - 1, 2, by - gy + 4); hatch(px + pw, gy - 1, 2, by - gy + 4); hatch(px - 2, by + 3, pw + 4, 2.5); hatch(px - 3, gy - 2.2, pw + 6, 1.6);
+        pipeH(x + 1, x + w - 1, by, r); const cx = px + pw / 2;
+        if (key === "air") {
+          pipeV(cx, by - r, by - h * 0.26, r * 0.7); valve(cx, by - h * 0.17, 2.2, true);
+          setFill(255, 255, 255); setDraw(0, 26, 51); doc.setLineWidth(0.3); doc.roundedRect(cx - 2.6, by - h * 0.34, 5.2, h * 0.08, 1.6, 1.6, "FD");
+          callout(1, x + 4, by, x + 3, by + 7); callout(2, cx - r, by - r, px + 3, by - 6); callout(3, cx + 2, by - h * 0.17, cx + 9, by - h * 0.12); callout(4, cx + 2.6, by - h * 0.3, cx + 9, by - h * 0.3);
+          callout(5, px - 1, gy + 4, x + 3, gy + 8); callout(6, px + pw * 0.8, gy - 1.4, px + pw * 0.8 + 3, yy + 4);
+        } else {
+          pipeV(cx, by + r, by + h * 0.12, r * 0.7); pipeH(cx, x + w - 1, by + h * 0.12, r * 0.7); valve(cx + pw * 0.3, by + h * 0.12, 2.2);
+          setFill(205, 190, 160); doc.rect(x + w - 6, by + h * 0.12 - 3, 5, 9, "F");
+          callout(1, x + 4, by, x + 3, by + 7); callout(2, cx, by + h * 0.06, px + 3, by + h * 0.2); callout(3, cx + pw * 0.3, by + h * 0.12 - 2, cx + pw * 0.3 + 4, by - 6);
+          callout(4, x + w - 3.5, by + h * 0.12 + 2, x + w - 6, by + h * 0.3); callout(5, px - 1, gy + 4, x + 3, gy + 8); callout(6, px + pw * 0.8, gy - 1.4, px + pw * 0.8 + 3, yy + 4);
+        }
+      } else if (key === "station") {
+        const n = Math.max(1, Math.min(4, nP)), my0 = yy + 4, step = (h - 10) / n, xs = x + 4, xc = x + w * 0.78;
+        setDraw(0, 26, 51); doc.setLineWidth(0.3); doc.rect(x + 1, yy + 1, w - 2, h - 2, "S");
+        pipeV(xs, my0, my0 + (n - 1) * step + 4, 1.2); pipeV(xc, my0, my0 + (n - 1) * step + 4, 1.4);
+        for (let i = 0; i < n; i++) {
+          const ly = my0 + 2 + i * step; pipeH(xs, xc, ly, 0.8);
+          const pxp = x + w * 0.3; setFill(255, 255, 255); setDraw(0, 26, 51); doc.setLineWidth(0.4); doc.circle(pxp, ly, 3, "FD"); setFill(0, 26, 51); doc.triangle(pxp - 1.2, ly - 1.5, pxp - 1.2, ly + 1.5, pxp + 1.6, ly, "F");
+          valve(x + w * 0.48, ly, 1.6); setDraw(0, 26, 51); doc.line(x + w * 0.48 - 1.6, ly - 2.4, x + w * 0.48 + 1.6, ly - 2.4);
+          valve(x + w * 0.62, ly, 1.6);
+          if (i === 0) { callout(1, pxp, ly - 3, pxp - 3, ly - 7 < yy + 2 ? yy + 3 : ly - 7); callout(2, x + w * 0.48, ly - 2.4, x + w * 0.44, yy + 3); callout(3, x + w * 0.62, ly - 1.6, x + w * 0.6, yy + 3); }
+        }
+        const oy = my0 + (n - 1) * step + 4; pipeH(xc, x + w + 2, oy, 1.4);
+        setFill(255, 255, 255); setDraw(122, 63, 176); doc.setLineWidth(0.4); doc.circle(x + w * 0.9, oy, 2, "FD"); setText(122, 63, 176); doc.setFont("helvetica", "bold"); doc.setFontSize(5); doc.text("M", x + w * 0.9, oy + 0.7, { align: "center" });
+        setFill(240, 244, 250); setDraw(0, 26, 51); doc.rect(x + w * 0.05, yy + h - 9, 9, 6, "FD"); setText(0, 26, 51); doc.setFontSize(4.6); doc.text("Q.E.", x + w * 0.05 + 4.5, yy + h - 5.4, { align: "center" });
+        callout(4, xc, my0 + 1, xc + 3, yy + 3); callout(5, x + w * 0.9, oy - 2, x + w * 0.9 + 1, oy - 7); callout(6, xs, my0 + 1, xs + 4, yy + 3); callout(7, x + w * 0.05 + 9, yy + h - 6, x + w * 0.05 + 14, yy + h - 4);
+      } else if (key === "pond") {
+        // argini in terra con scarpate 1:2, fondo largo, telo sulle scarpate interne e sul fondo
+        const by = yy + h * 0.8, ty = yy + h * 0.28, sl = w * 0.11, cw2 = w * 0.07;
+        const xl0 = x + sl + cw2, xl1 = x + 2 * sl + cw2, xr1 = x + w - 2 * sl - cw2, xr0 = x + w - sl - cw2;
+        setFill(205, 190, 160); setDraw(120, 100, 70); doc.setLineWidth(0.3);
+        doc.lines([[sl, -(by - ty)], [cw2, 0], [sl, by - ty]], x, by, [1, 1], "FD", true);
+        doc.lines([[sl, -(by - ty)], [cw2, 0], [sl, by - ty]], xr0 - sl + (sl - sl), by, [1, 1], "FD", true);
+        const wl = ty + (by - ty) * 0.25, f = (wl - ty) / (by - ty), wxl = xl0 + sl * f, wxr = xr0 - sl * f;
+        setFill(150, 205, 235); doc.lines([[wxr - wxl, 0], [xr1 - wxr, by - wl], [xl1 - xr1, 0]], wxl, wl, [1, 1], "F", true);
+        setDraw(17, 24, 39); doc.setLineWidth(0.7); doc.lines([[sl, by - ty], [xr1 - xl1, 0], [sl, -(by - ty)]], xl0, ty, [1, 1], "S", false);
+        setDraw(0, 123, 182); doc.setLineWidth(0.3); doc.setLineDashPattern([1, 0.6], 0); doc.line(wxl, wl, wxr, wl); doc.setLineDashPattern([], 0);
+        setDraw(92, 99, 106); doc.setLineWidth(0.15); doc.line(xr1 + 3, ty, xr1 + 6, ty); doc.line(xr1 + 3, wl, xr1 + 6, wl); doc.line(xr1 + 4.5, ty, xr1 + 4.5, wl);
+        ground(x, x + w, by);
+        callout(1, x + sl + cw2 / 2, ty, x + sl + cw2 / 2, yy + 3); callout(2, (xl0 + xl1) / 2, (ty + by) / 2, (xl0 + xl1) / 2 + 5, yy + 8); callout(3, (wxl + wxr) / 2, wl, (wxl + wxr) / 2, yy + 3);
+        callout(4, (xl1 + xr1) / 2, by, (xl1 + xr1) / 2 + 6, by + 5); callout(5, xr1 + 4.5, (ty + wl) / 2, xr1 + 10, yy + 6);
       }
     };
     // altezza che serve a un disegno nella vista accorpata
     const avail = bottom - 28;
     const panelH = (pg: TvDraw) => pg.kind === "trench" ? Math.min(avail - 8, fmtId === "a3" ? 80 : 70)
       : pg.kind === "profile" ? Math.min(avail - 8, fmtId === "a3" ? 118 : 92)
-      : Math.min(avail - 8, 30 + pg.srcs.reduce((a, s) => a + Math.max(1, s.loads.length) * 13 + 8, 0));
+      : pg.kind === "unif" ? Math.min(avail - 8, 30 + pg.srcs.reduce((a, s) => a + Math.max(1, s.loads.length) * 13 + 8, 0))
+      : pg.kind === "curve" ? Math.min(avail - 8, Math.ceil(pg.items.length / 2) * (fmtId === "a3" ? 92 : 72))
+      : pg.kind === "spans" ? Math.min(avail - 8, 12 + pg.items.length * 18)
+      : Math.min(avail - 8, Math.ceil(pg.items.length / 3) * (fmtId === "a3" ? 96 : 78));
     if (C.compact && ((sh.tech ?? []).length || (sh.draw ?? []).length)) {
       newPg(sh.title);
       for (const pdef of sh.tech ?? []) { ensure(18); heading(pdef.title); techBlocks(pdef); y += 2; }
       // un disegno si restringe fino al minimo leggibile pur di stare nello spazio che resta sulla pagina
-      const panelMin = (pg: TvDraw) => pg.kind === "trench" ? panelH(pg) : pg.kind === "profile" ? 62 : Math.min(panelH(pg), 26 + pg.srcs.reduce((a, s) => a + Math.max(1, s.loads.length) * 11 + 8, 0));
+      const panelMin = (pg: TvDraw) => pg.kind === "profile" ? 62 : pg.kind === "unif" ? Math.min(panelH(pg), 26 + pg.srcs.reduce((a, s) => a + Math.max(1, s.loads.length) * 11 + 8, 0))
+        : pg.kind === "spans" ? Math.min(panelH(pg), 10 + pg.items.length * 13) : panelH(pg);
       for (const pg of sh.draw ?? []) {
         const room = bottom - y - 8, h = room >= panelMin(pg) ? Math.min(panelH(pg), room) : panelH(pg);
         ensure(h + 8); heading(pg.title); drawPanel(pg, M, y, W - M, y + h); y += h + 5;

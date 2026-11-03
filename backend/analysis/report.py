@@ -194,13 +194,27 @@ def _session():
     return _SESSION
 
 
+# Tessere gia' scaricate (byte JPEG, ~30 kB l'una): copertina, inquadramento e
+# planimetria della relazione e degli allegati ripetono gli stessi riquadri, e una
+# seconda esportazione dello stesso progetto non torna in rete. Tetto ~15 MB.
+_TILE_CACHE: "dict[tuple[int, int, int], bytes]" = {}
+_TILE_CACHE_MAX = 500
+
+
 def _fetch_tile(z: int, x: int, y: int, timeout: float):
     from PIL import Image
-    # (connessione, lettura): la connessione deve essere rapida, il download
-    # di una tessera puo' invece prendersi qualche secondo in piu'.
-    r = _session().get(_TILE_URL.format(z=z, x=x, y=y), timeout=(timeout, timeout * 2))
-    r.raise_for_status()
-    return Image.open(io.BytesIO(r.content)).convert("RGB")
+    k = (z, x, y)
+    raw = _TILE_CACHE.get(k)
+    if raw is None:
+        # (connessione, lettura): la connessione deve essere rapida, il download
+        # di una tessera puo' invece prendersi qualche secondo in piu'.
+        r = _session().get(_TILE_URL.format(z=z, x=x, y=y), timeout=(timeout, timeout * 2))
+        r.raise_for_status()
+        raw = r.content
+        if len(_TILE_CACHE) >= _TILE_CACHE_MAX:
+            _TILE_CACHE.pop(next(iter(_TILE_CACHE)))
+        _TILE_CACHE[k] = raw
+    return Image.open(io.BytesIO(raw)).convert("RGB")
 
 
 def _satellite_bg(lon_min: float, lat_min: float, lon_max: float, lat_max: float,
