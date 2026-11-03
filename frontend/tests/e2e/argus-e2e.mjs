@@ -118,6 +118,11 @@ try {
   const zf = fsx.readdirSync(zdir), pdfF = zf.find((f) => f.endsWith(".pdf"));
   ok(!!pdfF && zf.some((f) => f.endsWith("_computo.xlsx")) && zf.some((f) => f.endsWith(".ceres")) && zf.some((f) => f.endsWith(".geojson")),
     `Progetto esecutivo: ZIP con PDF, computo .xlsx, .ceres e GeoJSON (${zf.length} file)`);
+  {
+    const zc = JSON.parse(fsx.readFileSync(pthx.join(zdir, zf.find((f) => f.endsWith(".ceres"))), "utf8"));
+    const r0 = ceres.progetto?.revisione ?? 0, r1 = zc.progetto?.revisione ?? 0;
+    ok(r1 === r0 + 1 && zf.some((f) => f.endsWith(`_rev${String(r1).padStart(2, "0")}.pdf`)), `Progetto esecutivo: revisione nuova come «Esporta per Ceres» (${r0} → ${r1}), uguale per PDF e .ceres`);
+  }
   const prjPdf = pthx.join(zdir, pdfF ?? "x.pdf");
   if (process.env.ARGUS_SAVE_PRJ_PDF) fsx.copyFileSync(prjPdf, process.env.ARGUS_SAVE_PRJ_PDF);
   const prjPages = Number(/Pages:\s+(\d+)/.exec(cp.execFileSync("pdfinfo", [prjPdf]).toString())?.[1] ?? 0);
@@ -279,6 +284,10 @@ try {
   const cer2 = await readJson(await download(() => page.locator('button:has-text("Esporta per Ceres")').click()));
   const rows2 = (cer2.sezioni ?? []).flatMap((x) => x.righe ?? []);
   ok(rows2.some((r) => r.codice === "ARGUS-FV" && /pivot solari/i.test(r.descrizione ?? "")) && (cer2.sezioni ?? []).some((x) => /Pivot solari/.test(x.titolo)), ".ceres: campo FV dei pivot solari nel computo");
+  const f2 = cer2.planimetria?.elementi?.features ?? [];
+  ok(f2.some((f) => f.properties?.tipo === "fotovoltaico" && f.properties?.kwp > 0) && f2.some((f) => f.properties?.tipo === "tara" && f.properties?.raggio_m > 0)
+    && (cer2.tecnica?.voci ?? []).some((v) => /Tara FV/.test(v.etichetta)) && (cer2.tecnica?.macchine ?? []).some((m) => /solare/.test(m.tipo)),
+    ".ceres: campo FV e tara nella planimetria e nella scheda tecnica per Mercurius");
   ok(errors.length === 0, `nessun errore nella pagina${errors.length ? ": " + errors.join(" | ") : ""}`);
 } catch (e) {
   fails.push(String(e)); console.log("✕", e);

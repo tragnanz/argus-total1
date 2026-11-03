@@ -16,7 +16,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.219";
+const REV = "v0.6.220";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -4020,6 +4020,9 @@ export default function Page() {
       {t("Sito: {v} mm/g · usa questo valore", { v: fmt(siteEt0Peak, { maximumFractionDigits: 1 }) })}</button>) : null;
   // La revisione successiva per Mercurius (stesso riferimento, revisione più alta)
   const nextCeresRev = () => Math.max(1, Math.round(Number((projects.find((x) => x.id === projectId)?.settings as { ceres_rev?: number } | undefined)?.ceres_rev ?? 0)) + 1);
+  // Revisione dei documenti: l'ultima esportata; durante il pacchetto ZIP quella nuova, uguale per PDF, .xlsx e .ceres.
+  const revOverride = useRef<number | null>(null);
+  const docRev = () => revOverride.current ?? Math.max(1, nextCeresRev() - 1);
   function saveCeresRev(pid: number, rev: number) {
     api.updateProject(pid, { settings: { ceres_rev: rev } } as Partial<api.Project>)
       .then((p2) => setProjects((ps) => ps.map((p) => (p.id === pid ? { ...p, settings: p2.settings } : p)))).catch(() => { /* silenzioso */ });
@@ -4181,7 +4184,7 @@ export default function Page() {
       let logo: string | null = null;
       try { const b = await (await fetch("/argusmark.png")).blob(); logo = await new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = rej; fr.readAsDataURL(b); }); } catch { logo = null; }
       const lng: Lang = (["it", "en", "fr", "es", "pt", "de", "af", "ms", "id"] as Lang[]).includes(pdfLang) ? pdfLang : "en";
-      const rev = Math.max(1, nextCeresRev() - 1);
+      const rev = docRev();
       const { sheets, sheetsA, sheetsB, wkMeta, common, kinds, codes, titles, cname: wkCli, rev: wkRev, date: wkDate } = inLang(lng, () => {
         const n0 = (x: number) => fx(Math.round(x)), n1 = (x: number) => fx(x, { maximumFractionDigits: 1 }), n2 = (x: number) => fx(x, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const LLf = (q: number[]): LL => [q[1], q[0]];
@@ -4534,7 +4537,7 @@ export default function Page() {
       {
         meteo = await siteClimateCached();
       }
-      const rev = Math.max(1, nextCeresRev() - 1);
+      const rev = docRev();
       const company = relBrand === "nabu" ? "Nabu srl" : "Agrostar srl";
       let bbox: number[] | null = null;
       const doc = inLang(pdfLang, () => {
@@ -4952,6 +4955,7 @@ export default function Page() {
   async function downloadProgetto() {
     if (!projectId || !pivots.length) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
     const pid = projectId, t0 = performance.now();
+    revOverride.current = nextCeresRev();          // il pacchetto è una revisione nuova, come «Esporta per Ceres»
     const steps = [t("Dati del sito"), t("Tavole e relazione"), t("Unione dei PDF"), t("Computo, file .ceres e GeoJSON"), t("Pacchetto ZIP")];
     const step = (k: number) => setProg({ k, n: steps.length, lab: steps[k] });
     setBusy("all");
@@ -4974,19 +4978,22 @@ export default function Page() {
       out.setTitle(`${pname} · ${t("Progetto esecutivo")}`); out.setCreator(`Argus Total ${REV}`); out.setProducer("Argus Total · Nabu · Agrostar Group");
       const pdfBytes = await out.save();
       step(3);
-      const rev = Math.max(1, nextCeresRev() - 1), base = `ARGUS-${pid}`;
+      const rev = docRev(), base = `ARGUS-${pid}`;
       const zip = new JSZip();
       zip.file(`${base}_${safe(pname)}_progetto_esecutivo_rev${String(rev).padStart(2, "0")}.pdf`, pdfBytes);
       const xl = await computoXlsx(); if (xl) zip.file(`${base}-CMP-01_computo.xlsx`, xl);
       const cf = ceresFile(base, rev);
       if (!("err" in cf)) zip.file(`${base}_${safe(cf.name)}_rev${rev}.ceres`, JSON.stringify(await withPhoto(cf.file)));
+      const ceresWarn = "err" in cf ? " " + t("Attenzione: il file .ceres non è nel pacchetto.") + " " + cf.err : "";
       const plan = (mercuriusComputo(base, rev).planimetria as { elementi?: { features?: unknown[] } } | undefined)?.elementi?.features ?? [];
       if (plan.length) zip.file(`${base}-GEO_planimetria.geojson`, JSON.stringify({ type: "FeatureCollection", features: plan }));
       step(4);
       const zb = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
       saveBlob(zb, `${base}_${safe(pname)}_progetto_rev${String(rev).padStart(2, "0")}.zip`);
-      setMsg(t("Progetto esecutivo scaricato ✓ ({n} pagine)", { n: out.getPageCount() }) + ` · ${fmt((performance.now() - t0) / 1000, { maximumFractionDigits: 1 })} s`);
-    } catch (e) { showErr(e); } finally { setBusy(""); setProg(null); }
+      saveCeresRev(pid, rev);
+      setMsg(t("Progetto esecutivo scaricato ✓ ({n} pagine)", { n: out.getPageCount() }) + ` · ${fmt((performance.now() - t0) / 1000, { maximumFractionDigits: 1 })} s`
+        + " · " + t("Computo per Mercurius: riferimento {r}, revisione {v}.", { r: base, v: rev }) + ceresWarn);
+    } catch (e) { showErr(e); } finally { revOverride.current = null; setBusy(""); setProg(null); }
   }
   function renderOlympus() {
     return (
@@ -5441,7 +5448,7 @@ export default function Page() {
         const c = spanComposition(pv, pivotBrand);
         if (!c) noComp++;
         else { for (const sp of c.spans) { const kk = `${sp.pipe}|${sp.len}`; spans.set(kk, (spans.get(kk) ?? 0) + 1); } if (c.oh) ohs.set(c.oh, (ohs.get(c.oh) ?? 0) + 1); nSpansTot += c.spans.length; }
-        if (macchine.length < 50) macchine.push({ nome: `P${k + 1}`, tipo: (pv.deg ?? 360) < 360 ? "pivot a settore" : "pivot", superficie_ha: Math.round(pvAreaM2(pv) / 100) / 100,
+        if (macchine.length < 50) macchine.push({ nome: `P${k + 1}`, tipo: `${(pv.deg ?? 360) < 360 ? "pivot a settore" : "pivot"}${pv.solar ? " solare" : ""}`, superficie_ha: Math.round(pvAreaM2(pv) / 100) / 100,
           lunghezza_m: Math.round(c ? c.total : pv.r), pluviometria_mm_24h: Math.round(mmDes * 10) / 10,
           portata_ls: Math.round(pivotFlow(pv) * 10) / 10, pressione_bar: Math.round(pivotPressure(pv) * 100) / 100 });
       });
@@ -5615,6 +5622,7 @@ export default function Page() {
       ...(sc ? [["Schema della fonte", `${sc.key} · ${sc.name}`]] : []),
       ...(sc?.res ? [["Vasca di accumulo", `${it(sc.res.vol)} m³`]] : []),
       ...(hydraNow() ? [["Rete di adduzione", `${it(hydraNow()!.byDn.reduce((a, x) => a + x[1], 0) / 1000, 2)} km`]] : []),
+      ...(pivots.some((p) => p.solar) ? [["Tara FV non irrigua", `${it(pivots.reduce((a, p) => a + (p.solar ? solarSize(p).taraM2 : 0), 0) / 1e4, 2)} ha · ${pivots.filter((p) => p.solar).length} pivot solari, cerchio attorno al perno`]] : []),
       ["Macchine", `${pivots.length} pivot${Object.keys(sysDesigns).length ? `, ${Object.keys(sysDesigns).length} campi con altri sistemi` : ""}`],
     ].map(([etichetta, valore]) => ({ etichetta: etichetta.slice(0, 80), valore: valore.slice(0, 120) })).slice(0, 40);
     // Planimetria come dati (senza foto): campi, impronte dei pivot, tubazioni
@@ -5652,6 +5660,19 @@ export default function Page() {
           potenza_assorbita_kw: Math.round(pk.pAbs * 10) / 10 } : {}),
         ...(st.well ? { livello_m: Math.round(srcRange * 10) / 10, profondita_posa_m: Math.round(srcRange + 5) } : {}) } });
     }
+    for (const rd of roads) if (!rd.hidden && rd.coords.length >= 2) feats.push({ type: "Feature", geometry: { type: "LineString", coordinates: rd.coords },
+      properties: { tipo: "strada", ...(rd.kind === "service" ? { sottotipo: "servizio" } : {}), ...(rd.width_m ? { larghezza_m: Math.round(rd.width_m * 10) / 10 } : {}), lunghezza_m: Math.round(rd.coords.reduce((a, q, j) => a + (j ? distM(rd.coords[j - 1], q) : 0), 0)) } });
+    pivots.forEach((pv, k) => {
+      if (!pv.solar) return;
+      const z = solarSize(pv), all = solarPolys(pv).flat();
+      const la = all.map((q) => q[0]), lo = all.map((q) => q[1]), s0 = Math.min(...la), n0 = Math.max(...la), w0 = Math.min(...lo), e0 = Math.max(...lo);
+      feats.push({ type: "Feature", geometry: { type: "Polygon", coordinates: [[[w0, s0], [e0, s0], [e0, n0], [w0, n0], [w0, s0]]] },
+        properties: { tipo: "fotovoltaico", impianto: `P${k + 1}`, kwp: Math.round(z.kWp * 10) / 10, moduli: z.n, modulo_wp: solarCfg.wp, file: z.rows, ...(z.batt ? { batterie_kwh: z.batt } : {}) } });
+      const kx = 111320 * Math.cos((pv.lat * Math.PI) / 180), ring: number[][] = [];
+      for (let j = 0; j <= 48; j++) { const a = (j / 48) * 2 * Math.PI; ring.push([pv.lng + (z.taraR * Math.sin(a)) / kx, pv.lat + (z.taraR * Math.cos(a)) / 110540]); }
+      feats.push({ type: "Feature", geometry: { type: "Polygon", coordinates: [ring] },
+        properties: { tipo: "tara", impianto: `P${k + 1}`, raggio_m: z.taraR, superficie_ha: Math.round(z.taraM2 / 100) / 100, nota: "non irrigua (campo FV)" } });
+    });
     for (const c of cabs) if (c.coords) feats.push({ type: "Feature", geometry: { type: "LineString", coordinates: c.coords },
       properties: { tipo: "cavo", conduttori: 3, sezione_mmq: c.S, materiale: c.mat, lunghezza_m: c.L, nome: c.name.slice(0, 80) } });
     const xs: number[] = [], ys: number[] = [];
