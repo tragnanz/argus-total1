@@ -16,7 +16,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.211";
+const REV = "v0.6.212";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -4111,7 +4111,7 @@ export default function Page() {
   const [tvCompact, setTvCompact] = useState(true);   // tabelle e disegni accorpati sulle stesse pagine
   // out: per il PDF di progetto (relazione + tavole) il PDF non si scarica ma torna al chiamante
   // Elaborati del progetto: codice ARGUS-<id>-TAV-01 … come il riferimento Mercurius
-  type TvKind = "plan" | "pipe" | "elec" | "phase" | "det" | "sch" | "cmp";
+  type TvKind = "plan" | "pipe" | "elec" | "phase" | "det" | "wk" | "sch" | "cmp";
   type TavOut = { blob?: Blob; kinds?: TvKind[]; codes?: string[]; titles?: string[]; lang?: Lang; full?: boolean; defer?: boolean; build?: () => Promise<Blob> };
   const elabCode = (pid: number, kind: TvKind, n: number) => `ARGUS-${pid}-${kind === "sch" ? "SCH" : kind === "cmp" ? "CMP" : "TAV"}-${String(n).padStart(2, "0")}`;
   async function downloadTavole(out?: TavOut) {
@@ -4125,7 +4125,7 @@ export default function Page() {
       try { const b = await (await fetch("/argusmark.png")).blob(); logo = await new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = rej; fr.readAsDataURL(b); }); } catch { logo = null; }
       const lng: Lang = (["it", "en", "fr", "es", "pt", "de", "af", "ms", "id"] as Lang[]).includes(pdfLang) ? pdfLang : "en";
       const rev = Math.max(1, nextCeresRev() - 1);
-      const { sheets, common, kinds, codes } = inLang(lng, () => {
+      const { sheets, sheetsA, sheetsB, wkMeta, common, kinds, codes, titles, cname: wkCli, rev: wkRev, date: wkDate } = inLang(lng, () => {
         const n0 = (x: number) => fx(Math.round(x)), n1 = (x: number) => fx(x, { maximumFractionDigits: 1 }), n2 = (x: number) => fx(x, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const LLf = (q: number[]): LL => [q[1], q[0]];
         const pname = projects.find((x) => x.id === pid)?.name || "Argus Total", cname = clients.find((c) => c.id === clientId)?.name || "—";
@@ -4325,10 +4325,12 @@ export default function Page() {
           station: [tx("Stazione di pompaggio (pianta)"), [tx("Pompa (vedi schede tecniche)"), tx("Valvola di non ritorno"), tx("Saracinesca di mandata"), tx("Collettore di mandata"), tx("Misuratore di portata"), tx("Collettore di aspirazione"), tx("Quadro elettrico di comando e protezione")]],
           pond: [tx("Sezione della vasca di accumulo"), [tx("Argine in terra compattata con strada di servizio in sommità"), tx("Scarpate interne 1:2 con telo impermeabile"), tx("Livello massimo dell'acqua"), tx("Fondo della vasca"), tx("Franco di sicurezza 0,5 m")]],
         };
-        const detKeys = [...(pivots.length ? ["pivot"] : []), ...(runs.length ? ["air", "drain"] : []), ...(stations.length ? ["station"] : []), ...(sc?.res ? ["pond"] : [])] as ("pivot" | "air" | "drain" | "station" | "pond")[];
+        // piazzola del pivot, stazioni di pompaggio e vasca: i disegni delle opere di Ceres (più sotto);
+        // qui restano i pozzetti della rete, che Ceres non disegna
+        const detKeys = (runs.length ? ["air", "drain"] : []) as ("pivot" | "air" | "drain" | "station" | "pond")[];
         const nPumpMax = Math.max(2, ...stations.map((st) => st.nTot));
-        const shDet: TvSheet | null = detKeys.length ? { title: tx("Particolari costruttivi"), noMap: true, fields: [], pivots: [], lines: [], points: [], column: [], cells: [],
-          draw: [{ kind: "details", title: tx("Particolari costruttivi tipo"), items: detKeys.map((k) => ({ key: k, title: NOTES[k][0], notes: NOTES[k][1], n: nPumpMax })) }] } : null;
+        const shDet: TvSheet | null = detKeys.length ? { title: tx("Pozzetti della rete"), noMap: true, fields: [], pivots: [], lines: [], points: [], column: [], cells: [],
+          draw: [{ kind: "details", title: tx("Pozzetti di sfiato e di scarico"), items: detKeys.map((k) => ({ key: k, title: NOTES[k][0], notes: NOTES[k][1], n: nPumpMax })) }] } : null;
         // 6 — schede tecniche: curve delle pompe e campate dei pivot (solo nel progetto completo)
         const PIPE_TXT = ['10"', '8"5/8', '6"5/8'], PIPE_W = [1.3, 0.85, 0.5];
         const curveItems = stations.filter((st) => st.pick).map((st) => {
@@ -4377,20 +4379,83 @@ export default function Page() {
           coordsTitle: tx("COORDINATE GPS"), centroidLabel: tx("Centro campo"), client: cname, rev: String(rev),
           footer: `© ${new Date().getFullYear()} Nabu srl · Agrostar Group · Argus Total ${REV} · ${tx("esportato il")} {d}`,
           disclaimer: tx("I risultati sono stime a scopo di progettazione preliminare e non sostituiscono la verifica di un tecnico qualificato. Dati da confermare sul campo.") };
-        const all: [TvKind, TvSheet | null][] = [["plan", sh1], ["pipe", runs.length ? sh2 : null], ["elec", cabRows.length ? sh3 : null], ["phase", shPh], ["det", shDet], ["sch", shSch], ["cmp", shCmp]];
-        const kept = all.filter((x) => x[1]) as [TvKind, TvSheet][];
-        const sheets = kept.map((x) => x[1]), kinds = kept.map((x) => x[0]);
-        let nT = 0; const codes: string[] = [];
-        kept.forEach(([k, sh]) => {
-          if (k === "sch" || k === "cmp") { codes.push(elabCode(pid, k, 1)); sh.title = `${sh.title} · ${codes[codes.length - 1]}`; return; }
-          nT++; codes.push(elabCode(pid, k, nT)); sh.title = `${tx("Tav.")} ${String(nT).padStart(2, "0")} · ${sh.title}`;
-          if (sh.cells.length) sh.cells[1] = [sh.cells[1][0], `${codes[codes.length - 1]} · ${sh.cells[1][1].split(" · ")[0]}`];
+        // ---- disegni delle opere di Ceres (stesso motore): piazzola del pivot, stazioni, pompa verticale, vasca, gruppo elettrogeno
+        const wkJobs: { type: string; ctx: Record<string, unknown>; name: string }[] = [];
+        {
+          const grp = new Map<string, { ctx: Record<string, unknown>; names: string[] }>();
+          pivots.forEach((pv, k) => {
+            const c = spanComposition(pv, pivotBrand), dm = c && c.spans.length ? Math.max(...c.spans.map((sp) => PIPE_MM[sp.pipe] ?? 168)) : 0;
+            const ctx = { mk: pivotBrand, pp: "fix", prof: "std", tube: dm >= 200 ? 254 : dm > 0 && dm < 160 ? 168 : 203, pivDn: pivotRiser(pv).mv };
+            const key = JSON.stringify(ctx); const g = grp.get(key) ?? grp.set(key, { ctx, names: [] }).get(key)!; g.names.push(`P${k + 1}`);
+          });
+          for (const g of grp.values()) wkJobs.push({ type: "pad", ctx: g.ctx, name: g.names.join(", ") });
+          const sg = new Map<string, { ctx: Record<string, unknown>; names: string[]; vert: boolean }>();
+          stations.forEach((st) => {
+            const pk = st.pick; if (!pk) return;
+            const kind = pk.diesel ? "moto" : pk.fam === "vert" ? "vert" : pk.fam === "subm" ? "subm" : "horiz";
+            const atRes = !!(resPt && st.pt && distM(st.pt, resPt) < 30), inst = st.well ? "well" : kind === "vert" ? "sump" : atRes ? "flooded" : "bank";
+            const ctx = { kind, model: pk.model, motorKw: pk.motor, stKw: pk.motor, motoKw: pk.motor, stN: st.nTot, motoN: st.nTot, stQ: Math.round(st.qLs * 10) / 10, rpm: pk.rpm,
+              water: st.well ? "well" : "surf", drive: pk.diesel ? "diesel" : "el", inst, ...(atRes && sc?.res ? { rvType: "earth" } : {}) };
+            const key = JSON.stringify(ctx); const g = sg.get(key) ?? sg.set(key, { ctx, names: [], vert: kind === "vert" }).get(key)!; g.names.push(st.name);
+          });
+          for (const g of sg.values()) { wkJobs.push({ type: "station", ctx: g.ctx, name: g.names.join(" · ") }); if (g.vert) wkJobs.push({ type: "vpump", ctx: g.ctx, name: String(g.ctx.model) }); }
+          if (sc?.res && S) {
+            const fillQ = Math.round((sc.key === "B" ? sc.stages[0].qLs : S.Qd) * 3.6 * 10) / 10;
+            wkJobs.push({ type: "reservoir", ctx: { rv: { ok: true, type: "earth", V: sc.res.vol, H: resDepth, Q: Math.round((stations.filter((st) => st.pt && resPt && distM(st.pt, resPt) < 30).reduce((x, st) => x + st.qLs, 0) || S.Qd) * 3.6), Vday: Math.round(sc.res.vol / Math.max(1, sc.res.days || resDays)), days: Math.max(1, sc.res.days || resDays), fillQ, soil: "loam", mode: "eff" },
+              dnIn: sc.main?.dn ?? 0, dnOut: runs.length ? Math.max(...runs.map((r) => r.dn)) : 0 }, name: `${n0(sc.res.vol)} m³` });
+          }
+          if (G.supply === "gen") wkJobs.push({ type: "gen", ctx: { kva: G.kva }, name: `${G.kva} kVA` });
+        }
+        type Ent = [TvKind, TvSheet | null, number?];
+        const all: Ent[] = [["plan", sh1], ["pipe", runs.length ? sh2 : null], ["elec", cabRows.length ? sh3 : null], ["phase", shPh], ["det", shDet],
+          ...wkJobs.map((_, i) => ["wk", null, i] as Ent), ["sch", shSch], ["cmp", shCmp]];
+        const kept = all.filter((x) => x[1] || x[0] === "wk");
+        let nT = 0; const codes: string[] = [], titles: string[] = [];
+        kept.forEach(([k, sh, wi]) => {
+          if (k === "sch" || k === "cmp") { codes.push(elabCode(pid, k, 1)); sh!.title = `${sh!.title} · ${codes[codes.length - 1]}`; titles.push(sh!.title); return; }
+          nT++; codes.push(elabCode(pid, k, nT));
+          if (k === "wk") { const j = wkJobs[wi!], WKN: Record<string, string> = { pad: tx("Piazzola del pivot"), station: tx("Stazione di pompaggio"), vpump: tx("Pompa verticale"), reservoir: tx("Vasca di accumulo"), gen: tx("Basamento del gruppo elettrogeno") };
+            titles.push(`${tx("Tav.")} ${String(nT).padStart(2, "0")} · ${WKN[j.type] ?? j.type} · ${j.name}`); return; }
+          sh!.title = `${tx("Tav.")} ${String(nT).padStart(2, "0")} · ${sh!.title}`; titles.push(sh!.title);
+          if (sh!.cells.length) sh!.cells[1] = [sh!.cells[1][0], `${codes[codes.length - 1]} · ${sh!.cells[1][1].split(" · ")[0]}`];
         });
-        return { sheets, common, kinds, codes };
+        const kinds = kept.map((x) => x[0]);
+        const iWk = kinds.indexOf("wk"), iTail = kinds.findIndex((k) => k === "sch" || k === "cmp");
+        const sheetsA = kept.filter((x) => x[1] && x[0] !== "sch" && x[0] !== "cmp").map((x) => x[1]!), sheetsB = kept.filter((x) => x[0] === "sch" || x[0] === "cmp").map((x) => x[1]!);
+        const wkMeta = kept.map((x, i) => (x[0] === "wk" ? { job: wkJobs[x[2]!], code: codes[i], tav: titles[i].split(" · ")[0] } : null)).filter(Boolean) as { job: { type: string; ctx: Record<string, unknown>; name: string }; code: string; tav: string }[];
+        void iWk; void iTail;
+        const sheets = [...sheetsA, ...sheetsB];
+        return { sheets, sheetsA, sheetsB, wkMeta, common, kinds, codes, titles, cname, rev, date: new Date().toISOString().slice(0, 10) };
       });
-      if (out) { out.kinds = kinds; out.codes = codes; out.titles = sheets.map((x) => x.title); out.lang = lng; }
-      if (out?.defer) { out.build = () => TV.buildTavole(sheets, common); return; }
-      const blob = await TV.buildTavole(sheets, common);
+      void sheets;
+      if (out) { out.kinds = kinds; out.codes = codes; out.titles = titles; out.lang = lng; }
+      // le tavole di Argus, poi i disegni delle opere di Ceres (A3, con il loro computo dei materiali), poi schede e computo
+      const buildAll = async (): Promise<Blob> => {
+        const parts: ArrayBuffer[] = [await (await TV.buildTavole(sheetsA, common)).arrayBuffer()];
+        if (wkMeta.length) {
+          const WK = await import("@/lib/ceres-wk/wk.js");
+          const I = (await import("@/lib/ceres-wk/i18n.json")).default as Record<string, Record<string, string>>;
+          const TT = (k: string) => I[k]?.[lng] ?? I[k]?.en ?? I[k]?.it ?? k;
+          const disc = TT("wk_disc").replace(/Ceres/g, "Argus Total (Ceres)");
+          for (const m of wkMeta) {
+            const ty = m.job.type, par = WK.wkDefaults(ty, m.job.ctx), sh = WK.wkBuild(ty, par, TT);
+            const ttl = `${m.tav} · ${TT("wk_t_" + ty)} · ${m.job.name}`;
+            const meta = { title: ttl, sub: [wkCli, m.code, m.job.name].filter(Boolean).join(" · "), app: "Argus Total", by: "by Nabu · Agrostar Group", ver: `${TT("sp_mWorks") !== "sp_mWorks" ? TT("sp_mWorks") : ""} · ${REV}`,
+              logo: common.logo, foot1: `Argus Total ${REV} · © ${new Date().getFullYear()} Nabu · Agrostar Group`, disc, notesT: TT("wk_notesT"), qtyT: TT("wk_qtyT"), brand: "Argus Total · Agrostar Group",
+              cells: [[tx("Cliente"), wkCli || "—"], [tx("Riferimento"), m.code], [TT("wk_bSheet"), `${TT("wk_t_" + ty)} · ${m.job.name}`], [TT("wk_bScale"), TT("wk_scaleV")], [`${tx("Data")} · REV.`, `${wkDate} · Rev. ${wkRev}`]],
+              cellW: [0.2, 0.17, 0.33, 0.14, 0.16] };
+            try { parts.push(WK.wkPdf(sh, meta).output("arraybuffer")); } catch (e) { console.error(e); }
+          }
+        }
+        if (sheetsB.length) parts.push(await (await TV.buildTavole(sheetsB, common)).arrayBuffer());
+        if (parts.length === 1) return new Blob([parts[0]], { type: "application/pdf" });
+        const { PDFDocument } = await import("pdf-lib");
+        const outDoc = await PDFDocument.load(parts[0]);
+        for (const b of parts.slice(1)) { const d2 = await PDFDocument.load(b); (await outDoc.copyPages(d2, d2.getPageIndices())).forEach((pg) => outDoc.addPage(pg)); }
+        return new Blob([await outDoc.save()], { type: "application/pdf" });
+      };
+      if (out?.defer) { out.build = buildAll; return; }
+      const blob = await buildAll();
       if (out) { out.blob = blob; return; }
       const pname = (projects.find((x) => x.id === pid)?.name || "Argus").replace(/[^\w\-]+/g, "_");
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `Tavole_${pname}_${pdfFormat.toUpperCase()}_${REV}.pdf`;
@@ -4771,15 +4836,17 @@ export default function Page() {
           pipe: [tx("Tavola delle tubazioni"), tx("Tratti, nodi e raccordi, valvole e apparecchiature, sezioni tipo di scavo e profilo longitudinale")],
           elec: [tx("Tavola delle linee elettriche"), tx("Linee elettriche, sezioni tipo di scavo dei cavi e schema unifilare")],
           phase: [tx("Fasi di realizzazione"), tx("Pivot e campi divisi per fase, con superficie e portata di ogni fase")],
-          det: [tx("Particolari costruttivi"), tx("Attacco del pivot, pozzetti di sfiato e di scarico, stazione di pompaggio, sezione della vasca")],
+          det: [tx("Pozzetti della rete"), tx("Pozzetti di sfiato e di scarico: schema tipo con le parti numerate")],
+          wk: [tx("Disegno costruttivo"), tx("Viste quotate in scala, note di esecuzione e computo dei materiali della tavola (motore delle opere di Ceres)")],
           sch: [tx("Schede tecniche"), tx("Curve delle pompe con il punto di lavoro e composizione delle campate dei pivot")],
           cmp: [tx("Computo metrico"), tx("Quantità delle opere per categoria, senza prezzi, con i rimandi alle sigle delle tavole")] };
-        const tk = opt?.tav?.kinds ?? [], tc = opt?.tav?.codes ?? [];
+        const tk = opt?.tav?.kinds ?? [], tc = opt?.tav?.codes ?? [], tt2 = opt?.tav?.titles ?? [];
+        const wTitle = (k: TvKind, i: number) => (k === "wk" ? (tt2[i] ?? "").split(" · ").slice(1).join(" · ") || what.wk[0] : what[k][0]);
         if (tk.length) {
           ch.push({ title: tx("Tavole esecutive"), blocks: [
             { p: tx("Fanno parte del progetto le tavole esecutive che seguono, allegate in coda alla presente relazione nel formato {f} orizzontale.", { f: pdfFormat.toUpperCase() }) },
             { table: { header: [tx("Codice"), tx("Titolo"), tx("Contenuto")], widths: [24, 26, 50],
-              rows: tk.map((k, i) => [tc[i] ?? "", what[k][0], what[k][1]]) } }] });
+              rows: tk.map((k, i) => [tc[i] ?? "", wTitle(k, i), what[k][1]]) } }] });
         }
         ch.push({ title: tx("Note e limitazioni"), blocks: [{ p: tx("Le stime contenute in questa relazione si basano sui dati disponibili in fase di progetto: confini digitalizzati dei campi, modello digitale del terreno, dati climatici e parametri di progetto indicati. I valori vanno confermati con i rilievi e le verifiche in campo prima della realizzazione; quantità e condizioni economiche sono riportate nell'offerta.") }] });
         const title = tx("Relazione tecnica generale"), revTxt = `Rev ${String(rev).padStart(2, "0")}`;
@@ -4794,7 +4861,7 @@ export default function Page() {
             intro: tx("Il progetto «{p}» è composto dagli elaborati che seguono. Il codice di ogni elaborato riprende il riferimento del progetto in Mercurius (ARGUS-{id}); la revisione è la stessa per tutti.", { p: pname, id: fx(pid, { useGrouping: false }) }),
             header: [tx("Codice"), tx("Elaborato"), tx("Contenuto"), tx("Formato"), "Rev."], widths: [22, 20, 36, 14, 8],
             rows: [[`ARGUS-${pid}-REL-01`, tx("Relazione tecnica generale"), tx("Sito, clima e fabbisogno irriguo, portata, fonte d'acqua, rete, pompaggio ed energia"), "A4", String(rev).padStart(2, "0")],
-              ...tk.map((k, i) => [tc[i] ?? "", what[k][0], what[k][1], k === "sch" || k === "cmp" ? pdfFormat.toUpperCase() : `${pdfFormat.toUpperCase()} ${tx("orizz.")}`, String(rev).padStart(2, "0")]),
+              ...tk.map((k, i) => [tc[i] ?? "", wTitle(k, i), what[k][1], k === "sch" || k === "cmp" ? pdfFormat.toUpperCase() : `${k === "wk" ? "A3" : pdfFormat.toUpperCase()} ${tx("orizz.")}`, String(rev).padStart(2, "0")]),
               ...(opt?.tav?.full ? [[`ARGUS-${pid}-CMP-01`, tx("Computo metrico"), tx("Foglio di calcolo delle quantità, anche per fasi"), "XLSX", String(rev).padStart(2, "0")],
                 [`ARGUS-${pid}`, tx("File di progetto per Ceres e Mercurius"), tx("Campi, pivot e computo per l'offerta"), ".ceres", String(rev).padStart(2, "0")],
                 [`ARGUS-${pid}-GEO`, tx("Planimetria in formato GIS"), tx("Campi, pivot, rete, cavi e stazioni in coordinate WGS84"), "GeoJSON", String(rev).padStart(2, "0")]] : [])],

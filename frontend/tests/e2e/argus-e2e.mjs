@@ -118,7 +118,8 @@ try {
   ok(prjPages >= tavPages + 8 && /Relazione tecnica generale/.test(prjTxt) && /Tavole esecutive/.test(prjTxt) && /Tav\. 01 · Planimetria generale/.test(prjTxt) && /Tav\. 03 · Tavola delle linee elettriche/.test(prjTxt),
     `Progetto esecutivo: relazione + tavole in un PDF di ${prjPages} pagine, con l'elenco delle tavole`);
   ok(/Elenco degli elaborati/.test(prjTxt) && /ARGUS-\d+-REL-01/.test(prjTxt) && /ARGUS-\d+-TAV-0\d/.test(prjTxt), "Progetto esecutivo: elenco degli elaborati con la codifica");
-  ok(/Particolari costruttivi tipo/.test(prjTxt) && /Attacco del pivot/.test(prjTxt) && /Pozzetto di sfiato/.test(prjTxt), "Progetto esecutivo: particolari costruttivi");
+  ok(/Pozzetti di sfiato e di scarico/.test(prjTxt) && /Piazzola del pivot/.test(prjTxt) && /Stazione di pompaggio/.test(prjTxt) && /Sezione A-A|SEZIONE A-A/i.test(prjTxt) && /Calcestruzzo/.test(prjTxt) && /Reservoir|Vasca di accumulo/.test(prjTxt),
+    "Progetto esecutivo: disegni delle opere di Ceres (piazzola, stazioni, vasca) e pozzetti della rete");
   ok(/Curve delle pompe e punto di lavoro/.test(prjTxt) && /Composizione delle campate dei pivot/.test(prjTxt), "Progetto esecutivo: schede tecniche di pompe e pivot");
   ok(/Computo metrico delle opere/.test(prjTxt) && /Tav\. 02 · T\d/.test(prjTxt) && /Tav\. 03 · C\d/.test(prjTxt), "Progetto esecutivo: computo metrico con le sigle delle tavole");
   await page.locator('button:has-text("Dividi in fasi")').click();
