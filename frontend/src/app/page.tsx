@@ -16,7 +16,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.209";
+const REV = "v0.6.210";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -4294,6 +4294,15 @@ export default function Page() {
     if (!opt?.out) setBusy("rel");
     try {
       ensureHydra(); await ensureProfile();
+      // dati meteorologici mensili del sito (NASA POWER + ET₀ Penman-Monteith), anche senza layout dei campi
+      let meteo: api.SiteClimate | null = null;
+      {
+        const mp = pivots.length ? pivots.map((p) => [p.lng, p.lat]) : fields.filter((f) => f.parentId == null).flatMap((f) => f.geom.coordinates[0]);
+        if (mp.length) {
+          const mlo = mp.reduce((a, q) => a + q[0], 0) / mp.length, mla = mp.reduce((a, q) => a + q[1], 0) / mp.length;
+          try { meteo = await api.siteClimate(mla, mlo); if (meteo?.eto_month_mm?.length !== 12 || meteo?.tmax?.length !== 12) meteo = null; } catch { meteo = null; }
+        }
+      }
       const rev = Math.max(1, nextCeresRev() - 1);
       const company = relBrand === "nabu" ? "Nabu srl" : "Agrostar srl";
       let bbox: number[] | null = null;
@@ -4341,11 +4350,38 @@ export default function Page() {
           { p: tx("Le superfici sono misurate sui confini digitalizzati dei campi; le quote del terreno derivano dal modello digitale del terreno Copernicus ({m} m).", { m: demModel === "COPERNICUS_90" ? "90" : "30" }) },
         ] });
         // dati climatici del sito (dal layout dei campi)
-        const clim = P.clim, eto = clim?.eto_month_mm ?? null, rain = clim?.rain_month_mm ?? null;
+        const clim = P.clim ?? (meteo ? { eto_month_mm: meteo.eto_month_mm, rain_month_mm: meteo.rain_month_mm, source: meteo.source } : null);
+        const eto = clim?.eto_month_mm ?? null, rain = clim?.rain_month_mm ?? null;
+        const months12 = Array.from({ length: 12 }, (_, i) => month(i));
+        const srcClim = clim?.source ?? meteo?.source ?? "NASA POWER";
+        const seasonIdx = eto ? eto.map((_, i) => i).filter((i) => eto[i] >= Math.max(...eto) * 0.4) : [];
         const re = Math.max(0, Math.min(100, psRainEff)) / 100;
         // 3 — Inquadramento climatico
         const c3: Record<string, unknown>[] = [];
-        if (eto && rain) {
+        if (meteo && eto && rain) {
+          const M = meteo, eY = eto.reduce((a, x) => a + x, 0), rY = rain.reduce((a, x) => a + x, 0), ai = eY > 0 ? rY / eY : 0;
+          const cls = ai < 0.05 ? tx("iperarida") : ai < 0.2 ? tx("arida") : ai < 0.5 ? tx("semiarida") : ai < 0.65 ? tx("subumida secca") : tx("umida");
+          const tm = M.tmax.map((x, i) => (x + M.tmin[i]) / 2), iC = tm.indexOf(Math.min(...tm)), iH = tm.indexOf(Math.max(...tm));
+          const iRs = M.rs.indexOf(Math.max(...M.rs)), iRw = rain.indexOf(Math.max(...rain)), iRd = rain.indexOf(Math.min(...rain));
+          const etoD = eto.map((e, i) => e / [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][i]), iPk = etoD.indexOf(Math.max(...etoD));
+          const sR = seasonIdx.reduce((a, i) => a + rain[i], 0), sE = seasonIdx.reduce((a, i) => a + eto[i], 0);
+          c3.push({ p: tx("Il clima del sito è descritto dai normali climatici mensili {src} nel punto di progetto: temperatura massima e minima, umidità relativa, vento a 2 m, radiazione solare e precipitazione. Con un indice di aridità (pioggia annua su ET₀ annua) di {ai}, secondo la classificazione UNEP l'area ricade in una zona climatica {cls}.", { src: srcClim, ai: n2(ai), cls }) });
+          c3.push({ p: tx("Il mese più freddo è {mc}, con temperature fra {a} e {b} °C; il più caldo è {mh}, con minime di {c} °C e massime di {d} °C. L'umidità relativa media varia fra {h1} e {h2} %, il vento a 2 m fra {w1} e {w2} m/s e la radiazione solare arriva a {rs} MJ/m² al giorno a {mrs}.",
+            { mc: monthLong(iC), a: n1(M.tmin[iC]), b: n1(M.tmax[iC]), mh: monthLong(iH), c: n1(M.tmin[iH]), d: n1(M.tmax[iH]), h1: n0(Math.min(...M.rh)), h2: n0(Math.max(...M.rh)), w1: n1(Math.min(...M.wind)), w2: n1(Math.max(...M.wind)), rs: n1(M.rs[iRs]), mrs: monthLong(iRs) }) });
+          c3.push({ p: tx("La pioggia annua è di {r} mm: il mese più piovoso è {mw} ({x} mm), il più secco {md} ({y} mm). Da {a} a {b}, quando la domanda evaporativa è più alta, cadono {sr} mm contro un'ET₀ di {se} mm nello stesso periodo.",
+            { r: n0(rY), mw: monthLong(iRw), x: n0(rain[iRw]), md: monthLong(iRd), y: n0(rain[iRd]), a: monthLong(seasonIdx[0] ?? 0), b: monthLong(seasonIdx[seasonIdx.length - 1] ?? 11), sr: n0(sR), se: n0(sE) }) });
+          c3.push({ p: tx("L'evapotraspirazione di riferimento FAO-56 Penman-Monteith è di circa {e} mm all'anno, con una punta di {d} mm al giorno a {m}. Il deficit idrico annuo (ET₀ meno pioggia) è di {def} mm: l'irrigazione è un fattore di produzione e va dimensionata sulle condizioni di punta, non sulle medie annue.",
+            { e: n0(eY), d: n1(etoD[iPk]), m: monthLong(iPk), def: n0(eY - rY) }) });
+          c3.push({ chart: { x: months12, y: "mm", y2: "°C", bars: [{ name: tx("Pioggia") + " (mm)", values: rain.map((v) => Math.round(v * 10) / 10) }],
+            lines: [{ name: "ET₀ (mm)", values: eto }, { name: "T max (°C)", values: M.tmax, axis: "y2", dash: true, color: "#F59E0B" }, { name: "T min (°C)", values: M.tmin, axis: "y2", dash: true, color: "#E11D48" }] },
+            caption: tx("Dati meteorologici del sito: pioggia ed ET₀ mensili, temperature massime e minime ({src})", { src: srcClim }) });
+          c3.push({ table: { header: [tx("Mese"), "T max (°C)", "T min (°C)", tx("UR") + " (%)", tx("Vento") + " (m/s)", "Rs (MJ/m²·g)", tx("Pioggia") + " (mm)", "ET₀ (mm/g)", "ET₀ (mm)"], widths: [12, 11, 11, 10, 11, 12, 11, 11, 11],
+            rows: [...months12.map((mo, i) => [mo, n1(M.tmax[i]), n1(M.tmin[i]), n0(M.rh[i]), n1(M.wind[i]), n1(M.rs[i]), n1(rain[i]), n1(etoD[i]), n0(eto[i])]),
+              [tx("Anno"), n1(M.tmax.reduce((a, x) => a + x, 0) / 12), n1(M.tmin.reduce((a, x) => a + x, 0) / 12), n0(M.rh.reduce((a, x) => a + x, 0) / 12), n1(M.wind.reduce((a, x) => a + x, 0) / 12), n1(M.rs.reduce((a, x) => a + x, 0) / 12), n0(rY), n1(eY / 365), n0(eY)]] },
+            caption: tx("Dati meteorologici mensili del sito ({src}); UR = umidità relativa, Rs = radiazione solare globale", { src: srcClim }) });
+          c3.push({ table: { header: [tx("Mese"), "ET₀ (mm)", tx("Pioggia") + " (mm)", tx("Bilancio") + " (mm)"], widths: [25, 25, 25, 25],
+            rows: [...eto.map((e, i) => [month(i), n0(e), n0(rain[i]), n0(rain[i] - e)]), [tx("Anno"), n0(eY), n0(rY), n0(rY - eY)]] }, caption: tx("Bilancio idrico climatico mensile (pioggia meno ET₀)") });
+        } else if (eto && rain) {
           const eY = eto.reduce((a, x) => a + x, 0), rY = rain.reduce((a, x) => a + x, 0);
           const iMax = eto.indexOf(Math.max(...eto)), iRain = rain.indexOf(Math.max(...rain));
           c3.push({ p: tx("Il clima del sito è descritto dalle serie mensili di evapotraspirazione di riferimento e di pioggia ({src}). L'ET₀ annua è di circa {e} mm e la pioggia annua di {r} mm: il rapporto fra pioggia ed evapotraspirazione è di {k}.", { src: clim?.source ?? "NASA POWER", e: n0(eY), r: n0(rY), k: n2(eY > 0 ? rY / eY : 0) }) });
@@ -4372,13 +4408,28 @@ export default function Page() {
         const KC_STAGE: Record<string, [number, number, number]> = { canna: [0.4, 1.25, 0.75], mais: [0.3, 1.2, 0.6], medica: [0.4, 1.15, 1.1], cereali: [0.3, 1.15, 0.4], ortive: [0.6, 1.05, 0.9], altro: [0.5, 1.1, 0.8] };
         ch.push({ title: tx("Metodologia di stima dell'evapotraspirazione"), blocks: [
           { p: tx("Il fabbisogno idrico delle colture è stimato con la metodologia FAO-56, riferimento internazionale per la pianificazione irrigua. L'evapotraspirazione di riferimento (ET₀) esprime la domanda climatica dell'atmosfera ed è calcolata con l'equazione di Penman-Monteith, che integra temperatura, umidità, vento e radiazione solare. L'evapotraspirazione della coltura si ottiene come ETc = ET₀ × Kc, con coefficienti colturali che seguono le fasi di sviluppo: iniziale, di sviluppo, di piena copertura e finale.") },
+          ...(eto ? [{ p: tx("I dati meteorologici sono i normali climatici mensili {src} nel punto del sito: temperatura massima e minima a 2 m, umidità relativa, velocità del vento a 2 m, radiazione solare globale e precipitazione. Per ogni mese l'ET₀ è calcolata con l'equazione FAO-56 Penman-Monteith:", { src: srcClim }) },
+            { p: "ET₀ = [ 0,408 · Δ · (Rn − G) + γ · 900 / (T + 273) · u₂ · (es − ea) ] / [ Δ + γ · (1 + 0,34 · u₂) ]" },
+            { bullets: [tx("Rn: radiazione netta alla superficie (MJ/m² al giorno), dalla radiazione solare con albedo 0,23 e dal bilancio a onde lunghe;"), tx("G: flusso di calore nel suolo, trascurabile alla scala mensile;"),
+              tx("T: temperatura media dell'aria a 2 m (°C); u₂: velocità del vento a 2 m (m/s);"), tx("es − ea: deficit di pressione di vapore (kPa), dalle temperature e dall'umidità relativa;"),
+              tx("Δ: pendenza della curva della pressione di vapore (kPa/°C); γ: costante psicrometrica (kPa/°C), dalla quota del sito.")] }] : []),
           { p: tx("Il fabbisogno irriguo netto (NIR) è la differenza fra ETc e pioggia efficace; il fabbisogno lordo (GIR) divide il netto per l'efficienza di applicazione del sistema irriguo.") },
+          { bullets: ["ETc = ET₀ × Kc", tx("Pe = pioggia × {re} % (pioggia efficace)", { re: fx(psRainEff) }), "NIR = ETc − Pe", tx("GIR = NIR ÷ Ea (efficienza di applicazione, {eff} % in progetto)", { eff: fx(effPct) }),
+            tx("Q = A × dose ÷ (ore × 3,6): portata in l/s con A in ettari, dose in mm al giorno e ore di funzionamento giornaliere")] },
+          { p: tx("Coefficienti colturali applicati per fase di sviluppo (FAO-56):") },
           ...crops.map((c) => { const k = KC_STAGE[c.key] ?? KC_STAGE.altro; return { bullets: [`${tx(c.label)}: ${tx("Kc iniziale {a}, di piena copertura {b}, finale {c}", { a: n2(k[0]), b: n2(k[1]), c: n2(k[2]) })}`] }; }),
         ] });
         // 6 — Pioggia e pioggia efficace
         const c6: Record<string, unknown>[] = [{ p: tx("Nei climi con estati secche solo una parte della pioggia è utile alla coltura: la pioggia efficace è la frazione che resta nella zona delle radici, al netto di evaporazione immediata, ruscellamento e percolazione profonda. Per il dimensionamento è stimata in modo prudente.") }];
         if (eto && rain) {
-          c6.push({ p: tx("È considerata efficace il {re} % della pioggia mensile. La tabella riporta pioggia totale ed efficace mese per mese.", { re: fx(psRainEff) }) });
+          c6.push({ p: tx("I dati di pioggia sono i normali mensili {src} nel punto del sito. È considerata efficace il {re} % della pioggia mensile, per tenere conto di evaporazione immediata, ruscellamento e infiltrazione oltre le radici. La tabella riporta pioggia totale ed efficace mese per mese.", { src: srcClim, re: fx(psRainEff) }) });
+          if (seasonIdx.length) {
+            const sR = seasonIdx.reduce((a, i) => a + rain[i], 0), iX = seasonIdx.reduce((a, i) => (rain[i] > rain[a] ? i : a), seasonIdx[0]), iN = seasonIdx.reduce((a, i) => (rain[i] < rain[a] ? i : a), seasonIdx[0]);
+            c6.push({ p: tx("Nella stagione irrigua, da {a} a {b}, cadono in tutto {r} mm, di cui {pe} mm efficaci: il mese più piovoso è {mx} ({x} mm), il più secco {mn} ({y} mm). Questo contributo riduce il fabbisogno della coltura; il resto va fornito con l'irrigazione.",
+              { a: monthLong(seasonIdx[0]), b: monthLong(seasonIdx[seasonIdx.length - 1]), r: n0(sR), pe: n0(sR * re), mx: monthLong(iX), x: n1(rain[iX]), mn: monthLong(iN), y: n1(rain[iN]) }) });
+          }
+          c6.push({ chart: { x: months12, y: "mm", bars: [{ name: tx("Pioggia") + " (mm)", values: rain.map((v) => Math.round(v * 10) / 10) }, { name: tx("Pioggia efficace") + " (mm)", values: rain.map((v) => Math.round(v * re * 10) / 10) }] },
+            caption: tx("Pioggia totale ed efficace mese per mese ({src})", { src: srcClim }) });
           c6.push({ table: { header: [tx("Mese"), tx("Pioggia") + " (mm)", tx("Pioggia efficace") + " (mm)"], widths: [34, 33, 33],
             rows: [...rain.map((r, i) => [month(i), n1(r), n1(r * re)]), [tx("Anno"), n0(rain.reduce((a, x) => a + x, 0)), n0(rain.reduce((a, x) => a + x * re, 0))]] } });
         } else {
@@ -4403,6 +4454,8 @@ export default function Page() {
             cb.push({ p: tx("Il fabbisogno irriguo netto (NIR) è l'ETc meno la pioggia efficace:") });
             cb.push({ table: { header: [tx("Mese"), "ETc (mm)", tx("Pioggia") + " (mm)", tx("Pioggia efficace") + " (mm)", "NIR (mm)"], widths: [20, 20, 20, 20, 20],
               rows: rows.map((r) => [month(r.i), n0(r.etc), n1(rain[r.i]), n1(r.pe), n1(Math.max(0, r.etc - r.pe))]) } });
+            cb.push({ chart: { x: rows.map((r) => month(r.i)), y: "mm", bars: [{ name: "ETc (mm)" }, { name: tx("Pioggia efficace") + " (mm)" }].map((b, k) => ({ ...b, values: rows.map((r) => Math.round((k ? r.pe : r.etc) * 10) / 10) })),
+              lines: [{ name: "NIR (mm)", values: rows.map((r) => Math.round(Math.max(0, r.etc - r.pe) * 10) / 10), color: "#E11D48" }] }, caption: tx("{c}: ETc, pioggia efficace e fabbisogno irriguo netto mese per mese", { c: tx(c.label) }) });
             cb.push({ p: tx("Il fabbisogno netto stagionale è di circa {n} mm: è l'acqua che deve arrivare alla coltura, escluse le perdite di applicazione. Il fabbisogno lordo (GIR) si ottiene dividendo il netto per l'efficienza di applicazione (Ea):", { n: n0(nirT) }) });
             cb.push({ bullets: effs.map((e) => tx("Ea {e}: circa {g} mm", { e: fx(e, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), g: n0(nirT / e) })) });
             cb.push({ p: tx("Con l'efficienza di progetto del {eff} % il fabbisogno lordo è di circa {g} mm; nei mesi di punta l'impianto deve poter distribuire {d} mm al giorno.", { eff: fx(effPct), g: n0(nirT / Math.max(0.3, effPct / 100)), d: n1(mmDes) }) });

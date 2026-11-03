@@ -113,6 +113,8 @@ try {
   ok(relPdf.subarray(0, 4).toString() === "%PDF" && relPdf.length > 200000, "Relazione tecnica per il cliente: PDF con copertina e planimetria");
   if (process.env.ARGUS_SAVE) await rel.saveAs(process.env.ARGUS_SAVE);
   const relTxt = (await import("node:child_process")).execFileSync("pdftotext", ["-layout", await rel.path(), "-"]).toString();
+  ok(/zona\s+climatica/.test(relTxt) && /Dati meteorologici mensili del sito/.test(relTxt) && /T max/.test(relTxt) && /0,408/.test(relTxt) && /NIR = ETc − Pe/.test(relTxt) && /Pioggia totale ed efficace mese per mese/.test(relTxt),
+    "Relazione: dati meteorologici del sito, piogge e metodo di calcolo FAO-56");
   ok(/Dati della fonte d'acqua/.test(relTxt) && /Livelli della fonte mese per mese/.test(relTxt) && /400 l\/s/.test(relTxt), "Relazione: fonte d'acqua con portata disponibile e livelli mese per mese");
   ok(/Campo 1\s+[\d,]+\s+Canna da zucchero/.test(relTxt) && /Campo 2\s+[\d,]+\s+Mais, Cereali/.test(relTxt) && /Mais: ETc/.test(relTxt) && /Cereali: ETc/.test(relTxt),
     "Relazione: più colture per campo nella stessa azienda");

@@ -15,7 +15,10 @@ import math
 import requests
 
 POWER_URL = "https://power.larc.nasa.gov/api/temporal/climatology/point"
-PARAMS = "T2M_MAX,T2M_MIN,RH2M,WS2M,ALLSKY_SFC_SW_DWN,PRECTOTCORR"
+# T2M_MAX/T2M_MIN della climatologia POWER sono gli ESTREMI del mese sul periodo, non le
+# medie delle massime e minime giornaliere che servono a FAO-56: si ricavano da T2M
+# (media) e T2M_RANGE (escursione giornaliera media). Gli estremi restano come dato in più.
+PARAMS = "T2M,T2M_RANGE,T2M_MAX,T2M_MIN,RH2M,WS2M,ALLSKY_SFC_SW_DWN,PRECTOTCORR"
 MONTH_KEYS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
               "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
@@ -47,9 +50,12 @@ def fetch_power(lat: float, lon: float, timeout: float = 25.0) -> dict:
     # precipitazione: PRECTOTCORR è in mm/giorno → mm/mese
     rain_day = _months(p["PRECTOTCORR"])
     rain = [v * DAYS_IN_MONTH[i] for i, v in enumerate(rain_day)]
+    t2m, rng = _months(p["T2M"]), _months(p["T2M_RANGE"])
     return {
-        "tmax": _months(p["T2M_MAX"]),
-        "tmin": _months(p["T2M_MIN"]),
+        "tmax": [t + r / 2 for t, r in zip(t2m, rng)],
+        "tmin": [t - r / 2 for t, r in zip(t2m, rng)],
+        "tmax_abs": _months(p["T2M_MAX"]),
+        "tmin_abs": _months(p["T2M_MIN"]),
         "rh": _months(p["RH2M"]),
         "wind": _months(p["WS2M"]),
         "rs": rs,

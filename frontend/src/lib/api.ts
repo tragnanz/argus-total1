@@ -490,3 +490,12 @@ export async function relazione(doc: Record<string, unknown>, bbox: number[] | n
   }
   return res.blob();
 }
+// Dati meteorologici mensili del sito (NASA POWER) con ET₀ FAO-56 Penman-Monteith
+export type SiteClimate = { tmax: number[]; tmin: number[]; rh: number[]; wind: number[]; rs: number[]; eto_day: number[]; eto_month_mm: number[];
+  rain_month_mm: number[]; eto_year_mm: number; rain_year_mm: number; deficit_year_mm: number; aridity_index: number | null; source: string; elev: number };
+export async function siteClimate(lat: number, lon: number): Promise<SiteClimate> {
+  const tok = getToken();
+  const res = await fetch(`${API_BASE}/api/project/climate?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}`, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} });
+  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  return res.json();
+}

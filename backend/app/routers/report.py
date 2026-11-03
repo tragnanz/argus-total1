@@ -507,6 +507,22 @@ def tech_annex(body: TechAnnexIn, user: User = Depends(get_current_user)):
     return Response(pdf, media_type="application/pdf")
 
 
+@router.get("/climate")
+def site_climate(lat: float, lon: float, user: User = Depends(get_current_user)):
+    """Normali climatici mensili del sito (NASA POWER, o stima sintetica senza rete) con l'ET₀ FAO-56
+    Penman-Monteith: dati meteorologici della relazione tecnica."""
+    from analysis.suitability import _get_climate_cached
+    from analysis.eto import eto_year
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise HTTPException(422, "Coordinate non valide.")
+    clim, elev = _get_climate_cached(lat, lon, True)
+    out = eto_year(clim, elev, lat)
+    r2 = lambda v: [round(float(x), 2) for x in v]  # noqa: E731
+    out.update({"tmax": r2(clim["tmax"]), "tmin": r2(clim["tmin"]), "rh": r2(clim["rh"]), "wind": r2(clim["wind"]),
+                "rs": r2(clim["rs"]), "elev": round(float(elev or 0), 1), "lat": lat, "lon": lon})
+    return out
+
+
 class RelazioneIn(BaseModel):
     doc: dict[str, Any]
     bbox: list[float] | None = None     # riquadro della foto di copertina (ovest, sud, est, nord)

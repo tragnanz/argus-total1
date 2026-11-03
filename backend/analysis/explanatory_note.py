@@ -50,6 +50,81 @@ BRANDS = {
 _LATIN_HEAD = {"it", "en", "fr", "es", "pt", "ro", "hu", "id", "de", "pl", "af", "ms"}
 
 
+_SUBS = str.maketrans({"₀": "<sub>0</sub>", "₁": "<sub>1</sub>", "₂": "<sub>2</sub>", "₃": "<sub>3</sub>"})
+
+
+def _subs(s: str) -> str:
+    """Pedici in markup: il font dei titoli (Plus Jakarta Sans) non ha i caratteri ₀ ₂ …"""
+    return s.translate(_SUBS)
+
+
+def chart_png(spec: dict, brand: dict, lang: str = "it", w_px: int = 2400, h_px: int = 1150) -> bytes | None:
+    """Grafico mensile (barre + linee, secondo asse opzionale) nei colori del marchio.
+
+    spec = {x: [etichette], y: "mm", y2: "°C", bars: [{name, values, color?}], lines: [{name, values, color?, axis?: "y2", dash?}]}
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib import font_manager as fm
+    x = [str(v) for v in (spec.get("x") or [])]
+    if not x:
+        return None
+    fam = "DejaVu Sans"
+    if lang not in ("zh", "ar"):
+        for fn in ("Inter-Regular.ttf", "Inter-SemiBold.ttf"):
+            fp = os.path.join(_ASSETS, "fonts", fn)
+            if os.path.exists(fp):
+                try:
+                    fm.fontManager.addfont(fp); fam = "Inter"
+                except Exception:  # noqa: BLE001
+                    pass
+    if lang == "zh":
+        fp = os.path.join(_ASSETS, "fonts", "NabuCJK.ttf")
+        if os.path.exists(fp):
+            try:
+                fm.fontManager.addfont(fp); fam = fm.FontProperties(fname=fp).get_name()
+            except Exception:  # noqa: BLE001
+                pass
+    lab = (lambda t: _shape(lang, str(t))) if lang == "ar" else (lambda t: str(t))
+    pal = [brand["primary"], brand["accent"], "#F59E0B", "#E11D48", brand["dark"], "#8B5CF6"]
+    plt.rcParams.update({"font.family": fam, "font.size": 15, "axes.edgecolor": brand["border"], "axes.labelcolor": brand["muted"],
+                         "xtick.color": brand["muted"], "ytick.color": brand["muted"]})
+    fig, ax = plt.subplots(figsize=(w_px / 150, h_px / 150), dpi=150)
+    ax2 = None
+    bars = spec.get("bars") or []
+    n = max(1, len(bars)); bw = 0.8 / n
+    idx = list(range(len(x)))
+    k = 0
+    for i, b in enumerate(bars):
+        col = b.get("color") or pal[k % len(pal)]; k += 1
+        ax.bar([j - 0.4 + bw * (i + 0.5) for j in idx], b.get("values") or [], width=bw * 0.92, color=col, alpha=0.85, label=lab(b.get("name", "")), zorder=2)
+    for ln in spec.get("lines") or []:
+        col = ln.get("color") or pal[k % len(pal)]; k += 1
+        tgt = ax
+        if ln.get("axis") == "y2":
+            if ax2 is None:
+                ax2 = ax.twinx(); ax2.spines["top"].set_visible(False); ax2.tick_params(colors=brand["muted"])
+                if spec.get("y2"):
+                    ax2.set_ylabel(lab(spec["y2"]))
+            tgt = ax2
+        tgt.plot(idx, ln.get("values") or [], color=col, lw=2.6, marker="o", ms=5, ls="--" if ln.get("dash") else "-", label=lab(ln.get("name", "")), zorder=3)
+    ax.set_xticks(idx); ax.set_xticklabels([lab(v) for v in x])
+    if spec.get("y"):
+        ax.set_ylabel(lab(spec["y"]))
+    ax.grid(axis="y", color=brand["border"], lw=0.8, alpha=0.7, zorder=0)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
+    hs, ls = ax.get_legend_handles_labels()
+    if ax2 is not None:
+        h2, l2 = ax2.get_legend_handles_labels(); hs += h2; ls += l2
+    if hs:
+        ax.legend(hs, ls, loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=min(5, len(hs)), frameon=False)
+    fig.tight_layout()
+    bio = io.BytesIO(); fig.savefig(bio, format="png"); plt.close(fig)
+    return bio.getvalue()
+
+
 def _register(name: str, fn: str) -> bool:
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
@@ -214,7 +289,7 @@ def build_note(doc: dict, rev: str, cover_jpeg: bytes | None = None) -> bytes:
         n = max([len(head)] + [len(r) for r in rows] or [1])
         ws = tb.get("widths")
         cw = [avail * x / sum(ws) for x in ws] if ws and len(ws) == n else [avail / n] * n
-        data = ([[Paragraph(S(h), st_th) for h in head]] if head else []) + [
+        data = ([[Paragraph(_subs(S(h)), st_th) for h in head]] if head else []) + [
             [Paragraph(S(c), st_tn if (i and num.match(str(c) or "x")) else st_td) for i, c in enumerate(r)] for r in rows]
         if rtl:
             data = [r[::-1] for r in data]; cw = cw[::-1]
@@ -282,6 +357,14 @@ def build_note(doc: dict, rev: str, cover_jpeg: bytes | None = None) -> bytes:
                     continue
                 fig_n += 1
                 iw = avail; ih = iw * 1500 / 2400
+                el = [CondPageBreak(ih + 20 * mm), RLImage(io.BytesIO(png), width=iw, height=ih),
+                      Paragraph(S(f"{doc.get('figure_label', 'Figura')} {fig_n} – {b.get('caption', '')}"), st_cap)]
+            elif "chart" in b:
+                png = chart_png(b["chart"], B, lang)
+                if not png:
+                    continue
+                fig_n += 1
+                iw = avail; ih = iw * 1150 / 2400
                 el = [CondPageBreak(ih + 20 * mm), RLImage(io.BytesIO(png), width=iw, height=ih),
                       Paragraph(S(f"{doc.get('figure_label', 'Figura')} {fig_n} – {b.get('caption', '')}"), st_cap)]
             else:
