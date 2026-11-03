@@ -143,3 +143,8 @@ body {
   font-size: 11px; font-weight: 600; padding: 2px 7px; box-shadow: 0 2px 8px rgba(13,59,38,.4);
 }
 .argus-pin::before { border-top-color: #08341c !important; }
+
+/* etichetta del campo FV dei pivot solari: sempre leggibile, anche a vista campo */
+.solar-tag { position: absolute; transform: translate(-50%, -50%); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  background: #fff; color: #1e3a8a; border: 1px solid #1e3a8a; border-radius: 999px; padding: 1px 6px 1px 4px;
+  font: 600 10px/1.4 Inter, system-ui, sans-serif; box-shadow: 0 1px 4px rgba(0,26,51,.35); pointer-events: none; }

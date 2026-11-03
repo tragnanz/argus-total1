@@ -17,7 +17,8 @@ export type PivotItem = { lat: number; lng: number; r: number; conn?: string; fi
   phase?: number;             // fase di realizzazione (1, 2, …)
   phaseColor?: boolean;       // colora per fase sulla mappa
   solar?: boolean;            // pivot alimentato da pannelli solari vicino al centro
-  solarPolys?: [number, number][][] };   // moduli FV da disegnare ([lat, lng] per modulo)
+  solarPolys?: [number, number][][];    // moduli FV da disegnare ([lat, lng] per modulo)
+  solarTag?: { lat: number; lng: number; text: string } };   // etichetta del campo FV, visibile a ogni zoom
 // Settore (o cerchio) come anello [lat, lng] per Leaflet.
 function sectorLatLngs(lat: number, lng: number, r: number, deg = 360, az = 0): [number, number][] {
   const dLat = r / 111320, dLng = r / (111320 * Math.cos((lat * Math.PI) / 180) || 1e-9);
@@ -842,6 +843,11 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           // Pivot solare: i moduli fotovoltaici accanto al centro, come sul campo
           if (pv.solarPolys?.length) {
             for (const ring of pv.solarPolys) g.addLayer(L.polygon(ring, { color: "#e5edf7", weight: 0.6, fillColor: "#1e3a8a", fillOpacity: 0.92, interactive: false }));
+          }
+          if (pv.solarTag) {
+            g.addLayer(L.marker([pv.solarTag.lat, pv.solarTag.lng], { interactive: false, keyboard: false,
+              icon: L.divIcon({ className: "", iconSize: [0, 0], iconAnchor: [0, 0],
+                html: `<div class="solar-tag"><svg viewBox="0 0 16 16" width="11" height="11"><rect x="1" y="5" width="14" height="9" rx="1" fill="#1e3a8a" stroke="#e5edf7" stroke-width="1"/><path d="M1 9.5h14M5.7 5v9M10.3 5v9" stroke="#e5edf7" stroke-width=".8"/><circle cx="12.5" cy="2.6" r="1.8" fill="#f0b429"/></svg>${pv.solarTag.text}</div>` }) }));
           }
           c.on("click", (e) => { L.DomEvent.stop(e); cbs.onClick(i); });
           c.bindTooltip(`#${i + 1}${pv.phase && pv.phaseColor ? ` · F${pv.phase}` : ""} · r ${Math.round(pv.r)} m${deg < 359.5 ? ` · ${Math.round(deg)}°` : ""}${pv.gun ? ` · +${Math.round(pv.gun)} m` : ""}${pv.solar ? " · ☀ FV" : ""}`, { direction: "top", sticky: true });

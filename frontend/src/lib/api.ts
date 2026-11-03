@@ -499,3 +499,12 @@ export async function siteClimate(lat: number, lon: number): Promise<SiteClimate
   if (!res.ok) throw new ApiError(res.status, res.statusText);
   return res.json();
 }
+// Scheda in scala del campo FV di un pivot solare (PDF A3)
+export async function solarSheet(doc: Record<string, unknown>): Promise<Blob> {
+  const tok = getToken();
+  const res = await fetch(`${API_BASE}/api/project/solar-sheet`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }, body: JSON.stringify({ doc }),
+  });
+  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  return res.blob();
+}

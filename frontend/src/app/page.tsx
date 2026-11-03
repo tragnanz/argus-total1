@@ -16,7 +16,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.215";
+const REV = "v0.6.216";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -2632,7 +2632,8 @@ export default function Page() {
     const fed = fedPivotKeys(pivotLines);
     const visP = visIdx.map((k) => ({ ...pivots[k], unconn: pivotLines.some((l) => l.kind === "pipe") && !fed.has(pKey(pivots[k])),
       label: pivotLabels ? `${nPhases > 1 && phaseColors ? `F${pivots[k].phase ?? 1} · ` : ""}${uHa(pvAreaM2(pivots[k]) / 10000, 1)}<br>${fmt(Math.round(pivotFlow(pivots[k])))} l/s` : undefined,
-      phaseColor: nPhases > 1 && phaseColors, ...(pivots[k].solar ? { solarPolys: solarPolys(pivots[k]) } : {}) }));
+      phaseColor: nPhases > 1 && phaseColors, ...(pivots[k].solar ? (() => { const sp = solarPolys(pivots[k]), all = sp.flat();
+        return { solarPolys: sp, solarTag: { lat: all.reduce((a, q) => a + q[0], 0) / all.length, lng: all.reduce((a, q) => a + q[1], 0) / all.length, text: `${fmt(solarSize(pivots[k]).kWp, { maximumFractionDigits: 1 })} kWp` } }; })() : {}) }));
     // Le tubazioni hanno una visibilità propria (oggetto a sé); le altre linee
     // seguono la visibilità del gruppo pivot del loro campo.
     const visL = pivotLines.filter((l) => l.kind === "pipe"
@@ -7452,6 +7453,38 @@ export default function Page() {
       </div>
     );
   }
+  async function downloadSolarSheet(k: number) {
+    const pv = pivots[k]; if (!pv) return;
+    setBusy(`sol${k}`);
+    try {
+      const c = spanComposition(pv, pivotBrand), PIPE_TXT = ['10"', '8"5/8', '6"5/8'];
+      const lng: Lang = pdfLang;
+      const doc = inLang(lng, () => ({
+        lang: lng, name: `P${k + 1}`, r: pv.r, lat: pv.lat, gun: pv.gun ?? 0, q_ls: pivotFlow(pv), p_bar: pivotPressure(pv), show_flow: pivotLabels,
+        spans: c ? c.spans.map((sp) => ({ len: sp.len, d: PIPE_TXT[sp.pipe] ?? "" })) : Array.from({ length: Math.max(1, Math.round(pv.r / 50)) }, () => ({ len: pv.r / Math.max(1, Math.round(pv.r / 50)), d: "" })),
+        cfg: solarCfg,
+        labels: {
+          kicker: tx("CAMPO FOTOVOLTAICO DEL PIVOT SOLARE"), title: tx("{name} · {r} m · {n} campate{gun}"), withGun: tx(" · irrigatore finale"),
+          sub: tx("{kw} kW assorbiti → {kwp} kWp: {n} moduli da {wp} Wp in {rows} file, a {off} m dal perno, inclinati di {tilt}° verso {dir}"), south: tx("sud"), north: tx("nord"),
+          persp: tx("Vista prospettica · il pivot ruota sopra il campo FV: nel raggio dei pannelli (≈ {r} m) niente discese degli irrigatori"),
+          plan: tx("PIANTA · scala grafica"), section: tx("SEZIONE DELLE FILE"), data: tx("DATI DI PROGETTO"),
+          pivotPt: tx("perno"), panel: tx("quadro FV / inverter"), noDrops: tx("raggio senza discese {r} m"), span1: tx("1ª campata {l} m"),
+          pipe: tx("tubo della campata ≈ 4,4 m"), truss: tx("traliccio ≈ 3,2 m"), pitch: tx("passo {p} m"),
+          kPower: tx("Potenza del pivot"), vPower: tx("{t} torri × 0,75 kW{g} = {kw} kW"), vGun: tx(" + irrigatore finale 1,5 kW"),
+          kField: tx("Campo FV"), vField: tx("{kwp} kWp ({k} kWp per kW): {n} moduli da {wp} Wp, 1,134 × 2,278 m"),
+          kLayout: tx("Disposizione"), vLayout: tx("{rows} file da {cols} moduli verticali, inclinati {tilt}°, passo {p} m"),
+          kArea: tx("Ingombro"), vArea: tx("{w} × {d} m = {a} m² · bordo a {off} m dal perno"),
+          kHeight: tx("Altezza"), vHeight: tx("da {h0} a {h1} m: sotto il traliccio (≈ 3,2 m), il pivot ci passa sopra"),
+          kFlow: tx("Portata del pivot"), vFlow: tx("{q} l/s ({m3} m³/h) a {p} bar"),
+          kElec: tx("Elettrico"), vElecDay: tx("inverter / regolatore ≈ {inv} kW nel quadro vicino al perno; senza batterie il pivot irriga di giorno"),
+          vElecBatt: tx("inverter / regolatore ≈ {inv} kW nel quadro vicino al perno; batterie {b} kWh ({h} h di autonomia)"),
+          foot: tx("Argus Total · by Nabu · Agrostar Group — schema indicativo: moduli, strutture e altezze da verificare con il costruttore del pivot e dell'impianto FV."),
+        },
+      }));
+      const pname = projects.find((x) => x.id === projectId)?.name || "progetto";
+      saveBlob(await api.solarSheet(doc), `${safe(pname)}_P${k + 1}_campo_FV.pdf`);
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
   function renderSolarPivots() {
     if (!pivots.length) return <p className="text-[11px] text-sage-dark">{t("Posa i pivot per scegliere quali alimentare con i pannelli solari.")}</p>;
     const setAll = (on: boolean) => commitPivots(pivots.map((p) => ({ ...p, solar: on || undefined })));
@@ -7464,6 +7497,9 @@ export default function Page() {
     );
     return (
       <div className="space-y-3">
+        <label className="flex items-center gap-2 text-[11px] text-sage-dark cursor-pointer">
+          <input type="checkbox" checked={pivotLabels} onChange={(e) => setPivotLabels(e.target.checked)} />
+          {t("Mostra la portata dei pivot (sulla mappa, qui e nella scheda)")}</label>
         <div className="flex gap-2">
           <button className="btn-ghost flex-1 text-[12px]" onClick={() => setAll(true)} disabled={nOn === pivots.length}>{t("Tutti solari")}</button>
           <button className="btn-ghost flex-1 text-[12px]" onClick={() => setAll(false)} disabled={!nOn}>{t("Nessuno")}</button>
@@ -7478,12 +7514,21 @@ export default function Page() {
           {pivots.map((p, k) => {
             const z = SZ[k];
             return (
-              <li key={k}>
-                <label className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[11px] cursor-pointer ${p.solar ? "border-sky-700/40 bg-sky-50" : "border-black/5 bg-white"}`}>
+              <li key={k} className={`rounded-lg border px-2.5 py-1.5 text-[11px] ${p.solar ? "border-sky-700/40 bg-sky-50" : "border-black/5 bg-white"}`}>
+                <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={!!p.solar} onChange={(e) => commitPivots(pivots.map((q, i) => (i === k ? { ...q, solar: e.target.checked || undefined } : q)))} />
                   <b className="text-brand-darker w-7">P{k + 1}</b>
                   <span className="flex-1 text-sage-dark tabular-nums">{fmt(z.kW, { maximumFractionDigits: 2 })} kW → <b className="text-brand-darker">{fmt(z.kWp, { maximumFractionDigits: 1 })} kWp</b> · {z.n} {t("moduli")} · {z.rows}×{z.cols}{z.batt ? ` · ${fmt(z.batt)} kWh` : ""}</span>
                 </label>
+                <div className="mt-1 flex items-center gap-3 pl-6 text-sage-dark">
+                  <label className="flex items-center gap-1 cursor-pointer" title={t("L'irrigatore finale aggiunge 1,5 kW di pompa di rilancio al pivot")}>
+                    <input type="checkbox" checked={!!(p.gun && p.gun > 0)} onChange={(e) => commitPivots(pivots.map((q, i) => (i === k ? { ...q, gun: e.target.checked ? 25 : undefined } : q)))} />
+                    {t("Irrigatore finale")}</label>
+                  {pivotLabels && <span className="tabular-nums">{fmt(pivotFlow(p), { maximumFractionDigits: 1 })} l/s · {fmt(pivotPressure(p), { maximumFractionDigits: 1 })} bar</span>}
+                  <button type="button" className="ml-auto text-brand-mid hover:underline disabled:opacity-40" disabled={busy === `sol${k}`} onClick={() => downloadSolarSheet(k)}
+                    title={t("Scheda in scala del campo FV di questo pivot: vista prospettica, pianta quotata, sezione delle file e dati (PDF A3)")}>
+                    {busy === `sol${k}` ? t("Preparo…") : t("Scheda in scala")} ↓</button>
+                </div>
               </li>
             );
           })}

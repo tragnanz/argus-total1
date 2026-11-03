@@ -523,6 +523,25 @@ def site_climate(lat: float, lon: float, user: User = Depends(get_current_user))
     return out
 
 
+class SolarSheetIn(BaseModel):
+    doc: dict[str, Any]
+
+
+@router.post("/solar-sheet")
+def solar_sheet(body: SolarSheetIn, user: User = Depends(get_current_user)):
+    """Scheda in scala del campo fotovoltaico di un pivot solare (PDF A3)."""
+    from analysis.solar_sheet import build_solar_sheet
+    if not _EXPORT_LOCK.acquire(timeout=_EXPORT_WAIT_S):
+        raise HTTPException(503, "Export occupato, riprova fra poco.")
+    try:
+        pdf = build_solar_sheet(body.doc)
+    except (ValueError, KeyError, TypeError) as e:
+        raise HTTPException(422, str(e))
+    finally:
+        _EXPORT_LOCK.release(); _trim_memory()
+    return Response(pdf, media_type="application/pdf")
+
+
 class RelazioneIn(BaseModel):
     doc: dict[str, Any]
     bbox: list[float] | None = None     # riquadro della foto di copertina (ovest, sud, est, nord)
