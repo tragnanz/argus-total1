@@ -15,7 +15,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.203";
+const REV = "v0.6.204";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -339,6 +339,9 @@ type Snapshot = {
   pl: { kind: string; coords: number[][]; field?: number }[];
   rd: { id: string; coords: number[][]; width_m: number }[];
   g: GuidedResult | null;
+  // canali, corsi d'acqua, altri sistemi, fonte d'acqua (punto, tracciato, parametri), colture
+  cn?: unknown[]; wc?: unknown[]; sy?: Record<string, unknown>; fo?: Record<string, unknown>;
+  cr?: { base: string[]; fields: Record<string, string[]> };
 };
 
 // ---- KMZ (KML zippato) lato client per l'export delle geometrie ----
@@ -1443,46 +1446,6 @@ export default function Page() {
   const [roadWidth, setRoadWidth] = useState(8);      // spessore strada di default (m)
   const [canalWidth, setCanalWidth] = useState(6);    // spessore canale/fiume di default (m)
 
-  // ---- Cronologia Annulla/Ripristina UNIFICATA ----
-  // Uno snapshot copre TUTTE le mosse (campi, pivot spostati/ridimensionati/
-  // eliminati, strade) così «Annulla» torna indietro su ognuna, una alla volta.
-  const hist = useRef<{ past: Snapshot[]; fut: Snapshot[] }>({ past: [], fut: [] });
-  const prevSnap = useRef<Snapshot | null>(null);
-  const applyingHist = useRef(false);
-  const histMounted = useRef(false);
-  useEffect(() => {
-    const curr: Snapshot = { f: fields, a: activeIdRef.current, pv: pivots, pl: pivotLines, rd: roads, g: guided };
-    if (!histMounted.current) { histMounted.current = true; prevSnap.current = curr; return; }
-    if (applyingHist.current) { applyingHist.current = false; prevSnap.current = curr; return; }
-    if (prevSnap.current) hist.current.past.push(prevSnap.current);
-    if (hist.current.past.length > 80) hist.current.past.shift();
-    hist.current.fut = [];
-    prevSnap.current = curr;
-    setCanUndo(true); setCanRedo(false);
-    setUndoN(hist.current.past.length); setRedoN(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fields, pivots, pivotLines, roads, guided]);
-  function applySnap(s: Snapshot) {
-    applyingHist.current = true; prevSnap.current = s;
-    setActiveId(s.a); setFields(s.f); renderFields(s.f, s.a);
-    setPivots(s.pv); setPivotLines(s.pl); setGuided(s.g); setRoads(s.rd);
-    setPivotSel({ mode: "none", idx: -1 });
-  }
-  function undo() {
-    const h = hist.current; if (!h.past.length || !prevSnap.current) return;
-    h.fut.push(prevSnap.current);
-    applySnap(h.past.pop()!);
-    setCanUndo(h.past.length > 0); setCanRedo(true);
-    setUndoN(h.past.length); setRedoN(h.fut.length);
-  }
-  function redo() {
-    const h = hist.current; if (!h.fut.length || !prevSnap.current) return;
-    h.past.push(prevSnap.current);
-    applySnap(h.fut.pop()!);
-    setCanUndo(true); setCanRedo(h.fut.length > 0);
-    setUndoN(h.past.length); setRedoN(h.fut.length);
-  }
-
   const [excludeWater, setExcludeWater] = useState(true);  // niente pivot su acqua/paludi (NDWI)
   const [soilKey, setSoilKey] = useState("franco");
   // Infiltrazione di base del suolo (mm/h). Un solo valore per tutta l'app:
@@ -1643,6 +1606,7 @@ export default function Page() {
   // Apertura progetto → LISTA UNICA: le aree salvate diventano subito «Campi»
   // sulla mappa; gli eventuali livelli salvati (canali/pivot) vengono ripristinati.
   async function openProject(pid: number) {
+    histPaused.current = true;            // il caricamento non entra nella cronologia
     suppressAutosaveRef.current = true;   // non salvare durante il caricamento (evita di sovrascrivere il progetto)
     clearAllFields();
     setCanals([]); setRoads([]); setWatercourses([]); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set()); setHiddenPipeFields(new Set());
@@ -1725,6 +1689,7 @@ export default function Page() {
       // Caricamento COMPLETO: riallinea la firma e riattiva l'autosave (dopo il
       // flush di render).
       setTimeout(() => { lastSavedSigRef.current = latestSigRef.current; suppressAutosaveRef.current = false; setAutosave("saved"); }, 600);
+      histBaseline(1200);
     } catch (e) {
       // Caricamento FALLITO: lascia l'autosave inibito, così uno stato parziale
       // non sovrascrive (cancella) il progetto salvato.
@@ -5836,6 +5801,94 @@ export default function Page() {
   const fonteState = () => ({ pt: srcPt, route: srcRoute, type: srcType, qmax: srcQmax, hours: srcHours, range: srcRange,
     sed: srcSediment, energy: srcEnergy, drive: pumpDrive, monthly: srcMonthly, sectors: srcSectors, resDepth, resDays, resEvapK, eta: wtwEta,
     canalSlope, bankSlope, settleMm, filterCap, wellQ, shown: srcShown, cableM, costs: { kwh: costKwh, diesel: costDiesel, lkwh: dieselLkWh, gen: genShare, mkw: costMaintKw, pvom: costPvOm, batt: costBattKwh, blife: battLife } });
+  // ---- Cronologia Annulla/Ripristina UNIFICATA ----
+  // Uno snapshot copre tutte le mosse del progetto: campi, pivot e tubazioni, strade,
+  // canali, corsi d'acqua, altri sistemi, fonte d'acqua e colture. Le modifiche che
+  // arrivano a raffica (meno di 600 ms: un'operazione che tocca più stati, una
+  // digitazione veloce) valgono un passo solo. ⌘Z / Ctrl+Z annulla, ⇧⌘Z / Ctrl+Y rifà.
+  const hist = useRef<{ past: Snapshot[]; fut: Snapshot[] }>({ past: [], fut: [] });
+  const prevSnap = useRef<Snapshot | null>(null);
+  const curSnap = useRef<Snapshot | null>(null);
+  const applyingHist = useRef(false);
+  const histPaused = useRef(true);               // fermo finché un progetto non è caricato
+  const lastPush = useRef(0);
+  const histSig = JSON.stringify([fonteState(), farmCrops, fieldCrops]);
+  const syncHistUi = () => {
+    const h = hist.current;
+    setCanUndo(h.past.length > 0); setCanRedo(h.fut.length > 0);
+    setUndoN(h.past.length); setRedoN(h.fut.length);
+  };
+  // dopo un caricamento: lo stato attuale è il punto di partenza, cronologia vuota
+  function histBaseline(ms = 900) {
+    histPaused.current = true;
+    window.setTimeout(() => {
+      hist.current = { past: [], fut: [] }; prevSnap.current = curSnap.current; histPaused.current = false; syncHistUi();
+    }, ms);
+  }
+  useEffect(() => {
+    const curr: Snapshot = { f: fields, a: activeIdRef.current, pv: pivots, pl: pivotLines, rd: roads, g: guided,
+      cn: canals, wc: watercourses, sy: sysDesigns, fo: fonteState(), cr: { base: farmCrops, fields: fieldCrops } };
+    curSnap.current = curr;
+    if (histPaused.current || !prevSnap.current) { prevSnap.current = curr; return; }
+    if (applyingHist.current) { applyingHist.current = false; prevSnap.current = curr; return; }
+    const now = Date.now();
+    if (now - lastPush.current > 600 || !hist.current.past.length) {
+      hist.current.past.push(prevSnap.current);
+      if (hist.current.past.length > 100) hist.current.past.shift();
+    }
+    lastPush.current = now;
+    hist.current.fut = [];
+    prevSnap.current = curr;
+    syncHistUi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fields, pivots, pivotLines, roads, guided, canals, watercourses, sysDesigns, histSig]);
+  useEffect(() => { histBaseline(500); /* all'avvio */ // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  function applySnap(s: Snapshot) {
+    applyingHist.current = true; prevSnap.current = s; lastPush.current = 0;
+    setActiveId(s.a); setFields(s.f); renderFields(s.f, s.a);
+    setPivots(s.pv); setPivotLines(s.pl); setGuided(s.g); setRoads(s.rd);
+    if (s.cn) { setCanals(s.cn as CanalL[]); renderCanals(s.cn as CanalL[]); }
+    if (s.wc) { setWatercourses(s.wc as WaterL[]); renderWater(s.wc as WaterL[]); }
+    if (s.sy) setSysDesigns(s.sy as Record<string, SysDesign>);
+    if (s.fo && JSON.stringify(s.fo) !== JSON.stringify(fonteState())) applyFonte(s.fo);
+    if (s.cr) { setFarmCrops(s.cr.base); setFieldCrops(s.cr.fields); }
+    setPivotSel({ mode: "none", idx: -1 });
+    // se lo stato ripristinato coincide con l'attuale l'effetto non riparte: niente flag appeso
+    window.setTimeout(() => { applyingHist.current = false; }, 0);
+  }
+  function undo() {
+    const h = hist.current; if (!h.past.length || !prevSnap.current) return;
+    h.fut.push(prevSnap.current);
+    applySnap(h.past.pop()!);
+    syncHistUi();
+  }
+  function redo() {
+    const h = hist.current; if (!h.fut.length || !prevSnap.current) return;
+    h.past.push(prevSnap.current);
+    applySnap(h.fut.pop()!);
+    syncHistUi();
+  }
+  // ⌘Z / Ctrl+Z annulla, ⇧⌘Z / ⇧Ctrl+Z / Ctrl+Y rifà. Nei campi di testo resta
+  // l'annulla del browser; durante il disegno ⌘Z toglie l'ultimo punto.
+  const [isMac, setIsMac] = useState(false);
+  useEffect(() => { try { setIsMac(/Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent)); } catch { /* */ } }, []);
+  const histKeys = useRef({ undo, redo, drawing: false });
+  histKeys.current = { undo, redo, drawing };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k !== "z" && k !== "y") return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
+      e.preventDefault();
+      if (histKeys.current.drawing && k === "z" && !e.shiftKey) { mapApi.current?.drawUndo(); return; }
+      if (k === "y" || e.shiftKey) histKeys.current.redo(); else histKeys.current.undo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   useEffect(() => {
     if (projectId == null) { projLoaded.current = null; return; }
     if (projLoaded.current === projectId) return;
@@ -5853,6 +5906,7 @@ export default function Page() {
     const sy = (st as { systems?: Record<string, SysDesign> }).systems;
     setSysDesigns(sy && typeof sy === "object" ? sy : {});
     projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
+    histBaseline(1200);       // impostazioni di progetto caricate: punto di partenza della cronologia
     projLoaded.current = projectId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, projects]);
@@ -7227,14 +7281,18 @@ export default function Page() {
 
             <button onClick={goHome} className="nav-pill" title={t("Vista iniziale")} aria-label={t("Home")}><IcoHome /></button>
 
-            <button onClick={undo} disabled={!canUndo} className="nav-pill"
-              title={canUndo ? t("Annulla l'ultima operazione") : t("Niente da annullare")} aria-label={t("Annulla")}>
-              ↩{undoN > 1 ? ` (${undoN})` : ""}
-            </button>
-            <button onClick={redo} disabled={!canRedo} className="nav-pill"
-              title={canRedo ? t("Rifai l'operazione annullata") : t("Niente da rifare")} aria-label={t("Rifai")}>
-              ↪{redoN > 1 ? ` (${redoN})` : ""}
-            </button>
+            <div className="flex items-center rounded-full bg-white/5 ring-1 ring-white/10">
+              <button onClick={undo} disabled={!canUndo} className="nav-pill relative px-2.5 disabled:opacity-35"
+                title={canUndo ? `${t("Annulla l'ultima operazione")} (${isMac ? "⌘Z" : "Ctrl+Z"})` : t("Niente da annullare")} aria-label={t("Annulla")}>
+                <IcoUndo />
+                {undoN > 1 && <span className="absolute -top-1 -right-0.5 min-w-[15px] h-[15px] px-0.5 text-[9px] font-bold leading-[15px] text-center rounded-full bg-white/90 text-nabu-green tabular-nums">{undoN > 99 ? "99+" : undoN}</span>}
+              </button>
+              <button onClick={redo} disabled={!canRedo} className="nav-pill relative px-2.5 disabled:opacity-35"
+                title={canRedo ? `${t("Rifai l'operazione annullata")} (${isMac ? "⇧⌘Z" : "Ctrl+Y"})` : t("Niente da rifare")} aria-label={t("Rifai")}>
+                <IcoRedo />
+                {redoN > 1 && <span className="absolute -top-1 -right-0.5 min-w-[15px] h-[15px] px-0.5 text-[9px] font-bold leading-[15px] text-center rounded-full bg-white/90 text-nabu-green tabular-nums">{redoN > 99 ? "99+" : redoN}</span>}
+              </button>
+            </div>
 
             <button onClick={() => { setBellOpen((o) => { if (!o) setAlertsSeen(alerts.length); return !o; }); setMapMenuOpen(false); }}
               className="nav-pill relative" title={t("Avvisi")} aria-label={t("Avvisi")}>

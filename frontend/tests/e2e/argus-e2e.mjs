@@ -136,6 +136,16 @@ try {
     ".ceres: motopompa diesel con il motore da prezzare");
   await page.locator('button:has-text("Pompaggio")').first().click(); await page.waitForTimeout(1000);
   await page.locator('.seg-item:has-text("Motore elettrico")').first().click(); await page.waitForTimeout(1500);
+  // annulla e rifai: ⌘Z / Ctrl+Z torna al motore diesel, ⇧⌘Z / ⇧Ctrl+Z di nuovo all'elettrico
+  const driveOn = async () => (await page.locator('.seg-item:has-text("Motore diesel")').first().getAttribute("data-active")) === "true";
+  await page.keyboard.press("ControlOrMeta+z"); await page.waitForTimeout(1500);
+  const undone = await driveOn();
+  await page.keyboard.press("ControlOrMeta+Shift+z"); await page.waitForTimeout(1500);
+  const redone = !(await driveOn());
+  await page.locator('button[aria-label="Annulla"]').click(); await page.waitForTimeout(1500);
+  const btnUndo = await driveOn();
+  await page.locator('button[aria-label="Rifai"]').click(); await page.waitForTimeout(1500);
+  ok(undone && redone && btnUndo && !(await driveOn()), "Annulla e rifai: scorciatoie ⌘Z / ⇧⌘Z e frecce in alto");
   ok(errors.length === 0, `nessun errore nella pagina${errors.length ? ": " + errors.join(" | ") : ""}`);
 } catch (e) {
   fails.push(String(e)); console.log("✕", e);
