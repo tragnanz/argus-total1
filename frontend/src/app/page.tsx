@@ -16,7 +16,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.208";
+const REV = "v0.6.209";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -4074,10 +4074,12 @@ export default function Page() {
   // sezioni, schema unifilare). Il font del PDF ha solo l'alfabeto latino-1: le
   // altre lingue escono in inglese.
   const [tvCompact, setTvCompact] = useState(true);   // tabelle e disegni accorpati sulle stesse pagine
-  async function downloadTavole() {
+  // out: per il PDF di progetto (relazione + tavole) il PDF non si scarica ma torna al chiamante
+  type TavOut = { blob?: Blob; kinds?: ("plan" | "pipe" | "elec")[]; titles?: string[]; lang?: Lang };
+  async function downloadTavole(out?: TavOut) {
     if (!projectId || (!pivots.length && !pivotLines.some((l) => l.kind === "pipe"))) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
     const pid = projectId;
-    setBusy("tav");
+    if (!out) setBusy("tav");
     try {
       ensureHydra(); await ensureProfile();
       const TV = await import("@/lib/tavole");
@@ -4085,7 +4087,7 @@ export default function Page() {
       try { const b = await (await fetch("/argusmark.png")).blob(); logo = await new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = rej; fr.readAsDataURL(b); }); } catch { logo = null; }
       const lng: Lang = (["it", "en", "fr", "es", "pt", "de", "af", "ms", "id"] as Lang[]).includes(pdfLang) ? pdfLang : "en";
       const rev = Math.max(1, nextCeresRev() - 1);
-      const { sheets, common } = inLang(lng, () => {
+      const { sheets, common, kinds } = inLang(lng, () => {
         const n0 = (x: number) => fx(Math.round(x)), n1 = (x: number) => fx(x, { maximumFractionDigits: 1 }), n2 = (x: number) => fx(x, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const LLf = (q: number[]): LL => [q[1], q[0]];
         const pname = projects.find((x) => x.id === pid)?.name || "Argus Total", cname = clients.find((c) => c.id === clientId)?.name || "—";
@@ -4273,20 +4275,23 @@ export default function Page() {
           footer: `© ${new Date().getFullYear()} Nabu srl · Agrostar Group · Argus Total ${REV} · ${tx("esportato il")} {d}`,
           disclaimer: tx("I risultati sono stime a scopo di progettazione preliminare e non sostituiscono la verifica di un tecnico qualificato. Dati da confermare sul campo.") };
         const sheets = [sh1, ...(runs.length ? [sh2] : []), ...(cabRows.length ? [sh3] : [])];
-        return { sheets, common };
+        const kinds = [ "plan" as const, ...(runs.length ? ["pipe" as const] : []), ...(cabRows.length ? ["elec" as const] : [])];
+        sheets.forEach((sh, k) => { sh.title = `${tx("Tav.")} ${String(k + 1).padStart(2, "0")} · ${sh.title}`; });
+        return { sheets, common, kinds };
       });
       const blob = await TV.buildTavole(sheets, common);
+      if (out) { out.blob = blob; out.kinds = kinds; out.titles = sheets.map((x) => x.title); out.lang = lng; return; }
       const pname = (projects.find((x) => x.id === pid)?.name || "Argus").replace(/[^\w\-]+/g, "_");
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `Tavole_${pname}_${pdfFormat.toUpperCase()}_${REV}.pdf`;
       document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
       setMsg(t("Tavole PDF pronte ✓"));
-    } catch (e) { setMsg(`${t("Errore generazione PDF")}: ${String((e as Error)?.message ?? e)}`); }
-    finally { setBusy(""); }
+    } catch (e) { if (out) throw e; setMsg(`${t("Errore generazione PDF")}: ${String((e as Error)?.message ?? e)}`); }
+    finally { if (!out) setBusy(""); }
   }
-  async function downloadRelazione() {
+  async function downloadRelazione(opt?: { tav?: TavOut; out?: { blob?: Blob } }) {
     if (!projectId || (!pivots.length && !Object.keys(sysDesigns).length)) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
     const pid = projectId;
-    setBusy("rel");
+    if (!opt?.out) setBusy("rel");
     try {
       ensureHydra(); await ensureProfile();
       const rev = Math.max(1, nextCeresRev() - 1);
@@ -4601,6 +4606,16 @@ export default function Page() {
           tx("Analisi del suolo (tessitura, infiltrazione, salinità) per confermare dose e pluviometria."), tx("Verifica con il distributore di energia della potenza disponibile e del punto di consegna."),
           tx("Conferma dei tracciati e delle interferenze (strade, canali, sottoservizi) prima della posa.")] }] });
         // Note e limitazioni
+        // Tavole esecutive allegate (PDF di progetto completo)
+        if (opt?.tav?.kinds?.length) {
+          const what = { plan: [tx("Planimetria generale"), tx("Campi, pivot, rete di distribuzione, adduttrice, vasca e stazioni di pompaggio su ortofoto in scala")],
+            pipe: [tx("Tavola delle tubazioni"), tx("Tratti, nodi e raccordi, valvole e apparecchiature, sezioni tipo di scavo e profilo longitudinale")],
+            elec: [tx("Tavola delle linee elettriche"), tx("Linee elettriche, sezioni tipo di scavo dei cavi e schema unifilare")] };
+          ch.push({ title: tx("Tavole esecutive"), blocks: [
+            { p: tx("Fanno parte del progetto le tavole esecutive che seguono, allegate in coda alla presente relazione nel formato {f} orizzontale.", { f: pdfFormat.toUpperCase() }) },
+            { table: { header: [tx("Tav."), tx("Titolo"), tx("Contenuto")], widths: [10, 30, 60],
+              rows: opt.tav.kinds.map((k, i) => [String(i + 1).padStart(2, "0"), what[k][0], what[k][1]]) } }] });
+        }
         ch.push({ title: tx("Note e limitazioni"), blocks: [{ p: tx("Le stime contenute in questa relazione si basano sui dati disponibili in fase di progetto: confini digitalizzati dei campi, modello digitale del terreno, dati climatici e parametri di progetto indicati. I valori vanno confermati con i rilievi e le verifiche in campo prima della realizzazione; quantità e condizioni economiche sono riportate nell'offerta.") }] });
         const title = tx("Relazione tecnica generale"), revTxt = `Rev ${String(rev).padStart(2, "0")}`;
         return {
@@ -4612,8 +4627,30 @@ export default function Page() {
         };
       });
       const pname = projects.find((x) => x.id === pid)?.name || "progetto";
-      saveBlob(await api.relazione(doc, bbox), `${safe(pname)}_relazione_tecnica.pdf`);
+      const rb = await api.relazione(doc, bbox);
+      if (opt?.out) { opt.out.blob = rb; return; }
+      saveBlob(rb, `${safe(pname)}_relazione_tecnica.pdf`);
       setMsg(t("Relazione tecnica scaricata ✓"));
+    } catch (e) { if (opt?.out) throw e; showErr(e); } finally { if (!opt?.out) setBusy(""); }
+  }
+  // PDF di progetto completo: relazione tecnica (A4 verticale) seguita dalle tavole esecutive (A3/A4 orizzontali)
+  async function downloadProgetto() {
+    if (!projectId || !pivots.length) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
+    const pid = projectId;
+    setBusy("all");
+    try {
+      const tav: TavOut = {}; await downloadTavole(tav);
+      if (!tav.blob) throw new Error(t("Errore generazione PDF"));
+      const rel: { blob?: Blob } = {}; await downloadRelazione({ tav, out: rel });
+      if (!rel.blob) throw new Error(t("Errore generazione PDF"));
+      const { PDFDocument } = await import("pdf-lib");
+      const out = await PDFDocument.load(await rel.blob.arrayBuffer());
+      const tv = await PDFDocument.load(await tav.blob.arrayBuffer());
+      (await out.copyPages(tv, tv.getPageIndices())).forEach((pg) => out.addPage(pg));
+      const pname = projects.find((x) => x.id === pid)?.name || "progetto";
+      out.setTitle(`${pname} · ${t("Progetto esecutivo")}`); out.setCreator(`Argus Total ${REV}`); out.setProducer("Argus Total · Nabu · Agrostar Group");
+      saveBlob(new Blob([await out.save()], { type: "application/pdf" }), `${safe(pname)}_progetto_esecutivo.pdf`);
+      setMsg(t("Progetto esecutivo scaricato ✓ ({n} pagine)", { n: out.getPageCount() }));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   function renderOlympus() {
@@ -8994,8 +9031,13 @@ export default function Page() {
             </div>
             <button className="btn-ghost w-full mt-2" disabled={!pivots.length && !Object.values(sysDesigns).some((d) => d.sys === "lineari")} onClick={exportCeres}
               title={t("Campi e pivot con le campate del produttore scelto in Impianti, da aprire in Ceres con File › Apri file. Contiene anche il computo per Mercurius (riferimento del progetto e revisione crescente).")}>{busy === "ceres" ? t("Preparo…") : t("Esporta per Ceres (.ceres)")}</button>
+            <button className="btn-primary w-full mt-3 flex items-center justify-center gap-2" disabled={busy === "all" || !pivots.length} onClick={downloadProgetto}
+              title={t("Un solo PDF con la relazione tecnica per il cliente seguita dalle tavole esecutive (planimetria, tubazioni, linee elettriche), con l'elenco delle tavole nella relazione. Lingua, intestazione, formato e vista delle tavole come scelti qui sotto. Senza prezzi.")}>
+              <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M6 3h8l4 4v14H6z" /><path d="M14 3v4h4M9 12h6M9 16h6" /></svg>
+              {busy === "all" ? t("Preparo…") : t("Progetto esecutivo completo (PDF)")}</button>
+            <div className="text-[11px] text-sage-dark text-center mt-1">{t("Relazione tecnica + tavole esecutive")}</div>
             <div className="mt-2 flex gap-2 items-stretch">
-              <button className="btn-ghost flex-1" disabled={busy === "rel" || (!pivots.length && !Object.keys(sysDesigns).length)} onClick={downloadRelazione}
+              <button className="btn-ghost flex-1" disabled={busy === "rel" || (!pivots.length && !Object.keys(sysDesigns).length)} onClick={() => downloadRelazione()}
                 title={t("Relazione tecnica generale per il cliente, nella lingua di stampa scelta sopra: copertina con la foto del sito, capitoli su sito, clima e fabbisogno, portata, fonte, impianto, rete, pompaggio ed energia. Senza prezzi.")}>
                 {busy === "rel" ? t("Preparo…") : t("Relazione tecnica per il cliente (PDF)")}</button>
               <select className="field-input text-sm w-28" value={relBrand} onChange={(e) => setRelBrand(e.target.value as "agrostar" | "nabu")} title={t("Intestazione")}>
@@ -9003,7 +9045,7 @@ export default function Page() {
               </select>
             </div>
             <div className="mt-2 flex gap-2 items-stretch">
-            <button className="btn-ghost flex-1 flex items-center justify-center gap-2" disabled={busy === "tav" || (!pivots.length && !pivotLines.some((l) => l.kind === "pipe"))} onClick={downloadTavole}
+            <button className="btn-ghost flex-1 flex items-center justify-center gap-2" disabled={busy === "tav" || (!pivots.length && !pivotLines.some((l) => l.kind === "pipe"))} onClick={() => downloadTavole()}
               title={t("Tavole di progetto come in Ceres: planimetria generale, tavola delle tubazioni (tratti, nodi, valvole, sezioni di scavo, profilo) e tavola delle linee elettriche (cavi, sezioni, schema unifilare), su ortofoto in scala. Senza prezzi.")}>
               <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="1.5" /><path d="M3 15h18M15 15v5M7 11l3-3 3 2 4-4" /></svg>
               {busy === "tav" ? t("Preparo…") : t("Tavole di progetto (PDF {f})", { f: pdfFormat.toUpperCase() })}</button>

@@ -102,6 +102,12 @@ try {
   ok(tavPdf.subarray(0, 4).toString() === "%PDF" && tavPages >= 4, `Tavole (vista accorpata): PDF di ${tavPages} pagine`);
   ok(/Planimetria generale/.test(tavTxt) && /Tavola delle tubazioni/.test(tavTxt) && /Tavola delle linee elettriche/.test(tavTxt), "Tavole: planimetria, tubazioni e linee elettriche");
   ok(/Tratti delle tubazioni/.test(tavTxt) && /T1\b/.test(tavTxt) && /Valvole e apparecchiature/.test(tavTxt) && /Sezioni tipo di scavo/.test(tavTxt) && /Schema unifilare/.test(tavTxt), "Tavole: tratti, valvole, sezioni di scavo e schema unifilare");
+  const prj = await download(() => page.locator('button:has-text("Progetto esecutivo completo")').click());
+  if (process.env.ARGUS_SAVE_PRJ) await prj.saveAs(process.env.ARGUS_SAVE_PRJ);
+  const prjPages = Number(/Pages:\s+(\d+)/.exec(cp.execFileSync("pdfinfo", [await prj.path()]).toString())?.[1] ?? 0);
+  const prjTxt = cp.execFileSync("pdftotext", ["-layout", await prj.path(), "-"]).toString();
+  ok(prjPages >= tavPages + 8 && /Relazione tecnica generale/.test(prjTxt) && /Tavole esecutive/.test(prjTxt) && /Tav\. 01 · Planimetria generale/.test(prjTxt) && /Tav\. 03 · Tavola delle linee elettriche/.test(prjTxt),
+    `Progetto esecutivo: relazione + tavole in un PDF di ${prjPages} pagine, con l'elenco delle tavole`);
   const rel = await download(() => page.locator('button:has-text("Relazione tecnica per il cliente")').click());
   const relPdf = await readBytes(rel);
   ok(relPdf.subarray(0, 4).toString() === "%PDF" && relPdf.length > 200000, "Relazione tecnica per il cliente: PDF con copertina e planimetria");
