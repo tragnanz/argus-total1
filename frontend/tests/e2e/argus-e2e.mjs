@@ -235,6 +235,14 @@ try {
   const taraM2 = Number(await page.locator("section:not([hidden]) [data-tara]").first().getAttribute("data-tara").catch(() => "0"));
   const taraCirc = await page.locator('path[stroke="#b45309"]').count();
   ok(taraM2 > 100 && /tara Ø/.test(solTxt) && /ha irrigui/.test(solTxt) && taraCirc >= 1, `Pivot solari: tara circolare non irrigua (${taraM2} m², cerchio sulla mappa)`);
+  // Vista mappa (pannello di sinistra): pannelli FV ed etichette kWp si spengono e riaccendono
+  const isVis = async (sel) => page.evaluate((q) => { const e = document.querySelector(q); return !!e && getComputedStyle(e).display !== "none"; }, sel);
+  const v0 = (await isVis(".solar-tag")) && (await isVis("path.solar-mod"));
+  await page.locator('[data-mv="mod"]').click(); await page.locator('[data-mv="solar"]').click(); await page.waitForTimeout(300);
+  const v1 = (await isVis(".solar-tag")) || (await isVis("path.solar-mod"));
+  await page.locator('[data-mv="mod"]').click(); await page.locator('[data-mv="solar"]').click(); await page.waitForTimeout(300);
+  const v2 = (await isVis(".solar-tag")) && (await isVis("path.solar-mod"));
+  ok(v0 && !v1 && v2, `Vista mappa: pannelli FV ed etichette kWp attivabili dal pannello di sinistra (${v0}/${v1}/${v2} · ${await page.locator("path.solar-mod").count()} moduli · body ${await page.evaluate(() => document.body.className)})`);
   const kw0 = /([\d,]+) kW →/.exec(await section())?.[1];
   const gunBox = page.locator('section:not([hidden]) li:has(b:text-is("P1")) label:has-text("Irrigatore finale") input').first();
   await gunBox.setChecked(!(await gunBox.isChecked())); await page.waitForTimeout(800);

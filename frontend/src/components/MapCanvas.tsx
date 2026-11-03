@@ -842,9 +842,9 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             fillColor: pv.unconn ? "#fff" : "#0d3b26", fillOpacity: 1, interactive: false,
           }));
           // Pivot solare: i moduli fotovoltaici accanto al centro, come sul campo
-          if (pv.solarTaraR) g.addLayer(L.circle([pv.lat, pv.lng], { radius: pv.solarTaraR, color: "#b45309", weight: 1.2, dashArray: "4 3", fillColor: "#d9c9a3", fillOpacity: 0.55, interactive: false }));
+          if (pv.solarTaraR) g.addLayer(L.circle([pv.lat, pv.lng], { radius: pv.solarTaraR, className: "solar-tara", color: "#b45309", weight: 1.2, dashArray: "4 3", fillColor: "#d9c9a3", fillOpacity: 0.55, interactive: false }));
           if (pv.solarPolys?.length) {
-            for (const ring of pv.solarPolys) g.addLayer(L.polygon(ring, { color: "#e5edf7", weight: 0.6, fillColor: "#1e3a8a", fillOpacity: 0.92, interactive: false }));
+            for (const ring of pv.solarPolys) g.addLayer(L.polygon(ring, { className: "solar-mod", color: "#e5edf7", weight: 0.6, fillColor: "#1e3a8a", fillOpacity: 0.92, interactive: false }));
           }
           if (pv.solarTag) {
             g.addLayer(L.marker([pv.solarTag.lat, pv.solarTag.lng], { interactive: false, keyboard: false,
@@ -908,7 +908,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         for (const p of d.points ?? []) {
           const esc = (x: string) => x.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[ch] as string));
           g.addLayer(L.marker([p.pt[1], p.pt[0]], {
-            icon: L.divIcon({ className: "", iconSize: [30, 20], iconAnchor: [15, 10],
+            icon: L.divIcon({ className: "stn-badge", iconSize: [30, 20], iconAnchor: [15, 10],
               html: `<div style="min-width:30px;height:20px;padding:0 5px;border-radius:10px;background:#1d4ed8;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);color:#fff;font:700 11px Inter,system-ui,sans-serif;display:grid;place-items:center">${esc(p.label)}</div>` }),
             zIndexOffset: 1100,
           }).bindTooltip(p.tip ?? p.label, { direction: "top", offset: [0, -10] }));

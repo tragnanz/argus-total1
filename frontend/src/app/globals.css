@@ -148,3 +148,7 @@ body {
 .solar-tag { position: absolute; transform: translate(-50%, -50%); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
   background: #fff; color: #1e3a8a; border: 1px solid #1e3a8a; border-radius: 999px; padding: 1px 6px 1px 4px;
   font: 600 10px/1.4 Inter, system-ui, sans-serif; box-shadow: 0 1px 4px rgba(0,26,51,.35); pointer-events: none; }
+
+/* Vista mappa: etichette e livelli attivabili dal pannello di sinistra */
+body.mh-field .field-label, body.mh-pivot .pivot-label, body.mh-stn .stn-badge,
+body.mh-solar .solar-tag, body.mh-mod .solar-mod, body.mh-tara .solar-tara { display: none !important; }

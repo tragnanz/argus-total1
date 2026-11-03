@@ -16,7 +16,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.217";
+const REV = "v0.6.218";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1354,6 +1354,14 @@ export default function Page() {
   const [rainMm, setRainMm] = useState(0);           // piovosità utile (mm/24h)
   const [effPct, setEffPct] = useState(85);          // efficienza dell'impianto (%)
   // Etichette sulla mappa con superficie e portata di ogni pivot (spegnibili).
+  // Vista mappa: etichette e livelli nascosti (per utente, nel browser)
+  const MAP_VIEW = [["field", "Nomi di campi e punti"], ["pivot", "Ettari e portata dei pivot"], ["stn", "Sigle delle stazioni"], ["solar", "Etichette kWp"], ["mod", "Pannelli FV"], ["tara", "Tara FV"]] as const;
+  const [mapHide, setMapHide] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem("argus.mapHide") || "[]"); } catch { return []; } });
+  useEffect(() => {
+    try { localStorage.setItem("argus.mapHide", JSON.stringify(mapHide)); } catch { /* */ }
+    for (const [k] of MAP_VIEW) document.body.classList.toggle(`mh-${k}`, mapHide.includes(k));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapHide]);
   const [pivotLabels, setPivotLabelsState] = useState<boolean>(() => {
     try { return typeof window === "undefined" ? true : window.localStorage.getItem("argus.pivotLabels") !== "0"; } catch { return true; }
   });
@@ -8393,6 +8401,26 @@ export default function Page() {
                 {autosave === "saving" ? t("Salvataggio automatico…") : autosave === "error" ? t("Salvataggio non riuscito (riprovo alla prossima modifica)") : t("Salvataggio automatico attivo — le modifiche vengono salvate da sole")}
               </div>
             )}
+            <div className="mt-3" data-mapview>
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-sage-dark">{t("Vista mappa")}</label>
+                <span className="text-[11px] text-brand-mid space-x-2">
+                  <button type="button" className="hover:underline" onClick={() => { setMapHide([]); setPivotLabels(true); }}>{t("Tutte")}</button>
+                  <button type="button" className="hover:underline" onClick={() => { setMapHide(MAP_VIEW.map(([k]) => k)); setPivotLabels(false); }}>{t("Nessuna")}</button>
+                </span>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {MAP_VIEW.map(([k, lab]) => {
+                  const on = k === "pivot" ? pivotLabels : !mapHide.includes(k);
+                  return (
+                    <button key={k} type="button" data-mv={k} aria-pressed={on}
+                      onClick={() => (k === "pivot" ? setPivotLabels(!on) : setMapHide((h) => (on ? [...h, k] : h.filter((x) => x !== k))))}
+                      className={`rounded-full border px-2 py-0.5 text-[11px] transition ${on ? "border-brand/40 bg-brand/10 text-brand-darker" : "border-black/10 bg-white text-sage-dark line-through opacity-70"}`}>
+                      {t(lab)}</button>
+                  );
+                })}
+              </div>
+            </div>
             {/* Lista unica: i campi (e i livelli salvati) si caricano automaticamente
                 all'apertura del progetto nell'elenco «Campi» qui sopra. Nessun
                 elenco «Aree salvate»/«Livelli salvati» separato. */}
