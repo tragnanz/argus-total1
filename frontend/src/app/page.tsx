@@ -8,6 +8,7 @@ import { useI18n, LANGS, type Lang, translateError, translatorFor } from "@/lib/
 import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
 import { buildXlsx } from "@/lib/xlsx";
+import type { LL, RGB, TvSheet, TvCommon, TvPivot, TvLine, TvPoint, TvColItem, TvTrenchItem, TvDraw } from "@/lib/tavole";
 import { linearLayout, reelLayout, dripLayout, type LL as SysLL } from "@/lib/systems";
 import type {
   Area, Client, Polygon, Project, Scene, ColorScale, SuitMeta, SuitWeights,
@@ -15,7 +16,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.206";
+const REV = "v0.6.207";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3373,10 +3374,10 @@ export default function Page() {
     return { byDn: [...byDn.entries()].sort((a, b) => a[0] - b[0]), totalQ, hlMax, unserved, isolated, nSources: sources.length,
       headMax, withElev: !!elev,
       // per tubazione: [indice, diametri dei tratti, lunghezze dei tratti] (sfiati, scarichi, non ritorno)
-      lines: [...dnOf.entries()].map(([i, dns]) => [i, dns.map((d) => d ?? 0), lens(i)] as [number, number[], number[]]) };
+      lines: [...dnOf.entries()].map(([i, dns]) => [i, dns.map((d) => d ?? 0), lens(i), (qsOf.get(i) ?? []).map((q) => q ?? 0)] as [number, number[], number[], number[]]) };
   }
   type HydraRes = { byDn: [number, number][]; totalQ: number; hlMax: number; unserved: number; isolated: number; nSources: number; headMax: number; withElev: boolean;
-    lines?: [number, number[], number[]][] };
+    lines?: [number, number[], number[], number[]?][] };
   const [hydra, setHydra] = useState<null | HydraRes>(null);
   // Diametri della rete: quelli calcolati, oppure si calcolano al momento
   // dell'esportazione (computo, .ceres, varianti) senza passare dalla pagina.
@@ -4067,6 +4068,220 @@ export default function Page() {
   // sito, capitoli numerati in prosa con tabelle e figure. Nessun prezzo: le
   // condizioni economiche stanno solo nell'offerta Mercurius (il backend rifiuta «€»).
   const [relBrand, setRelBrand] = useState<"agrostar" | "nabu">("agrostar");
+  // ---- Tavole PDF (motore delle tavole di Ceres) ----------------------------------
+  // Tre tavole in un solo PDF: planimetria generale, tavola delle tubazioni (tratti,
+  // nodi, valvole, sezioni di scavo, profilo) e tavola delle linee elettriche (cavi,
+  // sezioni, schema unifilare). Il font del PDF ha solo l'alfabeto latino-1: le
+  // altre lingue escono in inglese.
+  async function downloadTavole() {
+    if (!projectId || (!pivots.length && !pivotLines.some((l) => l.kind === "pipe"))) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
+    const pid = projectId;
+    setBusy("tav");
+    try {
+      ensureHydra(); await ensureProfile();
+      const TV = await import("@/lib/tavole");
+      let logo: string | null = null;
+      try { const b = await (await fetch("/argusmark.png")).blob(); logo = await new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = rej; fr.readAsDataURL(b); }); } catch { logo = null; }
+      const lng: Lang = (["it", "en", "fr", "es", "pt", "de", "af", "ms", "id"] as Lang[]).includes(pdfLang) ? pdfLang : "en";
+      const rev = Math.max(1, nextCeresRev() - 1);
+      const { sheets, common } = inLang(lng, () => {
+        const n0 = (x: number) => fx(Math.round(x)), n1 = (x: number) => fx(x, { maximumFractionDigits: 1 }), n2 = (x: number) => fx(x, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const LLf = (q: number[]): LL => [q[1], q[0]];
+        const pname = projects.find((x) => x.id === pid)?.name || "Argus Total", cname = clients.find((c) => c.id === clientId)?.name || "—";
+        const d = new Date(), date = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+        const HY = hydraNow(), stations = pumpStationsList(), cabs = cableRuns(stations), G = powerGear(stations);
+        const S = srcPt && pivots.length ? sourceSchemes() : null;
+        const sc = S ? (S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? null) : null;
+        const resPt = srcRoute && srcRoute.length >= 2 ? srcRoute[srcRoute.length - 1] : null;
+        const usedF = fields.filter((f) => f.parentId == null && (pivots.some((p) => p.field === f.id) || pivotLines.some((l) => l.field === f.id)));
+        const fieldsShown = (usedF.length ? usedF : fields.filter((f) => f.parentId == null)).filter((f) => !f.hidden);
+        const fieldsTv = fieldsShown.map((f) => ({ pts: f.geom.coordinates[0].map(LLf) }));
+        const gross = fieldsShown.reduce((a, f) => a + ringAreaHa(f.geom.coordinates), 0);
+        const pHa = (p: PivotItem) => (Math.PI * p.r * p.r * Math.min(360, p.deg ?? 360)) / 360 / 1e4;
+        const covHa = pivots.reduce((a, p) => a + pHa(p), 0);
+        const pivTv: TvPivot[] = pivots.map((p, k) => {
+          const deg = Math.min(360, p.deg ?? 360), azc = (p.az ?? 0) + deg / 2, c = spanComposition(p, pivotBrand);
+          return { lat: p.lat, lng: p.lng, r: p.r, deg, az: azc, ring: TV.pivotRing(p.lat, p.lng, p.r, deg, azc),
+            gunRing: p.gun && p.gun > 0 ? TV.pivotRing(p.lat, p.lng, p.r + p.gun, deg, azc) : null, spans: c?.spans.map((s) => s.len),
+            line1: `P${k + 1} · R ${n0(p.r)} m · ${n0(deg)}° · ${n1(pHa(p))} ha`,
+            line2: `${n1(pivotFlow(p) * 3.6)} m³/h · ${n1(pivotPressure(p))} bar` };
+        });
+        // ---- rete: tratti T# a diametro costante ----
+        type Run = { n: number; i: number; dn: number; L: number; q: number; pts: number[][]; hf: number; d0: number };
+        const runs: Run[] = [];
+        for (const [i, dns, ls, qs] of HY?.lines ?? []) {
+          const co = pivotLines[i]?.coords; if (!co) continue;
+          let cur: Run | null = null, dAcc = 0;
+          dns.forEach((dn, k) => {
+            const L = ls[k] ?? 0, q = qs?.[k] ?? 0;
+            const hf = q > 0 && dn > 0 ? (10.67 * L * Math.pow(q / 1000, 1.852)) / (Math.pow(hwC, 1.852) * Math.pow(dn / 1000, 4.87)) : 0;
+            if (cur && cur.dn === dn) { cur.L += L; cur.q = Math.max(cur.q, q); cur.hf += hf; cur.pts.push(co[k + 1]); }
+            else { cur = { n: runs.length + 1, i, dn, L, q, pts: [co[k], co[k + 1]], hf, d0: dAcc }; runs.push(cur); }
+            dAcc += L;
+          });
+        }
+        if (!runs.length) pivotLines.forEach((l, i) => { if (l.kind === "pipe" && l.coords.length >= 2) runs.push({ n: runs.length + 1, i, dn: 0, L: l.coords.reduce((a, q, k, c) => a + (k ? distM(c[k - 1], q) : 0), 0), q: 0, pts: l.coords, hf: 0, d0: 0 }); });
+        const vel = (r: Run) => (r.q > 0 && r.dn > 0 ? r.q / 1000 / (Math.PI * Math.pow(r.dn / 1000 * (1 - 2 / 17), 2) / 4) : 0);
+        // nodi: vertici con 3+ tratti (T, croce) o cambio di diametro (riduzione)
+        const key = (q: number[]) => `${q[0].toFixed(5)},${q[1].toFixed(5)}`;
+        const nodeMap = new Map<string, { q: number[]; dns: number[] }>();
+        for (const r of runs) for (let k = 0; k < r.pts.length - 1; k++) for (const q of [r.pts[k], r.pts[k + 1]]) {
+          const e = nodeMap.get(key(q)) ?? nodeMap.set(key(q), { q, dns: [] }).get(key(q))!; e.dns.push(r.dn);
+        }
+        const nodes: { n: number; q: number[]; type: string; dns: number[] }[] = [];
+        for (const e of nodeMap.values()) {
+          const mx = Math.max(...e.dns), mn = Math.min(...e.dns), deg = e.dns.length;
+          const type = deg >= 4 ? tx("Raccordi a croce") : deg === 3 ? tx("Raccordi a T") : deg === 2 && mn < mx && mn > 0 ? tx("Riduzione") : "";
+          if (type) nodes.push({ n: nodes.length + 1, q: e.q, type, dns: [...new Set(e.dns)].sort((a, b) => b - a) });
+        }
+        // apparecchiature: sfiati (inizio, colmi, fine in salita), scarichi (avvallamenti), idrovalvole ai pivot, non ritorno e misuratore alle stazioni
+        const prof = netProfRef.current?.sig === netSig() ? netProfRef.current.lines : null;
+        const lineAt = (co: number[][], x: number) => { let c = 0; for (let k = 0; k < co.length - 1; k++) { const L = distM(co[k], co[k + 1]); if (x <= c + L + 1e-6) { const f = L ? (x - c) / L : 0; return [co[k][0] + (co[k + 1][0] - co[k][0]) * f, co[k][1] + (co[k + 1][1] - co[k][1]) * f]; } c += L; } return co[co.length - 1]; };
+        const runAt = (i: number, x: number) => runs.find((r) => r.i === i && x >= r.d0 - 1e-6 && x <= r.d0 + r.L + 1e-6) ?? runs.find((r) => r.i === i);
+        type Ap = { tag: string; k: "I" | "S" | "V" | "M"; type: string; dn: string; run: string; prog: number | null; q: number[]; z: number | null };
+        const aps: Ap[] = []; let nS = 0, nD = 0;
+        const pushAp = (k: Ap["k"], type: string, i: number, x: number, z: number | null) => {
+          const co = pivotLines[i].coords, r = runAt(i, x), tag = k === "S" ? `S${++nS}` : `D${++nD}`;
+          aps.push({ tag, k, type, dn: r?.dn ? `Ø${r.dn}` : "—", run: r ? `T${r.n}` : "—", prog: x, q: lineAt(co, x), z });
+        };
+        const lineIdx = [...new Set(runs.map((r) => r.i))];
+        for (const i of lineIdx) {
+          const co = pivotLines[i].coords, Ltot = co.reduce((a, q, k, c) => a + (k ? distM(c[k - 1], q) : 0), 0), pr = prof?.get(i);
+          if (pr && pr.z.filter((z) => z != null).length >= 3) {
+            const n = pr.d.length, z = pr.z.map((v) => v ?? NaN);
+            const win = (k: number, rr: number) => { const o: number[] = []; for (let j = 0; j < n; j++) if (Math.abs(pr.d[j] - pr.d[k]) <= rr && Number.isFinite(z[j])) o.push(z[j]); return o; };
+            pushAp("S", tx("Valvole di sfiato / aria"), i, 0, Number.isFinite(z[0]) ? z[0] : null);
+            let dl = 0;
+            for (let k = 1; k < n - 1; k++) {
+              if (!Number.isFinite(z[k])) continue;
+              const near = win(k, 150), far = win(k, 400);
+              if (z[k] >= Math.max(...near) && z[k] - Math.min(...far) >= 1) pushAp("S", tx("Valvole di sfiato / aria"), i, pr.d[k], z[k]);
+              else if (z[k] <= Math.min(...near) && Math.max(...far) - z[k] >= 1) { pushAp("V", tx("Scarichi invernali (gelo)"), i, pr.d[k], z[k]); dl++; }
+            }
+            if (Number.isFinite(z[n - 1]) && Number.isFinite(z[n - 2]) && z[n - 1] < z[n - 2]) { pushAp("V", tx("Scarichi invernali (gelo)"), i, pr.d[n - 1], z[n - 1]); dl++; }
+            else pushAp("S", tx("Valvole di sfiato / aria"), i, pr.d[n - 1], Number.isFinite(z[n - 1]) ? z[n - 1] : null);
+            if (!dl) { let kmin = 0; for (let k = 1; k < n; k++) if (z[k] < z[kmin]) kmin = k; pushAp("V", tx("Scarichi invernali (gelo)"), i, pr.d[kmin], Number.isFinite(z[kmin]) ? z[kmin] : null); }
+          } else {
+            pushAp("S", tx("Valvole di sfiato / aria"), i, 0, null);
+            for (let x = 500; x < Ltot - 50; x += 500) pushAp("S", tx("Valvole di sfiato / aria"), i, x, null);
+            pushAp("V", tx("Scarichi invernali (gelo)"), i, Ltot, null);
+          }
+        }
+        pivots.forEach((p, k) => { const rs = pivotRiser(p); aps.push({ tag: `I${k + 1}`, k: "I", type: tx("Idrovalvola") + ` · P${k + 1}`, dn: `DN${rs.mv}`, run: "—", prog: null, q: [p.lng, p.lat], z: null }); });
+        stations.forEach((st, k) => { if (!st.pt) return;
+          const dn = runs.find((r) => r.pts.some((q) => distM(q, st.pt!) < 30))?.dn;
+          aps.push({ tag: `NR${k + 1}`, k: "V", type: tx("Valvole di non ritorno") + ` · ${st.name}`, dn: dn ? `Ø${dn}` : "—", run: "—", prog: null, q: st.pt, z: null });
+          aps.push({ tag: `M${k + 1}`, k: "M", type: tx("Misuratore di portata") + ` · ${st.name}`, dn: dn ? `Ø${dn}` : "—", run: "—", prog: null, q: st.pt, z: null }); });
+        // ---- elementi comuni della planimetria ----
+        const PIPE_C = "#c2691a", ADD_C = "#1769ff", CAB_C = "#e11d48", PUMP_C = "#0ea5e9";
+        const srcLines: TvLine[] = srcRoute && srcRoute.length >= 2 ? [{ id: "src", pts: srcRoute.map(LLf), color: ADD_C, width: 0.9 }] : [];
+        const basePts: TvPoint[] = [];
+        if (srcPt) basePts.push({ pt: LLf(srcPt), color: "#1d6fb8", lab: tx("Fonte d'acqua") });
+        if (resPt && sc?.res) basePts.push({ pt: LLf(resPt), color: "#1d6fb8", resR: sc.res.r, resLab: `${tx("Vasca di accumulo")} · ${n0(sc.res.vol)} m³` });
+        {   // stazioni nello stesso punto (presa e rilanci alla vasca): un solo simbolo con un'etichetta
+          const grp = new Map<string, { pt: number[]; names: string[] }>();
+          stations.forEach((st) => { if (!st.pt) return; const k2 = key(st.pt); (grp.get(k2) ?? grp.set(k2, { pt: st.pt, names: [] }).get(k2)!).names.push(st.name); });
+          for (const g of grp.values()) basePts.push({ pt: LLf(g.pt), color: PUMP_C, square: true, lab: g.names.length > 1 ? `${g.names[0]} +${g.names.length - 1}` : g.names[0] });
+        }
+        const pivItems: TvColItem[] = pivots.map((p, k) => ({ head: pivTv[k].line1, lines: [pivTv[k].line2 ?? ""] }));
+        const stItems: TvColItem[] = stations.map((st) => ({ head: st.name, lines: [`${n1(st.qLs * 3.6)} m³/h · ${n0(st.head)} m · ${n1(st.kW)} kW`, st.pick ? `${st.pick.n} × ${st.pick.model ?? ""}`.trim() : ""].filter(Boolean) }));
+        const cellsBase = (title: string): [string, string][] => [[tx("Cliente"), cname], [tx("Riferimento"), `${pname} · ${title}`], [tx("Superficie campo"), `${n1(gross)} ha`],
+          [tx("Copertura"), gross > 0 ? `${n0((covHa / gross) * 100)} %` : "—"], [tx("Coperta / non cop."), `${n1(covHa)} / ${n1(Math.max(0, gross - covHa))} ha`],
+          [tx("Macchine"), `${pivots.length} pivot`], [tx("Data"), `${date} · Rev. ${rev}`]];
+        const totL = runs.reduce((a, r) => a + r.L, 0);
+        const byDn = new Map<number, number>(); runs.forEach((r) => byDn.set(r.dn, (byDn.get(r.dn) ?? 0) + r.L));
+        // 1 — planimetria generale
+        const sh1: TvSheet = { title: tx("Planimetria generale"), fields: fieldsTv, pivots: pivTv,
+          lines: [...srcLines, ...runs.map((r) => ({ id: "p" + r.n, pts: r.pts.map(LLf), color: PIPE_C, dash: true, width: 0.6 }))], points: basePts,
+          column: [{ title: tx("Impianto"), items: [...pivItems, ...stItems] },
+            { title: tx("Tubo sotterraneo"), items: [...byDn.entries()].sort((a, b) => b[0] - a[0]).map(([dn, L]) => ({ head: dn ? `PE100 PN10 Ø${dn}` : tx("Tubo sotterraneo"), lines: [`${n0(L)} m`] })) }],
+          cells: cellsBase(tx("Planimetria generale")) };
+        // 2 — tubazioni
+        const trenchItems: TvTrenchItem[] = [...byDn.keys()].filter((x) => x > 0).sort((a, b) => b - a).map((dn) => {
+          const tr = TV.trench(dn), sandTop = Math.max(0.2, tr.cover - 0.15);
+          return { title: `${tx("Tratto")} Ø${dn} · PE100 PN10`, w: tr.w, h: tr.h, sandTop, tape: Math.max(0.15, tr.cover - 0.4),
+            objs: [{ k: "pipe", x: 0, y: tr.cover + tr.od / 2, r: tr.od / 2 }],
+            notes: [tx("Ricoprimento sopra il tubo {c} m", { c: n2(tr.cover) }), tx("Letto di posa in sabbia 0,10 m"), tx("Rinfianco e copertura in sabbia (giallo)"), tx("Nastro segnalatore (arancio tratteggiato)"), tx("Rinterro con il terreno di scavo")] };
+        });
+        const trenchPages: TvDraw[] = [];
+        for (let k = 0; k < trenchItems.length; k += 4) trenchPages.push({ kind: "trench", title: tx("Sezioni tipo di scavo"), items: trenchItems.slice(k, k + 4) });
+        // profilo della linea più lunga, con la piezometrica dalla prevalenza alla presa
+        const profPages: TvDraw[] = [];
+        if (prof) {
+          const best = lineIdx.map((i) => ({ i, pr: prof.get(i) })).filter((x) => x.pr && x.pr.z.filter((z) => z != null).length >= 3)
+            .sort((a, b) => (b.pr!.d[b.pr!.d.length - 1] ?? 0) - (a.pr!.d[a.pr!.d.length - 1] ?? 0))[0];
+          if (best?.pr) {
+            const pr = best.pr, zs = pr.z.map((z, k) => z ?? pr.z.slice(0, k).reverse().find((v) => v != null) ?? pr.z.find((v) => v != null) ?? 0) as number[];
+            // piezometrica: dalla fine della linea (pressione del pivot più esigente) risalendo le perdite,
+            // alzata quanto serve per tenere almeno 5 m d'acqua su tutto il profilo
+            const pEnd = Math.max(...pivots.map((p) => pivotPressure(p) * 10.2), 20);
+            const lossAt = (x: number) => runs.filter((r) => r.i === best.i).reduce((a, r) => a + (x >= r.d0 + r.L ? r.hf : x > r.d0 ? (r.hf * (x - r.d0)) / Math.max(1, r.L) : 0), 0);
+            const Lend = pr.d[pr.d.length - 1] ?? 0, lossEnd = lossAt(Lend), raw = pr.d.map((dd) => zs[zs.length - 1] + pEnd + (lossEnd - lossAt(dd)));
+            const lift = Math.max(0, ...raw.map((h, k) => zs[k] + 5 - h));
+            const pts = pr.d.map((dd, k) => ({ d: dd, z: zs[k], hgl: raw[k] + lift }));
+            const highs = aps.filter((a) => a.k === "S" && a.prog != null && a.z != null && runs.some((r) => r.i === best.i && `T${r.n}` === a.run)).map((a) => ({ d: a.prog!, z: a.z! }));
+            const lows = aps.filter((a) => a.k === "V" && a.prog != null && a.z != null && runs.some((r) => r.i === best.i && `T${r.n}` === a.run)).map((a) => ({ d: a.prog!, z: a.z! }));
+            const L = pr.d[pr.d.length - 1] ?? 1, tl = runs.filter((r) => r.i === best.i).map((r) => `T${r.n}`);
+            profPages.push({ kind: "profile", title: tx("Profilo longitudinale"), sub: `${tl[0] ?? ""}${tl.length > 1 ? "–" + tl[tl.length - 1] : ""} · ${n0(L)} m`, L, pts, highs, lows,
+              labT: tx("terreno"), labH: tx("linea piezometrica"), labA: tx("Valvole di sfiato / aria"), labD: tx("Scarichi invernali (gelo)") });
+          }
+        }
+        const coordS = (q: number[]) => `${q[1].toFixed(6)}, ${q[0].toFixed(6)}`;
+        const fitCount = new Map<string, number>(); nodes.forEach((nd) => fitCount.set(nd.type, (fitCount.get(nd.type) ?? 0) + 1));
+        const sh2: TvSheet = { title: tx("Tavola delle tubazioni"), fields: fieldsTv, pivots: pivTv, vertices: false,
+          lines: [...srcLines, ...runs.map((r) => ({ id: "p" + r.n, pts: r.pts.map(LLf), color: PIPE_C, dash: true, width: 0.7, lab: `T${r.n}${r.dn ? " · Ø" + r.dn : ""}` }))],
+          points: basePts, nodes: nodes.map((nd) => ({ pt: LLf(nd.q), lab: `N${nd.n}` })), app: aps.map((a) => ({ pt: LLf(a.q), lab: a.tag, k: a.k })),
+          column: [{ title: tx("Tratti delle tubazioni"), items: [{ head: `${runs.length} ${tx("Tratto").toLowerCase()} · ${n0(totL)} m`, lines: [...byDn.entries()].sort((a, b) => b[0] - a[0]).map(([dn, L]) => `Ø${dn} · ${n0(L)} m`) }] },
+            { title: tx("Raccordi"), items: [...fitCount.entries()].map(([k, n]) => ({ head: `${k} · ${n}`, lines: [] })) },
+            { title: tx("Valvole e apparecchiature"), items: [["S", tx("Valvole di sfiato / aria")], ["V", tx("Scarichi invernali (gelo)") + " / " + tx("Valvole di non ritorno")], ["I", tx("Idrovalvola")], ["M", tx("Misuratore di portata")]]
+              .map(([k, l]) => ({ head: `${k} · ${l}`, lines: [`${aps.filter((a) => a.k === k).length}`] })) }],
+          cells: cellsBase(tx("Tavola delle tubazioni")),
+          tech: [{ title: tx("Tratti delle tubazioni"), blocks: [{ table: { w: [8, 14, 22, 10, 14, 10, 10, 10],
+              cols: [{ t: tx("Tratto") }, { t: tx("Tipo") }, { t: tx("Materiale e classe") }, { t: "Ø (mm)", a: "r" }, { t: tx("Lunghezza") + " (m)", a: "r" }, { t: "l/s", a: "r" }, { t: "m/s", a: "r" }, { t: "hf (bar)", a: "r" }],
+              rows: runs.map((r) => [`T${r.n}`, tx("Tubo sotterraneo"), "PE100 PN10 SDR17", r.dn ? String(r.dn) : "—", n0(r.L), r.q ? n1(r.q) : "—", r.q ? n2(vel(r)) : "—", r.hf ? n2(r.hf / 10.2) : "—"]) } }] },
+            ...(nodes.length ? [{ title: tx("Nodi e raccordi"), blocks: [{ table: { w: [8, 22, 20, 26], cols: [{ t: tx("Nodo") }, { t: tx("Tipo") }, { t: "Ø (mm)" }, { t: tx("Coordinate (lat, lng)") }],
+              rows: nodes.map((nd) => [`N${nd.n}`, nd.type, nd.dns.join(" × "), coordS(nd.q)]) } }] }] : []),
+            { title: tx("Valvole e apparecchiature"), blocks: [{ table: { w: [7, 26, 9, 8, 11, 22, 9], cols: [{ t: tx("Sigla") }, { t: tx("Tipo") }, { t: "DN/Ø" }, { t: tx("Tratto") }, { t: tx("Progressiva (m)"), a: "r" }, { t: tx("Coordinate (lat, lng)") }, { t: tx("Quota (m)"), a: "r" }],
+              rows: aps.map((a) => [a.tag, a.type, a.dn, a.run, a.prog != null ? n0(a.prog) : "—", coordS(a.q), a.z != null ? n1(a.z) : "—"]) } }] }],
+          draw: [...trenchPages, ...profPages] };
+        // 3 — linee elettriche
+        const cabRows = cabs.map((c, k) => ({ c, n: k + 1, form: `3×${fx(c.S)} mm² ${c.mat}` }));
+        const sh3: TvSheet = { title: tx("Tavola delle linee elettriche"), fields: fieldsTv, pivots: pivTv, vertices: false,
+          lines: [...srcLines, ...runs.map((r) => ({ id: "p" + r.n, pts: r.pts.map(LLf), color: "#b9a58c", dash: true, width: 0.35 })),
+            ...cabRows.filter((x) => x.c.coords && x.c.coords.length >= 2).map((x) => ({ id: "c" + x.n, pts: x.c.coords!.map(LLf), color: CAB_C, dash: true, width: 0.6, lab: `C${x.n} · ${x.form}`, labColor: [225, 29, 72] as RGB }))],
+          points: basePts,
+          column: [{ title: tx("Linee elettriche"), items: cabRows.map((x) => ({ head: `C${x.n} · ${x.c.name}`, lines: [`${x.form} · ${n0(x.c.L)} m · ${n1(x.c.kW)} kW · ${n1(x.c.I)} A · ${n1(x.c.dv)} %`] })) },
+            { title: tx("Allacciamento elettrico"), items: [{ head: `${n0(G.kW)} kW · ${G.kva} kVA`, lines: [G.supply.toUpperCase()] }] }],
+          cells: cellsBase(tx("Tavola delle linee elettriche")),
+          tech: cabRows.length ? [{ title: tx("Linee elettriche"), blocks: [{ table: { w: [8, 30, 18, 8, 12, 10, 10, 10],
+            cols: [{ t: tx("Linea") }, { t: tx("Tipo") }, { t: tx("Formazione") }, { t: "V", a: "r" }, { t: tx("Lunghezza") + " (m)", a: "r" }, { t: "kW", a: "r" }, { t: "A", a: "r" }, { t: tx("Caduta") + " (%)", a: "r" }],
+            rows: cabRows.map((x) => [`C${x.n}`, x.c.name, x.form, "400", n0(x.c.L), n1(x.c.kW), n1(x.c.I), n2(x.c.dv)]) } }] }] : [],
+          draw: cabRows.length ? [
+            { kind: "trench", title: tx("Sezioni tipo di scavo"), items: [
+              { title: tx("Scavo per cavo interrato (trincea 0,40 × 0,80 m)"), w: 0.4, h: 0.8, sandTop: 0.55, tape: 0.4, objs: [{ k: "cable", x: -0.05, y: 0.72 }, { k: "cable", x: 0.05, y: 0.72 }, { k: "tile", x: 0, y: 0.62, w: 0.3 }],
+                notes: [tx("Cavi a 0,80 m di profondità, in trincea propria 0,40 m"), tx("Tegolo o lastra di protezione sopra i cavi"), tx("Nastro segnalatore (arancio tratteggiato)"), tx("Rinterro con il terreno di scavo")] },
+              ...(runs.length ? (() => { const dn = Math.max(...runs.map((r) => r.dn), 110), tr = TV.trench(dn);
+                return [{ title: tx("Cavo posato nello scavo del tubo (scavo comune, senza scavo in più)"), w: tr.w, h: tr.h, sandTop: Math.max(0.2, tr.cover - 0.15), tape: Math.max(0.15, tr.cover - 0.4),
+                  objs: [{ k: "pipe" as const, x: -tr.w * 0.1, y: tr.cover + tr.od / 2, r: tr.od / 2 }, { k: "cable" as const, x: tr.w / 2 - 0.08, y: tr.h - 0.05 }, { k: "tile" as const, x: tr.w / 2 - 0.08, y: tr.h - 0.14, w: 0.14 }],
+                  notes: [tx("Cavo nello scavo del tubo, a lato e sul fondo, con il tegolo sopra"), tx("Ricoprimento sopra il tubo {c} m", { c: n2(tr.cover) }), tx("Nastro segnalatore (arancio tratteggiato)")] }]; })() : [])] },
+            { kind: "unif", title: tx("Schema unifilare"), note: tx("Schema indicativo: ogni utenza ha il suo interruttore nel quadro della fonte; sezioni, lunghezze e cadute dalle linee disegnate."),
+              srcs: [{ cap: tx("Allacciamento elettrico").toUpperCase(), name: `${G.supply.toUpperCase()} · ${G.kva} kVA`, info: `${n0(G.kW)} kW`,
+                loads: cabRows.map((x) => ({ name: x.c.name.split(" · ").pop() ?? x.c.name, info: `${n1(x.c.kW)} kW · ${n1(x.c.I)} A`, cab: `C${x.n} · ${x.form}`, cab2: `${n0(x.c.L)} m · ${n1(x.c.dv)} %` })) }] }] : [] };
+        const common: TvCommon = { format: pdfFormat, brand: "Argus Total", brandSub: "by Nabu · Agrostar Group", version: REV, logo,
+          coordsTitle: tx("COORDINATE GPS"), centroidLabel: tx("Centro campo"), client: cname, rev: String(rev),
+          footer: `© ${new Date().getFullYear()} Nabu srl · Agrostar Group · Argus Total ${REV} · ${tx("esportato il")} {d}`,
+          disclaimer: tx("I risultati sono stime a scopo di progettazione preliminare e non sostituiscono la verifica di un tecnico qualificato. Dati da confermare sul campo.") };
+        const sheets = [sh1, ...(runs.length ? [sh2] : []), ...(cabRows.length ? [sh3] : [])];
+        return { sheets, common };
+      });
+      const blob = await TV.buildTavole(sheets, common);
+      const pname = (projects.find((x) => x.id === pid)?.name || "Argus").replace(/[^\w\-]+/g, "_");
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `Tavole_${pname}_${pdfFormat.toUpperCase()}_${REV}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      setMsg(t("Tavole PDF pronte ✓"));
+    } catch (e) { setMsg(`${t("Errore generazione PDF")}: ${String((e as Error)?.message ?? e)}`); }
+    finally { setBusy(""); }
+  }
   async function downloadRelazione() {
     if (!projectId || (!pivots.length && !Object.keys(sysDesigns).length)) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
     const pid = projectId;
@@ -8786,6 +9001,10 @@ export default function Page() {
                 <option value="agrostar">Agrostar</option><option value="nabu">Nabu</option>
               </select>
             </div>
+            <button className="btn-ghost w-full mt-2 flex items-center justify-center gap-2" disabled={busy === "tav" || (!pivots.length && !pivotLines.some((l) => l.kind === "pipe"))} onClick={downloadTavole}
+              title={t("Tavole di progetto come in Ceres: planimetria generale, tavola delle tubazioni (tratti, nodi, valvole, sezioni di scavo, profilo) e tavola delle linee elettriche (cavi, sezioni, schema unifilare), su ortofoto in scala. Senza prezzi.")}>
+              <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="1.5" /><path d="M3 15h18M15 15v5M7 11l3-3 3 2 4-4" /></svg>
+              {busy === "tav" ? t("Preparo…") : t("Tavole di progetto (PDF {f})", { f: pdfFormat.toUpperCase() })}</button>
             {renderOlympus()}
             <div className="mt-3 bg-panel rounded-lg p-2 space-y-1.5">
               <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Fasi di realizzazione")}</div>

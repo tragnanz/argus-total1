@@ -12,6 +12,7 @@
   "dependencies": {
     "@geoman-io/leaflet-geoman-free": "^2.18.3",
     "@tmcw/togeojson": "5.8.1",
+    "jspdf": "^2.5.2",
     "jszip": "^3.10.1",
     "leaflet": "^1.9.4",
     "next": "14.2.33",

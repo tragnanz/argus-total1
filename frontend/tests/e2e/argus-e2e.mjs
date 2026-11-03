@@ -94,6 +94,14 @@ try {
   ok(feats.some((f) => f.properties?.tipo === "attrezzatura" && f.properties?.pompa_modello), ".ceres: planimetria con la pompa consigliata");
   ok(feats.filter((f) => f.properties?.tipo === "cavo").every((f) => f.geometry.coordinates.length >= 3), ".ceres: cavi dei pivot lungo le tubazioni");
 
+  const tav = await download(() => page.locator('button:has-text("Tavole di progetto")').click());
+  if (process.env.ARGUS_SAVE_TAV) await tav.saveAs(process.env.ARGUS_SAVE_TAV);
+  const tavPdf = await readBytes(tav), cp = await import("node:child_process");
+  const tavPages = Number(/Pages:\s+(\d+)/.exec(cp.execFileSync("pdfinfo", [await tav.path()]).toString())?.[1] ?? 0);
+  const tavTxt = cp.execFileSync("pdftotext", ["-layout", await tav.path(), "-"]).toString();
+  ok(tavPdf.subarray(0, 4).toString() === "%PDF" && tavPages >= 5, `Tavole: PDF di ${tavPages} pagine`);
+  ok(/Planimetria generale/.test(tavTxt) && /Tavola delle tubazioni/.test(tavTxt) && /Tavola delle linee elettriche/.test(tavTxt), "Tavole: planimetria, tubazioni e linee elettriche");
+  ok(/Tratti delle tubazioni/.test(tavTxt) && /T1\b/.test(tavTxt) && /Valvole e apparecchiature/.test(tavTxt) && /Sezioni tipo di scavo/.test(tavTxt) && /Schema unifilare/.test(tavTxt), "Tavole: tratti, valvole, sezioni di scavo e schema unifilare");
   const rel = await download(() => page.locator('button:has-text("Relazione tecnica per il cliente")').click());
   const relPdf = await readBytes(rel);
   ok(relPdf.subarray(0, 4).toString() === "%PDF" && relPdf.length > 200000, "Relazione tecnica per il cliente: PDF con copertina e planimetria");
