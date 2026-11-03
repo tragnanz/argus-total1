@@ -146,6 +146,27 @@ try {
   const btnUndo = await driveOn();
   await page.locator('button[aria-label="Rifai"]').click(); await page.waitForTimeout(1500);
   ok(undone && redone && btnUndo && !(await driveOn()), "Annulla e rifai: scorciatoie ⌘Z / ⇧⌘Z e frecce in alto");
+  // selezione + ⌫: clic su un pivot (gruppo), clic sulla riga (pivot singolo), ⌫ lo elimina, ⌘Z lo rimette
+  await page.locator('button:has-text("Impianti")').first().click(); await page.waitForTimeout(1500);
+  await page.locator('button[aria-label="Home"]').first().click(); await page.waitForTimeout(1500);
+  const circles = await page.locator("path.leaflet-interactive").evaluateAll((ps) => ps.map((p) => { const r = p.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; })
+    .filter(([, , w, h]) => w > 30 && Math.abs(w - h) < 4));
+  const vis = circles.filter(([x, y, w, h]) => { const cx = x + w / 2, cy = y + h / 2; return cx > 420 && cx < 1050 && cy > 120 && cy < 900; });
+  const rowsSel = 'tr[title="Modifica"]';
+  if (vis.length) {
+    const [x, y, w, h] = vis[0];
+    await page.mouse.click(x + w / 2 + w * 0.2, y + h / 2); await page.waitForTimeout(1200);
+    const n0 = await page.locator(rowsSel).count();
+    await page.locator(rowsSel).first().click(); await page.waitForTimeout(900);
+    const chip = await page.locator('text=selezionato').count();
+    await page.keyboard.press("Backspace"); await page.waitForTimeout(1500);
+    const n1 = await page.locator(rowsSel).count();                   // resta selezionato il gruppo
+    await page.keyboard.press("ControlOrMeta+z"); await page.waitForTimeout(1500);
+    await page.mouse.click(x + w / 2 + w * 0.2, y + h / 2); await page.waitForTimeout(1200);
+    const n2 = await page.locator(rowsSel).count();
+    ok(n0 > 0 && chip > 0 && n1 === n0 - 1 && n2 === n0, `Selezione: ⌫ elimina il pivot selezionato, ⌘Z lo rimette (${n0} → ${n1} → ${n2})`);
+    await page.keyboard.press("Escape");
+  } else ok(false, "Selezione: pivot non trovati sulla mappa");
   ok(errors.length === 0, `nessun errore nella pagina${errors.length ? ": " + errors.join(" | ") : ""}`);
 } catch (e) {
   fails.push(String(e)); console.log("✕", e);

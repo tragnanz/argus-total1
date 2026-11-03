@@ -15,7 +15,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.204";
+const REV = "v0.6.205";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1436,6 +1436,7 @@ export default function Page() {
   // Selezione delle tubazioni a due tempi, come per i pivot: primo clic = gruppo,
   // secondo clic = la singola tubazione, che entra in modifica con i suoi vertici.
   const [pipeSel, setPipeSel] = useState<{ mode: "none" | "group" | "single"; idx: number }>({ mode: "none", idx: -1 });
+  const [fieldPicked, setFieldPicked] = useState(false);   // campo selezionato con un clic sulla mappa (⌫ lo elimina)
   // gruppi di strade aperti (albero Livelli e pannello Strade): chiusi di default
   const [openRoadGroups, setOpenRoadGroups] = useState<Set<string>>(new Set());
   const toggleRoadGroup = (k: string) => setOpenRoadGroups((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; });
@@ -1525,17 +1526,21 @@ export default function Page() {
   const unseen = Math.max(0, alerts.length - alertsSeen);
   useEffect(() => { mapApi.current?.setBasemap(basemap); }, [basemap]);
   useEffect(() => { mapApi.current?.setMapLabels(mapLabels); }, [mapLabels]);
+  // ⌫ / Canc elimina l'elemento selezionato (pivot, tubazione, campo cliccato sulla
+  // mappa); Esc toglie la selezione. Nei campi di testo i tasti restano al testo.
+  const selKeys = useRef<{ del: () => boolean; esc: () => boolean }>({ del: () => false, esc: () => false });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      if (e.key !== "Delete" && e.key !== "Backspace" && e.key !== "Escape") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const el = document.activeElement as HTMLElement | null;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
-      if (pipeSel.mode === "single") { e.preventDefault(); deleteSelectedPipe(); }
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
+      const done = e.key === "Escape" ? selKeys.current.esc() : selKeys.current.del();
+      if (done) e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pipeSel, pivotLines, hiddenPipeFields, pivots]);
+  }, []);
   // Esc chiude il righello o il righello circolare, come ripremere l'icona.
   useEffect(() => {
     if (!measuring && !circling) return;
@@ -2637,18 +2642,19 @@ export default function Page() {
         const real = visIdx[i];
         // lavorare sui pivot chiude la modifica di una tubazione
         if (editPipeRef.current != null) { editPipeRef.current = null; api2.endPipeEdit?.(); }
-        setPipeSel({ mode: "none", idx: -1 });
+        setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false);
         setPivotSel((s) => (s.mode === "none" ? { mode: "group", idx: -1 } : { mode: "single", idx: real }));
       },
       onMove: (i, lat, lng) => { const real = visIdx[i]; commitPivots(pivots.map((p, k) => (k === real ? { ...p, lat, lng } : p))); },
       onBackground: () => {
-        setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 });
+        setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false);
         if (editPipeRef.current != null) { editPipeRef.current = null; api2.endPipeEdit?.(); setMsg(""); }
       },
       // Clic su una tubazione: la rende modificabile (maniglie sui vertici).
       onLineClick: (li) => {
         const target = pivotLines.indexOf(visL[li]);   // indice reale nel modello
         if (target < 0) return;
+        setFieldPicked(false);
         // PRIMO clic: seleziona il GRUPPO delle tubazioni, senza entrare in modifica.
         if (pipeSel.mode === "none") {
           setPivotSel({ mode: "none", idx: -1 });
@@ -2698,6 +2704,26 @@ export default function Page() {
     commitPivots(pivots.filter((_, k) => k !== pivotSel.idx));
     setPivotSel({ mode: "group", idx: -1 });
   }
+  // Elemento selezionato che ⌫ può eliminare (nome per la barretta in alto)
+  const delTarget: { name: string; del: () => void } | null =
+    pipeSel.mode === "single" ? { name: t("Tubazione"), del: deleteSelectedPipe }
+    : pivotSel.mode === "single" && pivots[pivotSel.idx] ? { name: `${t("Pivot")} P${pivotSel.idx + 1}`, del: () => { deleteSelPivot(); setMsg(t("Pivot eliminato ✓")); } }
+    : fieldPicked && active ? { name: active.name, del: () => { setFieldPicked(false); removeField(active); } }
+    : null;
+  const clearSel = () => {
+    const any = pivotSel.mode !== "none" || pipeSel.mode !== "none" || fieldPicked;
+    setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false);
+    if (editPipeRef.current != null) { editPipeRef.current = null; mapApi.current?.endPipeEdit?.(); }
+    return any;
+  };
+  selKeys.current = {
+    del: () => {
+      if (delTarget) { delTarget.del(); return true; }
+      if (pivotSel.mode === "group" || pipeSel.mode === "group") { setMsg(t("Clicca ancora l'elemento da eliminare: il primo clic seleziona il gruppo.")); return true; }
+      return false;
+    },
+    esc: () => (drawing ? false : clearSel()),
+  };
   function applyRadiusToAll() { commitPivots(pivots.map((p) => ({ ...p, r: pivotR }))); }
 
   // ---- livello Strade (linee) ----
@@ -7242,9 +7268,21 @@ export default function Page() {
 
   return (
     <main>
-      <MapCanvas apiRef={mapApi} onCreate={addDrawnField} onEditActive={updateActiveGeom} onSelect={selectField}
+      <MapCanvas apiRef={mapApi} onCreate={addDrawnField} onEditActive={updateActiveGeom} onSelect={(id) => { selectField(id); setFieldPicked(true); setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); }}
         onCanalProfile={(i) => setProfileCanal(i)} onDrawChange={setDrawing} />
 
+      {/* Elemento selezionato: ⌫ (o il pulsante) lo elimina, Esc toglie la selezione */}
+      {delTarget && !drawing && (
+        <div className="ui-scale fixed top-20 left-1/2 -translate-x-1/2 z-[500] widget pl-3 pr-1.5 py-1.5 flex items-center gap-2 pointer-events-auto">
+          <span className="text-[12px] text-sage-dark max-w-[220px] truncate"><b className="text-brand-darker">{delTarget.name}</b> · {t("selezionato")}</span>
+          <button className="btn-ghost text-danger flex items-center gap-1.5" onClick={() => delTarget.del()} title={t("Elimina")}>
+            {t("Elimina")} <kbd className="text-[10px] font-sans px-1.5 py-0.5 rounded border border-danger/30 bg-danger/5">{isMac ? "⌫" : "Canc"}</kbd>
+          </button>
+          <button className="btn-ghost" onClick={clearSel} title={t("Togli la selezione")}>
+            <kbd className="text-[10px] font-sans px-1.5 py-0.5 rounded border border-black/10 bg-black/[0.03]">Esc</kbd>
+          </button>
+        </div>
+      )}
       {/* Pannellino di controllo del disegno/tracciatura (snap ai confini dei poligoni attivo). */}
       {drawing && (
         <div className="ui-scale fixed top-20 left-1/2 -translate-x-1/2 z-[500] widget px-2 py-1.5 flex items-center gap-2 pointer-events-auto">
@@ -7282,12 +7320,12 @@ export default function Page() {
             <button onClick={goHome} className="nav-pill" title={t("Vista iniziale")} aria-label={t("Home")}><IcoHome /></button>
 
             <div className="flex items-center rounded-full bg-white/5 ring-1 ring-white/10">
-              <button onClick={undo} disabled={!canUndo} className="nav-pill relative px-2.5 disabled:opacity-35"
+              <button onClick={undo} disabled={!canUndo} className="nav-pill relative px-2.5 disabled:opacity-60"
                 title={canUndo ? `${t("Annulla l'ultima operazione")} (${isMac ? "⌘Z" : "Ctrl+Z"})` : t("Niente da annullare")} aria-label={t("Annulla")}>
                 <IcoUndo />
                 {undoN > 1 && <span className="absolute -top-1 -right-0.5 min-w-[15px] h-[15px] px-0.5 text-[9px] font-bold leading-[15px] text-center rounded-full bg-white/90 text-nabu-green tabular-nums">{undoN > 99 ? "99+" : undoN}</span>}
               </button>
-              <button onClick={redo} disabled={!canRedo} className="nav-pill relative px-2.5 disabled:opacity-35"
+              <button onClick={redo} disabled={!canRedo} className="nav-pill relative px-2.5 disabled:opacity-60"
                 title={canRedo ? `${t("Rifai l'operazione annullata")} (${isMac ? "⇧⌘Z" : "Ctrl+Y"})` : t("Niente da rifare")} aria-label={t("Rifai")}>
                 <IcoRedo />
                 {redoN > 1 && <span className="absolute -top-1 -right-0.5 min-w-[15px] h-[15px] px-0.5 text-[9px] font-bold leading-[15px] text-center rounded-full bg-white/90 text-nabu-green tabular-nums">{redoN > 99 ? "99+" : redoN}</span>}
