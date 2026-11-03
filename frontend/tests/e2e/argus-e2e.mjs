@@ -72,6 +72,13 @@ try {
   await page.locator(`select:has(option:text-is("${CLIENT}"))`).selectOption({ label: CLIENT }); await page.waitForTimeout(1200);
   await page.locator('select:has(option:text-is("Progetto E2E"))').selectOption({ label: "Progetto E2E" }); await page.waitForTimeout(5000);
 
+  const prog = page.locator('[data-testid="project-progress"]');
+  const progTxt = await prog.innerText();
+  ok(/Completamento del progetto/i.test(progTxt) && /\b\d+\/10\b/.test(progTxt), `Home: barra del completamento del progetto (${(/\d+\/10/.exec(progTxt) ?? ["?"])[0]})`);
+  await prog.locator("button").first().click(); await page.waitForTimeout(300);
+  ok((await prog.locator("li").count()) === 10, "Home: elenco delle voci da completare");
+  if (process.env.ARGUS_SHOT_PROG) await page.screenshot({ path: process.env.ARGUS_SHOT_PROG });
+  await prog.locator("button").first().click();
   await page.locator('button:has-text("Pompaggio")').first().click(); await page.waitForTimeout(2500);
   const pump = await section();
   ok(/Caprari \S+/.test(pump), "Pompaggio: pompa Caprari scelta dalle curve");

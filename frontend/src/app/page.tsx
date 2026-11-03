@@ -16,7 +16,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.212";
+const REV = "v0.6.213";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -7326,6 +7326,76 @@ export default function Page() {
     patch({ kc: Math.max(...n.map((x) => cropOf(x).kc)) });
     return n;
   });
+  // ---- Completamento del progetto: barra a sinistra con quello che manca ----------------
+  const [progOpen, setProgOpen] = useState(() => { try { return localStorage.getItem("argus.progOpen") === "1"; } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem("argus.progOpen", progOpen ? "1" : "0"); } catch { /* */ } }, [progOpen]);
+  type PStep = { k: string; ok: boolean; warn?: boolean; label: string; hint: string; tab?: string };
+  const progSteps = useMemo((): PStep[] => {
+    const hasPipes = pivotLines.some((l) => l.kind === "pipe");
+    let pumpsOk = false;
+    try { pumpsOk = capReady && pivots.length > 0 && pumpStationsList().some((st) => st.pick); } catch { pumpsOk = false; }
+    const st = projSettings(), exported = Number((st as { ceres_rev?: number }).ceres_rev ?? 0) > 0;
+    const etOk = siteEt0Peak == null || Math.abs(siteEt0Peak - et0Peak) < 0.15;
+    return [
+      { k: "client", ok: clientId != null, label: t("Cliente"), hint: t("Scegli o crea il cliente nel pannello Progetto") },
+      { k: "fields", ok: fields.length > 0, label: t("Campi"), hint: t("Disegna o importa i campi"), tab: "analisi" },
+      { k: "pivots", ok: pivots.length > 0 || Object.keys(sysDesigns).length > 0, label: t("Macchine di irrigazione"), hint: t("Posa i pivot sul campo"), tab: "impianti" },
+      { k: "source", ok: !!srcPt, label: t("Fonte d'acqua"), hint: t("Indica la presa: fiume, canale, pozzo o invaso"), tab: "fonte" },
+      { k: "pipes", ok: hasPipes, label: t("Rete di tubazioni"), hint: t("Collega i pivot alla fonte con le tubazioni"), tab: "accessori" },
+      { k: "dn", ok: !!hydra, warn: hasPipes, label: t("Diametri della rete"), hint: t("Calcola i diametri nella pagina Tubazioni"), tab: "accessori" },
+      { k: "pumps", ok: pumpsOk, label: t("Pompe"), hint: t("Scegli le pompe Caprari nella pagina Pompaggio"), tab: "pompaggio" },
+      { k: "climate", ok: !!st.site_climate, warn: true, label: t("Clima del sito"), hint: t("Si scarica da solo all'apertura del progetto (NASA POWER)") },
+      { k: "et0", ok: !!st.site_climate && etOk, warn: true, label: t("ET₀ di punta"), hint: siteEt0Peak != null ? t("Sito: {v} mm/g · usa questo valore", { v: fmt(siteEt0Peak, { maximumFractionDigits: 1 }) }) : t("Allinea l'ET₀ di punta al clima del sito"), tab: "irrigazione" },
+      { k: "export", ok: exported, label: t("Pacchetto di progetto"), hint: t("Esporta relazione, tavole e computo"), tab: "export" },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId, fields.length, pivots, sysDesigns, srcPt, pivotLines, hydra, capReady, projects, projectId, et0Peak, lang]);
+  function renderProgress() {
+    if (projectId == null) return null;
+    const S2 = progSteps, done = S2.filter((x) => x.ok).length, next = S2.find((x) => !x.ok && !x.warn) ?? S2.find((x) => !x.ok);
+    const pct = Math.round((done / S2.length) * 100);
+    const act = (x: PStep) => { if (x.k === "et0" && siteEt0Peak != null) { setEt0Peak(Math.round(siteEt0Peak * 10) / 10); return; } if (x.tab) goTab(x.tab); else setLeftMin(false); };
+    return (
+      <div className="pointer-events-auto w-full widget px-3 py-2 shrink-0" data-testid="project-progress">
+        <button type="button" className="w-full flex items-center gap-2 text-left" onClick={() => setProgOpen((o) => !o)} aria-expanded={progOpen}
+          title={progOpen ? t("Riduci") : t("Mostra cosa manca per completare il progetto")}>
+          <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide flex-1">{t("Completamento del progetto")}</span>
+          <span className={`text-[11px] font-semibold tabular-nums ${done === S2.length ? "text-brand" : "text-brand-darker"}`}>{done}/{S2.length}</span>
+          <span className="text-sage-dark text-[10px]">{progOpen ? "▴" : "▾"}</span>
+        </button>
+        <div className="mt-1.5 flex gap-[3px]" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label={t("Completamento del progetto")}>
+          {S2.map((x) => (
+            <button key={x.k} type="button" onClick={() => act(x)} title={`${x.label}: ${x.ok ? "✓" : x.hint}`}
+              className={`h-1.5 flex-1 rounded-full transition-colors ${x.ok ? "bg-brand" : x.warn ? "bg-amber/80" : "bg-black/10 hover:bg-black/20"}`} />
+          ))}
+        </div>
+        {!progOpen && next && (
+          <button type="button" onClick={() => act(next)} className="mt-1.5 w-full flex items-center gap-1.5 text-[11px] text-left text-brand-darker hover:text-brand">
+            <span className={`inline-block h-1.5 w-1.5 rounded-full ${next.warn ? "bg-amber" : "bg-rust"}`} />
+            <span className="flex-1 min-w-0 truncate"><b className="font-semibold">{next.label}</b> · {next.hint}</span>
+            {next.tab && <span className="shrink-0 text-brand-mid">→</span>}
+          </button>
+        )}
+        {progOpen && (
+          <ul className="mt-2 space-y-1">
+            {S2.map((x) => (
+              <li key={x.k}>
+                <button type="button" onClick={() => !x.ok && act(x)} disabled={x.ok}
+                  className={`w-full flex items-start gap-2 rounded-md px-1.5 py-1 text-left text-[11px] ${x.ok ? "cursor-default" : "hover:bg-black/5"}`}>
+                  <span className={`mt-[1px] grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full text-[9px] font-bold ${x.ok ? "bg-brand text-white" : x.warn ? "bg-amber text-white" : "border border-black/20 text-transparent"}`}>{x.ok ? "✓" : x.warn ? "!" : "·"}</span>
+                  <span className="flex-1 min-w-0">
+                    <span className={`block font-semibold ${x.ok ? "text-sage-dark" : "text-brand-darker"}`}>{x.label}</span>
+                    {!x.ok && <span className="block text-sage-dark leading-snug">{x.hint}</span>}
+                  </span>
+                  {!x.ok && x.tab && <span className="shrink-0 text-brand-mid">→</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
   function renderFarmCrops() {
     return (
       <div>
@@ -8047,6 +8117,7 @@ export default function Page() {
 
         {/* Colonna sinistra: pannello Progetto + widget Proprietà (impilati) */}
         <div className="absolute top-[4.5rem] left-4 bottom-[6.5rem] w-[440px] max-w-[calc(100vw/var(--ui-scale)_-_2rem)] flex flex-col gap-3 z-30 pointer-events-none">
+        {renderProgress()}
         {leftMin ? (
           <button onClick={() => setLeftMin(false)} title={t("Espandi il pannello Progetto")}
             className="pointer-events-auto self-start widget px-3 py-2 flex items-center gap-2 text-sm text-brand-darker hover:bg-black/5">
@@ -8154,7 +8225,7 @@ export default function Page() {
 
             {projectId && (
               <div className="mt-3 flex items-center gap-2 text-[11px] text-sage-dark">
-                <span className={"inline-block w-2 h-2 rounded-full " + (autosave === "saving" ? "bg-amber-400 animate-pulse" : autosave === "error" ? "bg-danger" : "bg-brand")} />
+                <span className={"inline-block w-2 h-2 rounded-full " + (autosave === "saving" ? "bg-amber animate-pulse" : autosave === "error" ? "bg-danger" : "bg-brand")} />
                 {autosave === "saving" ? t("Salvataggio automatico…") : autosave === "error" ? t("Salvataggio non riuscito (riprovo alla prossima modifica)") : t("Salvataggio automatico attivo — le modifiche vengono salvate da sole")}
               </div>
             )}
