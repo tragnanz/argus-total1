@@ -15,7 +15,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.205";
+const REV = "v0.6.206";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1436,7 +1436,8 @@ export default function Page() {
   // Selezione delle tubazioni a due tempi, come per i pivot: primo clic = gruppo,
   // secondo clic = la singola tubazione, che entra in modifica con i suoi vertici.
   const [pipeSel, setPipeSel] = useState<{ mode: "none" | "group" | "single"; idx: number }>({ mode: "none", idx: -1 });
-  const [fieldPicked, setFieldPicked] = useState(false);   // campo selezionato con un clic sulla mappa (⌫ lo elimina)
+  const [fieldPicked, setFieldPicked] = useState(false);
+  const [srcPicked, setSrcPicked] = useState(false);       // fonte d'acqua / adduttrice cliccata sulla mappa   // campo selezionato con un clic sulla mappa (⌫ lo elimina)
   // gruppi di strade aperti (albero Livelli e pannello Strade): chiusi di default
   const [openRoadGroups, setOpenRoadGroups] = useState<Set<string>>(new Set());
   const toggleRoadGroup = (k: string) => setOpenRoadGroups((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; });
@@ -2642,19 +2643,19 @@ export default function Page() {
         const real = visIdx[i];
         // lavorare sui pivot chiude la modifica di una tubazione
         if (editPipeRef.current != null) { editPipeRef.current = null; api2.endPipeEdit?.(); }
-        setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false);
+        setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false); setSrcPicked(false);
         setPivotSel((s) => (s.mode === "none" ? { mode: "group", idx: -1 } : { mode: "single", idx: real }));
       },
       onMove: (i, lat, lng) => { const real = visIdx[i]; commitPivots(pivots.map((p, k) => (k === real ? { ...p, lat, lng } : p))); },
       onBackground: () => {
-        setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false);
+        setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false); setSrcPicked(false);
         if (editPipeRef.current != null) { editPipeRef.current = null; api2.endPipeEdit?.(); setMsg(""); }
       },
       // Clic su una tubazione: la rende modificabile (maniglie sui vertici).
       onLineClick: (li) => {
         const target = pivotLines.indexOf(visL[li]);   // indice reale nel modello
         if (target < 0) return;
-        setFieldPicked(false);
+        setFieldPicked(false); setSrcPicked(false);
         // PRIMO clic: seleziona il GRUPPO delle tubazioni, senza entrare in modifica.
         if (pipeSel.mode === "none") {
           setPivotSel({ mode: "none", idx: -1 });
@@ -2709,10 +2710,13 @@ export default function Page() {
     pipeSel.mode === "single" ? { name: t("Tubazione"), del: deleteSelectedPipe }
     : pivotSel.mode === "single" && pivots[pivotSel.idx] ? { name: `${t("Pivot")} P${pivotSel.idx + 1}`, del: () => { deleteSelPivot(); setMsg(t("Pivot eliminato ✓")); } }
     : fieldPicked && active ? { name: active.name, del: () => { setFieldPicked(false); removeField(active); } }
+    : srcPicked && srcPt ? { name: t("Fonte d'acqua e adduttrice"), del: () => {
+        setSrcPicked(false); setSrcPt(null); setSrcRoute(null); setSrcShown(null); setSrcElev(null); setMsg(t("Fonte d'acqua eliminata ✓"));
+      } }
     : null;
   const clearSel = () => {
-    const any = pivotSel.mode !== "none" || pipeSel.mode !== "none" || fieldPicked;
-    setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false);
+    const any = pivotSel.mode !== "none" || pipeSel.mode !== "none" || fieldPicked || srcPicked;
+    setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false); setSrcPicked(false);
     if (editPipeRef.current != null) { editPipeRef.current = null; mapApi.current?.endPipeEdit?.(); }
     return any;
   };
@@ -6410,9 +6414,12 @@ export default function Page() {
   }
   useEffect(() => {
     const m = mapApi.current; if (!m) return;
-    m.setSourceScheme?.(sourceDrawing());
+    const d = sourceDrawing();
+    m.setSourceScheme?.(d ? { ...d, picked: srcPicked, onPick: () => {
+      setSrcPicked(true); setFieldPicked(false); setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 });
+    } } : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srcPt, srcRoute, srcShown, srcElev, srcType, srcEnergy, srcHours, srcQmax, srcRange, srcMonthly, srcSectors, pivots, mmDes, hoursDay, resDepth, resDays, resEvapK, et0Peak, wtwEta, canalSlope, lang]);
+  }, [srcPicked, srcPt, srcRoute, srcShown, srcElev, srcType, srcEnergy, srcHours, srcQmax, srcRange, srcMonthly, srcSectors, pivots, mmDes, hoursDay, resDepth, resDays, resEvapK, et0Peak, wtwEta, canalSlope, lang]);
   // Profilo del tracciato (SVG): terreno, e linea dei carichi o pelo libero del canale.
   function renderProfile(S: NonNullable<ReturnType<typeof sourceSchemes>>, sc: Scheme | undefined) {
     const pr = S.prof; if (!pr || pr.d.length < 2 || !sc?.main) return null;
@@ -7268,7 +7275,7 @@ export default function Page() {
 
   return (
     <main>
-      <MapCanvas apiRef={mapApi} onCreate={addDrawnField} onEditActive={updateActiveGeom} onSelect={(id) => { selectField(id); setFieldPicked(true); setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); }}
+      <MapCanvas apiRef={mapApi} onCreate={addDrawnField} onEditActive={updateActiveGeom} onSelect={(id) => { selectField(id); setFieldPicked(true); setSrcPicked(false); setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); }}
         onCanalProfile={(i) => setProfileCanal(i)} onDrawChange={setDrawing} />
 
       {/* Elemento selezionato: ⌫ (o il pulsante) lo elimina, Esc toglie la selezione */}

@@ -167,6 +167,22 @@ try {
     ok(n0 > 0 && chip > 0 && n1 === n0 - 1 && n2 === n0, `Selezione: ⌫ elimina il pivot selezionato, ⌘Z lo rimette (${n0} → ${n1} → ${n2})`);
     await page.keyboard.press("Escape");
   } else ok(false, "Selezione: pivot non trovati sulla mappa");
+  // la linea blu dell'adduttrice dalla fonte: clic, ⌫ la elimina con la fonte, ⌘Z la rimette
+  const blue = 'path[stroke="#1d4ed8"]';
+  // sposta la mappa a destra: la presa sta a ovest, sotto il pannello di sinistra
+  await page.keyboard.press("Escape");
+  await page.locator('button[aria-label="Home"]').first().click(); await page.waitForTimeout(1500);
+  await page.mouse.move(700, 600); await page.mouse.down(); await page.mouse.move(1050, 600, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(1200);
+  const bb = await page.locator(blue).first().boundingBox().catch(() => null);
+  if (bb) {
+    await page.mouse.click(bb.x + bb.width / 2, bb.y + bb.height / 2); await page.waitForTimeout(900);
+    const chipSrc = await page.locator("text=Fonte d'acqua e adduttrice").count();
+    await page.keyboard.press("Backspace"); await page.waitForTimeout(1500);
+    const gone = (await page.locator(blue).count()) === 0;
+    await page.keyboard.press("ControlOrMeta+z"); await page.waitForTimeout(2500);
+    const back = (await page.locator(blue).count()) > 0;
+    ok(chipSrc > 0 && gone && back, `Selezione: la linea dell'adduttrice si seleziona, ⌫ la elimina e ⌘Z la rimette (${chipSrc}/${gone}/${back})`);
+  } else ok(false, "Selezione: linea dell'adduttrice non trovata");
   ok(errors.length === 0, `nessun errore nella pagina${errors.length ? ": " + errors.join(" | ") : ""}`);
 } catch (e) {
   fails.push(String(e)); console.log("✕", e);

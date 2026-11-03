@@ -82,7 +82,8 @@ export type MapHandle = {
   setCommentPins: (pins: { lat: number; lng: number; n: number; text: string; done?: boolean }[]) => void;
   // Fonte d'acqua e schema d'impianto (presa, adduttrice, vasca): solo disegno.
   setSourceScheme: (d: { src: number[] | null; line?: number[][] | null; lineKind?: "pipe" | "canal";
-    reservoir?: { center: number[]; r: number } | null; points?: { pt: number[]; label: string; tip?: string }[]; labels?: { src: string; res: string; line: string } } | null) => void;
+    reservoir?: { center: number[]; r: number } | null; points?: { pt: number[]; label: string; tip?: string }[]; labels?: { src: string; res: string; line: string };
+    onPick?: () => void; picked?: boolean } | null) => void;
   setDesign: (d: { polys: { ring: number[][]; color: string; label?: string; dashed?: boolean }[];
     lines: { coords: number[][]; color: string; dashed?: boolean; weight?: number }[] } | null) => void;
   startMeasure: (cb: (text: string) => void) => void;
@@ -871,14 +872,24 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         if (!d) return;
         if (d.line && d.line.length >= 2) {
           const ll = d.line.map((p) => [p[1], p[0]] as [number, number]);
-          g.addLayer(L.polyline(ll, { color: "#ffffff", weight: 6, opacity: 0.85, interactive: false }));
-          g.addLayer(L.polyline(ll, d.lineKind === "canal"
+          // selezionata: alone più largo; clic: selezione (⌫ la elimina)
+          g.addLayer(L.polyline(ll, { color: d.picked ? "#fde047" : "#ffffff", weight: d.picked ? 10 : 6, opacity: d.picked ? 0.95 : 0.85, interactive: false }));
+          const ln = L.polyline(ll, d.lineKind === "canal"
             ? { color: "#0284c7", weight: 3.5, dashArray: "8,5" }
-            : { color: "#1d4ed8", weight: 3.5 }).bindTooltip(d.labels?.line ?? "", { sticky: true }));
+            : { color: "#1d4ed8", weight: 3.5 }).bindTooltip(d.labels?.line ?? "", { sticky: true });
+          if (d.onPick) {
+            ln.on("click", (e) => { L.DomEvent.stop(e); d.onPick?.(); });
+            // bersaglio di clic più largo della linea visibile
+            const hit = L.polyline(ll, { color: "#000", weight: 16, opacity: 0 });
+            hit.on("click", (e) => { L.DomEvent.stop(e); d.onPick?.(); });
+            g.addLayer(hit);
+          }
+          g.addLayer(ln);
         }
         if (d.reservoir) {
           g.addLayer(L.circle([d.reservoir.center[1], d.reservoir.center[0]], { radius: d.reservoir.r,
-            color: "#1d4ed8", weight: 2, fillColor: "#38bdf8", fillOpacity: 0.45 }).bindTooltip(d.labels?.res ?? "", { sticky: true }));
+            color: d.picked ? "#ca8a04" : "#1d4ed8", weight: d.picked ? 3 : 2, fillColor: "#38bdf8", fillOpacity: 0.45 }).bindTooltip(d.labels?.res ?? "", { sticky: true })
+            .on("click", (e) => { if (d.onPick) { L.DomEvent.stop(e); d.onPick(); } }));
         }
         for (const p of d.points ?? []) {
           const esc = (x: string) => x.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[ch] as string));
@@ -893,7 +904,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             icon: L.divIcon({ className: "", iconSize: [26, 32], iconAnchor: [13, 32],
               html: '<div style="width:26px;height:26px;border-radius:13px 13px 13px 0;transform:rotate(-45deg);background:#1d4ed8;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);display:grid;place-items:center"><span style="transform:rotate(45deg);color:#fff;font:700 13px Inter,system-ui,sans-serif">≈</span></div>' }),
             zIndexOffset: 1200,
-          }).bindTooltip(d.labels?.src ?? "", { direction: "top", offset: [0, -30] }));
+          }).bindTooltip(d.labels?.src ?? "", { direction: "top", offset: [0, -30] })
+            .on("click", (e) => { if (d.onPick) { L.DomEvent.stop(e); d.onPick(); } }));
         }
       },
       setDesign(d) {
