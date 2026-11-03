@@ -11,7 +11,7 @@ import { jsPDF } from "jspdf";
 export type LL = [number, number];                     // [lat, lng]
 export type RGB = [number, number, number];
 export type TvPivot = { lat: number; lng: number; r: number; deg: number; az: number; ring: LL[]; gunRing?: LL[] | null;
-  spans?: number[]; line1: string; line2?: string; fill?: RGB };
+  spans?: number[]; line1: string; line2?: string; fill?: RGB; pv?: LL[][] };   // pv: moduli fotovoltaici del pivot solare
 export type TvLine = { id: string; pts: LL[]; color: string; dash?: boolean; width?: number; lab?: string; labColor?: RGB };
 export type TvPoint = { pt: LL; color: string; square?: boolean; resR?: number; resLab?: string; lab?: string };
 export type TvNode = { pt: LL; lab: string };
@@ -191,6 +191,7 @@ export async function buildTavole(sheets: TvSheet[], C: TvCommon): Promise<Blob>
         }
         doc.setLineDashPattern([], 0);
       }
+      if (p.pv?.length) { setFill(30, 58, 138); setDraw(229, 237, 247); doc.setLineWidth(0.08); for (const m of p.pv) poly(m.map((q) => P(q[0], q[1])), "FD"); }
       const c = P(p.lat, p.lng), az = p.deg < 359.5 ? p.az : 45;
       setFill(sat ? 240 : 11, sat ? 250 : 80, sat ? 240 : 55); doc.circle(c[0], c[1], 0.8, "F");
       const e = dest(p.lat, p.lng, p.r, az), edge = P(e[0], e[1]);

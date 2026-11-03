@@ -16,7 +16,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.214";
+const REV = "v0.6.215";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -68,6 +68,7 @@ const TABS: { key: string; label: string }[] = [
   { key: "fonte", label: "Fonte d'acqua" },
   { key: "accessori", label: "Tubazioni" },
   { key: "pompaggio", label: "Pompaggio" },
+  { key: "solare", label: "Pivot solari" },
   { key: "strade", label: "Strade" },
   { key: "irrigazione", label: "Irrigazione" },
   { key: "export", label: "Esporta" },
@@ -1074,12 +1075,13 @@ const IcoNavAccessori = () => (<svg {...navProps}><path d="M2 9h8" /><path d="M2
 const IcoNavStrade = () => (<svg {...navProps}><path d="M8 3 4 21" /><path d="m16 3 4 18" /><path d="M12 4v3M12 10.5v3M12 17v3" /></svg>);
 const IcoNavFonte = () => (<svg {...navProps}><path d="M3 8c2 0 2-1.5 4.5-1.5S10 8 12 8s2-1.5 4.5-1.5S19 8 21 8" /><path d="M3 13c2 0 2-1.5 4.5-1.5S10 13 12 13s2-1.5 4.5-1.5S19 13 21 13" /><path d="M12 16v5" /><path d="m9.5 18.5 2.5 2.5 2.5-2.5" /></svg>);
 const IcoNavPompaggio = () => (<svg {...navProps}><circle cx="10" cy="13" r="6" /><circle cx="10" cy="13" r="1.6" /><path d="M10 7V3h8v4" /><path d="M16 13h6" /><path d="M5 20h10" /></svg>);
+const IcoNavSolare = () => (<svg {...navProps}><circle cx="17" cy="6" r="2.4" /><path d="M17 1.5v1.2M21.5 6h-1.2M20.2 2.8l-.8.8" /><path d="M3 19 6 11h11l3 8Z" /><path d="M4.5 15h14M9.5 11 9 19M14 11l.5 8" /></svg>);
 const IcoNavExport = () => (<svg {...navProps}><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M4 20h16" /></svg>);
 const IcoNavIrrigazione = () => (<svg {...navProps}><path d="M12 3s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z" /><path d="M10 13a2 2 0 0 0 4 0" /></svg>);
 const IcoNavInfo = () => (<svg {...navProps}><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 7.6v.6" /></svg>);
 const TAB_ICONS = {
   analisi: IcoNavAnalisi, rilievo: IcoNavRilievo, impianti: IcoNavImpianti,
-  fonte: IcoNavFonte, accessori: IcoNavAccessori, pompaggio: IcoNavPompaggio, strade: IcoNavStrade, irrigazione: IcoNavIrrigazione, export: IcoNavExport,
+  fonte: IcoNavFonte, accessori: IcoNavAccessori, pompaggio: IcoNavPompaggio, solare: IcoNavSolare, strade: IcoNavStrade, irrigazione: IcoNavIrrigazione, export: IcoNavExport,
   informazioni: IcoNavInfo,
 };
 
@@ -1334,6 +1336,7 @@ export default function Page() {
   // un campo senza colture proprie segue quelle dell'azienda. Salvate con il progetto.
   const [farmCrops, setFarmCrops] = useState<string[]>(["canna"]);
   const [fieldCrops, setFieldCrops] = useState<Record<string, string[]>>({});
+  const [solarCfg, setSolarCfg] = useState({ wp: 550, k: 1.6, batt: 0, off: 6 });   // pivot solari: modulo Wp, kWp/kW, ore di batteria, distanza dal perno (m)
   // la coltura più esigente dell'azienda (Kc di punta di riferimento)
   const cropKey = [...farmCrops].sort((a, b) => cropOf(b).kc - cropOf(a).kc)[0] ?? "canna";
   // lista di chiavi valide (vecchi progetti: una sola stringa)
@@ -2629,7 +2632,7 @@ export default function Page() {
     const fed = fedPivotKeys(pivotLines);
     const visP = visIdx.map((k) => ({ ...pivots[k], unconn: pivotLines.some((l) => l.kind === "pipe") && !fed.has(pKey(pivots[k])),
       label: pivotLabels ? `${nPhases > 1 && phaseColors ? `F${pivots[k].phase ?? 1} · ` : ""}${uHa(pvAreaM2(pivots[k]) / 10000, 1)}<br>${fmt(Math.round(pivotFlow(pivots[k])))} l/s` : undefined,
-      phaseColor: nPhases > 1 && phaseColors }));
+      phaseColor: nPhases > 1 && phaseColors, ...(pivots[k].solar ? { solarPolys: solarPolys(pivots[k]) } : {}) }));
     // Le tubazioni hanno una visibilità propria (oggetto a sé); le altre linee
     // seguono la visibilità del gruppo pivot del loro campo.
     const visL = pivotLines.filter((l) => l.kind === "pipe"
@@ -2693,7 +2696,7 @@ export default function Page() {
       },
     }, pipeSelForShow, waterLinesLL());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pivots, pivotLines, pivotSel, pipeSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses, pivotLabels, mm24, mmDes, hoursDay, imperial, phaseColors]);
+  }, [pivots, pivotLines, pivotSel, pipeSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses, pivotLabels, mm24, mmDes, hoursDay, imperial, phaseColors, solarCfg, pivotBrand]);
 
   // Operazioni sul singolo pivot selezionato.
   const selPivot = pivotSel.mode === "single" && pivotSel.idx >= 0 ? pivots[pivotSel.idx] : null;
@@ -3724,6 +3727,15 @@ export default function Page() {
       if (nGun) R.push({ cat: cPiv, item: tx("Irrigatore finale"), qty: nGun, unit: tx("n.") });
       const nSec = pvs.filter((p) => (p.deg ?? 360) < 360).length;
       if (nSec) R.push({ cat: cPiv, item: tx("Pivot a settore (con fermi di fine corsa)"), qty: nSec, unit: tx("n.") });
+      const sol = pvs.filter((p) => p.solar);
+      if (sol.length) {
+        const cS = tx("Pivot solari"), SZ = sol.map((p) => solarSize(p));
+        R.push({ cat: cS, key: "solar", item: tx("Campo fotovoltaico vicino al centro del pivot"), qty: Math.round(SZ.reduce((a, z) => a + z.kWp, 0) * 10) / 10, unit: "kWp", note: `${sol.length} pivot` });
+        R.push({ cat: cS, key: "solar", item: tx("Moduli fotovoltaici da {w} Wp", { w: fx(solarCfg.wp) }), qty: SZ.reduce((a, z) => a + z.n, 0), unit: tx("n.") });
+        R.push({ cat: cS, key: "solar", item: tx("Struttura di sostegno dei moduli"), qty: SZ.reduce((a, z) => a + z.rows, 0), unit: tx("file") });
+        R.push({ cat: cS, key: "solar", item: tx("Inverter / regolatore fotovoltaico del pivot"), qty: sol.length, unit: tx("n."), note: SZ.map((z) => `${fx(z.inv)} kW`).join(" · ") });
+        const bk = SZ.reduce((a, z) => a + z.batt, 0); if (bk > 0) R.push({ cat: cS, key: "solar", item: tx("Batterie del pivot solare"), qty: bk, unit: "kWh" });
+      }
     }
     // Lineari, rotoloni e goccia salvati sui campi
     for (const [k, d] of Object.entries(sysDesigns)) {
@@ -4145,7 +4157,8 @@ export default function Page() {
           return { lat: p.lat, lng: p.lng, r: p.r, deg, az: azc, ring: TV.pivotRing(p.lat, p.lng, p.r, deg, azc),
             gunRing: p.gun && p.gun > 0 ? TV.pivotRing(p.lat, p.lng, p.r + p.gun, deg, azc) : null, spans: c?.spans.map((s) => s.len),
             line1: `P${k + 1} · R ${n0(p.r)} m · ${n0(deg)}° · ${n1(pHa(p))} ha`,
-            line2: `${n1(pivotFlow(p) * 3.6)} m³/h · ${n1(pivotPressure(p))} bar` };
+            line2: `${n1(pivotFlow(p) * 3.6)} m³/h · ${n1(pivotPressure(p))} bar${p.solar ? ` · FV ${n1(solarSize(p).kWp)} kWp` : ""}`,
+            ...(p.solar ? { pv: solarPolys(p) as LL[][] } : {}) };
         });
         // ---- rete: tratti T# a diametro costante ----
         type Run = { n: number; i: number; dn: number; L: number; q: number; pts: number[][]; hf: number; d0: number };
@@ -4235,6 +4248,7 @@ export default function Page() {
         const sh1: TvSheet = { title: tx("Planimetria generale"), fields: fieldsTv, pivots: pivTv,
           lines: [...srcLines, ...runs.map((r) => ({ id: "p" + r.n, pts: r.pts.map(LLf), color: PIPE_C, dash: true, width: 0.6 }))], points: basePts,
           column: [{ title: tx("Impianto"), items: [...pivItems, ...stItems] },
+            ...(pivots.some((p) => p.solar) ? [{ title: tx("Pivot solari"), items: pivots.map((p, k) => (p.solar ? { head: `P${k + 1} · ${n1(solarSize(p).kWp)} kWp`, lines: [`${solarSize(p).n} × ${solarCfg.wp} Wp · ${n1(pivotKw(p))} kW${solarSize(p).batt ? ` · ${solarSize(p).batt} kWh` : ""}`] } : null)).filter(Boolean) as TvColItem[] }] : []),
             { title: tx("Tubo sotterraneo"), items: [...byDn.entries()].sort((a, b) => b[0] - a[0]).map(([dn, L]) => ({ head: dn ? `PE100 PN10 Ø${dn}` : tx("Tubo sotterraneo"), lines: [`${n0(L)} m`] })) }],
           cells: cellsBase(tx("Planimetria generale")) };
         // 2 — tubazioni
@@ -4816,6 +4830,14 @@ export default function Page() {
         if (G.supply === "bt") eb.push({ p: tx("La fornitura è in bassa tensione, con un punto di consegna dotato di quadro generale.") });
         if (G.supply === "gen") eb.push({ p: tx("Nelle ore senza sole l'energia è fornita da un gruppo elettrogeno da {kva} kVA.", { kva: fx(G.kva) }) });
         if (VM.pvKwp) eb.push({ p: tx("Il campo fotovoltaico ha una potenza di {kwp} kWp", { kwp: n0(VM.pvKwp) }) + (VM.battKwh ? " " + tx("con un accumulo a batterie di {kwh} kWh.", { kwh: n0(VM.battKwh) }) : ".") });
+        const solP = pivots.filter((p) => p.solar);
+        if (solP.length) {
+          const tk2 = solP.reduce((a, p) => a + solarSize(p).kWp, 0);
+          eb.push({ p: tx("{n} pivot sono alimentati da pannelli fotovoltaici posati accanto al perno centrale, per {k} kWp in tutto: le torri e l'irrigatore finale lavorano a energia solare e questi pivot non hanno la linea elettrica dalla stazione. Il campo è dimensionato con {f} kWp per ogni kW assorbito dal pivot.", { n: fx(solP.length), k: n1(tk2), f: n1(solarCfg.k) })
+            + (solarCfg.batt > 0 ? " " + tx("Le batterie danno {h} ore di autonomia senza sole.", { h: fx(solarCfg.batt) }) : " " + tx("Senza batterie i pivot solari irrigano di giorno.")) });
+          eb.push({ table: { header: [tx("Pivot"), "kW", "kWp", tx("Moduli"), tx("Batterie") + " (kWh)"], widths: [16, 16, 20, 28, 20],
+            rows: pivots.map((p, k) => (p.solar ? [`P${k + 1}`, n1(pivotKw(p)), n1(solarSize(p).kWp), `${solarSize(p).n} × ${solarCfg.wp} Wp`, solarSize(p).batt ? n0(solarSize(p).batt) : "—"] : null)).filter(Boolean) as string[][] } });
+        }
         eb.push({ p: tx("Le linee elettriche sono interrate, a 400 V; la sezione è scelta per la corrente di esercizio e una caduta di tensione non superiore al 4 %. I pivot sono alimentati dalla stazione che li serve, con le linee posate nella stessa trincea delle tubazioni.") });
         if (cabs.length) eb.push({ table: { header: [tx("Linea"), "kW", tx("Cavo"), tx("Lunghezza") + " (m)", "ΔV (%)"], widths: [38, 12, 22, 16, 12], rows: cabs.map((c) => [c.name, n1(c.kW), `${c.mat} 3 × ${n1(c.S)} mm²`, n0(c.L), n1(c.dv)]) } });
         if (G.panels.length) eb.push({ bullets: G.panels.map((pn) => `${tx("Quadro di comando delle pompe")} · ${pn.name}: ${pn.n} × ${n1(pn.kWp)} kW${pn.inverter ? ` · ${tx("Inverter")}` : ""}`) });
@@ -5132,6 +5154,7 @@ export default function Page() {
     }
     const feed = st.length ? st[st.length - 1].pt : (srcPt ?? pipeStart());
     if (feed) pivots.forEach((pv, k) => {
+      if (pv.solar) return;                                          // pivot solare: niente linea dalla stazione
       const c = spanComposition(pv, pivotBrand);
       const kW = (c ? c.spans.length : Math.max(1, Math.round(pv.r / 50))) * 0.75 + (pv.gun && pv.gun > 0 ? 1.5 : 0);
       // lungo la rete (stessa trincea del tubo, +3 % di scorta); senza rete in linea retta +15 %
@@ -5248,6 +5271,28 @@ export default function Page() {
     const c = spanComposition(pv, pivotBrand);
     return { mv, pipe: ["10", "8-5-8", "6-5-8"][c?.spans[0]?.pipe ?? 2] };
   }
+  // ---- PIVOT SOLARI: campo fotovoltaico accanto al centro del pivot ---------------------
+  // Le torri (0,75 kW l'una) e l'irrigatore finale (1,5 kW) vanno a pannelli: il pivot non ha
+  // la linea elettrica dalla stazione. kWp = potenza del pivot × fattore (rendimento del
+  // sistema e ore di sole ridotte a inizio e fine giornata); batterie per le ore di autonomia.
+  const pivotKw = (pv: PivotItem) => (spanComposition(pv, pivotBrand)?.spans.length ?? Math.max(1, Math.round(pv.r / 50))) * 0.75 + (pv.gun && pv.gun > 0 ? 1.5 : 0);
+  function solarSize(pv: PivotItem) {
+    const kW = pivotKw(pv), n = Math.max(2, Math.ceil((kW * solarCfg.k * 1000) / Math.max(100, solarCfg.wp)));
+    const cols = Math.max(2, Math.ceil(Math.sqrt(n * 1.8))), rows = Math.ceil(n / cols);
+    return { kW, n, kWp: (n * solarCfg.wp) / 1000, rows, cols, batt: solarCfg.batt > 0 ? Math.ceil((kW * solarCfg.batt) / 0.9) : 0, inv: Math.ceil(kW * 1.25) };
+  }
+  // moduli verticali 1,13 × 2,28 m inclinati di 25° (ingombro in pianta 1,13 × 2,07 m), file a 3,5 m,
+  // a sud del centro (a nord nell'emisfero australe), a «off» metri dal perno
+  function solarPolys(pv: PivotItem): [number, number][][] {
+    const S2 = solarSize(pv), kx = 111320 * Math.cos((pv.lat * Math.PI) / 180), sgn = pv.lat >= 0 ? -1 : 1, mw = 1.13, md = 2.07, pitch = 3.5;
+    const out: [number, number][][] = [], w = S2.cols * (mw + 0.02);
+    for (let k = 0; k < S2.n; k++) {
+      const r = Math.floor(k / S2.cols), c = k % S2.cols, x0 = -w / 2 + c * (mw + 0.02), y0 = solarCfg.off + r * pitch;
+      const pt = (x: number, y: number): [number, number] => [pv.lat + (sgn * y) / 110540, pv.lng + x / kx];
+      out.push([pt(x0, y0), pt(x0 + mw, y0), pt(x0 + mw, y0 + md), pt(x0, y0 + md)]);
+    }
+    return out;
+  }
   // ---- Quadri, inverter e consegna dell'energia ----------------------------------------
   const KVA = [100, 160, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500];
   function powerGear(stations: PStation[]) {
@@ -5257,7 +5302,7 @@ export default function Page() {
       const kWp = st.pick ? st.pick.motor : st.kW / Math.max(1, st.nDuty);
       return { name: st.name, n: st.nTot, kWp, inverter: solar || kWp >= 15 };
     });
-    const pivKW = pivots.reduce((a, pv) => a + (spanComposition(pv, pivotBrand)?.spans.length ?? Math.max(1, Math.round(pv.r / 50))) * 0.75 + (pv.gun && pv.gun > 0 ? 1.5 : 0), 0);
+    const pivKW = pivots.reduce((a, pv) => a + (pv.solar ? 0 : pivotKw(pv)), 0);   // i pivot solari hanno i loro pannelli
     const kW = elec.reduce((a, st) => a + (st.pick ? st.pick.motor * st.nDuty : st.kW), 0) + pivKW;
     const kva = KVA.find((k) => k >= kW / 0.85 / 0.8) ?? Math.ceil(kW / 0.85 / 0.8);
     const supply = srcEnergy === "fv-gen" ? "gen" : srcEnergy === "fv-batt" && powerMode === "solar" ? "pv" : kW > 100 ? "mt" : "bt";
@@ -5359,6 +5404,15 @@ export default function Page() {
       R.push({ codice: "ENDGUN", quantita: pivots.filter((p) => p.gun && p.gun > 0).length, unita: "pz" });
       R.push({ codice: "EOT-ARM", quantita: pivots.filter((p) => (p.deg ?? 360) < 360).length * 2, unita: "pz", descrizione: "Fermo di fine corsa (pivot a settore)" });
       add(`Pivot ${PIVOT_BRANDS[pivotBrand]}`, R);
+      const sol = pivots.filter((p) => p.solar);
+      if (sol.length) {
+        const SZ = sol.map((p) => solarSize(p)), kwp = SZ.reduce((a, z) => a + z.kWp, 0), bk = SZ.reduce((a, z) => a + z.batt, 0);
+        add("Pivot solari", [
+          { codice: "ARGUS-FV", quantita: kwp, unita: "kWp", descrizione: `Campo fotovoltaico dei pivot solari (${sol.length} pivot, ${SZ.reduce((a, z) => a + z.n, 0)} moduli da ${solarCfg.wp} Wp) con struttura di sostegno` },
+          { codice: "ARGUS-INVERTER", quantita: sol.length, unita: "pz", descrizione: "Inverter / regolatore fotovoltaico del pivot" },
+          ...(bk > 0 ? [{ codice: "ARGUS-BATTERIE", quantita: bk, unita: "kWh", descrizione: "Batterie dei pivot solari" }] : []),
+        ]);
+      }
     }
     // Lineari, rotoloni, goccia
     for (const [k, d] of Object.entries(sysDesigns)) {
@@ -6459,6 +6513,8 @@ export default function Page() {
     setDemModel(te.dem === "COPERNICUS_90" ? "COPERNICUS_90" : "COPERNICUS_30"); setDemSmooth(num(te.smooth, 100));
     setSpanVmax(num((st as { span_vmax?: number }).span_vmax, 3));
     applyCrops((st as { crops?: { base?: unknown; fields?: Record<string, unknown> } }).crops);
+    { const sp = (st as { solar_pv?: Partial<typeof solarCfg> }).solar_pv ?? {};
+      setSolarCfg({ wp: num(sp.wp, 550), k: num(sp.k, 1.6), batt: num(sp.batt, 0), off: num(sp.off, 6) }); }
     const sy = (st as { systems?: Record<string, SysDesign> }).systems;
     setSysDesigns(sy && typeof sy === "object" ? sy : {});
     projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
@@ -6469,7 +6525,7 @@ export default function Page() {
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId) return;
     const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, fonte: fonteState(), terrain: { dem: demModel, smooth: demSmooth },
-      crops: { base: farmCrops, fields: fieldCrops },
+      crops: { base: farmCrops, fields: fieldCrops }, solar_pv: solarCfg,
       systems: Object.fromEntries(Object.entries(sysDesigns).filter(([k]) => k.startsWith("a"))) };
     const js = JSON.stringify(payload);
     if (js === projSaved.current) return;
@@ -6482,7 +6538,7 @@ export default function Page() {
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
-    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
+    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId || (!pivots.length && !fields.length)) return;
     const h = window.setTimeout(() => { void siteClimateCached(); }, 2500);
@@ -7393,6 +7449,53 @@ export default function Page() {
             ))}
           </ul>
         )}
+      </div>
+    );
+  }
+  function renderSolarPivots() {
+    if (!pivots.length) return <p className="text-[11px] text-sage-dark">{t("Posa i pivot per scegliere quali alimentare con i pannelli solari.")}</p>;
+    const setAll = (on: boolean) => commitPivots(pivots.map((p) => ({ ...p, solar: on || undefined })));
+    const nOn = pivots.filter((p) => p.solar).length;
+    const SZ = pivots.map((p) => solarSize(p)), tot = pivots.reduce((a, p, k) => (p.solar ? { kWp: a.kWp + SZ[k].kWp, n: a.n + SZ[k].n, b: a.b + SZ[k].batt } : a), { kWp: 0, n: 0, b: 0 });
+    const num = (label: string, v: number, set: (x: number) => void, step: number, min: number, max: number, hint?: string) => (
+      <label className="text-[11px] text-sage-dark" title={hint}>{label}
+        <input type="number" min={min} max={max} step={step} value={v}
+          onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) set(Math.max(min, Math.min(max, x))); }} className="field-input mt-0.5 py-1 text-sm" /></label>
+    );
+    return (
+      <div className="space-y-3">
+        <div className="flex gap-2">
+          <button className="btn-ghost flex-1 text-[12px]" onClick={() => setAll(true)} disabled={nOn === pivots.length}>{t("Tutti solari")}</button>
+          <button className="btn-ghost flex-1 text-[12px]" onClick={() => setAll(false)} disabled={!nOn}>{t("Nessuno")}</button>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {num(t("Modulo (Wp)"), solarCfg.wp, (x) => setSolarCfg((c) => ({ ...c, wp: x })), 10, 200, 800)}
+          {num(t("Fattore kWp / kW"), solarCfg.k, (x) => setSolarCfg((c) => ({ ...c, k: x })), 0.1, 1, 4, t("kWp installati per ogni kW assorbito dal pivot: tiene conto del rendimento del sistema e del sole basso a inizio e fine giornata"))}
+          {num(t("Autonomia con batterie (h)"), solarCfg.batt, (x) => setSolarCfg((c) => ({ ...c, batt: x })), 1, 0, 24, t("0 = il pivot lavora solo di giorno"))}
+          {num(t("Distanza dal perno (m)"), solarCfg.off, (x) => setSolarCfg((c) => ({ ...c, off: x })), 1, 2, 40)}
+        </div>
+        <ul className="space-y-1">
+          {pivots.map((p, k) => {
+            const z = SZ[k];
+            return (
+              <li key={k}>
+                <label className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[11px] cursor-pointer ${p.solar ? "border-sky-700/40 bg-sky-50" : "border-black/5 bg-white"}`}>
+                  <input type="checkbox" checked={!!p.solar} onChange={(e) => commitPivots(pivots.map((q, i) => (i === k ? { ...q, solar: e.target.checked || undefined } : q)))} />
+                  <b className="text-brand-darker w-7">P{k + 1}</b>
+                  <span className="flex-1 text-sage-dark tabular-nums">{fmt(z.kW, { maximumFractionDigits: 2 })} kW → <b className="text-brand-darker">{fmt(z.kWp, { maximumFractionDigits: 1 })} kWp</b> · {z.n} {t("moduli")} · {z.rows}×{z.cols}{z.batt ? ` · ${fmt(z.batt)} kWh` : ""}</span>
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+        {nOn > 0 && (
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="bg-panel rounded-lg p-2"><div className="text-lg font-semibold text-brand">{nOn}</div><div className="text-[11px] text-sage-dark">{t("pivot solari")}</div></div>
+            <div className="bg-panel rounded-lg p-2"><div className="text-lg font-semibold text-brand">{fmt(tot.kWp, { maximumFractionDigits: 1 })}</div><div className="text-[11px] text-sage-dark">kWp</div></div>
+            <div className="bg-panel rounded-lg p-2"><div className="text-lg font-semibold text-brand">{fmt(tot.n)}</div><div className="text-[11px] text-sage-dark">{t("moduli")}</div></div>
+          </div>
+        )}
+        <p className="text-[11px] leading-snug text-sage-dark text-justify">{t("I moduli si vedono sulla mappa accanto al centro di ogni pivot solare, a sud del perno. Per questi pivot spariscono la linea elettrica dalla stazione e la sua quota di potenza nel quadro; nel computo entrano campo FV, moduli, strutture, inverter ed eventuali batterie.")}</p>
       </div>
     );
   }
@@ -9173,6 +9276,10 @@ export default function Page() {
             {renderSource()}
           </section>
 
+          <section hidden={tab !== "solare"}>
+            <SectionHead title={t("Pivot solari")} help={t("Pivot alimentati da pannelli fotovoltaici posati accanto al perno centrale: le torri e l'irrigatore finale vanno a energia solare e il pivot non ha la linea elettrica dalla stazione. Il campo FV si dimensiona sulla potenza del pivot; le batterie servono solo per lavorare senza sole.")} />
+            {renderSolarPivots()}
+          </section>
           <section hidden={tab !== "pompaggio"}>
             <SectionHead title={t("Stazione di pompaggio")} help={t("Dimensionamento consigliato della stazione di pompaggio in base alla potenza: numero e potenza delle pompe, scorte, potenza installata e consumo annuo di energia. Usa portate e fabbisogno della pagina Irrigazione, la prevalenza calcolata nella pagina Tubazioni e il clima del sito mese per mese.")} />
             {renderPumpStation()}

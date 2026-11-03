@@ -15,7 +15,9 @@ export type PivotItem = { lat: number; lng: number; r: number; conn?: string; fi
   az?: number;                // inizio del settore, azimut da nord in senso orario
   gun?: number;               // gittata dell'irrigatore finale (m); assente o 0 = senza
   phase?: number;             // fase di realizzazione (1, 2, …)
-  phaseColor?: boolean };     // colora per fase sulla mappa
+  phaseColor?: boolean;       // colora per fase sulla mappa
+  solar?: boolean;            // pivot alimentato da pannelli solari vicino al centro
+  solarPolys?: [number, number][][] };   // moduli FV da disegnare ([lat, lng] per modulo)
 // Settore (o cerchio) come anello [lat, lng] per Leaflet.
 function sectorLatLngs(lat: number, lng: number, r: number, deg = 360, az = 0): [number, number][] {
   const dLat = r / 111320, dLng = r / (111320 * Math.cos((lat * Math.PI) / 180) || 1e-9);
@@ -837,8 +839,12 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             radius: pv.unconn ? 4 : 2.5, color: pv.unconn ? "#b23b1e" : "#0d3b26", weight: pv.unconn ? 2 : 1,
             fillColor: pv.unconn ? "#fff" : "#0d3b26", fillOpacity: 1, interactive: false,
           }));
+          // Pivot solare: i moduli fotovoltaici accanto al centro, come sul campo
+          if (pv.solarPolys?.length) {
+            for (const ring of pv.solarPolys) g.addLayer(L.polygon(ring, { color: "#e5edf7", weight: 0.6, fillColor: "#1e3a8a", fillOpacity: 0.92, interactive: false }));
+          }
           c.on("click", (e) => { L.DomEvent.stop(e); cbs.onClick(i); });
-          c.bindTooltip(`#${i + 1}${pv.phase && pv.phaseColor ? ` · F${pv.phase}` : ""} · r ${Math.round(pv.r)} m${deg < 359.5 ? ` · ${Math.round(deg)}°` : ""}${pv.gun ? ` · +${Math.round(pv.gun)} m` : ""}`, { direction: "top", sticky: true });
+          c.bindTooltip(`#${i + 1}${pv.phase && pv.phaseColor ? ` · F${pv.phase}` : ""} · r ${Math.round(pv.r)} m${deg < 359.5 ? ` · ${Math.round(deg)}°` : ""}${pv.gun ? ` · +${Math.round(pv.gun)} m` : ""}${pv.solar ? " · ☀ FV" : ""}`, { direction: "top", sticky: true });
           g.addLayer(c);
           // Etichetta fissa sotto il centro (superficie · portata), se richiesta.
           if (pv.label) {

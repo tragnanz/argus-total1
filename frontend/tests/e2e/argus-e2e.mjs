@@ -225,6 +225,17 @@ try {
     const back = (await page.locator(blue).count()) > 0;
     ok(chipSrc > 0 && gone && back, `Selezione: la linea dell'adduttrice si seleziona, ⌫ la elimina e ⌘Z la rimette (${chipSrc}/${gone}/${back})`);
   } else ok(false, "Selezione: linea dell'adduttrice non trovata");
+  // Pivot solari: scheda a destra, P1 a pannelli → moduli sulla mappa, niente cavo per P1, campo FV nel computo
+  await page.locator('button[title="Pivot solari"]').first().click(); await page.waitForTimeout(800);
+  await page.locator('section:not([hidden]) label:has-text("P1") input[type="checkbox"]').first().check(); await page.waitForTimeout(1500);
+  const solTxt = await section();
+  const mods = await page.locator('path[fill="#1e3a8a"]').count();
+  ok(/kWp/.test(solTxt) && /pivot solari/i.test(solTxt) && mods >= 4, `Pivot solari: P1 a pannelli, ${mods} moduli disegnati accanto al centro`);
+  if (process.env.ARGUS_SHOT_SOLAR) await page.screenshot({ path: process.env.ARGUS_SHOT_SOLAR });
+  await page.locator('[title="Esporta"], button:has-text("Esporta")').first().click(); await page.waitForTimeout(800);
+  const cer2 = await readJson(await download(() => page.locator('button:has-text("Esporta per Ceres")').click()));
+  const rows2 = (cer2.sezioni ?? []).flatMap((x) => x.righe ?? []);
+  ok(rows2.some((r) => r.codice === "ARGUS-FV" && /pivot solari/i.test(r.descrizione ?? "")) && (cer2.sezioni ?? []).some((x) => /Pivot solari/.test(x.titolo)), ".ceres: campo FV dei pivot solari nel computo");
   ok(errors.length === 0, `nessun errore nella pagina${errors.length ? ": " + errors.join(" | ") : ""}`);
 } catch (e) {
   fails.push(String(e)); console.log("✕", e);
