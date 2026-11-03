@@ -16,7 +16,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.207";
+const REV = "v0.6.208";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -4073,6 +4073,7 @@ export default function Page() {
   // nodi, valvole, sezioni di scavo, profilo) e tavola delle linee elettriche (cavi,
   // sezioni, schema unifilare). Il font del PDF ha solo l'alfabeto latino-1: le
   // altre lingue escono in inglese.
+  const [tvCompact, setTvCompact] = useState(true);   // tabelle e disegni accorpati sulle stesse pagine
   async function downloadTavole() {
     if (!projectId || (!pivots.length && !pivotLines.some((l) => l.kind === "pipe"))) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
     const pid = projectId;
@@ -4267,7 +4268,7 @@ export default function Page() {
             { kind: "unif", title: tx("Schema unifilare"), note: tx("Schema indicativo: ogni utenza ha il suo interruttore nel quadro della fonte; sezioni, lunghezze e cadute dalle linee disegnate."),
               srcs: [{ cap: tx("Allacciamento elettrico").toUpperCase(), name: `${G.supply.toUpperCase()} · ${G.kva} kVA`, info: `${n0(G.kW)} kW`,
                 loads: cabRows.map((x) => ({ name: x.c.name.split(" · ").pop() ?? x.c.name, info: `${n1(x.c.kW)} kW · ${n1(x.c.I)} A`, cab: `C${x.n} · ${x.form}`, cab2: `${n0(x.c.L)} m · ${n1(x.c.dv)} %` })) }] }] : [] };
-        const common: TvCommon = { format: pdfFormat, brand: "Argus Total", brandSub: "by Nabu · Agrostar Group", version: REV, logo,
+        const common: TvCommon = { format: pdfFormat, compact: tvCompact, brand: "Argus Total", brandSub: "by Nabu · Agrostar Group", version: REV, logo,
           coordsTitle: tx("COORDINATE GPS"), centroidLabel: tx("Centro campo"), client: cname, rev: String(rev),
           footer: `© ${new Date().getFullYear()} Nabu srl · Agrostar Group · Argus Total ${REV} · ${tx("esportato il")} {d}`,
           disclaimer: tx("I risultati sono stime a scopo di progettazione preliminare e non sostituiscono la verifica di un tecnico qualificato. Dati da confermare sul campo.") };
@@ -9001,10 +9002,16 @@ export default function Page() {
                 <option value="agrostar">Agrostar</option><option value="nabu">Nabu</option>
               </select>
             </div>
-            <button className="btn-ghost w-full mt-2 flex items-center justify-center gap-2" disabled={busy === "tav" || (!pivots.length && !pivotLines.some((l) => l.kind === "pipe"))} onClick={downloadTavole}
+            <div className="mt-2 flex gap-2 items-stretch">
+            <button className="btn-ghost flex-1 flex items-center justify-center gap-2" disabled={busy === "tav" || (!pivots.length && !pivotLines.some((l) => l.kind === "pipe"))} onClick={downloadTavole}
               title={t("Tavole di progetto come in Ceres: planimetria generale, tavola delle tubazioni (tratti, nodi, valvole, sezioni di scavo, profilo) e tavola delle linee elettriche (cavi, sezioni, schema unifilare), su ortofoto in scala. Senza prezzi.")}>
               <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="1.5" /><path d="M3 15h18M15 15v5M7 11l3-3 3 2 4-4" /></svg>
               {busy === "tav" ? t("Preparo…") : t("Tavole di progetto (PDF {f})", { f: pdfFormat.toUpperCase() })}</button>
+              <select className="field-input text-sm w-36" value={tvCompact ? "1" : "0"} onChange={(e) => setTvCompact(e.target.value === "1")}
+                title={t("Accorpata: tabelle, sezioni di scavo, profilo e schema unifilare uno dopo l'altro sulle stesse pagine. Separata: una pagina per ciascuno.")}>
+                <option value="1">{t("Vista accorpata")}</option><option value="0">{t("Una per pagina")}</option>
+              </select>
+            </div>
             {renderOlympus()}
             <div className="mt-3 bg-panel rounded-lg p-2 space-y-1.5">
               <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Fasi di realizzazione")}</div>

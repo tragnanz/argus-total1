@@ -38,6 +38,7 @@ export type TvCommon = {
   format: "a3" | "a4"; brand: string; brandSub: string; version: string; logo?: string | null;
   coordsTitle: string; centroidLabel: string; footer: string; disclaimer: string; client?: string; rev?: string;
   noPlanSat?: boolean;
+  compact?: boolean;                                    // tabelle e disegni accorpati sulle stesse pagine
 };
 
 // ---- Web Mercator e ortofoto (Esri World Imagery), come Ceres -------------------
@@ -309,15 +310,24 @@ export async function buildTavole(sheets: TvSheet[], C: TvCommon): Promise<Blob>
     setText(120, 140, 128); doc.setFont("helvetica", "italic"); doc.setFontSize(5);
     doc.text(T(C.disclaimer), tbx0, H - 2.4, { maxWidth: tbx1 - tbx0 });
 
-    // ===== pagine tecniche (tabelle) =====
+    // ===== pagine tecniche (tabelle) e disegni =====
+    // Separata: una pagina per tabella e una per disegno, come Ceres.
+    // Accorpata (C.compact): tabelle e disegni scorrono uno dopo l'altro sulle
+    // stesse pagine, ciascuno col suo titolo, e si va a pagina nuova solo se non ci stanno.
     const M = fmtId === "a3" ? 14 : 12, bottom = H - 12;
     const footer = () => { setText(90, 115, 101); doc.setFont("helvetica", "normal"); doc.setFontSize(4.9); doc.text(T(`${C.brand} ${C.version} · ${dstr}${C.client ? " · " + C.client : ""}${C.rev ? " · Rev. " + C.rev : ""} · ${sh.title}`), M, H - 6); };
     const title = (s: string) => { setText(18, 53, 36); doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.text(T(s), M, 18); setDraw(120, 150, 130); doc.setLineWidth(0.3); doc.line(M, 21, W - M, 21);
       if (C.logo) { try { doc.addImage(C.logo, "PNG", W - M - 10, 9, 9, 9); } catch { /* */ } } };
-    for (const pdef of sh.tech ?? []) {
-      doc.addPage(); frame(); title(pdef.title); let y = 28;
-      const newPg = () => { footer(); doc.addPage(); frame(); title(pdef.title); y = 28; };
-      const ensure = (need: number) => { if (y + need > bottom) newPg(); };
+    const txt = (s: string, x: number, yy: number, o?: Record<string, unknown>) => doc.text(T(s), x, yy, o || {});
+    const f2 = (v: number, d = 2) => v.toLocaleString("it-IT", { minimumFractionDigits: d, maximumFractionDigits: d });
+    let y = 28, pageTitle = "";
+    const newPg = (pt: string) => { pageTitle = pt; doc.addPage(); frame(); title(pt); y = 28; };
+    const ensure = (need: number) => { if (y + need > bottom) { footer(); newPg(pageTitle); } };
+    const heading = (s: string) => {   // titolo di sezione nella vista accorpata
+      setText(18, 53, 36); doc.setFont("helvetica", "bold"); doc.setFontSize(10.5); doc.text(T(s), M, y);
+      setDraw(200, 214, 204); doc.setLineWidth(0.2); doc.line(M, y + 1.6, W - M, y + 1.6); y += 6.5;
+    };
+    const techBlocks = (pdef: TvTech) => {
       for (const blk of pdef.blocks) {
         if (blk.h) { ensure(9); setText(18, 53, 36); doc.setFont("helvetica", "bold"); doc.setFontSize(9.5); doc.text(T(blk.h), M, y); y += 5.5; }
         if (blk.kv) {
@@ -332,26 +342,22 @@ export async function buildTavole(sheets: TvSheet[], C: TvCommon): Promise<Blob>
             y += 1.6; setDraw(160, 175, 165); doc.setLineWidth(0.2); doc.line(M, y, W - M, y); y += 3; doc.setFont("helvetica", "normal"); doc.setFontSize(7.3); setText(30, 40, 34); };
           ensure(6 + 4 * Math.min(tb.rows.length, 4)); thead();
           tb.rows.forEach((r, ri) => {
-            if (y + 4 > bottom) { newPg(); thead(); }
+            if (y + 4 > bottom) { footer(); newPg(pageTitle); thead(); }
             if (ri % 2 === 1) { setFill(244, 248, 245); doc.rect(M, y - 2.9, W - 2 * M, 4, "F"); }
             r.forEach((c, ci) => { const al = tb.cols[ci]?.a === "r"; doc.text(T(c), al ? xs[ci] + cw(ci) - 1.5 : xs[ci] + 1, y, { align: al ? "right" : "left", maxWidth: cw(ci) - 1.5 }); }); y += 4;
           });
         }
         y += 2.6;
       }
-      footer();
-    }
-    // ===== pagine disegnate =====
-    for (const pg of sh.draw ?? []) {
-      doc.addPage(); frame(); title(pg.title);
-      const txt = (s: string, x: number, y: number, o?: Record<string, unknown>) => doc.text(T(s), x, y, o || {});
-      const f2 = (v: number, d = 2) => v.toLocaleString("it-IT", { minimumFractionDigits: d, maximumFractionDigits: d });
+    };
+    // un disegno dentro il riquadro (X0, Y0)–(X1, Y1)
+    const drawPanel = (pg: TvDraw, X0: number, Y0: number, X1: number, Y1: number) => {
       if (pg.kind === "trench") {
-        const n = Math.max(1, pg.items.length), slot = (W - 2 * M) / n, top = 46, bot = H - 30;
+        const n = Math.max(1, pg.items.length), slot = (X1 - X0) / n, top = Y0 + 10, bot = Y1 - 8;
         pg.items.forEach((it, i) => {
-          const x0 = M + i * slot, avW = slot * 0.5, avH = bot - top - 10, sc = Math.min(avW / (it.w + 0.8), avH / (it.h + 0.3)), cx = x0 + slot * 0.32, gy = top + 6;
+          const x0 = X0 + i * slot, avW = slot * 0.5, avH = bot - top - 10, sc = Math.min(avW / (it.w + 0.8), avH / (it.h + 0.3)), cx = x0 + slot * 0.32, gy = top + 4;
           const X = (m: number) => cx + m * sc, Y = (m: number) => gy + m * sc, hw = it.w / 2;
-          setText(0, 123, 182); doc.setFont("helvetica", "bold"); doc.setFontSize(9); txt(it.title, x0 + 2, top - 6);
+          setText(0, 123, 182); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); txt(it.title, x0 + 2, Y0 + 3, { maxWidth: slot - 4 });
           setDraw(92, 99, 106); doc.setLineWidth(0.5); doc.line(X(-hw - 0.4), Y(0), X(-hw), Y(0)); doc.line(X(hw), Y(0), X(hw + 0.4), Y(0));
           setFill(240, 232, 214); doc.rect(X(-hw), Y(0), it.w * sc, it.h * sc, "F"); setDraw(0, 26, 51); doc.setLineWidth(0.4); doc.lines([[0, it.h * sc], [it.w * sc, 0], [0, -it.h * sc]], X(-hw), Y(0), [1, 1], "S", false);
           setFill(255, 244, 196); doc.rect(X(-hw), Y(it.sandTop), it.w * sc, (it.h - it.sandTop) * sc, "F"); doc.setLineWidth(0.15); setDraw(184, 160, 90); doc.rect(X(-hw), Y(it.sandTop), it.w * sc, (it.h - it.sandTop) * sc, "S");
@@ -362,46 +368,65 @@ export async function buildTavole(sheets: TvSheet[], C: TvCommon): Promise<Blob>
           });
           setDraw(255, 159, 0); doc.setLineWidth(0.5); doc.setLineDashPattern([1, 0.8], 0); doc.line(X(-hw * 0.8), Y(it.tape), X(hw * 0.8), Y(it.tape)); doc.setLineDashPattern([], 0);
           setDraw(92, 99, 106); doc.setLineWidth(0.15); setText(0, 26, 51); doc.setFont("helvetica", "normal"); doc.setFontSize(6.5);
-          const yb = Y(it.h) + 5; doc.line(X(-hw), yb, X(hw), yb); doc.line(X(-hw), yb - 1, X(-hw), yb + 1); doc.line(X(hw), yb - 1, X(hw), yb + 1); txt("B = " + f2(it.w) + " m", cx, yb + 3.5, { align: "center" });
+          const yb = Y(it.h) + 4; doc.line(X(-hw), yb, X(hw), yb); doc.line(X(-hw), yb - 1, X(-hw), yb + 1); doc.line(X(hw), yb - 1, X(hw), yb + 1); txt("B = " + f2(it.w) + " m", cx, yb + 3.5, { align: "center" });
           const xd = X(-hw) - 5; doc.line(xd, Y(0), xd, Y(it.h)); doc.line(xd - 1, Y(0), xd + 1, Y(0)); doc.line(xd - 1, Y(it.h), xd + 1, Y(it.h)); txt("H = " + f2(it.h) + " m", xd - 1.5, Y(it.h / 2), { align: "right" });
-          const lx = X(hw) + 6; let ly = Y(0) + 2; doc.setFontSize(6.6);
-          it.notes.forEach((nt) => { const ls: string[] = doc.splitTextToSize(T(nt), slot - (lx - x0) - 3); ls.forEach((l2) => { txt(l2, lx, ly); ly += 3; }); ly += 1.2; });
+          const lx = X(hw) + 5; let ly = Y(0) + 2; doc.setFontSize(6.4);
+          it.notes.forEach((nt) => { const ls: string[] = doc.splitTextToSize(T(nt), Math.max(20, slot - (lx - x0) - 3)); ls.forEach((l2) => { txt(l2, lx, ly); ly += 2.8; }); ly += 1; });
         });
       } else if (pg.kind === "profile") {
-        const x0 = M + 14, x1 = W - M - 4, y0 = 30, y1 = H - 34, P2 = pg.pts, L = Math.max(1, pg.L);
+        const x0 = X0 + 14, x1 = X1 - 4, y0 = Y0 + 7, y1 = Y1 - 13, P2 = pg.pts, L = Math.max(1, pg.L);
         const zs = P2.map((q) => q.z).concat(P2.map((q) => q.hgl)), zMin = Math.floor(Math.min(...zs) - 2), zMax = Math.ceil(Math.max(...zs) + 2);
         const X = (d: number) => x0 + ((x1 - x0) * d) / L, Y = (z: number) => y1 - ((y1 - y0) * (z - zMin)) / Math.max(1, zMax - zMin);
         setDraw(190, 199, 210); doc.setLineWidth(0.1); setText(92, 99, 106); doc.setFont("helvetica", "normal"); doc.setFontSize(6);
-        const zs2 = Math.max(1, Math.round((zMax - zMin) / 8)); for (let z = Math.ceil(zMin / zs2) * zs2; z <= zMax; z += zs2) { doc.line(x0, Y(z), x1, Y(z)); txt(z + " m", x0 - 1.5, Y(z) + 1, { align: "right" }); }
+        const zs2 = Math.max(1, Math.round((zMax - zMin) / Math.max(3, Math.min(8, (y1 - y0) / 12)))); for (let z = Math.ceil(zMin / zs2) * zs2; z <= zMax; z += zs2) { doc.line(x0, Y(z), x1, Y(z)); txt(z + " m", x0 - 1.5, Y(z) + 1, { align: "right" }); }
         const ds = [50, 100, 200, 250, 500, 1000].find((v) => L / v <= 12) ?? 2000; for (let d = 0; d <= L; d += ds) { doc.line(X(d), y0, X(d), y1); txt(d + " m", X(d), y1 + 4, { align: "center" }); }
         setFill(230, 214, 190); doc.lines(P2.slice(1).map((q, i) => [X(q.d) - X(P2[i].d), Y(q.z) - Y(P2[i].z)]).concat([[0, y1 - Y(P2[P2.length - 1].z)], [X(P2[0].d) - X(P2[P2.length - 1].d), 0]]), X(P2[0].d), Y(P2[0].z), [1, 1], "F", true);
         setDraw(138, 109, 59); doc.setLineWidth(0.5); doc.lines(P2.slice(1).map((q, i) => [X(q.d) - X(P2[i].d), Y(q.z) - Y(P2[i].z)]), X(P2[0].d), Y(P2[0].z), [1, 1], "S", false);
         setDraw(0, 159, 227); doc.setLineWidth(0.8); doc.lines(P2.slice(1).map((q, i) => [X(q.d) - X(P2[i].d), Y(q.hgl) - Y(P2[i].hgl)]), X(P2[0].d), Y(P2[0].hgl), [1, 1], "S", false);
         pg.highs.forEach((q) => { setFill(0, 26, 51); doc.triangle(X(q.d) - 1.4, Y(q.z) - 1.2, X(q.d) + 1.4, Y(q.z) - 1.2, X(q.d), Y(q.z) - 3.6, "F"); });
         pg.lows.forEach((q) => { setFill(0, 123, 182); doc.triangle(X(q.d) - 1.4, Y(q.z) + 1.2, X(q.d) + 1.4, Y(q.z) + 1.2, X(q.d), Y(q.z) + 3.6, "F"); });
-        setText(0, 26, 51); doc.setFontSize(7); let lx = M;
-        const leg = (r: number, g: number, b: number, l: string) => { setFill(r, g, b); doc.rect(lx, H - 22, 5, 2, "F"); setText(0, 26, 51); txt(l, lx + 6.5, H - 20.4); lx += 8 + doc.getTextWidth(T(l)) + 6; };
+        setText(0, 26, 51); doc.setFontSize(7); let lx = X0;
+        const leg = (r: number, g: number, b: number, l: string) => { setFill(r, g, b); doc.rect(lx, Y1 - 3.6, 5, 2, "F"); setText(0, 26, 51); txt(l, lx + 6.5, Y1 - 2); lx += 8 + doc.getTextWidth(T(l)) + 6; };
         leg(138, 109, 59, pg.labT); leg(0, 159, 227, pg.labH); leg(0, 26, 51, pg.labA); leg(0, 123, 182, pg.labD);
-        doc.setFontSize(7.5); txt(pg.sub || "", M, 27);
+        doc.setFontSize(7.5); txt(pg.sub || "", X0, Y0 + 2.5);
       } else if (pg.kind === "unif") {
-        let y = 32; const bw = 58, bh = 16;
+        let yy = Y0 + 2; const bw = 58, bh = 16, yEnd = Y1 - 7;
         pg.srcs.forEach((src) => {
-          if (y + 26 > H - 16) return;
-          setFill(240, 244, 250); setDraw(0, 26, 51); doc.setLineWidth(0.4); doc.roundedRect(M, y, bw, bh, 2.4, 2.4, "FD");
-          setText(0, 123, 182); doc.setFont("helvetica", "bold"); doc.setFontSize(7); txt(src.cap, M + 3, y + 5); setText(0, 26, 51); doc.setFontSize(9); txt(src.name, M + 3, y + 10.5); doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); txt(src.info || "", M + 3, y + 14.2);
-          const busX = M + bw + 10, busY0 = y + bh / 2; setDraw(0, 26, 51); doc.setLineWidth(0.6); doc.line(M + bw, busY0, busX, busY0);
-          const yl = (k: number) => y + 4 + k * 22, busY1 = yl(Math.max(0, src.loads.length - 1)) + 8; doc.setLineWidth(1.2); doc.line(busX, y + 2, busX, Math.max(busY1, y + bh));
+          if (yy + 22 > yEnd) return;
+          const nL = Math.max(1, src.loads.length), step = Math.max(11, Math.min(22, (yEnd - yy - 6) / nL)), lb = Math.min(12, step - 2);
+          setFill(240, 244, 250); setDraw(0, 26, 51); doc.setLineWidth(0.4); doc.roundedRect(X0, yy, bw, bh, 2.4, 2.4, "FD");
+          setText(0, 123, 182); doc.setFont("helvetica", "bold"); doc.setFontSize(7); txt(src.cap, X0 + 3, yy + 5); setText(0, 26, 51); doc.setFontSize(9); txt(src.name, X0 + 3, yy + 10.5); doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); txt(src.info || "", X0 + 3, yy + 14.2);
+          const busX = X0 + bw + 10, busY0 = yy + bh / 2; setDraw(0, 26, 51); doc.setLineWidth(0.6); doc.line(X0 + bw, busY0, busX, busY0);
+          const yl = (k: number) => yy + 4 + k * step, busY1 = yl(Math.max(0, nL - 1)) + lb * 0.66; doc.setLineWidth(1.2); doc.line(busX, yy + 2, busX, Math.max(busY1, yy + bh));
           src.loads.forEach((ld, k) => {
-            const ly = yl(k) + 8; if (ly > H - 14) return; doc.setLineWidth(0.5); setDraw(0, 26, 51); doc.line(busX, ly, busX + 12, ly);
+            const ly = yl(k) + lb * 0.66; if (ly > yEnd) return; doc.setLineWidth(0.5); setDraw(0, 26, 51); doc.line(busX, ly, busX + 12, ly);
             doc.rect(busX + 12, ly - 2.2, 4.4, 4.4, "S"); doc.line(busX + 12, ly + 2.2, busX + 16.4, ly - 2.2); doc.line(busX + 16.4, ly, busX + 26, ly);
             setDraw(225, 29, 72); doc.setLineWidth(0.8); doc.line(busX + 26, ly, busX + 96, ly); setText(225, 29, 72); doc.setFont("helvetica", "bold"); doc.setFontSize(6.6); txt(ld.cab || "", busX + 28, ly - 1.6); doc.setFont("helvetica", "normal"); doc.setFontSize(6); txt(ld.cab2 || "", busX + 28, ly + 3.4);
-            setFill(255, 255, 255); setDraw(0, 26, 51); doc.setLineWidth(0.4); doc.roundedRect(busX + 96, ly - 6, 62, 12, 2.4, 2.4, "FD"); setText(0, 26, 51); doc.setFont("helvetica", "bold"); doc.setFontSize(8); txt(ld.name, busX + 99, ly - 1.4); doc.setFont("helvetica", "normal"); doc.setFontSize(6.4); txt(ld.info || "", busX + 99, ly + 3.4);
+            setFill(255, 255, 255); setDraw(0, 26, 51); doc.setLineWidth(0.4); doc.roundedRect(busX + 96, ly - lb / 2, 62, lb, 2.4, 2.4, "FD"); setText(0, 26, 51); doc.setFont("helvetica", "bold"); doc.setFontSize(8); txt(ld.name, busX + 99, ly - lb / 2 + 4.4, { maxWidth: 58 }); doc.setFont("helvetica", "normal"); doc.setFontSize(6.4); txt(ld.info || "", busX + 99, ly - lb / 2 + Math.min(9.4, lb - 1.8));
           });
-          y = Math.max(y + bh, busY1) + 12;
+          yy = Math.max(yy + bh, busY1 + lb / 2) + 8;
         });
-        setText(92, 99, 106); doc.setFontSize(6.5); txt(pg.note || "", M, H - 12);
+        setText(92, 99, 106); doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); txt(pg.note || "", X0, Y1 - 1, { maxWidth: X1 - X0 });
+      }
+    };
+    // altezza che serve a un disegno nella vista accorpata
+    const avail = bottom - 28;
+    const panelH = (pg: TvDraw) => pg.kind === "trench" ? Math.min(avail - 8, fmtId === "a3" ? 80 : 70)
+      : pg.kind === "profile" ? Math.min(avail - 8, fmtId === "a3" ? 118 : 92)
+      : Math.min(avail - 8, 30 + pg.srcs.reduce((a, s) => a + Math.max(1, s.loads.length) * 13 + 8, 0));
+    if (C.compact && ((sh.tech ?? []).length || (sh.draw ?? []).length)) {
+      newPg(sh.title);
+      for (const pdef of sh.tech ?? []) { ensure(18); heading(pdef.title); techBlocks(pdef); y += 2; }
+      // un disegno si restringe fino al minimo leggibile pur di stare nello spazio che resta sulla pagina
+      const panelMin = (pg: TvDraw) => pg.kind === "trench" ? panelH(pg) : pg.kind === "profile" ? 62 : Math.min(panelH(pg), 26 + pg.srcs.reduce((a, s) => a + Math.max(1, s.loads.length) * 11 + 8, 0));
+      for (const pg of sh.draw ?? []) {
+        const room = bottom - y - 8, h = room >= panelMin(pg) ? Math.min(panelH(pg), room) : panelH(pg);
+        ensure(h + 8); heading(pg.title); drawPanel(pg, M, y, W - M, y + h); y += h + 5;
       }
       footer();
+    } else {
+      for (const pdef of sh.tech ?? []) { newPg(pdef.title); techBlocks(pdef); footer(); }
+      for (const pg of sh.draw ?? []) { newPg(pg.title); drawPanel(pg, M, 26, W - M, H - 14); footer(); }
     }
   }
   return doc.output("blob");
