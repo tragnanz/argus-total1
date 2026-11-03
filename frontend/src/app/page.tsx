@@ -16,7 +16,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.218";
+const REV = "v0.6.219";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1462,6 +1462,9 @@ export default function Page() {
   const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
   // Livello Strade (linee, con spessore) disegnabile/importabile: i pivot le rispettano.
   const [roads, setRoads] = useState<RoadL[]>([]);
+  const [roadSel, setRoadSelState] = useState<string | null>(null);   // strada in modifica
+  const roadSelRef = useRef<string | null>(null);
+  const setRoadSel = (v: string | null) => { roadSelRef.current = v; setRoadSelState(v); };
   const [roadWidth, setRoadWidth] = useState(8);      // spessore strada di default (m)
   const [canalWidth, setCanalWidth] = useState(6);    // spessore canale/fiume di default (m)
 
@@ -2480,6 +2483,9 @@ export default function Page() {
         setCanals(next);
         renderCanals(next);
         setMsg("");
+        // il canale appena tracciato resta modificabile (punti e «+» a metà dei tratti)
+        const ni = next.length - 1;
+        if (ni >= 0 && next[ni].start && next[ni].end) { setEditingCanal(ni); installCanalEditor(ni, next[ni]); }
       } catch (e) { showErr(e); } finally { setBusy(""); }
     });
   }
@@ -2517,7 +2523,7 @@ export default function Page() {
   function startEditCanal(i: number) {
     if (!activeGeom) return needField();
     setEditingCanal(i);
-    setMsg(t("Trascina presa, finale o i punti del percorso. Clicca sulla linea per aggiungere un punto. Il canale resta sempre in discesa."));
+    setMsg(t("Trascina presa, finale o i punti del percorso; trascina un «+» a metà di un tratto (o clicca la linea) per aggiungere un punto. Il canale resta sempre in discesa."));
     installCanalEditor(i, canals[i]);
   }
   function endEditCanal() { setEditingCanal(null); setMsg(""); mapApi.current?.endCanalEdit(); }
@@ -2666,6 +2672,7 @@ export default function Page() {
       },
       onMove: (i, lat, lng) => { const real = visIdx[i]; commitPivots(pivots.map((p, k) => (k === real ? { ...p, lat, lng } : p))); },
       onBackground: () => {
+        endRoadEdit();
         setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false); setSrcPicked(false);
         if (editPipeRef.current != null) { editPipeRef.current = null; api2.endPipeEdit?.(); setMsg(""); }
       },
@@ -2684,29 +2691,7 @@ export default function Page() {
         }
         // SECONDO clic (o clic su un'altra tubazione): modifica quella singola.
         setPipeSel({ mode: "single", idx: li });
-        editPipeRef.current = target;
-        setMsg(t("Trascina i punti: si agganciano ai centri dei pivot e al canale. Clic sulla linea per aggiungere un punto, doppio clic (o tasto destro) su un punto per eliminarlo."));
-        const openEditor = (coords0: number[][]) => {
-          api2.editPipe?.(coords0, (coords) => {
-            // Se la modifica ha staccato la tubazione dall'acqua, viene riattaccata
-            // subito e l'editor riaperto sul tracciato corretto, così le maniglie
-            // mostrano la nuova presa invece di restare indietro.
-            const fixed = reattachToWater(coords, target);
-            setPivotLines((ls) => {
-              const arr = ls.map((l, k) => (k === target ? { ...l, coords: fixed } : l));
-              setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, arr) } : gp));
-              return arr;
-            });
-            if (fixed.length !== coords.length) {
-              setMsg(t("Tubazione ricollegata alla rete ✓"));
-              setTimeout(() => openEditor(fixed), 0);
-            }
-          },
-          pivots.map((pv) => [pv.lng, pv.lat]),                       // aggancio ai centri dei pivot
-          waterLinesLL(),                                             // aggancio al canale / fiume
-          { pivot: t("Agganciato al centro del pivot"), canal: t("Agganciato al canale"), free: t("Punto libero") });
-        };
-        openEditor(pivotLines[target].coords);
+        openPipeEditor(target);
       },
     }, pipeSelForShow, waterLinesLL());
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2725,7 +2710,9 @@ export default function Page() {
   }
   // Elemento selezionato che ⌫ può eliminare (nome per la barretta in alto)
   const delTarget: { name: string; del: () => void } | null =
-    pipeSel.mode === "single" ? { name: t("Tubazione"), del: deleteSelectedPipe }
+    roadSel === "__src" ? null
+    : roadSel != null ? { name: t("Strada"), del: () => { const id = roadSel; endRoadEdit(); setRoads((rs) => rs.filter((r) => r.id !== id)); setMsg(t("Strada eliminata ✓")); } }
+    : pipeSel.mode === "single" ? { name: t("Tubazione"), del: deleteSelectedPipe }
     : pivotSel.mode === "single" && pivots[pivotSel.idx] ? { name: `${t("Pivot")} P${pivotSel.idx + 1}`, del: () => { deleteSelPivot(); setMsg(t("Pivot eliminato ✓")); } }
     : fieldPicked && active ? { name: active.name, del: () => { setFieldPicked(false); removeField(active); } }
     : srcPicked && srcPt ? { name: t("Fonte d'acqua e adduttrice"), del: () => {
@@ -2733,7 +2720,8 @@ export default function Page() {
       } }
     : null;
   const clearSel = () => {
-    const any = pivotSel.mode !== "none" || pipeSel.mode !== "none" || fieldPicked || srcPicked;
+    const any = pivotSel.mode !== "none" || pipeSel.mode !== "none" || fieldPicked || srcPicked || roadSel != null;
+    endRoadEdit();
     setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false); setSrcPicked(false);
     if (editPipeRef.current != null) { editPipeRef.current = null; mapApi.current?.endPipeEdit?.(); }
     return any;
@@ -2752,7 +2740,7 @@ export default function Page() {
   const rid = () => `r${roads.length}_${roads.reduce((s, r) => s + r.coords.length, 0)}`;
   useEffect(() => {
     const vis = roads.filter((r) => !r.hidden);
-    mapApi.current?.showRoads?.(vis.map((r) => ({ coords: r.coords, width_m: r.width_m, kind: r.kind })), (i) => { const id = vis[i]?.id; if (id != null) setRoads((rs) => rs.filter((r) => r.id !== id)); });
+    mapApi.current?.showRoads?.(vis.map((r) => ({ coords: r.coords, width_m: r.width_m, kind: r.kind })), (i) => { const r = vis[i]; if (r) openRoadEditor(r.id, r.coords); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roads]);
   // Aggiorna la banda-spessore dei canali quando cambia lo spessore di default.
@@ -2760,9 +2748,22 @@ export default function Page() {
     if (canals.length) renderCanals();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canalWidth]);
+  // Strada selezionata: maniglie sui vertici e "+" a metà dei tratti; ⌫ la elimina.
+  function openRoadEditor(id: string, coords: number[][]) {
+    if (editPipeRef.current != null) { editPipeRef.current = null; }
+    setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false); setSrcPicked(false);
+    setRoadSel(id);
+    setMsg(t("Strada in modifica: trascina i punti o i «+» a metà dei tratti per aggiungerne; doppio clic su un punto per toglierlo, ⌫ per eliminare la strada."));
+    mapApi.current?.editPipe?.(coords, (c) => setRoads((rs) => rs.map((r) => (r.id === id ? { ...r, coords: c } : r))),
+      [], [], { pivot: t("Punto"), canal: t("Punto"), free: t("Punto") });
+  }
+  function endRoadEdit() { if (roadSelRef.current != null) { setRoadSel(null); mapApi.current?.endPipeEdit?.(); } }
   function drawRoad() {
     mapApi.current?.drawRoadManual((coords) => {
-      if (coords.length >= 2) setRoads((rs) => [...rs, { id: rid(), coords, width_m: roadWidth }]);
+      if (coords.length < 2) return;
+      const id = rid();
+      setRoads((rs) => [...rs, { id, coords, width_m: roadWidth }]);
+      setTimeout(() => openRoadEditor(id, coords), 0);   // appena tracciata resta modificabile
     });
     setMsg(t("Traccia la strada sulla mappa: clic per i vertici, doppio clic per finire."));
   }
@@ -3497,8 +3498,11 @@ export default function Page() {
       const next = [...pivotLines, { kind: "pipe", coords, field: fid }];
       setPivotLines(next);
       setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, next) } : gp));
-      setPipeSel({ mode: "group", idx: -1 });
-      setMsg(t("Tubazione aggiunta ✓"));
+      // la tubazione appena tracciata resta in modifica: si possono spostare i punti e aggiungerne in mezzo
+      const vis = next.filter((l) => !(l.kind === "pipe" && l.field != null && hiddenPipeFields.has(l.field)));
+      setPipeSel({ mode: "single", idx: vis.indexOf(next[next.length - 1]) });
+      setTimeout(() => openPipeEditor(next.length - 1, coords), 0);
+      setMsg(t("Tubazione aggiunta ✓") + " " + t("Trascina i punti o i «+» a metà dei tratti per aggiungerne; doppio clic su un punto per toglierlo."));
     }, pivots.map((pv) => [pv.lng, pv.lat]),
     [...canals.filter((c) => !c.hidden).map((c) => c.geojson.coordinates as number[][]),
      ...watercourses.filter((w) => !w.hidden && w.geojson?.type === "LineString")
@@ -3506,6 +3510,32 @@ export default function Page() {
      // per un RAMO anche le tubazioni esistenti sono bersaglio di aggancio:
      // lo stacco cade esattamente sulla linea da cui deriva
      ...(mode === "branch" ? pivotLines.filter((l) => l.kind === "pipe").map((l) => l.coords) : [])]);
+  }
+  // Editor del tracciato di UNA tubazione (maniglie sui vertici, "+" a metà dei tratti per aggiungere punti).
+  function openPipeEditor(target: number, coordsStart?: number[][]) {
+    editPipeRef.current = target;
+    setMsg(t("Trascina i punti: si agganciano ai centri dei pivot e al canale. Trascina un «+» a metà di un tratto (o clicca la linea) per aggiungere un punto; doppio clic (o tasto destro) su un punto per eliminarlo."));
+    const openEditor = (coords0: number[][]) => {
+      mapApi.current?.editPipe?.(coords0, (coords) => {
+        // Se la modifica ha staccato la tubazione dall'acqua, viene riattaccata
+        // subito e l'editor riaperto sul tracciato corretto, così le maniglie
+        // mostrano la nuova presa invece di restare indietro.
+        const fixed = reattachToWater(coords, target);
+        setPivotLines((ls) => {
+          const arr = ls.map((l, k) => (k === target ? { ...l, coords: fixed } : l));
+          setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, arr) } : gp));
+          return arr;
+        });
+        if (fixed.length !== coords.length) {
+          setMsg(t("Tubazione ricollegata alla rete ✓"));
+          setTimeout(() => openEditor(fixed), 0);
+        }
+      },
+      pivots.map((pv) => [pv.lng, pv.lat]),                       // aggancio ai centri dei pivot
+      waterLinesLL(),                                             // aggancio al canale / fiume
+      { pivot: t("Agganciato al centro del pivot"), canal: t("Agganciato al canale"), free: t("Punto libero") });
+    };
+    openEditor(coordsStart ?? pivotLines[target].coords);
   }
   // Elimina la SINGOLA tubazione selezionata (le altre restano).
   function deleteSelectedPipe() {
@@ -6641,7 +6671,15 @@ export default function Page() {
     setSrcDrawing(true);
     mapApi.current?.drawRoadManual((coords) => {
       setSrcDrawing(false);
-      if (coords.length >= 2) setSrcRoute([srcPt, ...coords.slice(1)]);
+      if (coords.length < 2) return;
+      const route = [srcPt, ...coords.slice(1)];
+      setSrcRoute(route);
+      // il percorso appena tracciato resta modificabile (la presa resta ferma)
+      setTimeout(() => {
+        setRoadSel("__src");
+        setMsg(t("Percorso in modifica: trascina i punti o i «+» a metà dei tratti per aggiungerne; doppio clic su un punto per toglierlo."));
+        mapApi.current?.editPipe?.(route, (c) => setSrcRoute([srcPt, ...c.slice(1)]), [], [], { pivot: t("Punto"), canal: t("Punto"), free: t("Punto") });
+      }, 0);
     });
     setMsg(t("Traccia il percorso dalla presa alla vasca: clic per i vertici, doppio clic sulla posizione della vasca."));
   }

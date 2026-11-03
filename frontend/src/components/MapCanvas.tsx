@@ -180,6 +180,10 @@ type Props = {
   apiRef?: MutableRefObject<MapHandle | null>;
 };
 
+// Maniglia "+" a metà di un tratto (aggiunge un punto al tracciato)
+const midIcon = () => L.divIcon({ className: "", iconSize: [14, 14], iconAnchor: [7, 7],
+  html: '<div style="width:14px;height:14px;border-radius:50%;background:rgba(255,255,255,.85);border:1.5px solid #0d3b26;color:#0d3b26;font:700 12px/11px Inter,system-ui,sans-serif;text-align:center;cursor:copy">+</div>' });
+
 export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalProfile, onDrawChange, apiRef }: Props) {
   // Testi della mappa (tooltip, popup, suggerimenti di disegno) nella lingua scelta.
   const { t, lang } = useI18n();
@@ -970,7 +974,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           const ly = L.polyline(latlngs, svc ? { color: "#b7791f", weight: 2.5, opacity: 0.95, dashArray: "6,4" }
             : { color: "#374151", weight: 2, opacity: 0.95 });
           ly.bindTooltip(`${tRef.current("Strada")} ${i + 1}${rd.width_m ? ` · ${Math.round(rd.width_m)} m` : ""}`, { direction: "top", sticky: true });
-          if (onRemove) ly.on("click", (e) => { L.DomEvent.stop(e); onRemove(i); });
+          if (onRemove) ly.on("click", (e) => { L.DomEvent.stop(e); onRemove(i); });   // la pagina decide: seleziona e modifica
           g.addLayer(ly);
         });
       },
@@ -1262,6 +1266,16 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         handle(s, "#038037", "Presa", (p) => { s = p; });
         handle(e, "#b23b1e", "Finale", (p) => { e = p; });
         wps.forEach((w, i) => handle(w, "#f0b429", `Waypoint ${i + 1}`, (p) => { wps[i] = p; }));
+        // "+" a metà tra due punti di controllo: trascinalo per aggiungere un waypoint
+        const ctrl0 = [s, ...wps, e];
+        for (let i = 0; i < ctrl0.length - 1; i++) {
+          const mid = [(ctrl0[i][0] + ctrl0[i + 1][0]) / 2, (ctrl0[i][1] + ctrl0[i + 1][1]) / 2];
+          const mm = L.marker([mid[1], mid[0]], { draggable: true, zIndexOffset: 900, icon: midIcon() });
+          mm.bindTooltip(tRef.current("Trascina per aggiungere un punto"), { direction: "top", offset: [0, -8] });
+          mm.on("dragend", () => { const ll = mm.getLatLng(); wps.splice(i, 0, [ll.lng, ll.lat]); fire(); });
+          mm.on("click", (ev2) => { L.DomEvent.stop(ev2); wps.splice(i, 0, mid); fire(); });
+          g.addLayer(mm);
+        }
         // clic sulla linea: inserisci un waypoint mantenendo l'ordine presa→finale
         line.on("click", (ev: L.LeafletMouseEvent) => {
           const cl = ev.latlng;
@@ -1412,6 +1426,22 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           m.on("contextmenu", kill);
           g.addLayer(m);
         });
+        // "+" a metà di ogni tratto: trascinalo (o cliccalo) per aggiungere un punto in mezzo
+        for (let i = 0; i < pts.length - 1; i++) {
+          const mid = [(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2];
+          const mm = L.marker([mid[1], mid[0]], { draggable: true, zIndexOffset: 1100, icon: midIcon() });
+          mm.bindTooltip(tRef.current("Trascina per aggiungere un punto"), { direction: "top", offset: [0, -8] });
+          mm.on("drag", (e) => {
+            const ll = (e.target as L.Marker).getLatLng();
+            line.setLatLngs([...pts.slice(0, i + 1), [ll.lng, ll.lat], ...pts.slice(i + 1)].map((q) => [q[1], q[0]] as [number, number]));
+          });
+          mm.on("dragend", (e) => {
+            const ll = (e.target as L.Marker).getLatLng();
+            pts.splice(i + 1, 0, snapTo(ll.lng, ll.lat).p); addJoints(); fire(); redraw();
+          });
+          mm.on("click", (e) => { L.DomEvent.stop(e); pts.splice(i + 1, 0, mid); fire(); redraw(); });
+          g.addLayer(mm);
+        }
         line.on("click", (ev: L.LeafletMouseEvent) => {
           const cl = ev.latlng; let best = 0, bd = Infinity;
           for (let i = 0; i < pts.length - 1; i++) {

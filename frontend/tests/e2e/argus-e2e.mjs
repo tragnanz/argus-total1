@@ -225,6 +225,27 @@ try {
     const back = (await page.locator(blue).count()) > 0;
     ok(chipSrc > 0 && gone && back, `Selezione: la linea dell'adduttrice si seleziona, ⌫ la elimina e ⌘Z la rimette (${chipSrc}/${gone}/${back})`);
   } else ok(false, "Selezione: linea dell'adduttrice non trovata");
+  // Tracciato modificabile: "+" a metà dei tratti di una tubazione, trascinandolo si aggiunge un punto
+  {
+    const hit = page.locator('path[stroke-width="18"]').first();
+    const hb = await hit.boundingBox();
+    if (hb) {
+      const clickHit = async () => page.evaluate(() => { const el = document.querySelector('path[stroke-width="18"]'); const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; });
+      // clicca un punto della linea vicino al primo "+" disponibile: usa l'evento Leaflet sulla geometria
+      await page.evaluate(() => document.querySelector('path[stroke-width="18"]').dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 0, clientY: 0 }))).catch(() => {});
+      await page.waitForTimeout(600);
+      await page.evaluate(() => document.querySelector('path[stroke-width="18"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }))).catch(() => {});
+      await page.waitForTimeout(900);
+      const nMid = await page.locator('div[style*="cursor:copy"]').count();
+      const nV0 = await page.locator('div[style*="cursor:grab"][style*="14px"]').count();
+      const mb = await page.locator('div[style*="cursor:copy"]').first().boundingBox();
+      if (mb) { await page.mouse.move(mb.x + 7, mb.y + 7); await page.mouse.down(); await page.mouse.move(mb.x + 60, mb.y + 40, { steps: 6 }); await page.mouse.up(); await page.waitForTimeout(900); }
+      const nV1 = await page.locator('div[style*="cursor:grab"][style*="14px"]').count();
+      ok(nMid >= 1 && nV1 === nV0 + 1, `Tracciato: «+» a metà dei tratti (${nMid}), trascinandolo i punti passano da ${nV0} a ${nV1}`);
+      await page.keyboard.press("Escape"); await page.waitForTimeout(400);
+      void clickHit; void hb;
+    } else ok(false, "Tracciato: tubazione non trovata sulla mappa");
+  }
   // Pivot solari: scheda a destra, P1 a pannelli → moduli sulla mappa, niente cavo per P1, campo FV nel computo
   await page.locator('button[title="Pivot solari"]').first().click(); await page.waitForTimeout(800);
   await page.locator('section:not([hidden]) label:has-text("P1") input[type="checkbox"]').first().check(); await page.waitForTimeout(1500);
