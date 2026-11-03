@@ -23,7 +23,7 @@ IT = {
     "south": "sud", "north": "nord",
     "persp": "Vista prospettica · il pivot ruota sopra il campo FV: nel raggio dei pannelli (≈ {r} m) niente discese degli irrigatori",
     "plan": "PIANTA · scala grafica", "section": "SEZIONE DELLE FILE", "data": "DATI DI PROGETTO",
-    "pivotPt": "perno", "panel": "quadro FV / inverter", "noDrops": "raggio senza discese {r} m", "span1": "1ª campata {l} m",
+    "pivotPt": "perno", "panel": "quadro FV / inverter", "noDrops": "tara: cerchio non irriguo r {r} m", "kTara": "Tara (area non irrigua)", "vTara": "cerchio di {r} m di raggio attorno al perno: {a} m² non irrigati, tolti dalla superficie irrigata", "span1": "1ª campata {l} m",
     "pipe": "tubo della campata ≈ 4,4 m", "truss": "traliccio ≈ 3,2 m", "pitch": "passo {p} m",
     "kPower": "Potenza del pivot", "vPower": "{t} torri × 0,75 kW{g} = {kw} kW", "vGun": " + irrigatore finale 1,5 kW",
     "kField": "Campo FV", "vField": "{kwp} kWp ({k} kWp per kW): {n} moduli da {wp} Wp, 1,134 × 2,278 m",
@@ -79,7 +79,7 @@ def build_solar_sheet(d: dict) -> bytes:
     mw, ml, tilt, h0, pitch, gap = 1.134, 2.278, 25, 0.50, 3.5, 0.02
     md = ml * math.cos(math.radians(tilt)); htop = h0 + ml * math.sin(math.radians(tilt))
     W = cols * (mw + gap) - gap; D = (rows - 1) * pitch + md
-    Rnd = math.ceil(off + D + 3)                      # raggio senza discese
+    Rnd = int(d.get("tara_r") or math.ceil(off + D + 3))   # tara: cerchio non irriguo attorno al perno
     south = (d.get("lat") or 0) >= 0
     mods = []
     for i in range(n):
@@ -174,13 +174,14 @@ def build_solar_sheet(d: dict) -> bytes:
            (L["kField"], L["vField"].format(kwp=N(kWp, 1), k=N(k, 1), n=n, wp=N(wp, 0))),
            (L["kLayout"], L["vLayout"].format(rows=rows, cols=cols, tilt=tilt, p=N(pitch, 1))),
            (L["kArea"], L["vArea"].format(w=N(W, 1), d=N(D, 1), a=N(W * D, 0), off=N(off, 0))),
-           (L["kHeight"], L["vHeight"].format(h0=N(h0, 2), h1=N(htop, 2)))]
+           (L["kHeight"], L["vHeight"].format(h0=N(h0, 2), h1=N(htop, 2))),
+           (L["kTara"], L["vTara"].format(r=Rnd, a=N(math.pi * Rnd * Rnd, 0)))]
     if d.get("show_flow") and d.get("q_ls"):
         q = float(d["q_ls"]); rws.append((L["kFlow"], L["vFlow"].format(q=N(q, 1), m3=N(q * 3.6, 0), p=N(float(d.get("p_bar") or 0), 1))))
     rws.append((L["kElec"], (L["vElecBatt"] if bkwh else L["vElecDay"]).format(inv=inv, b=bkwh, h=N(batt, 0))))
     fig.text(0.04, 0.255, S(L["data"]), fontsize=8.5, color=BLUE, fontweight="bold", family=famH)
     for i, (a, b) in enumerate(rws):
-        yy = 0.225 - i * 0.025
+        yy = 0.225 - i * 0.022
         fig.text(0.04, yy, S(a), fontsize=9, color=MUT); fig.text(0.17, yy, S(b), fontsize=9.5, color=NAVY)
     fig.text(0.04, 0.03, S(L["foot"]), fontsize=7.5, color=MUT)
     buf = io.BytesIO(); fig.savefig(buf, format="pdf"); plt.close(fig)

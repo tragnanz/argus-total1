@@ -18,6 +18,7 @@ export type PivotItem = { lat: number; lng: number; r: number; conn?: string; fi
   phaseColor?: boolean;       // colora per fase sulla mappa
   solar?: boolean;            // pivot alimentato da pannelli solari vicino al centro
   solarPolys?: [number, number][][];    // moduli FV da disegnare ([lat, lng] per modulo)
+  solarTaraR?: number;                  // raggio (m) del cerchio di tara non irriguo attorno al perno
   solarTag?: { lat: number; lng: number; text: string } };   // etichetta del campo FV, visibile a ogni zoom
 // Settore (o cerchio) come anello [lat, lng] per Leaflet.
 function sectorLatLngs(lat: number, lng: number, r: number, deg = 360, az = 0): [number, number][] {
@@ -841,6 +842,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             fillColor: pv.unconn ? "#fff" : "#0d3b26", fillOpacity: 1, interactive: false,
           }));
           // Pivot solare: i moduli fotovoltaici accanto al centro, come sul campo
+          if (pv.solarTaraR) g.addLayer(L.circle([pv.lat, pv.lng], { radius: pv.solarTaraR, color: "#b45309", weight: 1.2, dashArray: "4 3", fillColor: "#d9c9a3", fillOpacity: 0.55, interactive: false }));
           if (pv.solarPolys?.length) {
             for (const ring of pv.solarPolys) g.addLayer(L.polygon(ring, { color: "#e5edf7", weight: 0.6, fillColor: "#1e3a8a", fillOpacity: 0.92, interactive: false }));
           }

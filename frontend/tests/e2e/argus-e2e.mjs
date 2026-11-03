@@ -232,6 +232,9 @@ try {
   const mods = await page.locator('path[fill="#1e3a8a"]').count();
   ok(/kWp/.test(solTxt) && /pivot solari/i.test(solTxt) && mods >= 4, `Pivot solari: P1 a pannelli, ${mods} moduli disegnati accanto al centro`);
   ok((await page.locator(".solar-tag").count()) >= 1 && /kWp/.test(await page.locator(".solar-tag").first().innerText()), "Pivot solari: etichetta del campo FV sulla mappa");
+  const taraM2 = Number(await page.locator("section:not([hidden]) [data-tara]").first().getAttribute("data-tara").catch(() => "0"));
+  const taraCirc = await page.locator('path[stroke="#b45309"]').count();
+  ok(taraM2 > 100 && /tara Ø/.test(solTxt) && /ha irrigui/.test(solTxt) && taraCirc >= 1, `Pivot solari: tara circolare non irrigua (${taraM2} m², cerchio sulla mappa)`);
   const kw0 = /([\d,]+) kW →/.exec(await section())?.[1];
   const gunBox = page.locator('section:not([hidden]) li:has(b:text-is("P1")) label:has-text("Irrigatore finale") input').first();
   await gunBox.setChecked(!(await gunBox.isChecked())); await page.waitForTimeout(800);
@@ -241,7 +244,7 @@ try {
   const sol = await download(() => page.locator('section:not([hidden]) button:has-text("Scheda in scala")').first().click(), "scheda campo FV");
   if (process.env.ARGUS_SAVE_SOLAR) await sol.saveAs(process.env.ARGUS_SAVE_SOLAR);
   const solTxt2 = cp.execFileSync("pdftotext", [await sol.path(), "-"]).toString();
-  ok(/CAMPO FOTOVOLTAICO DEL PIVOT SOLARE/.test(solTxt2) && /kWp/.test(solTxt2) && /PIANTA/.test(solTxt2), "Pivot solari: scheda in scala del campo FV (PDF)");
+  ok(/CAMPO FOTOVOLTAICO DEL PIVOT SOLARE/.test(solTxt2) && /kWp/.test(solTxt2) && /PIANTA/.test(solTxt2) && /Tara/.test(solTxt2), "Pivot solari: scheda in scala del campo FV con la tara (PDF)");
   if (process.env.ARGUS_SHOT_SOLAR) await page.screenshot({ path: process.env.ARGUS_SHOT_SOLAR });
   await page.locator('[title="Esporta"], button:has-text("Esporta")').first().click(); await page.waitForTimeout(800);
   const cer2 = await readJson(await download(() => page.locator('button:has-text("Esporta per Ceres")').click()));

@@ -16,7 +16,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.216";
+const REV = "v0.6.217";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -425,8 +425,13 @@ function nearestOnPolyline(p: number[], coords: number[][]): { pt: number[]; dis
 // ---- Gerarchia pivot: conversione FeatureCollection ⇄ modello modificabile ----
 // Anello circolare (lon,lat) per un pivot di raggio r (m) centrato in (lat,lng).
 // Superficie irrigata da un pivot (m²): settore di (raggio + gittata dell'irrigatore finale).
-const pvAreaM2 = (p: { r: number; deg?: number; gun?: number }) =>
-  (Math.max(1, Math.min(360, p.deg ?? 360)) / 360) * Math.PI * Math.pow(p.r + Math.max(0, p.gun ?? 0), 2);
+// Tara dei pivot solari: il cerchio attorno al perno che contiene i pannelli non è irriguo.
+// Il raggio dipende dal campo FV (stato della pagina): la funzione è impostata a ogni render.
+let solarTaraR: (p: { r: number; solar?: boolean }) => number = () => 0;
+const pvAreaM2 = (p: { r: number; deg?: number; gun?: number; solar?: boolean }) => {
+  const f = Math.max(1, Math.min(360, p.deg ?? 360)) / 360, R0 = p.solar ? Math.min(p.r, solarTaraR(p)) : 0;
+  return f * Math.PI * (Math.pow(p.r + Math.max(0, p.gun ?? 0), 2) - R0 * R0);
+};
 // Anello del settore [lng, lat] (cerchio intero se deg = 360); azimut da nord in senso orario.
 function sectorRing(lat: number, lng: number, r: number, deg = 360, az = 0): number[][] {
   if (deg >= 359.5) return circleRing(lat, lng, r);
@@ -2633,7 +2638,7 @@ export default function Page() {
     const visP = visIdx.map((k) => ({ ...pivots[k], unconn: pivotLines.some((l) => l.kind === "pipe") && !fed.has(pKey(pivots[k])),
       label: pivotLabels ? `${nPhases > 1 && phaseColors ? `F${pivots[k].phase ?? 1} · ` : ""}${uHa(pvAreaM2(pivots[k]) / 10000, 1)}<br>${fmt(Math.round(pivotFlow(pivots[k])))} l/s` : undefined,
       phaseColor: nPhases > 1 && phaseColors, ...(pivots[k].solar ? (() => { const sp = solarPolys(pivots[k]), all = sp.flat();
-        return { solarPolys: sp, solarTag: { lat: all.reduce((a, q) => a + q[0], 0) / all.length, lng: all.reduce((a, q) => a + q[1], 0) / all.length, text: `${fmt(solarSize(pivots[k]).kWp, { maximumFractionDigits: 1 })} kWp` } }; })() : {}) }));
+        return { solarPolys: sp, solarTaraR: solarSize(pivots[k]).taraR, solarTag: { lat: all.reduce((a, q) => a + q[0], 0) / all.length, lng: all.reduce((a, q) => a + q[1], 0) / all.length, text: `${fmt(solarSize(pivots[k]).kWp, { maximumFractionDigits: 1 })} kWp` } }; })() : {}) }));
     // Le tubazioni hanno una visibilità propria (oggetto a sé); le altre linee
     // seguono la visibilità del gruppo pivot del loro campo.
     const visL = pivotLines.filter((l) => l.kind === "pipe"
@@ -3736,6 +3741,7 @@ export default function Page() {
         R.push({ cat: cS, key: "solar", item: tx("Struttura di sostegno dei moduli"), qty: SZ.reduce((a, z) => a + z.rows, 0), unit: tx("file") });
         R.push({ cat: cS, key: "solar", item: tx("Inverter / regolatore fotovoltaico del pivot"), qty: sol.length, unit: tx("n."), note: SZ.map((z) => `${fx(z.inv)} kW`).join(" · ") });
         const bk = SZ.reduce((a, z) => a + z.batt, 0); if (bk > 0) R.push({ cat: cS, key: "solar", item: tx("Batterie del pivot solare"), qty: bk, unit: "kWh" });
+        R.push({ cat: cS, key: "solar", item: tx("Tara non irrigua attorno al perno (area del campo FV)"), qty: Math.round(SZ.reduce((a, z) => a + z.taraM2, 0) / 100) / 100, unit: "ha", note: SZ.map((z) => `Ø ${fx(2 * z.taraR)} m`).join(" · ") });
       }
     }
     // Lineari, rotoloni e goccia salvati sui campi
@@ -4151,7 +4157,7 @@ export default function Page() {
         const fieldsShown = (usedF.length ? usedF : fields.filter((f) => f.parentId == null)).filter((f) => !f.hidden);
         const fieldsTv = fieldsShown.map((f) => ({ pts: f.geom.coordinates[0].map(LLf) }));
         const gross = fieldsShown.reduce((a, f) => a + ringAreaHa(f.geom.coordinates), 0);
-        const pHa = (p: PivotItem) => (Math.PI * p.r * p.r * Math.min(360, p.deg ?? 360)) / 360 / 1e4;
+        const pHa = (p: PivotItem) => pvAreaM2(p) / 1e4;
         const covHa = pivots.reduce((a, p) => a + pHa(p), 0);
         const pivTv: TvPivot[] = pivots.map((p, k) => {
           const deg = Math.min(360, p.deg ?? 360), azc = (p.az ?? 0) + deg / 2, c = spanComposition(p, pivotBrand);
@@ -4249,7 +4255,7 @@ export default function Page() {
         const sh1: TvSheet = { title: tx("Planimetria generale"), fields: fieldsTv, pivots: pivTv,
           lines: [...srcLines, ...runs.map((r) => ({ id: "p" + r.n, pts: r.pts.map(LLf), color: PIPE_C, dash: true, width: 0.6 }))], points: basePts,
           column: [{ title: tx("Impianto"), items: [...pivItems, ...stItems] },
-            ...(pivots.some((p) => p.solar) ? [{ title: tx("Pivot solari"), items: pivots.map((p, k) => (p.solar ? { head: `P${k + 1} · ${n1(solarSize(p).kWp)} kWp`, lines: [`${solarSize(p).n} × ${solarCfg.wp} Wp · ${n1(pivotKw(p))} kW${solarSize(p).batt ? ` · ${solarSize(p).batt} kWh` : ""}`] } : null)).filter(Boolean) as TvColItem[] }] : []),
+            ...(pivots.some((p) => p.solar) ? [{ title: tx("Pivot solari"), items: pivots.map((p, k) => (p.solar ? { head: `P${k + 1} · ${n1(solarSize(p).kWp)} kWp`, lines: [`${solarSize(p).n} × ${solarCfg.wp} Wp · ${n1(pivotKw(p))} kW${solarSize(p).batt ? ` · ${solarSize(p).batt} kWh` : ""}`, `${tx("tara")} Ø ${n0(2 * solarSize(p).taraR)} m · ${(solarSize(p).taraM2 / 1e4).toFixed(2)} ha`] } : null)).filter(Boolean) as TvColItem[] }] : []),
             { title: tx("Tubo sotterraneo"), items: [...byDn.entries()].sort((a, b) => b[0] - a[0]).map(([dn, L]) => ({ head: dn ? `PE100 PN10 Ø${dn}` : tx("Tubo sotterraneo"), lines: [`${n0(L)} m`] })) }],
           cells: cellsBase(tx("Planimetria generale")) };
         // 2 — tubazioni
@@ -4836,8 +4842,10 @@ export default function Page() {
           const tk2 = solP.reduce((a, p) => a + solarSize(p).kWp, 0);
           eb.push({ p: tx("{n} pivot sono alimentati da pannelli fotovoltaici posati accanto al perno centrale, per {k} kWp in tutto: le torri e l'irrigatore finale lavorano a energia solare e questi pivot non hanno la linea elettrica dalla stazione. Il campo è dimensionato con {f} kWp per ogni kW assorbito dal pivot.", { n: fx(solP.length), k: n1(tk2), f: n1(solarCfg.k) })
             + (solarCfg.batt > 0 ? " " + tx("Le batterie danno {h} ore di autonomia senza sole.", { h: fx(solarCfg.batt) }) : " " + tx("Senza batterie i pivot solari irrigano di giorno.")) });
-          eb.push({ table: { header: [tx("Pivot"), "kW", "kWp", tx("Moduli"), tx("Batterie") + " (kWh)"], widths: [16, 16, 20, 28, 20],
-            rows: pivots.map((p, k) => (p.solar ? [`P${k + 1}`, n1(pivotKw(p)), n1(solarSize(p).kWp), `${solarSize(p).n} × ${solarCfg.wp} Wp`, solarSize(p).batt ? n0(solarSize(p).batt) : "—"] : null)).filter(Boolean) as string[][] } });
+          const taraHa = solP.reduce((a, p) => a + solarSize(p).taraM2, 0) / 1e4;
+          eb.push({ p: tx("Il campo FV occupa un cerchio attorno al perno che il pivot attraversa senza irrigare: questa area è contata come tara ({ha} ha in tutto) e tolta dalla superficie irrigata, dalla portata e dai fabbisogni.", { ha: n1(taraHa) }) });
+          eb.push({ table: { header: [tx("Pivot"), "kW", "kWp", tx("Moduli"), tx("Batterie") + " (kWh)", tx("Tara") + " Ø (m)", tx("Tara") + " (ha)"], widths: [12, 11, 13, 22, 14, 14, 14],
+            rows: pivots.map((p, k) => (p.solar ? [`P${k + 1}`, n1(pivotKw(p)), n1(solarSize(p).kWp), `${solarSize(p).n} × ${solarCfg.wp} Wp`, solarSize(p).batt ? n0(solarSize(p).batt) : "—", n0(2 * solarSize(p).taraR), (solarSize(p).taraM2 / 1e4).toFixed(2)] : null)).filter(Boolean) as string[][] } });
         }
         eb.push({ p: tx("Le linee elettriche sono interrate, a 400 V; la sezione è scelta per la corrente di esercizio e una caduta di tensione non superiore al 4 %. I pivot sono alimentati dalla stazione che li serve, con le linee posate nella stessa trincea delle tubazioni.") });
         if (cabs.length) eb.push({ table: { header: [tx("Linea"), "kW", tx("Cavo"), tx("Lunghezza") + " (m)", "ΔV (%)"], widths: [38, 12, 22, 16, 12], rows: cabs.map((c) => [c.name, n1(c.kW), `${c.mat} 3 × ${n1(c.S)} mm²`, n0(c.L), n1(c.dv)]) } });
@@ -5276,12 +5284,17 @@ export default function Page() {
   // Le torri (0,75 kW l'una) e l'irrigatore finale (1,5 kW) vanno a pannelli: il pivot non ha
   // la linea elettrica dalla stazione. kWp = potenza del pivot × fattore (rendimento del
   // sistema e ore di sole ridotte a inizio e fine giornata); batterie per le ore di autonomia.
-  const pivotKw = (pv: PivotItem) => (spanComposition(pv, pivotBrand)?.spans.length ?? Math.max(1, Math.round(pv.r / 50))) * 0.75 + (pv.gun && pv.gun > 0 ? 1.5 : 0);
+  // il numero di torri non dipende dalla tara: si passa il pivot senza "solar" (evita il giro tara → kW → campate → portata → tara)
+  const pivotKw = (pv: PivotItem) => (spanComposition({ r: pv.r, gun: pv.gun, q: pv.q, deg: pv.deg }, pivotBrand)?.spans.length ?? Math.max(1, Math.round(pv.r / 50))) * 0.75 + (pv.gun && pv.gun > 0 ? 1.5 : 0);
   function solarSize(pv: PivotItem) {
     const kW = pivotKw(pv), n = Math.max(2, Math.ceil((kW * solarCfg.k * 1000) / Math.max(100, solarCfg.wp)));
     const cols = Math.max(2, Math.ceil(Math.sqrt(n * 1.8))), rows = Math.ceil(n / cols);
-    return { kW, n, kWp: (n * solarCfg.wp) / 1000, rows, cols, batt: solarCfg.batt > 0 ? Math.ceil((kW * solarCfg.batt) / 0.9) : 0, inv: Math.ceil(kW * 1.25) };
+    // tara: cerchio attorno al perno che contiene tutto il campo FV + 3 m di rispetto (il pivot ci gira sopra senza irrigare)
+    const W = cols * 1.154 - 0.02, D = (rows - 1) * 3.5 + 2.065, taraR = Math.ceil(Math.max(solarCfg.off + D + 3, Math.hypot(solarCfg.off + D, W / 2) + 1));
+    const taraM2 = (Math.max(1, Math.min(360, pv.deg ?? 360)) / 360) * Math.PI * taraR * taraR;
+    return { kW, n, kWp: (n * solarCfg.wp) / 1000, rows, cols, batt: solarCfg.batt > 0 ? Math.ceil((kW * solarCfg.batt) / 0.9) : 0, inv: Math.ceil(kW * 1.25), taraR, taraM2 };
   }
+  solarTaraR = (p) => (p.solar ? solarSize(p as PivotItem).taraR : 0);
   // moduli verticali 1,13 × 2,28 m inclinati di 25° (ingombro in pianta 1,13 × 2,07 m), file a 3,5 m,
   // a sud del centro (a nord nell'emisfero australe), a «off» metri dal perno
   function solarPolys(pv: PivotItem): [number, number][][] {
@@ -7462,13 +7475,14 @@ export default function Page() {
       const doc = inLang(lng, () => ({
         lang: lng, name: `P${k + 1}`, r: pv.r, lat: pv.lat, gun: pv.gun ?? 0, q_ls: pivotFlow(pv), p_bar: pivotPressure(pv), show_flow: pivotLabels,
         spans: c ? c.spans.map((sp) => ({ len: sp.len, d: PIPE_TXT[sp.pipe] ?? "" })) : Array.from({ length: Math.max(1, Math.round(pv.r / 50)) }, () => ({ len: pv.r / Math.max(1, Math.round(pv.r / 50)), d: "" })),
-        cfg: solarCfg,
+        cfg: solarCfg, tara_r: solarSize(pv).taraR,
         labels: {
+          kTara: tx("Tara (area non irrigua)"), vTara: tx("cerchio di {r} m di raggio attorno al perno: {a} m² non irrigati, tolti dalla superficie irrigata"),
           kicker: tx("CAMPO FOTOVOLTAICO DEL PIVOT SOLARE"), title: tx("{name} · {r} m · {n} campate{gun}"), withGun: tx(" · irrigatore finale"),
           sub: tx("{kw} kW assorbiti → {kwp} kWp: {n} moduli da {wp} Wp in {rows} file, a {off} m dal perno, inclinati di {tilt}° verso {dir}"), south: tx("sud"), north: tx("nord"),
           persp: tx("Vista prospettica · il pivot ruota sopra il campo FV: nel raggio dei pannelli (≈ {r} m) niente discese degli irrigatori"),
           plan: tx("PIANTA · scala grafica"), section: tx("SEZIONE DELLE FILE"), data: tx("DATI DI PROGETTO"),
-          pivotPt: tx("perno"), panel: tx("quadro FV / inverter"), noDrops: tx("raggio senza discese {r} m"), span1: tx("1ª campata {l} m"),
+          pivotPt: tx("perno"), panel: tx("quadro FV / inverter"), noDrops: tx("tara: cerchio non irriguo r {r} m"), span1: tx("1ª campata {l} m"),
           pipe: tx("tubo della campata ≈ 4,4 m"), truss: tx("traliccio ≈ 3,2 m"), pitch: tx("passo {p} m"),
           kPower: tx("Potenza del pivot"), vPower: tx("{t} torri × 0,75 kW{g} = {kw} kW"), vGun: tx(" + irrigatore finale 1,5 kW"),
           kField: tx("Campo FV"), vField: tx("{kwp} kWp ({k} kWp per kW): {n} moduli da {wp} Wp, 1,134 × 2,278 m"),
@@ -7520,6 +7534,7 @@ export default function Page() {
                   <b className="text-brand-darker w-7">P{k + 1}</b>
                   <span className="flex-1 text-sage-dark tabular-nums">{fmt(z.kW, { maximumFractionDigits: 2 })} kW → <b className="text-brand-darker">{fmt(z.kWp, { maximumFractionDigits: 1 })} kWp</b> · {z.n} {t("moduli")} · {z.rows}×{z.cols}{z.batt ? ` · ${fmt(z.batt)} kWh` : ""}</span>
                 </label>
+                {p.solar && <div className="pl-6 text-rust tabular-nums" data-tara={Math.round(z.taraM2)}>{t("tara")} Ø {fmt(2 * z.taraR)} m · −{fmt(z.taraM2 / 1e4, { maximumFractionDigits: 2 })} ha → {fmt(pvAreaM2(p) / 1e4, { maximumFractionDigits: 2 })} ha {t("irrigui")}</div>}
                 <div className="mt-1 flex items-center gap-3 pl-6 text-sage-dark">
                   <label className="flex items-center gap-1 cursor-pointer" title={t("L'irrigatore finale aggiunge 1,5 kW di pompa di rilancio al pivot")}>
                     <input type="checkbox" checked={!!(p.gun && p.gun > 0)} onChange={(e) => commitPivots(pivots.map((q, i) => (i === k ? { ...q, gun: e.target.checked ? 25 : undefined } : q)))} />
@@ -7534,13 +7549,14 @@ export default function Page() {
           })}
         </ul>
         {nOn > 0 && (
-          <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="grid grid-cols-4 gap-2 text-center">
             <div className="bg-panel rounded-lg p-2"><div className="text-lg font-semibold text-brand">{nOn}</div><div className="text-[11px] text-sage-dark">{t("pivot solari")}</div></div>
+            <div className="bg-panel rounded-lg p-2" title={t("Area non irrigua attorno al perno, dove stanno i pannelli: è tolta dalla superficie irrigata")}><div className="text-lg font-semibold text-rust">−{fmt(pivots.reduce((a, p, k) => a + (p.solar ? SZ[k].taraM2 : 0), 0) / 1e4, { maximumFractionDigits: 2 })}</div><div className="text-[11px] text-sage-dark">{t("ha di tara")}</div></div>
             <div className="bg-panel rounded-lg p-2"><div className="text-lg font-semibold text-brand">{fmt(tot.kWp, { maximumFractionDigits: 1 })}</div><div className="text-[11px] text-sage-dark">kWp</div></div>
             <div className="bg-panel rounded-lg p-2"><div className="text-lg font-semibold text-brand">{fmt(tot.n)}</div><div className="text-[11px] text-sage-dark">{t("moduli")}</div></div>
           </div>
         )}
-        <p className="text-[11px] leading-snug text-sage-dark text-justify">{t("I moduli si vedono sulla mappa accanto al centro di ogni pivot solare, a sud del perno. Per questi pivot spariscono la linea elettrica dalla stazione e la sua quota di potenza nel quadro; nel computo entrano campo FV, moduli, strutture, inverter ed eventuali batterie.")}</p>
+        <p className="text-[11px] leading-snug text-sage-dark text-justify">{t("I moduli si vedono sulla mappa accanto al centro di ogni pivot solare, a sud del perno. Per questi pivot spariscono la linea elettrica dalla stazione e la sua quota di potenza nel quadro; nel computo entrano campo FV, moduli, strutture, inverter ed eventuali batterie.")} {t("Il cerchio attorno al perno che contiene i pannelli non è irriguo: è contato come tara e tolto dalla superficie irrigata, dalla portata e dai consumi.")}</p>
       </div>
     );
   }
