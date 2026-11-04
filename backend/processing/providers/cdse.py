@@ -173,12 +173,63 @@ class CdseClient:
             },
             "evalscript": DEM_EVALSCRIPT,
         }
-        r = self.session.post(PROCESS_URL, json=payload, headers=self._headers(), timeout=120)
-        if not r.ok:
-            raise RuntimeError(f"CDSE DEM Process API {r.status_code}: {r.text[:600]}")
-        from rasterio.io import MemoryFile
-        with MemoryFile(r.content) as mf, mf.open() as ds:
-            return ds.read(1).astype("float32")
+        if not getattr(self, "_dem_cdse_denied", False):
+            r = self.session.post(PROCESS_URL, json=payload, headers=self._headers(), timeout=120)
+            if r.ok:
+                from rasterio.io import MemoryFile
+                with MemoryFile(r.content) as mf, mf.open() as ds:
+                    return ds.read(1).astype("float32")
+            if r.status_code != 403:
+                raise RuntimeError(f"CDSE DEM Process API {r.status_code}: {r.text[:600]}")
+            # l'account CDSE non ha il DEM: stesso Copernicus GLO dal bucket pubblico
+            self._dem_cdse_denied = True
+        return fetch_dem_open(bbox_utm, epsg, width, height, dem_instance)
+
+
+DEM_OPEN_URL = {"COPERNICUS_30": ("https://copernicus-dem-30m.s3.amazonaws.com", "10"),
+                "COPERNICUS_90": ("https://copernicus-dem-90m.s3.amazonaws.com", "30")}
+
+
+def fetch_dem_open(bbox_utm, epsg, width, height, dem_instance: str = "COPERNICUS_30") -> np.ndarray:
+    """Copernicus DEM GLO-30/GLO-90 dai COG pubblici (AWS Open Data), ricampionato
+    sulla stessa griglia UTM della Process API. Legge solo i blocchi/overview che
+    servono. Celle di mare (tessera assente) a 0 m."""
+    import math
+    import rasterio
+    from rasterio.enums import Resampling
+    from rasterio.errors import RasterioIOError
+    from rasterio.transform import from_bounds
+    from rasterio.vrt import WarpedVRT
+    from rasterio.warp import transform_bounds
+    base, code = DEM_OPEN_URL.get(dem_instance, DEM_OPEN_URL["COPERNICUS_30"])
+    w, s, e, n = transform_bounds(f"EPSG:{epsg}", "EPSG:4326", *bbox_utm, densify_pts=21)
+    width, height = int(width), int(height)
+    dst_t = from_bounds(*bbox_utm, width, height)
+    out = np.full((height, width), np.nan, dtype="float32")
+    env = dict(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR", CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif",
+               GDAL_HTTP_MAX_RETRY="3", GDAL_HTTP_RETRY_DELAY="1", VSI_CACHE="TRUE")
+    seen = False
+    with rasterio.Env(**env):
+        for la in range(math.floor(s), math.floor(n) + 1):
+            for lo in range(math.floor(w), math.floor(e) + 1):
+                ns = f"N{la:02d}" if la >= 0 else f"S{-la:02d}"
+                ew = f"E{lo:03d}" if lo >= 0 else f"W{-lo:03d}"
+                name = f"Copernicus_DSM_COG_{code}_{ns}_00_{ew}_00_DEM"
+                try:
+                    src = rasterio.open(f"/vsicurl/{base}/{name}/{name}.tif")
+                except RasterioIOError:
+                    continue                                   # tessera di mare
+                seen = True
+                with src, WarpedVRT(src, crs=f"EPSG:{epsg}", transform=dst_t, width=width, height=height,
+                                    resampling=Resampling.bilinear, src_nodata=src.nodata if src.nodata is not None else -32767.0,
+                                    nodata=np.nan, dtype="float32") as vrt:
+                    a = vrt.read(1, out_dtype="float32")
+                m = np.isfinite(a) & np.isnan(out)
+                out[m] = a[m]
+    if not seen:
+        raise RuntimeError("DEM Copernicus non disponibile per quest'area")
+    out[np.isnan(out)] = 0.0
+    return out
 
 
 def fetch_area_composite(client: "CdseClient", polygon_lonlat: dict,

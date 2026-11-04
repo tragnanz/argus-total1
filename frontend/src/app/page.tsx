@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.225";
+const REV = "v0.6.226";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3846,7 +3846,10 @@ export default function Page() {
       // (solo con un bacino vero: sotto 20 km² lo sbocco è un fosso vicino alla presa, non il fiume)
       if (b?.area_km2 && b.area_km2 >= 20 && !b.truncated && b.rain_month_mm?.length === 12 && d.glofas.cells.length) {
         const qb = b.rain_month_mm.reduce((a, r) => a + r, 0) / 1000 * b.area_km2 * 1e6 * 0.2 / (365 * 86400);
-        if (qb > 0) pick = d.glofas.cells.map((c, i) => ({ i, e: Math.abs(Math.log(c.mean / qb)) })).sort((x, y) => x.e - y.e)[0].i;
+        // un grande fiume sulla presa (≥ 50 m³/s, mille volte quello che il bacino locale può dare)
+        // ha un bacino che il DEM non contiene: resta la cella GloFAS proposta
+        const big = pick >= 0 && d.glofas.cells[pick].mean >= 50 && d.glofas.cells[pick].mean > 1000 * qb;
+        if (qb > 0 && !big) pick = d.glofas.cells.map((c, i) => ({ i, e: Math.abs(Math.log(c.mean / qb)) })).sort((x, y) => x.e - y.e)[0].i;
       }
       if (!d.glofas.cells.length) pick = -1;
       setRiver({ data: d, pick, dmv: river?.dmv ?? 10, c: river?.c ?? 0.2 });
