@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.236";
+const REV = "v0.6.237";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -4004,7 +4004,9 @@ export default function Page() {
                 <div data-river-chart>
                   <div className="text-[11px] text-brand-darker leading-snug">
                     {t("Portata media mese per mese")}: {t("da {a} m³/s ({ma}) a {b} m³/s ({mb})", { a: f1(Math.min(...R.mMean)), ma: mon(iMin), b: f1(Math.max(...R.mMean)), mb: mon(R.mMean.indexOf(Math.max(...R.mMean))) })}
-                    {share != null && <> · {t("nel mese irriguo più scarso il fiume dà il {p}% della portata di punta dell'impianto", { p: fmt(Math.min(999, Math.round(share * 100))) })}</>}
+                    {share != null && <> · {share >= 10
+                      ? t("nel mese irriguo più scarso il fiume dà {x} volte la portata di punta dell'impianto: non è il fiume a limitare", { x: fmt(Math.round(share)) })
+                      : t("nel mese irriguo più scarso il fiume dà il {p}% della portata di punta dell'impianto", { p: fmt(Math.round(share * 100)) })}</>}
                   </div>
                   <svg viewBox={`0 0 100 ${H + 2}`} className="w-full mt-1" preserveAspectRatio="none" style={{ height: 90 }}>
                     {R.mMean.map((q, i) => {
@@ -4050,8 +4052,14 @@ export default function Page() {
             </div>
             {renderRiverExtra(R)}
             <button className="btn-ghost w-full text-[12px]" onClick={() => downloadRiverCsv(R)} data-river-csv>{t("⬇ Dati del fiume (CSV per Excel)")}</button>
-            <button className="btn-ghost w-full text-[12px]" disabled={R.qMin <= 0 || srcQmax === R.qMin} onClick={() => setSrcQmax(R.qMin)}
-              title={t("Imposta come portata disponibile il prelevabile del mese irriguo più scarso.")}>{t("Usa {q} l/s come portata disponibile", { q: fmt(R.qMin) })}</button>
+            {(() => {
+              // fiume molto più grande dell'impianto: la portata disponibile è quella che serve (da chiedere in concessione), non tutto il fiume
+              const peak = Math.ceil(Math.max(0, ...R.bal.rows.map((r) => r.qNeed24)));
+              const big = peak > 0 && R.qMin > 10 * peak, q = big ? peak : R.qMin;
+              return <button className="btn-ghost w-full text-[12px]" disabled={q <= 0 || srcQmax === q} onClick={() => setSrcQmax(q)}
+                title={big ? t("Il fiume porta molto più di quanto serve: come portata disponibile si usa la portata di punta dell'impianto, da chiedere in concessione.") : t("Imposta come portata disponibile il prelevabile del mese irriguo più scarso.")}>
+                {big ? t("Usa {q} l/s (portata di punta dell'impianto) come portata disponibile", { q: fmt(q) }) : t("Usa {q} l/s come portata disponibile", { q: fmt(q) })}</button>;
+            })()}
             <p className="text-[10px] text-sage-dark leading-snug text-justify">{R.src === "meas" ? t("Portate misurate dall'ente: sostituiscono la stima GloFAS nel bilancio del fiume.") : R.src === "ggcorr"
               ? t("Serie del modello alla presa riportata, mese per mese, alle portate osservate della stazione: l'andamento dei mesi è quello del modello, i volumi quelli misurati.") : R.src === "geoglows"
               ? t("Simulazione GEOGLOWS v2 a scala di tratto di fiume, medie mensili: la magra è il valore del mese superato in 4 anni su 5. Nessuna stazione misurata sullo stesso fiume: da confrontare con le misure dell'ente.") : R.src === "glofas"
