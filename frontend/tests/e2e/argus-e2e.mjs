@@ -292,8 +292,10 @@ try {
   ok((await page.locator("[data-solar-months] > div > div").count()) === 12, "Pivot solari: produzione FV e ore di marcia mese per mese");
   // Fonte d'acqua: portata del fiume alla presa (GloFAS + bacino) e bilancio mese per mese
   await page.locator('button[title="Fonte d\'acqua"]').first().click(); await page.waitForTimeout(1200);
-  await page.locator("[data-river] button").first().click();
-  await page.locator("[data-river-table]").first().waitFor({ timeout: 90000 }).catch(() => {});
+  // con il fiume come fonte la stima parte da sola; il pulsante serve solo se non è partita
+  const autoRiver = await page.locator("[data-river-table]").first().waitFor({ timeout: 60000 }).then(() => true).catch(() => false);
+  if (!autoRiver) { await page.locator("[data-river] button").first().click(); await page.locator("[data-river-table]").first().waitFor({ timeout: 90000 }).catch(() => {}); }
+  ok(autoRiver && (await page.locator("[data-river-chart] svg rect").count()) >= 36, "Fonte: con il fiume la portata media mese per mese si calcola da sola (grafico)");
   const rvTxt = await page.locator("[data-river]").first().innerText().catch(() => "");
   ok(/prelevabile/i.test(rvTxt) && /km²/.test(rvTxt), `Fonte: portata del fiume alla presa e bilancio mese per mese (${(rvTxt.match(/Portata media[^·]*/) || [""])[0].trim()})`);
   if (process.env.ARGUS_SHOT_RIVER) await page.screenshot({ path: process.env.ARGUS_SHOT_RIVER });

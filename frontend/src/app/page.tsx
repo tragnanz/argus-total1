@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.222";
+const REV = "v0.6.223";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3780,6 +3780,18 @@ export default function Page() {
     const qMin = irr.length ? Math.min(...irr.map((i) => avail[i])) : Math.min(...avail);
     return { src, cell, mean, mMean, mLow, dmv, avail, needM3, bal, qMin: Math.floor(qMin), irr };
   }
+  // Fiume come fonte: la portata si stima da sola appena c'è il punto di presa (e di nuovo se la presa si sposta di oltre 300 m)
+  const riverAuto = useRef("");
+  useEffect(() => {
+    if (srcType !== "fiume" || !srcPt || projLoaded.current !== projectId || busy === "river") return;
+    const d = river?.data;
+    if (d && distM([d.lon, d.lat], srcPt) < 300) return;
+    const key = `${projectId}|${srcPt[0].toFixed(4)}|${srcPt[1].toFixed(4)}`;
+    if (riverAuto.current === key) return;                      // un tentativo per punto (niente ripetizioni su errore)
+    const h = window.setTimeout(() => { riverAuto.current = key; void estimateRiver(); }, 900);
+    return () => window.clearTimeout(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcType, srcPt, projectId, river]);
   async function estimateRiver() {
     if (!srcPt) return;
     setBusy("river");
@@ -3825,10 +3837,45 @@ export default function Page() {
             <div className="text-[11px] text-sage-dark leading-snug">
               {t("Portata media")} <b>{f1(R.mean)} m³/s</b>{R.cell && <> · Q347 {f1(R.cell.q347)} m³/s · {t("minima")} {f1(R.cell.min)} m³/s · {R.cell.years.join("–")}</>} · {t("lasciati al fiume")} {f1(R.dmv)} m³/s
             </div>
+            {(() => {
+              // grafico: portata media del mese (barra), magra (barra scura) e quota prelevabile; linea = portata che serve all'impianto
+              // scala in radice quadrata: la magra e la portata che serve restano leggibili accanto alle piene
+              const need = R.bal.rows.map((r) => r.qNeed24 / 1000), mx = Math.sqrt(Math.max(...R.mMean, ...need, 1e-6)), sc = (q: number) => Math.sqrt(Math.max(0, q)) / mx;
+              const H = 78, w = 100 / 12, iMin = R.mMean.indexOf(Math.min(...R.mMean));
+              const share = R.qMin > 0 && Math.max(...need) > 0 ? (R.qMin / 1000) / Math.max(...need) : null;
+              return (
+                <div data-river-chart>
+                  <div className="text-[11px] text-brand-darker leading-snug">
+                    {t("Portata media mese per mese")}: {t("da {a} m³/s ({ma}) a {b} m³/s ({mb})", { a: f1(Math.min(...R.mMean)), ma: mon(iMin), b: f1(Math.max(...R.mMean)), mb: mon(R.mMean.indexOf(Math.max(...R.mMean))) })}
+                    {share != null && <> · {t("nel mese irriguo più scarso il fiume dà il {p}% della portata di punta dell'impianto", { p: fmt(Math.min(999, Math.round(share * 100))) })}</>}
+                  </div>
+                  <svg viewBox={`0 0 100 ${H + 2}`} className="w-full mt-1" preserveAspectRatio="none" style={{ height: 90 }}>
+                    {R.mMean.map((q, i) => {
+                      const hM = sc(q) * H, hL = sc(R.mLow[i]) * H, hA = sc(R.avail[i] / 1000) * H;
+                      return (<g key={i}>
+                        <rect x={i * w + 1} y={H - hM} width={w - 2} height={hM} fill="#9fd3ee"><title>{`${mon(i)}: ${t("media")} ${f1(q)} m³/s · ${t("magra")} ${f1(R.mLow[i])} m³/s · ${t("prelevabile")} ${fmt(Math.round(R.avail[i]))} l/s`}</title></rect>
+                        <rect x={i * w + 1} y={H - hL} width={w - 2} height={hL} fill="#2e86ab" />
+                        <rect x={i * w + 2.5} y={H - hA} width={w - 5} height={Math.max(0, hA)} fill="#0b6b3a" opacity={0.85} />
+                      </g>);
+                    })}
+                    {need.map((q, i) => (q > 0 ? <line key={i} x1={i * w + 0.5} x2={(i + 1) * w - 0.5} y1={H - sc(q) * H} y2={H - sc(q) * H} stroke="#d64b34" strokeWidth={1.6} vectorEffect="non-scaling-stroke" /> : null))}
+                  </svg>
+                  <div className="flex text-[9px] leading-none text-sage-dark mt-0.5">{R.mMean.map((_, i) => <div key={i} className="flex-1 text-center">{mon(i).slice(0, 3)}</div>)}</div>
+                  <div className="flex flex-wrap gap-x-3 text-[10px] text-sage-dark">
+                    <span><i className="inline-block w-2.5 h-2.5 align-middle mr-1" style={{ background: "#9fd3ee" }} />{t("media")}</span>
+                    <span><i className="inline-block w-2.5 h-2.5 align-middle mr-1" style={{ background: "#2e86ab" }} />{t("magra")}</span>
+                    <span><i className="inline-block w-2.5 h-2.5 align-middle mr-1" style={{ background: "#0b6b3a" }} />{t("prelevabile")}</span>
+                    <span><i className="inline-block w-3 h-0.5 align-middle mr-1" style={{ background: "#d64b34" }} />{t("serve all'impianto")}</span>
+                    <span className="opacity-70">{t("scala in radice quadrata")}</span>
+                  </div>
+                </div>
+              );
+            })()}
             <div className="overflow-x-auto">
               <table className="w-full text-[10px] tabular-nums" data-river-table>
                 <thead><tr className="text-sage-dark"><th className="text-left font-normal"></th>{R.avail.map((_, i) => <th key={i} className="font-normal">{mon(i)}</th>)}</tr></thead>
                 <tbody>
+                  <tr><td className="text-sage-dark pr-1">{t("media")} m³/s</td>{R.mMean.map((q, i) => <td key={i} className="text-center">{f1(q)}</td>)}</tr>
                   <tr><td className="text-sage-dark pr-1">{t("magra")} m³/s</td>{R.mLow.map((q, i) => <td key={i} className="text-center">{f1(q)}</td>)}</tr>
                   <tr><td className="text-sage-dark pr-1">{t("prelevabile")} l/s</td>{R.avail.map((q, i) => <td key={i} className="text-center font-semibold text-brand-darker">{fmt(Math.round(q))}</td>)}</tr>
                   <tr><td className="text-sage-dark pr-1">{t("serve")} l/s</td>{R.bal.rows.map((r, i) => <td key={i} className="text-center">{r.qNeed24 > 0 ? fmt(Math.round(r.qNeed24)) : "—"}</td>)}</tr>
