@@ -9,7 +9,7 @@ import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
 import { buildXlsx } from "@/lib/xlsx";
 import { Dxf, toUtm, utmZone } from "@/lib/dxf";
-import { designCanal, canalEarthworks, LININGS, lining, pivotUniformity, cuGrade, SPRINKLERS, solarMonths, riverBalance, type LiningId, type CanalSection, type CuResult } from "@/lib/hydro";
+import { designCanal, canalEarthworks, LININGS, lining, pivotUniformity, cuGrade, SPRINKLERS, solarMonths, solarDesignWorstMonth, pvPerf, riverBalance, type LiningId, type CanalSection, type CuResult } from "@/lib/hydro";
 import type { LL, RGB, TvSheet, TvCommon, TvPivot, TvLine, TvPoint, TvColItem, TvTrenchItem, TvDraw, TvTech } from "@/lib/tavole";
 import { linearLayout, reelLayout, dripLayout, type LL as SysLL } from "@/lib/systems";
 import type {
@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.239";
+const REV = "v0.6.240";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1361,7 +1361,9 @@ export default function Page() {
   // un campo senza colture proprie segue quelle dell'azienda. Salvate con il progetto.
   const [farmCrops, setFarmCrops] = useState<string[]>(["canna"]);
   const [fieldCrops, setFieldCrops] = useState<Record<string, string[]>>({});
-  const [solarCfg, setSolarCfg] = useState({ wp: 550, k: 1.6, batt: 0, off: 6 });   // pivot solari: modulo Wp, kWp/kW, ore di batteria, distanza dal perno (m)
+  // pivot solari: modulo Wp, kWp/kW e ore di batteria (solo a mano), distanza dal perno (m),
+  // auto = pannelli e batterie dimensionati sul mese peggiore, util = utilizzo medio dei motori delle torri
+  const [solarCfg, setSolarCfg] = useState({ wp: 550, k: 1.6, batt: 0, off: 6, auto: true, util: 0.6 });
   // la coltura più esigente dell'azienda (Kc di punta di riferimento)
   const cropKey = [...farmCrops].sort((a, b) => cropOf(b).kc - cropOf(a).kc)[0] ?? "canna";
   // lista di chiavi valide (vecchi progetti: una sola stringa)
@@ -4089,8 +4091,11 @@ export default function Page() {
   function pivotSolarMonths(pv: PivotItem) {
     const cl = projSettings().site_climate?.data; if (!cl?.rs || cl.rs.length !== 12) return null;
     const z = solarSize(pv), P = pumpStation(), eff = Math.max(0.3, effPct / 100);
-    const hoursNeed = MDAYS.map((d, i) => (P.netMm ? Math.min(hoursDay, ((P.netMm[i] / eff / d) / Math.max(0.1, mmDes)) * hoursDay) : hoursDay));
-    const rows = solarMonths({ lat: pv.lat, rsMJ: cl.rs, kWp: z.kWp, kW: z.kW, hoursNeed, battKwh: z.batt });
+    const hoursNeed = solarCfg.auto ? solarNeed().hours : MDAYS.map((d, i) => (P.netMm ? Math.min(hoursDay, ((P.netMm[i] / eff / d) / Math.max(0.1, mmDes)) * hoursDay) : hoursDay));
+    const tm = (cl as { tmax?: number[] }).tmax;
+    const pr = cl.rs.map((_: number, m: number) => pvPerf(tm?.length === 12 ? tm[m] : null));
+    const kWa = solarCfg.auto ? z.kW * Math.max(0.2, Math.min(1, solarCfg.util)) : z.kW;
+    const rows = solarMonths({ lat: pv.lat, rsMJ: cl.rs, kWp: z.kWp, kW: kWa, hoursNeed, battKwh: z.batt, pr });
     const need = rows.filter((r) => r.hNeed > 0.05);
     return { rows, z, okAll: need.every((r) => r.ok), battMax: Math.ceil(Math.max(0, ...need.map((r) => r.battNeed))), dayOnly: need.filter((r) => r.hNeed <= r.hSun + 1e-6).map((r) => r.m) };
   }
@@ -5608,7 +5613,12 @@ export default function Page() {
         if (solP.length) {
           const tk2 = solP.reduce((a, p) => a + solarSize(p).kWp, 0);
           eb.push({ p: tx("{n} pivot sono alimentati da pannelli fotovoltaici posati accanto al perno centrale, per {k} kWp in tutto: le torri e l'irrigatore finale lavorano a energia solare e questi pivot non hanno la linea elettrica dalla stazione. Il campo è dimensionato con {f} kWp per ogni kW assorbito dal pivot.", { n: fx(solP.length), k: n1(tk2), f: n1(solarCfg.k) })
-            + (solarCfg.batt > 0 ? " " + tx("Le batterie danno {h} ore di autonomia senza sole.", { h: fx(solarCfg.batt) }) : " " + tx("Senza batterie i pivot solari irrigano di giorno.")) });
+            + (solarCfg.auto
+              ? (() => { const zs = solP.map((p) => solarSize(p)), w = zs.find((z) => z.worst >= 0)?.worst ?? -1, bt = zs.reduce((a, z) => a + z.batt, 0);
+                  const mn = w >= 0 ? new Date(2026, w, 15).toLocaleString(L, { month: "long" }) : "";
+                  return " " + (bt > 0 ? tx("Pannelli e batterie sono dimensionati sul mese più sfavorevole ({m}): ogni pivot fa tutte le ore di marcia che servono, di giorno con il sole e senza sole con le batterie ({b} kWh in tutto).", { m: mn, b: n0(bt) })
+                    : tx("I pannelli sono dimensionati sul mese più sfavorevole ({m}): ogni pivot fa con il sole tutte le ore di marcia che servono.", { m: mn })); })()
+              : (solarCfg.batt > 0 ? " " + tx("Le batterie danno {h} ore di autonomia senza sole.", { h: fx(solarCfg.batt) }) : " " + tx("Senza batterie i pivot solari irrigano di giorno."))) });
           { const sm0 = pivotSolarMonths(solP[0]);
             if (sm0) {
               const ml = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(L, { month: "long" }); } catch { return String(i + 1); } };
@@ -6083,13 +6093,32 @@ export default function Page() {
   // sistema e ore di sole ridotte a inizio e fine giornata); batterie per le ore di autonomia.
   // il numero di torri non dipende dalla tara: si passa il pivot senza "solar" (evita il giro tara → kW → campate → portata → tara)
   const pivotKw = (pv: PivotItem) => (spanComposition({ r: pv.r, gun: pv.gun, q: pv.q, deg: pv.deg }, pivotBrand)?.spans.length ?? Math.max(1, Math.round(pv.r / 50))) * 0.75 + (pv.gun && pv.gun > 0 ? 1.5 : 0);
+  // ore di marcia al giorno che servono, mese per mese (coltura più esigente, clima del sito): base del
+  // dimensionamento dei pivot solari. Non usa le superfici (niente ricorsione con la tara FV).
+  function solarNeed() {
+    const cl = projSettings().site_climate?.data as { eto_month_mm?: number[]; rain_month_mm?: number[]; rs?: number[]; tmax?: number[] } | undefined;
+    const eff = Math.max(0.3, effPct / 100), kc = cropOf(cropKey).kc;
+    const hours = MDAYS.map((d, i) => (cl?.eto_month_mm?.length === 12
+      ? Math.min(hoursDay, (Math.max(0, cl.eto_month_mm[i] * kc - ((cl.rain_month_mm?.[i] ?? 0) * psRainEff) / 100) / eff / d / Math.max(0.1, mmDes)) * hoursDay)
+      : hoursDay));
+    return { hours, rs: cl?.rs?.length === 12 ? cl.rs : null, tmax: cl?.tmax?.length === 12 ? cl.tmax : null };
+  }
+  const solarDesignMemo = new Map<string, ReturnType<typeof solarDesignWorstMonth>>();
   function solarSize(pv: PivotItem) {
-    const kW = pivotKw(pv), n = Math.max(2, Math.ceil((kW * solarCfg.k * 1000) / Math.max(100, solarCfg.wp)));
+    const kW = pivotKw(pv), N = solarCfg.auto ? solarNeed() : null;
+    let kWpTarget = kW * solarCfg.k, battKwh = solarCfg.batt > 0 ? Math.ceil((kW * solarCfg.batt) / 0.9) : 0, worst = -1;
+    if (N?.rs) {
+      const key = `${kW.toFixed(3)}|${pv.lat.toFixed(2)}|${solarCfg.util}`;
+      const D = solarDesignMemo.get(key) ?? solarDesignWorstMonth({ lat: pv.lat, rsMJ: N.rs, tmax: N.tmax, kWa: kW * Math.max(0.2, Math.min(1, solarCfg.util)), hoursNeed: N.hours });
+      solarDesignMemo.set(key, D);
+      kWpTarget = D.kWp; battKwh = Math.ceil(D.battKwh); worst = D.worst;
+    }
+    const n = Math.max(2, Math.ceil((kWpTarget * 1000) / Math.max(100, solarCfg.wp)));
     const cols = Math.max(2, Math.ceil(Math.sqrt(n * 1.8))), rows = Math.ceil(n / cols);
     // tara: cerchio attorno al perno che contiene tutto il campo FV + 3 m di rispetto (il pivot ci gira sopra senza irrigare)
     const W = cols * 1.154 - 0.02, D = (rows - 1) * 3.5 + 2.065, taraR = Math.ceil(Math.max(solarCfg.off + D + 3, Math.hypot(solarCfg.off + D, W / 2) + 1));
     const taraM2 = (Math.max(1, Math.min(360, pv.deg ?? 360)) / 360) * Math.PI * taraR * taraR;
-    return { kW, n, kWp: (n * solarCfg.wp) / 1000, rows, cols, batt: solarCfg.batt > 0 ? Math.ceil((kW * solarCfg.batt) / 0.9) : 0, inv: Math.ceil(kW * 1.25), taraR, taraM2 };
+    return { kW, n, kWp: (n * solarCfg.wp) / 1000, rows, cols, batt: battKwh, worst, inv: Math.ceil(kW * 1.25), taraR, taraM2 };
   }
   solarTaraR = (p) => (p.solar ? solarSize(p as PivotItem).taraR : 0);
   // moduli verticali 1,13 × 2,28 m inclinati di 25° (ingombro in pianta 1,13 × 2,07 m), file a 3,5 m,
@@ -7428,7 +7457,7 @@ export default function Page() {
     setSpanVmax(num((st as { span_vmax?: number }).span_vmax, 3));
     applyCrops((st as { crops?: { base?: unknown; fields?: Record<string, unknown> } }).crops);
     { const sp = (st as { solar_pv?: Partial<typeof solarCfg> }).solar_pv ?? {};
-      setSolarCfg({ wp: num(sp.wp, 550), k: num(sp.k, 1.6), batt: num(sp.batt, 0), off: num(sp.off, 6) }); }
+      setSolarCfg({ wp: num(sp.wp, 550), k: num(sp.k, 1.6), batt: num(sp.batt, 0), off: num(sp.off, 6), auto: sp.auto !== false, util: num(sp.util, 0.6) }); }
     { const cd = (st as { canal_design?: { lin?: string; q?: number; fb?: number } }).canal_design ?? {};
       setCanalLin(LININGS.some((l) => l.id === cd.lin) ? (cd.lin as LiningId) : "earth"); setCanalQ(num(cd.q, 0)); setCanalFb(num(cd.fb, 0.3)); }
     { const cm = (st as { cu_model?: string }).cu_model; setCuModel(SPRINKLERS.some((x) => x.id === cm) ? cm! : "kpt_black"); }
@@ -8443,10 +8472,15 @@ export default function Page() {
           <button className="btn-ghost flex-1 text-[12px]" onClick={() => setAll(true)} disabled={nOn === pivots.length}>{t("Tutti solari")}</button>
           <button className="btn-ghost flex-1 text-[12px]" onClick={() => setAll(false)} disabled={!nOn}>{t("Nessuno")}</button>
         </div>
+        <label className="flex items-start gap-2 text-[11px] text-sage-dark cursor-pointer" data-solar-auto>
+          <input type="checkbox" className="mt-0.5" checked={solarCfg.auto} onChange={(e) => setSolarCfg((c) => ({ ...c, auto: e.target.checked }))} />
+          <span>{t("Pannelli e batterie dimensionati sul mese peggiore: il pivot fa tutte le ore di marcia che servono in ogni mese irriguo, con il sole e le batterie")}</span></label>
         <div className="grid grid-cols-2 gap-2">
           {num(t("Modulo (Wp)"), solarCfg.wp, (x) => setSolarCfg((c) => ({ ...c, wp: x })), 10, 200, 800)}
-          {num(t("Fattore kWp / kW"), solarCfg.k, (x) => setSolarCfg((c) => ({ ...c, k: x })), 0.1, 1, 4, t("kWp installati per ogni kW assorbito dal pivot: tiene conto del rendimento del sistema e del sole basso a inizio e fine giornata"))}
-          {num(t("Autonomia con batterie (h)"), solarCfg.batt, (x) => setSolarCfg((c) => ({ ...c, batt: x })), 1, 0, 24, t("0 = il pivot lavora solo di giorno"))}
+          {solarCfg.auto
+            ? num(t("Utilizzo dei motori (%)"), Math.round(solarCfg.util * 100), (x) => setSolarCfg((c) => ({ ...c, util: x / 100 })), 5, 20, 100, t("Potenza media assorbita dalle torri rispetto a quella di targa: le torri interne avanzano a intermittenza (60% è un valore prudente)"))
+            : num(t("Fattore kWp / kW"), solarCfg.k, (x) => setSolarCfg((c) => ({ ...c, k: x })), 0.1, 1, 4, t("kWp installati per ogni kW assorbito dal pivot: tiene conto del rendimento del sistema e del sole basso a inizio e fine giornata"))}
+          {!solarCfg.auto && num(t("Autonomia con batterie (h)"), solarCfg.batt, (x) => setSolarCfg((c) => ({ ...c, batt: x })), 1, 0, 24, t("0 = il pivot lavora solo di giorno"))}
           {num(t("Distanza dal perno (m)"), solarCfg.off, (x) => setSolarCfg((c) => ({ ...c, off: x })), 1, 2, 40)}
         </div>
         <ul className="space-y-1">
@@ -8457,7 +8491,7 @@ export default function Page() {
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={!!p.solar} onChange={(e) => commitPivots(pivots.map((q, i) => (i === k ? { ...q, solar: e.target.checked || undefined } : q)))} />
                   <b className="text-brand-darker w-7">P{k + 1}</b>
-                  <span className="flex-1 text-sage-dark tabular-nums">{fmt(z.kW, { maximumFractionDigits: 2 })} kW → <b className="text-brand-darker">{fmt(z.kWp, { maximumFractionDigits: 1 })} kWp</b> · {z.n} {t("moduli")} · {z.rows}×{z.cols}{z.batt ? ` · ${fmt(z.batt)} kWh` : ""}</span>
+                  <span className="flex-1 text-sage-dark tabular-nums">{fmt(z.kW, { maximumFractionDigits: 2 })} kW → <b className="text-brand-darker">{fmt(z.kWp, { maximumFractionDigits: 1 })} kWp</b> · {z.n} {t("moduli")} · {z.rows}×{z.cols}{z.batt ? ` · ${fmt(z.batt)} kWh` : ""}{p.solar && z.worst >= 0 ? ` · ${t("mese peggiore")}: ${new Date(2000, z.worst, 1).toLocaleString(lang, { month: "long" })}` : ""}</span>
                 </label>
                 {p.solar && <div className="pl-6 text-rust tabular-nums" data-tara={Math.round(z.taraM2)}>{t("tara")} Ø {fmt(2 * z.taraR)} m · −{fmt(z.taraM2 / 1e4, { maximumFractionDigits: 2 })} ha → {fmt(pvAreaM2(p) / 1e4, { maximumFractionDigits: 2 })} ha {t("irrigui")}</div>}
                 <div className="mt-1 flex items-center gap-3 pl-6 text-sage-dark">

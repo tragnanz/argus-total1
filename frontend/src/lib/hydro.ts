@@ -199,9 +199,15 @@ export function dayLength(lat: number, m: number) {
  * marcia che servono al pivot per dare il fabbisogno del mese, ore in cui il sole da solo regge il
  * motore (potenza FV a mezza sinusoide sopra i kW del pivot) e batteria che servirebbe.
  */
-export function solarMonths(o: { lat: number; rsMJ: number[]; kWp: number; kW: number; hoursNeed: number[]; battKwh: number }) {
+// Rendimento del campo FV nel mese: caldo (celle a Tmax + 20 °C, −0,4 %/°C oltre 25 °C), polvere (−5 %),
+// inverter e cavi (0,86). Senza temperature resta il valore medio 0,8.
+export function pvPerf(tmax?: number | null) {
+  if (tmax == null || !Number.isFinite(tmax)) return 0.8;
+  return 0.86 * (1 - 0.004 * Math.max(0, tmax + 20 - 25)) * 0.95;
+}
+export function solarMonths(o: { lat: number; rsMJ: number[]; kWp: number; kW: number; hoursNeed: number[]; battKwh: number; pr?: number[] }) {
   return o.rsMJ.map((rs, m) => {
-    const N = dayLength(o.lat, m), E = (rs / 3.6) * 1.1 * 0.8 * o.kWp;       // kWh/giorno
+    const N = dayLength(o.lat, m), E = (rs / 3.6) * 1.1 * (o.pr?.[m] ?? 0.8) * o.kWp;       // kWh/giorno
     const Ppk = N > 0 ? (E * Math.PI) / (2 * N) : 0;
     const hSun = Ppk > o.kW ? N * (1 - (2 / Math.PI) * Math.asin(o.kW / Ppk)) : 0;
     const surplus = Math.max(0, E - o.kW * hSun);                            // energia oltre quella usata in diretta
@@ -230,4 +236,33 @@ export function riverBalance(qAvail: number[], needM3: number[], hoursMax: numbe
   for (let i = 0; i < 24; i++) { const r = rows[i % 12]; k = Math.max(0, k + r.deficit - r.surplus); store = Math.max(store, k); }
   const total = rows.reduce((a, r) => a + r.deficit, 0), yearSurplus = rows.reduce((a, r) => a + r.surplus, 0);
   return { rows, storeM3: store, deficitM3: total, feasible: yearSurplus >= total };
+}
+
+
+/**
+ * Pivot solare dimensionato sul MESE PEGGIORE: il più piccolo campo FV (kWp) che in ogni mese irriguo
+ * produce l'energia per le ore di marcia che servono — in diretta col sole e, per le ore senza sole,
+ * attraverso le batterie (rendimento 0,85) — e le batterie per le ore di marcia senza sole del mese
+ * più sfavorevole (scarica utile 90 %). kWa = potenza media assorbita (targa × utilizzo dei motori).
+ */
+export function solarDesignWorstMonth(o: { lat: number; rsMJ: number[]; tmax?: number[] | null; kWa: number; hoursNeed: number[] }) {
+  const pr = o.rsMJ.map((_, m) => pvPerf(o.tmax?.[m]));
+  const act = o.hoursNeed.map((h, m) => (h > 0.05 ? m : -1)).filter((m) => m >= 0);
+  const evalAt = (kWp: number) => solarMonths({ lat: o.lat, rsMJ: o.rsMJ, kWp, kW: o.kWa, hoursNeed: o.hoursNeed, battKwh: 0, pr });
+  const okAt = (kWp: number) => evalAt(kWp).every((r) => {
+    if (r.hNeed <= 0.05) return true;
+    const direct = Math.min(r.hNeed, r.hSun), night = Math.max(0, r.hNeed - r.hSun);
+    return r.E + 1e-9 >= o.kWa * (direct + night / 0.85);
+  });
+  if (!act.length || o.kWa <= 0) return { kWp: 0, battKwh: 0, worst: -1, pr, rows: evalAt(0) };
+  let lo = 0, hi = o.kWa * 2;
+  while (!okAt(hi) && hi < o.kWa * 200) hi *= 1.6;
+  for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (okAt(mid)) hi = mid; else lo = mid; }
+  const rows = evalAt(hi);
+  const night = rows.map((r) => (r.hNeed > 0.05 ? Math.max(0, r.hNeed - r.hSun) : 0));
+  const worst = act.reduce((a, m) => {
+    const need = (r: typeof rows[number]) => o.kWa * (Math.min(r.hNeed, r.hSun) + Math.max(0, r.hNeed - r.hSun) / 0.85) / Math.max(1e-6, r.E);
+    return need(rows[m]) > need(rows[a]) ? m : a;
+  }, act[0]);
+  return { kWp: hi, battKwh: Math.max(...night) * o.kWa / 0.9, worst, pr, rows };
 }
