@@ -26,9 +26,10 @@ Dopo l'apply, in dashboard trovi gli URL (di solito):
 ## 3. Imposta le variabili d'ambiente (`sync:false`)
 **argus-total-api** → Environment:
 - `CORS_ORIGINS` = URL del **frontend** (es. `https://argus-total-web.onrender.com`)
-- `CDSE_CLIENT_ID` / `CDSE_CLIENT_SECRET` = lasciali **vuoti** finché resti in
-  modalità synthetic. Quando il secondo account Copernicus è pronto: inseriscili
-  e cambia `PROVIDER_MODE` da `synthetic` a `cdse`.
+- `PROVIDER_MODE` = `cdse` (in produzione dal 04/11/2026; `synthetic` solo per
+  prove senza credenziali).
+- `CDSE_CLIENT_ID` / `CDSE_CLIENT_SECRET` = credenziali del **secondo** account
+  Copernicus Data Space (Sentinel-2). Senza, con `cdse` il backend va in errore.
 
 **argus-total-web** → Environment:
 - `NEXT_PUBLIC_API_BASE` = URL del **backend** (es. `https://argus-total-api.onrender.com`)
@@ -41,7 +42,8 @@ delle env var).
 
 ## 5. Verifica
 - Backend: apri `https://argus-total-api.onrender.com/api/health` → deve dare
-  `{"status":"ok","provider_mode":"synthetic","rev":"0.4.4"}`.
+  `{"status":"ok","provider_mode":"cdse","rev":"…"}` (il `rev` è quello di
+  `backend/app/main.py`).
 - Frontend: apri l'URL web, disegna un'area, cerca le date, genera l'anteprima e
   una scheda PDF.
 
@@ -50,7 +52,7 @@ delle env var).
 
 | servizio | piano | RAM / CPU | perché |
 |---|---|---|---|
-| `argus-total-api` | Standard | 2 GB / 1 CPU | un export di un progetto da 121 pivot tocca ~270 MB di picco su 164 MB a riposo: su 512 MB il margine era di poche decine di MB e il servizio si riavviava. Con CDSE i raster reali pesano più dei sintetici. |
+| `argus-total-api` | Standard | 2 GB / 1 CPU | un export di un progetto da 121 pivot tocca ~270 MB di picco su 164 MB a riposo: su 512 MB il margine era di poche decine di MB e il servizio si riavviava. Misurato il 04/11/2026 con dati reali: 138 MB a riposo, 398 MB di picco con 3 stime di fiume (DEM, GEOGLOWS) e l'NDVI di 35 pivot in parallelo. |
 | `argus-total-web` | Starter | 512 MB / 0,5 CPU | a Next.js serve soprattutto non andare in sospensione. |
 | `argus-total-db` | basic-256mb | — | già a pagamento. |
 
@@ -71,10 +73,29 @@ immediata e comporta un riavvio del servizio.
 - Deploy automatico: ogni push su GitHub ridistribuisce (per il frontend, se
   cambi `NEXT_PUBLIC_API_BASE`, ricordati del *clear cache & deploy*).
 
-## Passaggio al satellite reale (CDSE)
-Quando hai il **secondo** account Copernicus:
-1. `argus-total-api` → env: `PROVIDER_MODE=cdse`, `CDSE_CLIENT_ID`, `CDSE_CLIENT_SECRET`.
-2. Restart del backend. Nient'altro da toccare (nessuna modifica al codice).
+## Satellite reale (CDSE) — attivo
+`PROVIDER_MODE=cdse` con le credenziali del secondo account Copernicus. Per
+tornare ai dati sintetici (prove) basta rimettere `synthetic` e fare Restart.
+
+- **Sentinel-2** (NDVI, scene, compositi): Process API di CDSE.
+- **DEM**: l'account CDSE non ha i permessi sul DEM (la Process API risponde 403
+  `COMMON_INSUFFICIENT_PERMISSIONS`). Il backend se ne accorge alla prima
+  richiesta e legge lo stesso Copernicus DEM GLO-30/GLO-90 dai COG pubblici su
+  AWS (`copernicus-dem-30m` / `copernicus-dem-90m`), sulla stessa griglia UTM.
+
+## Fonti esterne usate dal backend
+Nessuna richiede chiavi oltre a CDSE. Tutte vanno raggiunte in uscita da Render.
+
+| dato | fonte | limiti |
+|---|---|---|
+| portate dei fiumi (modello principale) | GEOGLOWS v2, ECMWF — serie mensili `s3://geoglows-v2` (AWS Open Data, CC BY 4.0), previsione e livelli via `geoglows.ecmwf.int` e `transformers/hydroweb.zarr` | nessun limite di richieste |
+| indice dei fiumi | `backend/analysis/data/geoglows_index.npz` (1,15 milioni di tratti con bacino ≥ 1.000 km², ~17 MB nel repo) | — |
+| portate misurate | `backend/analysis/data/river_stations.json` (~25.000 stazioni: GSIM, GRDC 2025, Dai 2026, GRDC/UNH, Kazhydromet); il file è CC BY-SA 3.0 perché deriva anche da GSIM | — |
+| portate GloFAS (seconda opzione) | Open-Meteo Flood API | piano gratuito: limite orario; una ricerca della presa (25 celle × 20 anni) ne consuma una parte grande. Con molti utenti serve una chiave a pagamento |
+| clima e piogge | NASA POWER | — |
+| suolo | SoilGrids (ISRIC) | lento: 2 tentativi da 30 s |
+
+Per rigenerare i due file dei dati: `backend/scripts/river_data/README.md`.
 
 ## Opzione: frontend come Static Site (gratis, senza "sonno")
 Il frontend è interamente client-side: può essere pubblicato come **Static Site**

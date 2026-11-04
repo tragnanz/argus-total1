@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.235";
+const REV = "v0.6.236";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3784,9 +3784,9 @@ export default function Page() {
       const lowOf = (c0: api.RiverCell) => rv.risk === "mean" ? c0.month_mean : rv.risk === "p10" && c0.month_p10?.length === 12 ? c0.month_p10 : c0.month_q80;
       mean = cell.mean; mMean = cell.month_mean; mLow = lowOf(cell); src = gg ? "geoglows" : "glofas";
       // stazione misurata sullo stesso fiume: vale per le celle di portata simile a quella su cui è stata tarata
-      const c = gg ? rv.data.geoglows?.corr : rv.data.corr;
+      const c = gg ? rv.data.geoglows?.corr : null;
       if (c && !rv.corrOff && c.f_month?.length === 12 && Math.abs(Math.log(cell.mean / c.ref_mean)) < Math.log(3)) {
-        corr = c; src = gg ? "ggcorr" : "corr";
+        corr = c; src = "ggcorr";
         mMean = cell.month_mean.map((q, i) => q * c.f_month[i]); mLow = lowOf(cell).map((q, i) => q * c.f_month[i]);
         mean = mMean.reduce((a, x, i) => a + x * MDAYS[i], 0) / 365; q347 = cell.q347 * c.f_year; qMin0 = cell.min * c.f_year;
       }
@@ -3914,7 +3914,7 @@ export default function Page() {
     const q = (s0: string) => `"${String(s0).replace(/"/g, '""')}"`;
     lines.push([q(t("Portata del fiume alla presa")), q(projects.find((p) => p.id === projectId)?.name ?? "")].join(sep));
     if (srcPt) lines.push([q("lat"), nf(srcPt[1], 5), q("lon"), nf(srcPt[0], 5)].join(sep));
-    const srcName = R.src === "meas" ? t("Portate misurate dall'ente") : R.src === "geoglows" || R.src === "ggcorr" ? "GEOGLOWS v2 (ECMWF)" : R.src === "glofas" || R.src === "corr" ? "GloFAS v4 (Copernicus EMS)" : t("Metodo del bacino (piogge × coefficiente di deflusso)");
+    const srcName = R.src === "meas" ? t("Portate misurate dall'ente") : R.src === "geoglows" || R.src === "ggcorr" ? "GEOGLOWS v2 (ECMWF)" : R.src === "glofas" ? "GloFAS v4 (Copernicus EMS)" : t("Metodo del bacino (piogge × coefficiente di deflusso)");
     lines.push([q(t("Fonte")), q(srcName), q(t("Rischio di progetto")), q(river?.risk ?? "q80")].join(sep));
     if (d?.basin?.area_km2) lines.push([q(t("Bacino a monte della presa")), nf(d.basin.area_km2, 0), q("km²")].join(sep));
     for (const st of (R.corr as { stations?: api.RiverCorr["station"][] } | null)?.stations ?? (R.corr ? [R.corr.station] : []))
@@ -3954,7 +3954,7 @@ export default function Page() {
                 {b?.area_km2 && b.rain_month_mm && <option value={-1}>{t("Metodo del bacino (piogge × coefficiente di deflusso)")}</option>}
                 <option value={-2}>{river.meas ? t("Portate misurate dall'ente") + (river.meas.years ? ` · ${river.meas.years.join("–")}` : "") : t("Portate misurate dall'ente (da inserire)")}</option>
               </select></label>
-            {(() => { const cc = river.pick >= 100 ? d.geoglows?.corr : river.pick >= 0 ? d.corr : null; return cc ? (
+            {(() => { const cc = river.pick >= 100 ? d.geoglows?.corr : null; return cc ? (
 
               <div className="col-span-3 text-[11px] leading-snug rounded border border-black/10 p-1.5" data-river-corr>
                 <label className="flex items-start gap-1.5">
@@ -4052,7 +4052,7 @@ export default function Page() {
             <button className="btn-ghost w-full text-[12px]" onClick={() => downloadRiverCsv(R)} data-river-csv>{t("⬇ Dati del fiume (CSV per Excel)")}</button>
             <button className="btn-ghost w-full text-[12px]" disabled={R.qMin <= 0 || srcQmax === R.qMin} onClick={() => setSrcQmax(R.qMin)}
               title={t("Imposta come portata disponibile il prelevabile del mese irriguo più scarso.")}>{t("Usa {q} l/s come portata disponibile", { q: fmt(R.qMin) })}</button>
-            <p className="text-[10px] text-sage-dark leading-snug text-justify">{R.src === "meas" ? t("Portate misurate dall'ente: sostituiscono la stima GloFAS nel bilancio del fiume.") : R.src === "corr" || R.src === "ggcorr"
+            <p className="text-[10px] text-sage-dark leading-snug text-justify">{R.src === "meas" ? t("Portate misurate dall'ente: sostituiscono la stima GloFAS nel bilancio del fiume.") : R.src === "ggcorr"
               ? t("Serie del modello alla presa riportata, mese per mese, alle portate osservate della stazione: l'andamento dei mesi è quello del modello, i volumi quelli misurati.") : R.src === "geoglows"
               ? t("Simulazione GEOGLOWS v2 a scala di tratto di fiume, medie mensili: la magra è il valore del mese superato in 4 anni su 5. Nessuna stazione misurata sullo stesso fiume: da confrontare con le misure dell'ente.") : R.src === "glofas"
               ? t("Rianalisi GloFAS a ~5 km: sui fiumi grandi è affidabile, sui torrenti e vicino a dighe o derivazioni va confrontata con le misure dell'ente gestore. «Magra» = portata superata l'80% dei giorni del mese.")
@@ -5413,8 +5413,6 @@ export default function Page() {
                 ? tx("La portata parte dalla simulazione idrologica globale GEOGLOWS v2 (ECMWF) sul fiume più vicino alla presa (bacino {a} km², medie mensili {y}) ed è corretta mese per mese con le portate osservate alla stazione di {s} sul fiume {r} ({d} km dalla presa, {yo}; fonte {src}): lì il modello dà {g} m³/s contro {o} m³/s misurati. Portata media corretta {q} m³/s.", { a: n0((RV.cell as api.RiverCell & { area_km2?: number }).area_km2 ?? 0), y: RV.cell!.years.join("–"), s: RV.corr.station.name, r: RV.corr.station.river, d: n0(RV.corr.station.dist_km), yo: RV.corr.station.years.join("–"), src: RV.corr.station.source, g: ff(RV.corr.sim_mean), o: ff(RV.corr.obs_mean), q: ff(RV.mean) })
                 : RV.src === "geoglows"
                 ? tx("La portata è stimata dalla simulazione idrologica globale GEOGLOWS v2 (ECMWF) sul fiume più vicino alla presa (bacino {a} km², medie mensili {y}): portata media {q} m³/s. Non c'è una stazione misurata sullo stesso fiume: il dato va confrontato con le misure dell'ente.", { a: n0((RV.cell as api.RiverCell & { area_km2?: number }).area_km2 ?? 0), y: RV.cell!.years.join("–"), q: ff(RV.mean) })
-                : RV.src === "corr" && RV.corr
-                ? tx("La portata parte dalla rianalisi idrologica GloFAS (Copernicus Emergency Management Service) sulla cella del fiume più vicina alla presa, serie giornaliera {y}, ed è corretta mese per mese con le portate osservate alla stazione di {s} sul fiume {r} ({d} km dalla presa, {yo}; fonte {src}): lì GloFAS dà {g} m³/s contro {o} m³/s misurati. Portata media corretta {q} m³/s, Q347 {q3} m³/s.", { y: RV.cell!.years.join("–"), s: RV.corr.station.name, r: RV.corr.station.river, d: n0(RV.corr.station.dist_km), yo: RV.corr.station.years.join("–"), src: RV.corr.station.source, g: ff(RV.corr.sim_mean), o: ff(RV.corr.obs_mean), q: ff(RV.mean), q3: ff(RV.q347) })
                 : RV.src === "glofas"
                 ? tx("La portata è stimata dalla rianalisi idrologica GloFAS (Copernicus Emergency Management Service) sulla cella del fiume più vicina alla presa, serie giornaliera {y}: portata media {q} m³/s, Q347 {q3} m³/s. La portata di magra di ogni mese è quella superata l'80% dei giorni del mese.", { y: RV.cell!.years.join("–"), q: ff(RV.mean), q3: ff(RV.cell!.q347) })
                 : tx("La portata è stimata dalle piogge medie mensili del bacino con un coefficiente di deflusso di {c}: portata media {q} m³/s. La portata di magra è posta a metà della media del mese.", { c: fx(river!.c), q: ff(RV.mean) }))
@@ -5423,7 +5421,7 @@ export default function Page() {
               if (sts.length === 2) fb.push({ p: tx("La presa sta fra due stazioni sullo stesso fiume: il fattore di correzione è la media, pesata sull'inverso della distanza, di quelli di {a} ({da} km, peso {pa}%) e di {b} ({db} km, peso {pb}%).", { a: sts[0].name, da: n0(sts[0].dist_km), pa: n0((sts[0].weight ?? 0) * 100), b: sts[1].name, db: n0(sts[1].dist_km), pb: n0((sts[1].weight ?? 0) * 100) }) });
               const fonti: string[] = [];
               if (RV.src === "geoglows" || RV.src === "ggcorr") fonti.push("GEOGLOWS v2 (ECMWF, AWS Open Data, CC BY 4.0)");
-              if (RV.src === "glofas" || RV.src === "corr") fonti.push("GloFAS v4 (Copernicus Emergency Management Service, Open-Meteo)");
+              if (RV.src === "glofas") fonti.push("GloFAS v4 (Copernicus Emergency Management Service, Open-Meteo)");
               for (const st of sts.length ? sts : RV.corr ? [RV.corr.station] : []) fonti.push(`${st.name} (${st.river}, ${st.years.join("–")}): ${st.source}`);
               if (RV.src === "meas") fonti.push(tx("portate misurate fornite dall'ente gestore"));
               if (b?.area_km2) fonti.push((b as { source?: string }).source === "geoglows" ? "GEOGLOWS / TDX-Hydro" : "Copernicus DEM GLO-30");

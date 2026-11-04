@@ -180,7 +180,7 @@ def climatology(i: int) -> dict:
 
 def _station_reach(s: dict) -> int | None:
     """Il tratto della stazione: entro 8 km, quello col bacino più simile (se la stazione lo dichiara)."""
-    near = reaches_near(s["lat"], s["lon"], 15.0 if s["src"] in ("unh", "kzh") else 8.0)   # unh: coordinate approssimate
+    near = reaches_near(s["lat"], s["lon"], 15.0 if s["src"] in ("unh", "kzh") else 8.0)   # unh, kzh: coordinate approssimate
     if not near:
         return None
     a = float(s.get("area") or 0)
@@ -192,12 +192,12 @@ def _station_reach(s: dict) -> int | None:
 
 def correction(reach: dict, radius_km: float = 800.0) -> dict | None:
     """Stazione misurata sullo stesso fiume del tratto `reach`, con bacino di dimensione simile."""
-    from analysis.river_obs import stations, _dist_km, SOURCES
+    from analysis.river_obs import stations, usable, _dist_km, SOURCES
     i, a0, q0 = reach["i"], reach["area_km2"], float(reach.get("mean") or 0)
     down = set(downstream(i))
     cand = []
     for s in stations():
-        if abs(s["lat"] - reach["lat"]) > radius_km / 100 or s["mean"] <= 0 or (s.get("n", 0) < 10 and s["src"] != "kzh"):   # almeno 10 anni di misure
+        if abs(s["lat"] - reach["lat"]) > radius_km / 100 or not usable(s):
             continue
         sa = float(s.get("area") or 0)
         if sa > 0 and not (a0 / 4 <= sa <= a0 * 4):

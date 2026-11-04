@@ -577,8 +577,9 @@ def relazione(body: RelazioneIn, user: User = Depends(get_current_user)):
 
 @router.get("/river")
 def river_flow(lat: float, lon: float, basin: int = 1, client=Depends(get_client), user: User = Depends(get_current_user)):
-    """Portata del fiume alla presa: celle GloFAS vicine (serie giornaliera 1994-2023) e bacino
-    che drena fino alla presa ricavato dal DEM, con le piogge mensili del bacino (NASA POWER)."""
+    """Portata del fiume alla presa: tratti GEOGLOWS vicini corretti con la stazione misurata sullo stesso
+    fiume, celle GloFAS vicine (serie giornaliera 2004-2023) e bacino che drena fino alla presa (rete
+    GEOGLOWS sui fiumi della rete, altrimenti dal DEM), con le piogge mensili (NASA POWER)."""
     from analysis.river import glofas, basin as dem_basin
     from analysis.suitability import _get_climate_cached
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
@@ -588,17 +589,6 @@ def river_flow(lat: float, lon: float, basin: int = 1, client=Depends(get_client
         out["glofas"] = glofas(lat, lon, n=2, start="2004-01-01")   # 25 celle × 20 anni: ~3 volte meno peso sul limite di Open-Meteo
     except Exception as e:  # noqa: BLE001
         out["glofas"] = {"cells": [], "pick": -1, "error": str(e)[:200]}
-    # correzione con una stazione misurata sullo stesso fiume
-    try:
-        from analysis.river_obs import correction
-        gl = out["glofas"]
-        if gl.get("cells") and gl.get("pick", -1) >= 0:
-            def _no_live(*_a, **_k):                    # solo stazioni con GloFAS già calcolato: niente quota Open-Meteo
-                raise RuntimeError("GloFAS della stazione non precalcolato")
-            out["corr"] = correction(lat, lon, gl["cells"][gl["pick"]], _no_live)
-    except Exception as e:  # noqa: BLE001
-        out["corr"] = None
-        out["corr_error"] = str(e)[:200]
     # GEOGLOWS v2: ogni fiume del mondo (bacino ≥ 1.000 km²), senza limiti di richieste, corretto con le stazioni
     try:
         from analysis.geoglows import at as geoglows_at

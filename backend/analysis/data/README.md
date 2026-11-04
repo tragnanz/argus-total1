@@ -1,9 +1,9 @@
 # river_stations.json
 
 Medie mensili OSSERVATE di portata (m³/s) di ~25.000 stazioni idrometriche in 151 paesi, usate da
-`analysis/river_obs.py` per correggere GloFAS sullo stesso fiume.
-Campi: src, id, river, station, cc, lat, lon, area (km²), mean, mm (12 medie mensili gen→dic), yrs, n (anni),
-sc (facoltativo: celle GloFAS 2014-2023 già lette alla stazione, [lat, lon, media, 12 medie mensili]).
+`analysis/geoglows.py` per correggere GEOGLOWS sullo stesso fiume.
+Campi: src, id, river, station, cc, lat, lon, area (km²), mean, mm (12 medie mensili gen→dic), yrs, n (anni).
+Si usano solo le stazioni con almeno 10 anni di misure (eccezione: la serie recente di Kazhydromet).
 Doppioni (stazioni entro 3 km con media entro il 25%) tolti, con precedenza GRDC 2025 > Dai > GRDC/UNH > GSIM.
 
 Fonti:

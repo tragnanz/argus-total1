@@ -521,7 +521,6 @@ export type RiverCorr = { station: { id: string; name: string; river: string; co
   obs_mean: number; obs_month: number[]; sim_mean: number; sim_month: number[]; sim_cell: number[]; ref_mean: number; f_year: number; f_month: number[] };
 export type RiverOut = { lat: number; lon: number;
   glofas: { source?: string; period?: string[]; cells: RiverCell[]; pick: number; error?: string };
-  corr?: RiverCorr | null;
   geoglows?: { source?: string; period?: string[]; cells: (RiverCell & { area_km2: number; reach: number })[]; pick: number; corr?: RiverCorr | null; error?: string };
   basin?: { area_km2?: number; truncated?: boolean; outlet?: number[]; res_m?: number; z_outlet?: number; z_max?: number; z_mean?: number; ring?: number[][]; rain_month_mm?: number[]; error?: string } };
 export async function riverFlow(lat: number, lon: number): Promise<RiverOut> {
