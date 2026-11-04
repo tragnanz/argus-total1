@@ -35,6 +35,7 @@ SOURCES = {
     "grdc": "GRDC · WMO State of Global Water Resources 2025",
     "unh": "GRDC · UNH Composite Runoff Fields",
     "gsim": "GSIM · Global Streamflow Indices and Metadata (CC BY-SA 3.0)",
+    "kzh": "Kazhydromet (kazhydromet.kz), medie mensili 2015-2023",
 }
 
 

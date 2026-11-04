@@ -30,3 +30,8 @@ Costruito da `tables/v2-model-table.parquet` (DSLINKNO, DSContArea) e
 Array: larea (log10 km² × 1000, uint16), dcol (colonna zarr, differenze), dds (tratto a valle, scarto
 dall'indice), tiles/tstart (tessere di 1°), dla/dlo (posizione nella tessera, 1e-4°), dpr (tratto del punto,
 differenze). Fonte: GEOGLOWS ECMWF Streamflow Service, Hales et al.
+
+## Stazioni aggiunte a mano (`kzh`)
+- Ili a Konaev (Kapchagay), Kazakhstan: medie mensili 2015-2023 di Kazhydromet (www.kazhydromet.kz),
+  riportate nella General Explanatory Note Agrostar <> Qazaq Arab Sugar, Del05 Rev03 del 20/01/2026.
+  Coordinate approssimate (a valle della diga di Kapchagay).

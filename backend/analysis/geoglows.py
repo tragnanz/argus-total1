@@ -141,7 +141,7 @@ def climatology(i: int) -> dict:
 
 def _station_reach(s: dict) -> int | None:
     """Il tratto della stazione: entro 8 km, quello col bacino più simile (se la stazione lo dichiara)."""
-    near = reaches_near(s["lat"], s["lon"], 15.0 if s["src"] == "unh" else 8.0)   # unh: coordinate approssimate
+    near = reaches_near(s["lat"], s["lon"], 15.0 if s["src"] in ("unh", "kzh") else 8.0)   # unh: coordinate approssimate
     if not near:
         return None
     a = float(s.get("area") or 0)
