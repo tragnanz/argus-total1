@@ -27,3 +27,4 @@ arabic-reshaper>=3.0     # shaping arabo per la scheda PDF (RTL)
 python-bidi>=0.4         # ordinamento bidirezionale (arabo)
 # Necessario solo con PROVIDER_MODE=cdse (lettura GeoTIFF dalla Process API):
 rasterio>=1.3
+numcodecs>=0.12,<0.17

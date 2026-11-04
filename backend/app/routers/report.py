@@ -593,10 +593,18 @@ def river_flow(lat: float, lon: float, basin: int = 1, client=Depends(get_client
         from analysis.river_obs import correction
         gl = out["glofas"]
         if gl.get("cells") and gl.get("pick", -1) >= 0:
-            out["corr"] = correction(lat, lon, gl["cells"][gl["pick"]], lambda a, b, n: glofas(a, b, n=n, start="2014-01-01"))
+            def _no_live(*_a, **_k):                    # solo stazioni con GloFAS già calcolato: niente quota Open-Meteo
+                raise RuntimeError("GloFAS della stazione non precalcolato")
+            out["corr"] = correction(lat, lon, gl["cells"][gl["pick"]], _no_live)
     except Exception as e:  # noqa: BLE001
         out["corr"] = None
         out["corr_error"] = str(e)[:200]
+    # GEOGLOWS v2: ogni fiume del mondo (bacino ≥ 1.000 km²), senza limiti di richieste, corretto con le stazioni
+    try:
+        from analysis.geoglows import at as geoglows_at
+        out["geoglows"] = geoglows_at(lat, lon)
+    except Exception as e:  # noqa: BLE001
+        out["geoglows"] = {"cells": [], "pick": -1, "error": str(e)[:200]}
     if basin:
         try:
             b = dem_basin(client, lon, lat)

@@ -19,3 +19,14 @@ Fonti:
   10.1594/PANGAEA.887470, CC BY-SA 3.0. Medie dei mesi con al massimo 3 giorni mancanti.
 
 Questo file di dati, in quanto derivato anche da GSIM, è distribuito con licenza CC BY-SA 3.0.
+
+# geoglows_index.npz
+
+Indice dei 1.146.939 tratti della rete GEOGLOWS v2 / TDX-Hydro con bacino ≥ 1.000 km², usato da
+`analysis/geoglows.py` per trovare il fiume vicino alla presa e leggere la sua serie mensile dal bucket
+pubblico `s3://geoglows-v2/retrospective/monthly-timeseries.zarr` (AWS Open Data, CC BY 4.0).
+Costruito da `tables/v2-model-table.parquet` (DSLINKNO, DSContArea) e
+`hydrography-global/global_streams_simplified.gpkg` (un punto ogni ~4 km lungo ogni tratto).
+Array: larea (log10 km² × 1000, uint16), dcol (colonna zarr, differenze), dds (tratto a valle, scarto
+dall'indice), tiles/tstart (tessere di 1°), dla/dlo (posizione nella tessera, 1e-4°), dpr (tratto del punto,
+differenze). Fonte: GEOGLOWS ECMWF Streamflow Service, Hales et al.
