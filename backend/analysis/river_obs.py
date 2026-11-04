@@ -13,7 +13,11 @@ Fonti (data/river_stations.json, costruito una volta dai dataset originali):
 - GRDC, dataset WMO State of Global Water Resources 2025 (~3.000 stazioni,
   1991-2025; Zenodo 10.5281/zenodo.23587317; esclusi i dati con licenza non
   commerciale);
+- GSIM, Global Streamflow Indices and Metadata Archive (Do et al. 2018,
+  Gudmundsson et al. 2018; ~31.000 stazioni in tutto il mondo; PANGAEA
+  10.1594/PANGAEA.887470, CC BY-SA 3.0);
 - GRDC / UNH Composite Runoff Fields (stazioni storiche del bacino del Nilo).
+In tutto ~25.000 stazioni in 151 paesi, doppioni tolti.
 
 Una stazione vale per la presa solo se la sua cella GloFAS ha una portata
 dello stesso ordine di quella della presa (stesso fiume, tratto simile).
@@ -30,6 +34,7 @@ SOURCES = {
     "dai": "Dai et al. 2026 · Global Downstream River Flows (CC BY 4.0)",
     "grdc": "GRDC · WMO State of Global Water Resources 2025",
     "unh": "GRDC · UNH Composite Runoff Fields",
+    "gsim": "GSIM · Global Streamflow Indices and Metadata (CC BY-SA 3.0)",
 }
 
 
@@ -46,7 +51,7 @@ def _dist_km(la1, lo1, la2, lo2) -> float:
     return 6371.0 * 2 * math.asin(math.sqrt(min(1.0, a)))
 
 
-def candidates(lat: float, lon: float, q_ref: float, radius_km: float = 800.0, k: int = 3) -> list[dict]:
+def candidates(lat: float, lon: float, q_ref: float, radius_km: float = 800.0, k: int = 4) -> list[dict]:
     """Stazioni vicine con una portata osservata compatibile con q_ref (GloFAS alla presa).
     Il margine è ampio (1/12 … 3×) perché GloFAS stesso può sbagliare di volte."""
     out = []
