@@ -9,6 +9,11 @@ vedere a clienti diversi viste diverse dello stesso impianto.
 - DELETE /api/shares/{token}        → elimina un link
 - GET    /api/share/{token}         → dati pubblici (progetto + aree + layer + config)
 
+Relazione tecnica allegata al link (una fotografia, in tutte le lingue):
+- PUT    /api/shares/{token}/report       → allega o aggiorna (autenticato)
+- GET    /api/share/{token}/report?lang=  → (pubblico) relazione nella lingua chiesta
+- GET    /api/share/{token}/report.pdf?lang= → (pubblico) la stessa relazione in PDF
+
 Commenti dei clienti:
 - GET    /api/share/{token}/comments      → (pubblico) commenti del link
 - POST   /api/share/{token}/comments      → (pubblico) nuovo commento, con limiti anti-abuso
@@ -31,7 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Area, Project, ProjectLayer, Share, ShareComment, ShareView, User
+from ..models import Area, Project, ProjectLayer, Share, ShareComment, ShareReport, ShareView, User
 from ..security import get_current_user
 from ..access import own_project
 
@@ -48,6 +53,7 @@ class ShareOut(BaseModel):
     token: str
     name: str
     created_at: str | None = None
+    report_langs: list[str] | None = None
 
 
 # ---- Compat: singolo link legacy (una tantum per progetto) ----
@@ -85,7 +91,9 @@ def list_shares(project_id: int, db: Session = Depends(get_db), user: User = Dep
         select(ShareView).where(ShareView.project_id == project_id)
         .order_by(ShareView.created_at.desc())
     ).all()
-    return [ShareOut(token=x.token, name=x.name, created_at=x.created_at.isoformat() if x.created_at else None) for x in rows]
+    reps = {r.token: r.langs.split(",") for r in db.scalars(select(ShareReport).where(ShareReport.project_id == project_id)).all()}
+    return [ShareOut(token=x.token, name=x.name, created_at=x.created_at.isoformat() if x.created_at else None,
+                     report_langs=reps.get(x.token)) for x in rows]
 
 
 @router.delete("/shares/{token}", status_code=204)
@@ -94,7 +102,11 @@ def delete_share(token: str, db: Session = Depends(get_db), user: User = Depends
     if sv:
         own_project(db, user, sv.project_id)          # 404 se il link è di un'altra organizzazione
         db.delete(sv)
+        rep = db.scalar(select(ShareReport).where(ShareReport.token == token))
+        if rep:
+            db.delete(rep)
         db.commit()
+        _pdf_drop(token)
 
 
 @router.get("/share/{token}")
@@ -120,9 +132,12 @@ def get_share(token: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "Progetto non trovato")
     areas = db.scalars(select(Area).where(Area.project_id == p.id)).all()
     layers = db.scalars(select(ProjectLayer).where(ProjectLayer.project_id == p.id)).all()
+    rep = db.scalar(select(ShareReport).where(ShareReport.token == token))
     return {
         "project": {"name": p.name, "crop": p.crop},
         "config": config,
+        "report": {"langs": rep.langs.split(","), "default_lang": rep.default_lang, "revision": rep.revision,
+                   "updated_at": rep.updated_at.isoformat() if rep.updated_at else None} if rep else None,
         "areas": [
             {
                 "id": a.id,
@@ -270,3 +285,116 @@ def delete_comment(comment_id: int, db: Session = Depends(get_db), user: User = 
     c = _own_comment(db, user, comment_id)
     db.delete(c); db.commit()
 
+
+
+# ---------------- Relazione tecnica allegata al link ----------------
+_REPORT_MAX = 30_000_000          # JSON grezzo di tutte le lingue
+_PDF_CACHE: dict[tuple[str, str], tuple[str, bytes]] = {}
+_PDF_LOCK = threading.Lock()
+
+
+def _pdf_drop(token: str) -> None:
+    with _PDF_LOCK:
+        for k in [k for k in _PDF_CACHE if k[0] == token]:
+            _PDF_CACHE.pop(k, None)
+
+
+def _pack(obj) -> str:
+    import base64, zlib
+    return base64.b64encode(zlib.compress(json.dumps(obj, ensure_ascii=False).encode("utf-8"), 6)).decode("ascii")
+
+
+def _unpack(s: str):
+    import base64, zlib
+    return json.loads(zlib.decompress(base64.b64decode(s)).decode("utf-8"))
+
+
+class ReportIn(BaseModel):
+    docs: dict[str, dict]                      # {lingua: doc della relazione}
+    default_lang: str = "it"
+    bbox: list[float] | None = None
+    revision: str = ""
+
+
+@router.put("/shares/{token}/report")
+def put_share_report(token: str, body: ReportIn, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    project_id, _name = _share_of(db, token)
+    own_project(db, user, project_id)
+    if not body.docs:
+        raise HTTPException(422, "Relazione vuota")
+    raw = int(request.headers.get("content-length") or 0)
+    if raw > _REPORT_MAX:
+        raise HTTPException(413, "Relazione troppo grande")
+    langs = [k for k in body.docs if isinstance(k, str) and 1 < len(k) <= 8][:30]
+    dl = body.default_lang if body.default_lang in body.docs else langs[0]
+    rep = db.scalar(select(ShareReport).where(ShareReport.token == token))
+    if not rep:
+        rep = ShareReport(token=token, project_id=project_id, docs="")
+        db.add(rep)
+    rep.docs = _pack({k: body.docs[k] for k in langs})
+    rep.langs = ",".join(langs)
+    rep.default_lang = dl
+    rep.bbox = json.dumps(body.bbox) if body.bbox and len(body.bbox) == 4 else ""
+    rep.revision = body.revision[:40]
+    db.commit()
+    _pdf_drop(token)
+    return {"langs": langs, "default_lang": dl}
+
+
+def _report_of(db: Session, token: str, lang: str | None):
+    _share_of(db, token)                       # 404 se il link non c'è più
+    rep = db.scalar(select(ShareReport).where(ShareReport.token == token))
+    if not rep:
+        raise HTTPException(404, "Nessuna relazione allegata a questo link")
+    docs = _unpack(rep.docs)
+    lg = lang if lang in docs else (rep.default_lang if rep.default_lang in docs else next(iter(docs)))
+    return rep, docs, lg
+
+
+@router.get("/share/{token}/report")
+def get_share_report(token: str, lang: str | None = None, db: Session = Depends(get_db)):
+    rep, docs, lg = _report_of(db, token, lang)
+    return {"lang": lg, "langs": list(docs), "default_lang": rep.default_lang, "revision": rep.revision,
+            "updated_at": rep.updated_at.isoformat() if rep.updated_at else None, "doc": docs[lg]}
+
+
+@router.get("/share/{token}/report.pdf")
+def get_share_report_pdf(token: str, lang: str | None = None, db: Session = Depends(get_db)):
+    from fastapi import Response
+    rep, docs, lg = _report_of(db, token, lang)
+    stamp = rep.updated_at.isoformat() if rep.updated_at else ""
+    with _PDF_LOCK:
+        hit = _PDF_CACHE.get((token, lg))
+    if hit and hit[0] == stamp:
+        pdf = hit[1]
+    else:
+        import base64
+        from analysis.explanatory_note import build_note
+        from analysis.variants_pdf import ortho_for_bbox
+        from ..main import REV
+        from .report import _EXPORT_LOCK, _EXPORT_WAIT_S, _trim_memory
+        if not _EXPORT_LOCK.acquire(timeout=_EXPORT_WAIT_S):
+            raise HTTPException(503, "Export occupato, riprova fra poco.")
+        try:
+            cover = None
+            bbox = json.loads(rep.bbox) if rep.bbox else None
+            if bbox and len(bbox) == 4:
+                w, s_, e, n = bbox
+                if -180 <= w < e <= 180 and -85 <= s_ < n <= 85 and (e - w) <= 0.6 and (n - s_) <= 0.6:
+                    try:
+                        o = ortho_for_bbox(w, s_, e, n, ratio=595.0 / (0.56 * 842.0), width_px=1800, quality=82)
+                        if o:
+                            cover = base64.b64decode(o["immagine"].split(",", 1)[1])
+                    except Exception:  # noqa: BLE001
+                        cover = None
+            pdf = build_note(docs[lg], REV, cover)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        finally:
+            _EXPORT_LOCK.release(); _trim_memory()
+        with _PDF_LOCK:
+            if len(_PDF_CACHE) >= 12:
+                _PDF_CACHE.pop(next(iter(_PDF_CACHE)))
+            _PDF_CACHE[(token, lg)] = (stamp, pdf)
+    name = f"relazione_{lg}.pdf"
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{name}"'})

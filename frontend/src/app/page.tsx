@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.237";
+const REV = "v0.6.238";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -5162,10 +5162,12 @@ export default function Page() {
     } catch (e) { if (out) throw e; setMsg(`${t("Errore generazione PDF")}: ${String((e as Error)?.message ?? e)}`); }
     finally { if (!out) setBusy(""); }
   }
-  async function downloadRelazione(opt?: { tav?: TavOut; out?: { blob?: Blob } }) {
+  async function downloadRelazione(opt?: { tav?: TavOut; out?: { blob?: Blob }; docOut?: { lang: Lang; doc?: Record<string, unknown>; bbox?: number[] | null } }) {
+    const L: Lang = opt?.docOut?.lang ?? pdfLang;           // lingua del documento (il link ai clienti le prepara tutte)
     if (!projectId || (!pivots.length && !Object.keys(sysDesigns).length)) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
     const pid = projectId;
-    if (!opt?.out) setBusy("rel");
+    const quiet = !!(opt?.out || opt?.docOut);
+    if (!quiet) setBusy("rel");
     try {
       ensureHydra(); await ensureProfile();
       // dati meteorologici mensili del sito (NASA POWER + ET₀ Penman-Monteith), anche senza layout dei campi
@@ -5176,7 +5178,7 @@ export default function Page() {
       const rev = docRev();
       const company = relBrand === "nabu" ? "Nabu srl" : "Agrostar srl";
       let bbox: number[] | null = null;
-      const doc = inLang(pdfLang, () => {
+      const doc = inLang(L, () => {
         const n0 = (x: number) => fx(Math.round(x)), n1 = (x: number) => fx(x, { maximumFractionDigits: 1 }), n2 = (x: number) => fx(x, { maximumFractionDigits: 2 });
         const pname = projects.find((x) => x.id === pid)?.name || "Argus Total", cname = clients.find((c) => c.id === clientId)?.name || "";
         const d = new Date(), date = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
@@ -5195,8 +5197,8 @@ export default function Page() {
         const dms = (v: number, pos: string, neg: string) => { const a = Math.abs(v), dd = Math.floor(a), mm = Math.floor((a - dd) * 60), ss = ((a - dd) * 60 - mm) * 60; return `${dd}°${String(mm).padStart(2, "0")}′${ss.toFixed(1)}″${v >= 0 ? pos : neg}`; };
         const PIPE_TXT = ['10"', '8"5/8', '6"5/8'];
         const cropLbl = tx((pivots.length ? designCrops : cropsOf(fieldsShown))[0].label);
-        const month = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(pdfLang, { month: "short" }); } catch { return String(i + 1); } };
-        const monthLong = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(pdfLang, { month: "long" }); } catch { return String(i + 1); } };
+        const month = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(L, { month: "short" }); } catch { return String(i + 1); } };
+        const monthLong = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(L, { month: "long" }); } catch { return String(i + 1); } };
         // Indice come le relazioni tecniche Agrostar (General Explanatory Note)
         const ch: { title: string; blocks: Record<string, unknown>[] }[] = [];
         const nSys = Object.keys(sysDesigns).length;
@@ -5600,7 +5602,7 @@ export default function Page() {
             + (solarCfg.batt > 0 ? " " + tx("Le batterie danno {h} ore di autonomia senza sole.", { h: fx(solarCfg.batt) }) : " " + tx("Senza batterie i pivot solari irrigano di giorno.")) });
           { const sm0 = pivotSolarMonths(solP[0]);
             if (sm0) {
-              const ml = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(pdfLang, { month: "long" }); } catch { return String(i + 1); } };
+              const ml = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(L, { month: "long" }); } catch { return String(i + 1); } };
               const bad = sm0.rows.filter((r) => r.hNeed > 0.05 && r.hNeed > r.hSun + 1e-6).map((r) => ml(r.m));
               eb.push({ p: tx("Con l'irraggiamento medio del sito mese per mese, il campo FV regge da solo il motore del pivot per {h1}–{h2} ore al giorno.", { h1: n1(Math.min(...sm0.rows.map((r) => r.hSun))), h2: n1(Math.max(...sm0.rows.map((r) => r.hSun))) })
                 + " " + (bad.length ? tx("Nei mesi di {m} le ore di marcia necessarie superano quelle di sole: servono circa {b} kWh di batterie per pivot, oppure si accetta di irrigare solo di giorno con una dose minore.", { m: bad.join(", "), b: n0(sm0.battMax) })
@@ -5627,7 +5629,7 @@ export default function Page() {
               { table: { header: [tx("Pivot"), "ha", tx("Prodotto") + " (l)", tx("Durata del giro") + " (h)", tx("Pompa") + " (l/h)", "N (mg/l)"], rows: FC.rows.map((r) => [r.names.join(", "), n1(r.ha), n0(r.l), n0(r.T), n1(r.lh), n0(r.ppm)]) } }]; })()),
           ...(soilSat ? [{ h: tx("Suolo") }, { p: tx("Il suolo dei campi, dalla banca dati SoilGrids (ISRIC, 250 m, strato 0-30 cm, {n} punti), ha sabbia {s}%, limo {l}% e argilla {a}%: classe USDA «{u}», «{k}» nella classificazione del progetto. Con le equazioni di Saxton l'acqua disponibile è di {taw} mm per metro di suolo; l'assorbimento di base assunto è di {i} mm/h.", { n: String(soilSat.n), s: n0(soilSat.sand), l: n0(soilSat.silt), a: n0(soilSat.clay), u: soilSat.usda, k: tx(soilOf(soilSat.key).label).toLowerCase(), taw: n0(soilSat.taw_mm_m), i: n1(infiltration) }) }] : []),
           ...((() => { const IP = irrigProgram(); if (!IP) return [];
-            const ml = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(pdfLang, { month: "long" }); } catch { return String(i + 1); } };
+            const ml = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(L, { month: "long" }); } catch { return String(i + 1); } };
             return [{ h: tx("Programma irriguo mese per mese") },
               { p: tx("Programma per il pivot più grande (P{n}, {r} m; giro al 100% del timer in {h} h). La dose per giro è la minore fra l'acqua facilmente disponibile ({raw} mm: {taw} mm/m × {z} m di radici × {p}), la dose che il terreno assorbe senza ruscellamento in punta ({d}) e il fabbisogno di una settimana, e non scende sotto la dose al 100% del timer.", { n: String(pivots.indexOf(IP.pv) + 1), r: n0(IP.pv.r), h: n1(IP.T100), raw: n0(IP.RAW), taw: n0(IP.taw), z: n1(rootDepth), p: fx(rawP), d: Number.isFinite(IP.dRun) ? `${n1(IP.dRun)} mm` : tx("senza limite") }) },
               { table: { header: [tx("Mese"), tx("Fabbisogno lordo") + " (mm/g)", tx("Ore di marcia") + " (h/g)", tx("Dose per giro") + " (mm)", tx("Timer") + " (%)", tx("Durata del giro") + " (h)", tx("Giri a settimana")],
@@ -5662,7 +5664,7 @@ export default function Page() {
         ch.push({ title: tx("Note e limitazioni"), blocks: [{ p: tx("Le stime contenute in questa relazione si basano sui dati disponibili in fase di progetto: confini digitalizzati dei campi, modello digitale del terreno, dati climatici e parametri di progetto indicati. I valori vanno confermati con i rilievi e le verifiche in campo prima della realizzazione; quantità e condizioni economiche sono riportate nell'offerta.") }] });
         const title = tx("Relazione tecnica generale"), revTxt = `Rev ${String(rev).padStart(2, "0")}`;
         return {
-          lang: pdfLang, brand: relBrand,
+          lang: L, brand: relBrand,
           cover_title: `${tx("Impianto di irrigazione")}${pivots.length ? `\n${tx("a pivot centrale")}` : ""}`,
           title, revision: revTxt, date, client: cname || pname, recipient_label: tx("Alla cortese attenzione di"), recipient: cname ? [pname] : [],
           header: `${company} <> ${cname || pname} – ${title} – ${revTxt} – ${date}`, toc_title: tx("Indice"), figure_label: tx("Figura"), chapter_label: tx("Capitolo"), label: pname,
@@ -5680,11 +5682,12 @@ export default function Page() {
         };
       });
       const pname = projects.find((x) => x.id === pid)?.name || "progetto";
+      if (opt?.docOut) { opt.docOut.doc = doc as Record<string, unknown>; opt.docOut.bbox = bbox; return; }
       const rb = await api.relazione(doc, bbox);
       if (opt?.out) { opt.out.blob = rb; return; }
       saveBlob(rb, `${safe(pname)}_relazione_tecnica.pdf`);
       setMsg(t("Relazione tecnica scaricata ✓"));
-    } catch (e) { if (opt?.out) throw e; showErr(e); } finally { if (!opt?.out) setBusy(""); }
+    } catch (e) { if (quiet) throw e; showErr(e); } finally { if (!quiet) setBusy(""); }
   }
   // PDF di progetto completo: relazione tecnica (A4 verticale) seguita dalle tavole esecutive (A3/A4 orizzontali)
   // PACCHETTO DI PROGETTO (ZIP): PDF di progetto (relazione A4 + tavole, particolari,
@@ -6832,6 +6835,7 @@ export default function Page() {
   async function refreshShares(pid: number) { try { setShares(await api.listShares(pid)); } catch { /* silenzioso */ } }
   // Crea un NUOVO link che «fotografa» la visibilità attuale (quali aree/campi e
   // gruppi di pivot sono mostrati): link diversi possono mostrare livelli diversi.
+  const [shareWithReport, setShareWithReport] = useState(true);
   async function createNamedShare() {
     if (!projectId) { setMsg(t("Seleziona un progetto prima di creare il link.")); return; }
     const pid = projectId;
@@ -6848,11 +6852,34 @@ export default function Page() {
       const name = (shareName.trim() || t("Vista {n}", { n: shares.length + 1 }));
       const sv = await api.createShareView(pid, name, { hiddenFields, hiddenPivots, hiddenPipes, source: sourceDrawing() });
       setShareName("");
+      if (shareWithReport && (pivots.length || Object.keys(sysDesigns).length)) await attachReport(sv.token, sv.name);
       const url = `${window.location.origin}/view/${sv.token}`;
       try { await navigator.clipboard.writeText(url); setMsg(t("Link «{name}» creato e copiato ✓", { name: sv.name })); }
       catch { setMsg(t("Link «{name}» creato ✓", { name: sv.name })); }
       await refreshShares(pid);
     } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  // Relazione tecnica allegata al link, in tutte le lingue: il cliente la legge nella sua
+  const [repBusy, setRepBusy] = useState<string>("");
+  async function attachReport(token: string, name: string) {
+    if (!projectId) return;
+    if (!pivots.length && !Object.keys(sysDesigns).length) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
+    setRepBusy(token);
+    try {
+      const docs: Record<string, unknown> = {}; let bbox: number[] | null = null;
+      for (let i = 0; i < LANGS.length; i++) {
+        const l = LANGS[i].code;
+        setMsg(t("Preparo la relazione nelle lingue: {n}/{m}", { n: i + 1, m: LANGS.length }));
+        const o: { lang: Lang; doc?: Record<string, unknown>; bbox?: number[] | null } = { lang: l };
+        await downloadRelazione({ docOut: o });
+        if (o.doc) docs[l] = o.doc; if (o.bbox) bbox = o.bbox;
+        await new Promise((r) => setTimeout(r, 0));          // lascia respirare l'interfaccia
+      }
+      const rv = `Rev ${String(docRev()).padStart(2, "0")}`;
+      const r = await api.putShareReport(token, docs, pdfLang, bbox, rv);
+      setMsg(t("Relazione allegata al link «{name}» in {n} lingue ✓", { name, n: r.langs.length }));
+      await refreshShares(projectId);
+    } catch (e) { showErr(e); } finally { setRepBusy(""); }
   }
   async function removeShare(token: string) {
     if (!projectId) return;
@@ -10788,6 +10815,9 @@ export default function Page() {
                   {busy === "share" ? t("Creo…") : t("Crea link")}
                 </button>
               </div>
+              <label className="flex items-center gap-1.5 text-[11px] text-sage-dark mt-1" data-share-report>
+                <input type="checkbox" checked={shareWithReport} onChange={(e) => setShareWithReport(e.target.checked)} />
+                {t("Allega la relazione tecnica, leggibile nel link in tutte le lingue")}</label>
               {shares.length > 0 && (
                 <ul className="mt-2 space-y-1">
                   {shares.map((s) => {
@@ -10795,6 +10825,8 @@ export default function Page() {
                     return (
                       <li key={s.token} className="flex items-center gap-1 text-[12px] bg-panel rounded-lg px-2 py-1">
                         <span className="flex-1 truncate font-medium text-brand-darker">{s.name}</span>
+                        {s.report_langs?.length ? <span className="text-[10px] text-brand shrink-0" title={t("Relazione allegata")}>📄 {s.report_langs.length}</span> : null}
+                        <button className="text-brand-mid shrink-0 px-1" disabled={!!repBusy} title={s.report_langs?.length ? t("Aggiorna la relazione allegata") : t("Allega la relazione tecnica")} onClick={() => attachReport(s.token, s.name)} data-share-attach>{repBusy === s.token ? "…" : "📄"}</button>
                         <button className="text-brand-mid shrink-0 px-1" title={t("Copia link")} onClick={() => { navigator.clipboard?.writeText(url); setMsg(t("Link copiato ✓")); }}>⧉</button>
                         <a className="text-brand-mid shrink-0 px-1" title={t("Apri")} href={url} target="_blank" rel="noreferrer">↗</a>
                         <button className="text-danger shrink-0 px-1" title={t("Elimina link")} onClick={() => removeShare(s.token)}>✕</button>

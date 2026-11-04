@@ -154,6 +154,26 @@ class ShareView(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class ShareReport(Base):
+    """Relazione tecnica allegata a un link di sola lettura, in tutte le lingue.
+
+    È una «fotografia» presa quando si allega: il cliente vede la relazione di
+    quella revisione anche se il progetto cambia dopo. docs = JSON {lingua: doc}
+    compresso (zlib + base64). Tabella nuova → create_all la crea senza migrazioni."""
+    __tablename__ = "share_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    docs: Mapped[str] = mapped_column(Text, nullable=False)
+    langs: Mapped[str] = mapped_column(String(200), nullable=False, default="it")
+    default_lang: Mapped[str] = mapped_column(String(8), nullable=False, default="it")
+    bbox: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    revision: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class ExportRevision(Base):
     """Revisione di una tavola esportata.
 

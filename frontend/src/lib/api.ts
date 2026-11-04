@@ -225,8 +225,17 @@ export const deleteLayer = (id: number) =>
 
 // ---- Link pubblici di sola lettura (multipli per progetto) ----
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type ShareData = { project: { name: string; crop?: string | null }; areas: any[]; layers: any[]; config?: any };
-export type ShareView = { token: string; name: string; created_at?: string | null };
+export type ShareData = { project: { name: string; crop?: string | null }; areas: any[]; layers: any[]; config?: any;
+  report?: { langs: string[]; default_lang: string; revision?: string; updated_at?: string | null } | null };
+// Relazione tecnica allegata al link (tutte le lingue)
+export type ShareReport = { lang: string; langs: string[]; default_lang: string; revision?: string; updated_at?: string | null; doc: any };
+export const putShareReport = (token: string, docs: Record<string, unknown>, default_lang: string, bbox: number[] | null, revision: string) =>
+  req<{ langs: string[]; default_lang: string }>(`/api/shares/${encodeURIComponent(token)}/report`, { method: "PUT", body: JSON.stringify({ docs, default_lang, bbox, revision }) });
+export const fetchShareReport = (token: string, lang: string) =>
+  req<ShareReport>(`/api/share/${encodeURIComponent(token)}/report?lang=${encodeURIComponent(lang)}`);
+export const shareReportPdfUrl = (token: string, lang: string) =>
+  `${API_BASE}/api/share/${encodeURIComponent(token)}/report.pdf?lang=${encodeURIComponent(lang)}`;
+export type ShareView = { token: string; name: string; created_at?: string | null; report_langs?: string[] | null };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const createShareView = (projectId: number, name: string, config: any) =>
   req<ShareView>(`/api/projects/${projectId}/shares`, { method: "POST", body: JSON.stringify({ name, config }) });

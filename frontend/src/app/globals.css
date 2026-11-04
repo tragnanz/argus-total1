@@ -153,3 +153,62 @@ body {
 body.mh-field .field-label, body.mh-pivot .pivot-label, body.mh-stn .stn-badge,
 body.mh-solar .solar-tag, body.mh-mod .solar-mod, body.mh-tara .solar-tara,
 body.mh-basin .hy-basin, body.mh-ditch .hy-ditch { display: none !important; }
+
+/* ---- Relazione tecnica nel link di sola lettura (ReportReader) ---- */
+.rr-root { position: fixed; inset: 0; z-index: 60; background: #F7F9FF; display: flex; flex-direction: column; color: #001A33; font-family: Inter, system-ui, sans-serif; }
+.rr-head { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: #fff; border-bottom: 1px solid #E5E8EE; flex-wrap: wrap; }
+.rr-logo { height: 34px; width: auto; }
+.rr-kicker { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #009FE3; }
+.rr-title { font-size: 16px; font-weight: 700; }
+.rr-btn { border: 1px solid #BEC7D2; background: #fff; border-radius: 8px; padding: 7px 12px; font-size: 13px; color: #001A33; white-space: nowrap; }
+.rr-primary { background: #009FE3; border-color: #009FE3; color: #fff; font-weight: 600; }
+.rr-note { background: #FFF8CC; padding: 6px 16px; font-size: 12px; }
+.rr-main { flex: 1; display: flex; min-height: 0; }
+.rr-toc { width: 290px; flex-shrink: 0; border-inline-end: 1px solid #E5E8EE; background: #fff; overflow: auto; padding: 12px 8px; }
+.rr-toc ol { list-style: none; margin: 0; padding: 0; }
+.rr-toc li button { display: flex; gap: 8px; width: 100%; text-align: start; font-size: 13px; padding: 6px 8px; border-radius: 8px; color: #5C636A; }
+.rr-toc li button span { font-weight: 700; color: #009FE3; min-width: 18px; }
+.rr-toc li.on button { background: #F0F4FA; color: #001A33; font-weight: 600; }
+.rr-tocbtn { display: none; }
+.rr-body { flex: 1; overflow: auto; padding: 24px 32px 60px; scroll-behavior: smooth; }
+.rr-body > * { max-width: 880px; margin-inline: auto; }
+.rr-cover { background: linear-gradient(135deg, #001A33, #007BB6); color: #fff; border-radius: 16px; padding: 32px; margin-bottom: 24px; }
+.rr-cover .rr-kicker { color: #9fd3ee; }
+.rr-cover h1 { font-size: 30px; line-height: 1.15; font-weight: 800; margin: 8px 0; }
+.rr-rec { font-size: 13px; opacity: .85; }
+.rr-ch { background: #fff; border: 1px solid #E5E8EE; border-radius: 16px; padding: 22px 26px; margin-bottom: 18px; }
+.rr-ch h2 { font-size: 21px; font-weight: 700; margin: 0 0 12px; display: flex; flex-direction: column; }
+.rr-ch h2 span { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #009FE3; }
+.rr-h { font-size: 15px; font-weight: 700; margin: 16px 0 6px; }
+.rr-p { font-size: 14.5px; line-height: 1.6; text-align: justify; margin: 0 0 10px; color: #1f2d3d; }
+.rr-ul, .rr-ol { font-size: 14.5px; line-height: 1.55; margin: 0 0 10px; padding-inline-start: 22px; }
+.rr-ul { list-style: disc; } .rr-ol { list-style: decimal; }
+.rr-tab { margin: 10px 0 14px; }
+.rr-tab figcaption, .rr-fig figcaption { font-size: 12px; color: #5C636A; margin: 6px 0; }
+.rr-tabwrap { overflow-x: auto; border: 1px solid #E5E8EE; border-radius: 10px; }
+.rr-tab table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.rr-tab th { background: #F0F4FA; text-align: start; padding: 7px 9px; font-weight: 600; position: sticky; top: 0; white-space: nowrap; }
+.rr-tab td { padding: 6px 9px; border-top: 1px solid #E5E8EE; font-variant-numeric: tabular-nums; }
+.rr-tab tbody tr:hover td { background: #F7F9FF; }
+.rr-fig { margin: 12px 0 16px; }
+.rr-chart { position: relative; }
+.rr-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: #5C636A; }
+.rr-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-inline-end: 5px; vertical-align: middle; }
+.rr-tip { font-size: 12px; background: #001A33; color: #fff; border-radius: 8px; padding: 5px 9px; margin-top: 6px; display: inline-block; }
+.rr-map { height: 360px; border-radius: 12px; overflow: hidden; border: 1px solid #E5E8EE; }
+.rr-map img, .rr-map .leaflet-tile { max-width: none !important; max-height: none !important; border: 0 !important; }
+.rr-foot { font-size: 11px; color: #5C636A; text-align: center; padding: 18px 0; }
+@media (max-width: 860px) {
+  .rr-toc { position: absolute; z-index: 5; width: auto; inset-inline: 0; border: 0; border-bottom: 1px solid #E5E8EE; max-height: 46px; overflow: hidden; padding: 6px 10px; }
+  .rr-toc.open { max-height: 70vh; overflow: auto; box-shadow: 0 8px 20px rgba(0,0,0,.12); }
+  .rr-tocbtn { display: block; font-weight: 600; font-size: 13px; padding: 6px 4px; }
+  .rr-main { position: relative; }
+  .rr-body { padding: 58px 16px 40px; }
+  .rr-ch { padding: 16px; }
+  .rr-cover { padding: 22px; } .rr-cover h1 { font-size: 24px; }
+  .rr-title { font-size: 14px; white-space: normal; }
+  .rr-head { gap: 6px 8px; padding: 8px 12px; }
+  .rr-head > .min-w-0 { flex: 1 1 calc(100% - 50px); }
+  .rr-head .rr-btn { flex: 1 1 auto; padding: 6px 8px; font-size: 12px; text-align: center; }
+  .rr-map { height: 260px; }
+}

@@ -8,6 +8,7 @@ import * as api from "@/lib/api";
 import { useI18n, LANGS, type Lang, translateError } from "@/lib/i18n";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
+const ReportReader = dynamic(() => import("@/components/ReportReader"), { ssr: false });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Area = any;
@@ -20,6 +21,9 @@ export default function ViewPage({ params }: { params: { token: string } }) {
   const [data, setData] = useState<api.ShareData | null>(null);
   const [err, setErr] = useState("");
   const [infoOpen, setInfoOpen] = useState(true);   // pannello informazioni richiudibile
+  // relazione tecnica allegata al link: si apre dal pulsante o con #relazione nell'indirizzo
+  const [repOpen, setRepOpen] = useState(false);
+  useEffect(() => { if (data?.report && typeof window !== "undefined" && /relazione|report/i.test(window.location.hash)) setRepOpen(true); }, [data]);
   // ---- Commenti del cliente su questo link ----
   const [comments, setComments] = useState<api.ShareComment[]>([]);
   const [cOpen, setCOpen] = useState(true);
@@ -194,6 +198,10 @@ export default function ViewPage({ params }: { params: { token: string } }) {
               <span className="truncate">{data.project.name}{data.project.crop ? ` · ${data.project.crop}` : ""}</span>
             </div>
           )}
+          {data?.report && (
+            <button className="h-11 px-3 rounded-xl shadow text-sm font-semibold text-white shrink-0" style={{ background: "#009FE3" }}
+              onClick={() => setRepOpen(true)} data-open-report>📄 {t("Relazione tecnica")}</button>
+          )}
           <select className="pill-light h-11 px-2 text-sm shrink-0 max-w-[7.5rem]" value={lang}
             onChange={(e) => setLang(e.target.value as Lang)} aria-label={t("Lingua")}>
             {LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
@@ -294,6 +302,7 @@ export default function ViewPage({ params }: { params: { token: string } }) {
           </div>
         )}
 
+        {repOpen && data?.report && <ReportReader token={params.token} info={data.report} onClose={() => setRepOpen(false)} />}
         <div className="absolute bottom-1 left-3 text-[11px] text-white/80 z-10 pointer-events-none">Argus Total · by Nabu srl — Agrostar Group srl</div>
       </div>
     </main>

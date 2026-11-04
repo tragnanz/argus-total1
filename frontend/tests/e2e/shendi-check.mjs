@@ -90,6 +90,36 @@ try {
   const zp = await download(() => page.locator('button:has-text("Progetto esecutivo completo")').click());
   const zl = cp.execFileSync("unzip", ["-l", await zp.path()]).toString();
   ok(/\.pdf/.test(zl) && /\.ceres/.test(zl) && /\.xlsx/.test(zl), "ZIP: PDF, .ceres e computo");
+  // link per il cliente con la relazione in tutte le lingue
+  await page.locator('input[placeholder*="Nome del link"]').fill("Cliente Shendi");
+  const tl = Date.now();
+  await page.locator('button:has-text("Crea link")').click();
+  await page.waitForFunction(() => /Relazione allegata al link/.test(document.body.innerText), null, { timeout: 300000 });
+  const tAtt = (Date.now() - tl) / 1000;
+  const shares = await fetch(`${API}/projects/${p.id}/shares`, { headers: { Authorization: `Bearer ${tok}` } }).then((r) => r.json());
+  const sh = shares[0];
+  ok((sh?.report_langs?.length ?? 0) >= 18, `Link: relazione allegata in ${sh?.report_langs?.length ?? 0} lingue (${tAtt.toFixed(0)} s)`);
+  const vp = await ctx.newPage(); vp.on("pageerror", (e) => errors.push("view: " + e.message));
+  await vp.goto(`${URL}/view/${sh.token}`); await vp.waitForTimeout(3000);
+  await vp.locator("[data-open-report]").click();
+  await vp.locator("[data-report-reader] .rr-ch").first().waitFor({ timeout: 60000 });
+  const it = await vp.locator("[data-report-reader]").innerText();
+  ok(/Portata del fiume alla presa/.test(it) && /Dongola/.test(it) && (await vp.locator(".rr-ch").count()) >= 5, `Link: relazione interattiva in italiano (${await vp.locator(".rr-ch").count()} capitoli)`);
+  await vp.waitForTimeout(1500);
+  await vp.screenshot({ path: path.join(SH, "3_link_relazione_it.png") });
+  ok((await vp.locator(".rr-chart svg").count()) >= 1 && (await vp.locator(".rr-map").count()) >= 1, "Link: grafici e mappe nella relazione");
+  for (const [lg, re] of [["en", /Technical|technical|report/i], ["ru", /[А-Яа-я]{4,}/], ["ar", /[\u0600-\u06FF]{3,}/], ["zh", /[\u4e00-\u9fff]{2,}/]]) {
+    await vp.locator("[data-report-reader] select").selectOption(lg); await vp.waitForTimeout(2500);
+    const tx = await vp.locator("[data-report-reader] .rr-body").innerText();
+    ok(re.test(tx) && /Dongola/.test(tx), `Link: relazione in ${lg}`);
+    if (lg === "ar") ok((await vp.locator("[data-report-reader]").getAttribute("dir")) === "rtl", "Link: arabo da destra a sinistra");
+  }
+  await vp.screenshot({ path: path.join(SH, "4_link_relazione_zh.png") });
+  const pdfR = await fetch(`${API}/share/${sh.token}/report.pdf?lang=en`);
+  const pdfB = Buffer.from(await pdfR.arrayBuffer());
+  ok(pdfR.ok && pdfB.subarray(0, 4).toString() === "%PDF", `Link: PDF della relazione in inglese (${Math.round(pdfB.length / 1024)} kB)`);
+  await vp.setViewportSize({ width: 390, height: 844 }); await vp.locator("[data-report-reader] select").selectOption("it"); await vp.waitForTimeout(2000);
+  await vp.screenshot({ path: path.join(SH, "5_link_mobile.png") });
   ok(errors.length === 0, `Nessun errore nella pagina${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (e) { console.log("✗ ERRORE", e.message); fail++; await page.screenshot({ path: path.join(SH, "errore.png") }).catch(() => {}); }
 await browser.close();
