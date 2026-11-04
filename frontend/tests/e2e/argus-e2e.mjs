@@ -297,6 +297,27 @@ try {
   const rvTxt = await page.locator("[data-river]").first().innerText().catch(() => "");
   ok(/prelevabile/i.test(rvTxt) && /km²/.test(rvTxt), `Fonte: portata del fiume alla presa e bilancio mese per mese (${(rvTxt.match(/Portata media[^·]*/) || [""])[0].trim()})`);
   if (process.env.ARGUS_SHOT_RIVER) await page.screenshot({ path: process.env.ARGUS_SHOT_RIVER });
+  // Irrigazione: suolo dal satellite, ruscellamento pivot per pivot e programma irriguo mensile
+  await page.locator('button[title="Irrigazione"]').first().click(); await page.waitForTimeout(1200);
+  await page.locator("[data-soil] button").first().click();
+  await page.locator("[data-soil] p").first().waitFor({ timeout: 120000 }).catch(() => {});
+  const soilTxt = await page.locator("[data-soil]").first().innerText().catch(() => "");
+  ok(/Sabbia/.test(soilTxt) && /mm\/m/.test(soilTxt), `Suolo da SoilGrids (${(soilTxt.match(/Sabbia[^·]*·[^·]*·[^·]*/) || [""])[0].trim()})`);
+  ok((await page.locator("[data-runoff] tbody tr").count()) >= 1, "Ruscellamento pivot per pivot con gli irrigatori reali");
+  const prgTxt = await page.locator("[data-program]").first().innerText().catch(() => "");
+  ok(/timer/.test(prgTxt) && /giri\/sett/.test(prgTxt), "Programma irriguo mese per mese (dose, timer, giri)");
+  if (process.env.ARGUS_SHOT_IRR) await page.screenshot({ path: process.env.ARGUS_SHOT_IRR });
+  // Rilievo: fossi di scolo dei campi
+  await page.locator('button[title="Rilievo"]').first().click(); await page.waitForTimeout(1000);
+  await page.locator("[data-drain] input[type=checkbox]").first().check(); await page.waitForTimeout(800);
+  const drTxt = await page.locator("[data-drain]").first().innerText().catch(() => "");
+  ok(/F1/.test(drTxt) && /l\/s/.test(drTxt) && /m³/.test(drTxt), "Fossi di scolo dei campi dimensionati");
+  // Esporta: planimetria DXF
+  await page.locator('[title="Esporta"], button:has-text("Esporta")').first().click(); await page.waitForTimeout(800);
+  const dxf = await readBytes(await download(() => page.locator('button:has-text("Planimetria DXF")').click(), "DXF"));
+  const dxfTxt = Buffer.from(dxf).toString("utf8");
+  ok(/AC1009/.test(dxfTxt) && /\r\nPIVOT\r\n/.test(dxfTxt) && /FOSSI_SCOLO/.test(dxfTxt) && (dxfTxt.match(/\r\nCIRCLE\r\n/g) || []).length >= 4, `Planimetria DXF in UTM (${(dxfTxt.match(/\r\nCIRCLE\r\n/g) || []).length} cerchi)`);
+  await page.locator('button[title="Rilievo"]').first().click(); await page.waitForTimeout(800);
   await page.locator('[title="Esporta"], button:has-text("Esporta")').first().click(); await page.waitForTimeout(800);
   const cer2 = await readJson(await download(() => page.locator('button:has-text("Esporta per Ceres")').click()));
   const rows2 = (cer2.sezioni ?? []).flatMap((x) => x.righe ?? []);

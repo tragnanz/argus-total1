@@ -499,6 +499,14 @@ export async function siteClimate(lat: number, lon: number): Promise<SiteClimate
   if (!res.ok) throw new ApiError(res.status, res.statusText);
   return res.json();
 }
+// Suolo del sito (SoilGrids 0-30 cm): tessitura, classe USDA, acqua disponibile, infiltrazione di base
+export type SoilOut = { sand: number; silt: number; clay: number; soc_gkg: number; usda: string; key: string; inf_mmh: number; fc: number; wp: number; taw_mm_m: number; source: string };
+export async function siteSoil(lat: number, lon: number): Promise<SoilOut> {
+  const tok = getToken();
+  const res = await fetch(`${API_BASE}/api/project/soil?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}`, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} });
+  if (!res.ok) { let m = res.statusText; try { m = (await res.json()).detail ?? m; } catch { /* */ } throw new ApiError(res.status, m); }
+  return res.json();
+}
 // Portata del fiume alla presa: celle GloFAS vicine e bacino dal DEM
 export type RiverCell = { lat: number; lon: number; dist_km: number; mean: number; q347: number; min: number; max: number;
   month_mean: number[]; month_q80: number[]; month_min: number[]; years: string[]; n_days: number };

@@ -8,6 +8,7 @@ import { useI18n, LANGS, type Lang, translateError, translatorFor } from "@/lib/
 import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
 import { buildXlsx } from "@/lib/xlsx";
+import { Dxf, toUtm, utmZone } from "@/lib/dxf";
 import { designCanal, canalEarthworks, LININGS, lining, pivotUniformity, cuGrade, SPRINKLERS, solarMonths, riverBalance, type LiningId, type CanalSection, type CuResult } from "@/lib/hydro";
 import type { LL, RGB, TvSheet, TvCommon, TvPivot, TvLine, TvPoint, TvColItem, TvTrenchItem, TvDraw, TvTech } from "@/lib/tavole";
 import { linearLayout, reelLayout, dripLayout, type LL as SysLL } from "@/lib/systems";
@@ -17,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.221";
+const REV = "v0.6.222";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1311,6 +1312,11 @@ export default function Page() {
   const [canalFb, setCanalFb] = useState(0.3);        // franco minimo (m)
   const [cuModel, setCuModel] = useState("kpt_black");   // irrigatori del calcolo di uniformità (Nereus pag. 18)
   const cuMemo = useRef(new Map<string, CuResult | null>());
+  // Fossi di scolo dei campi (Nereus pag. 17, scheda «Fosso»): coefficiente di drenaggio in mm/24h
+  const [drainOn, setDrainOn] = useState(false);
+  const [drainC, setDrainC] = useState(12.96);         // mm/24h = 1,5 l/s·ha
+  const [drainS, setDrainS] = useState(2);             // pendenza del fondo (‰)
+  const [drainB, setDrainB] = useState(0.5);           // base del fosso (m)
   const [canalPermille, setCanalPermille] = useState(1);
   const [canalStart, setCanalStart] = useState<number[] | null>(null);
   const [canalEnd, setCanalEnd] = useState<number[] | null>(null);
@@ -1485,6 +1491,11 @@ export default function Page() {
   // stessa grandezza, tenerli separati li faceva divergere.
   const [infiltration, setInfiltration] = useState(SOILS[2].inf);
   const infTouched = useRef(false);      // true se l'utente lo ha corretto a mano
+  // Suolo dal satellite (SoilGrids) e parametri del programma irriguo
+  const [soilSat, setSoilSat] = useState<(api.SoilOut & { n: number }) | null>(null);
+  const [rootDepth, setRootDepth] = useState(0.8);      // profondità delle radici (m)
+  const [rawP, setRawP] = useState(0.5);                // frazione dell'acqua disponibile consumabile senza stress (FAO-56 p)
+  const [v100, setV100] = useState(2.3);                // velocità dell'ultima torre al 100% del timer (m/min)
   const [et0Peak, setEt0Peak] = useState(7);               // mm/g
   // raggio consigliato: intensità di pioggia di punta al bordo ≤ infiltrazione del suolo.
   // I_picco = 2π·R·Dg /(H·w) ≤ infiltrazione → R ≤ infiltrazione·H·w /(2π·Dg).
@@ -3866,6 +3877,78 @@ export default function Page() {
     const need = rows.filter((r) => r.hNeed > 0.05);
     return { rows, z, okAll: need.every((r) => r.ok), battMax: Math.ceil(Math.max(0, ...need.map((r) => r.battNeed))), dayOnly: need.filter((r) => r.hNeed <= r.hSun + 1e-6).map((r) => r.m) };
   }
+  // ---- SUOLO DAL SATELLITE ------------------------------------------------------
+  async function readSoil() {
+    const pts = (fields.length ? fields : []).slice(0, 6).map((f) => { const r = f.geom.coordinates[0]; return [r.reduce((a, p) => a + p[0], 0) / r.length, r.reduce((a, p) => a + p[1], 0) / r.length]; });
+    if (!pts.length && srcPt) pts.push(srcPt);
+    if (!pts.length) return needField();
+    setBusy("soil");
+    try {
+      const res: api.SoilOut[] = [];
+      for (const [lon, lat] of pts) { try { res.push(await api.siteSoil(lat, lon)); } catch (e) { if (!res.length && pts.length === 1) throw e; } }
+      if (!res.length) throw new Error(t("SoilGrids non ha dati per questi campi."));
+      const avg = (k: "sand" | "silt" | "clay" | "soc_gkg" | "taw_mm_m" | "inf_mmh" | "fc" | "wp") => res.reduce((a, r) => a + r[k], 0) / res.length;
+      const cnt = new Map<string, number>(); res.forEach((r) => cnt.set(r.key, (cnt.get(r.key) ?? 0) + 1));
+      const key = [...cnt.entries()].sort((a, b) => b[1] - a[1])[0][0], usda = res.find((r) => r.key === key)!.usda;
+      const out = { ...res[0], sand: avg("sand"), silt: avg("silt"), clay: avg("clay"), soc_gkg: avg("soc_gkg"), taw_mm_m: Math.round(avg("taw_mm_m")), inf_mmh: Math.round(avg("inf_mmh") * 10) / 10, fc: avg("fc"), wp: avg("wp"), key, usda, n: res.length };
+      setSoilSat(out); setSoilKey(key);
+      if (!infTouched.current) setInfiltration(out.inf_mmh);
+      setMsg(t("Suolo letto da SoilGrids ✓"));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  // ---- VERIFICA DEL RUSCELLAMENTO PER PIVOT (irrigatori reali) ----------------
+  // Larghezza bagnata in punta = diametro bagnato dell'ultimo irrigatore dello sprinkler chart;
+  // a parità di portata dose e tempo di bagnatura sono proporzionali alla durata del giro.
+  function pivotRunoff(pv: PivotItem) {
+    const u = pivotCU(pv); if (!u || !u.spk.length) return null;
+    const last = u.spk[u.spk.length - 1], W = 2 * last.R, r = pv.r;
+    const dose = depthPass(), Th = turnHours(), tw = (W * Th) / (2 * Math.PI * r);
+    const runoff = Math.max(0, dose - (infiltration * tw + surfStore));
+    let need = 0;
+    for (let n = 1; n <= 24; n++) { const d = mm24 / n, th = Math.max(0.05, hoursDay / n), t2 = (W * th) / (2 * Math.PI * r); if (d <= infiltration * t2 + surfStore) { need = n; break; } }
+    const k = mmDes / hoursDay - (infiltration * W) / (2 * Math.PI * r);            // mm/h netti a giro lento
+    const dMax = k > 0 ? (mmDes * (surfStore / k)) / hoursDay : Infinity;            // dose massima senza ruscellamento
+    return { u, W, tw, dose, runoff, need, peak: u.peak, dMax };
+  }
+  // ---- PROGRAMMA IRRIGUO MENSILE ------------------------------------------------
+  // Mese per mese per il pivot più grande: fabbisogno lordo al giorno, ore di marcia, dose per giro
+  // (la minore fra acqua facilmente disponibile, dose senza ruscellamento e fabbisogno di 7 giorni,
+  // non sotto la dose al 100% del timer), durata del giro, timer, giri a settimana e intervallo.
+  function irrigProgram() {
+    if (!pivots.length) return null;
+    const pv = pivots.reduce((a, p) => (p.r > a.r ? p : a), pivots[0]);
+    const P = pumpStation(), eff = Math.max(0.3, effPct / 100);
+    const taw = soilSat?.taw_mm_m ?? ({ sabbioso: 60, franco_sabbioso: 110, franco: 160, franco_limoso: 190, franco_argilloso: 170, argilloso: 160 } as Record<string, number>)[soilKey] ?? 140;
+    const RAW = taw * rootDepth * rawP;
+    const ro = pivotRunoff(pv), dRun = ro ? ro.dMax : Infinity;
+    const T100 = (2 * Math.PI * pv.r) / Math.max(0.1, v100 * 60);                       // ore per giro al 100%
+    const dMin = (mmDes * T100) / hoursDay;                                             // dose al 100% del timer
+    const rows = MDAYS.map((d, i) => {
+      const G = P.netMm ? Math.min(mmDes, P.netMm[i] / eff / d) : mmDes;               // mm/giorno lordi
+      if (G < 0.05) return { m: i, G: 0, h: 0, D: 0, T: 0, timer: 0, perWeek: 0, every: 0 };
+      const h = Math.min(24, (G / mmDes) * hoursDay);
+      const D = Math.max(dMin, Math.min(RAW, dRun, G * 7));
+      const T = (D * hoursDay) / mmDes, timer = Math.min(100, (100 * T100) / T);
+      return { m: i, G, h, D, T, timer, perWeek: (7 * G) / D, every: D / G };
+    });
+    const qPv = pivots.reduce((a, p) => a + pivotFlow(p), 0), simul = srcQmax > 0 ? Math.max(1, Math.floor(srcQmax / Math.max(1, pivotFlow(pv)))) : pivots.length;
+    return { pv, taw, RAW, dRun, dMin, T100, rows, simul: Math.min(simul, pivots.length), qPv };
+  }
+  // Fossi di scolo: uno per campo, lungo tutto il perimetro, dimensionato sulla portata di drenaggio
+  // del campo (Q = C·A·10/86,4 l/s) con Manning, terra inerbita, scarpe 1:1,5 come Nereus pag. 17.
+  function drainCalcs() {
+    if (!drainOn) return [];
+    const used = new Set<number>(pivots.map((p) => p.field).filter((x): x is number => x != null));
+    const fs = fields.filter((f) => !used.size || used.has(f.id));
+    return fs.map((f, i) => {
+      const ring = f.geom.coordinates[0], ha = ringAreaHa(f.geom.coordinates);
+      const L = ring.reduce((a, p, k) => a + (k ? distM(ring[k - 1], p) : 0), 0);
+      const q = (drainC * ha * 10) / 86.4;
+      const sec = designCanal(q, Math.max(0.1, drainS), "grass", { b: drainB, m: 1.5, fb: 0.3 });
+      const A = sec ? (sec.b + sec.m * sec.H) * sec.H : 0;
+      return { f, n: i + 1, ha, L, q, sec, cut: A * L, ring };
+    });
+  }
   // Sezione e movimenti di terra di ogni canale visibile (pendenza di progetto = target del tracciato)
   function canalCalcs() {
     const vis = canals.filter((c) => !c.hidden && c.geojson?.coordinates?.length >= 2);
@@ -3975,6 +4058,11 @@ export default function Page() {
         if (k.sec && (k.sec.lin === "concr" || k.sec.lin === "liner" || k.sec.lin === "stone"))
           R.push({ cat: cC, key: "canal", item: tx("{n}: rivestimento in {lin}", { n: nm, lin: tx(lining(k.sec.lin).label).toLowerCase() }), qty: Math.round(k.ew.linedM2), unit: "m²" });
       }
+    }
+    if (common) for (const d of drainCalcs()) {
+      const cD = tx("Drenaggio");
+      R.push({ cat: cD, key: "drain", item: d.sec ? tx("Fosso di scolo F{n} ({f}): base {b} m, tirante {y} m, scarpe 1:1,5, inerbito", { n: d.n, f: d.f.name, b: fx(d.sec.b, { maximumFractionDigits: 2 }), y: fx(d.sec.y, { maximumFractionDigits: 2 }) }) : `F${d.n}`, qty: Math.round(d.L), unit: "m", note: `${fx(Math.round(d.q))} l/s · ${fx(drainS)}‰` });
+      R.push({ cat: cD, key: "drain", item: tx("Fosso di scolo F{n}: scavo", { n: d.n }), qty: Math.round(d.cut), unit: "m³" });
     }
     const mRoad = roads.filter((r) => r.kind === "service" && !r.hidden).reduce((a, r) => a + lenOf(r.coords), 0);
     if (mRoad > 0) R.push({ cat: tx("Strade"), item: tx("Strade di servizio"), qty: Math.round(mRoad), unit: "m" });
@@ -4321,7 +4409,7 @@ export default function Page() {
   const [tvCompact, setTvCompact] = useState(true);   // tabelle e disegni accorpati sulle stesse pagine
   // out: per il PDF di progetto (relazione + tavole) il PDF non si scarica ma torna al chiamante
   // Elaborati del progetto: codice ARGUS-<id>-TAV-01 … come il riferimento Mercurius
-  type TvKind = "plan" | "pipe" | "elec" | "can" | "phase" | "det" | "wk" | "sch" | "cmp";
+  type TvKind = "plan" | "pipe" | "elec" | "can" | "dr" | "phase" | "det" | "wk" | "sch" | "cmp";
   type TavOut = { blob?: Blob; kinds?: TvKind[]; codes?: string[]; titles?: string[]; lang?: Lang; full?: boolean; defer?: boolean; build?: () => Promise<Blob> };
   const elabCode = (pid: number, kind: TvKind, n: number) => `ARGUS-${pid}-${kind === "sch" ? "SCH" : kind === "cmp" ? "CMP" : "TAV"}-${String(n).padStart(2, "0")}`;
   async function downloadTavole(out?: TavOut) {
@@ -4542,6 +4630,19 @@ export default function Page() {
                 pts: k.c.profile.map(([d, z]) => ({ d, z, hgl: bed0 - (k.S / 1000) * d + k.sec!.y })), highs: [], lows: [],
                 labT: tx("terreno"), labH: tx("pelo libero"), labA: "", labD: "" };
             })] } : null;
+        // 3c — fossi di scolo dei campi
+        const DRt = drainCalcs().filter((d) => d.sec);
+        const shDr: TvSheet | null = DRt.length ? { title: tx("Tavola dei fossi di scolo"), fields: fieldsTv, pivots: pivTv, vertices: false,
+          lines: DRt.map((d) => ({ id: "f" + d.n, pts: d.ring.map(LLf), color: "#8a6d3b", dash: true, width: 0.9, lab: `F${d.n} · ${n0(d.q)} l/s` })),
+          points: basePts,
+          column: [{ title: tx("Fossi di scolo"), items: DRt.map((d) => ({ head: `F${d.n} · ${d.f.name}`, lines: [`${n1(d.ha)} ha · ${n0(d.q)} l/s · ${n0(d.L)} m`, `b ${n2(d.sec!.b)} · y ${n2(d.sec!.y)} · ${tx("ciglio")} ${n2(d.sec!.topW)} m`] })) }],
+          cells: cellsBase(tx("Tavola dei fossi di scolo")),
+          tech: [{ title: tx("Fossi di scolo"), blocks: [{ table: { w: [8, 22, 9, 9, 10, 9, 9, 10, 9, 10],
+            cols: [{ t: tx("Sigla") }, { t: tx("Campo") }, { t: "ha", a: "r" }, { t: "l/s", a: "r" }, { t: tx("Lunghezza") + " (m)", a: "r" }, { t: "b (m)", a: "r" }, { t: "y (m)", a: "r" }, { t: tx("ciglio") + " (m)", a: "r" }, { t: "v (m/s)", a: "r" }, { t: tx("Scavo") + " (m³)", a: "r" }],
+            rows: DRt.map((d) => [`F${d.n}`, d.f.name, n1(d.ha), n0(d.q), n0(d.L), n2(d.sec!.b), n2(d.sec!.y), n2(d.sec!.topW), n2(d.sec!.v), n0(d.cut)]) } },
+            { kv: [[tx("Coefficiente di drenaggio"), `${n2(drainC)} mm/24h · ${n2(drainC / 8.64)} l/s·ha`], [tx("Pendenza"), `${n1(drainS)}‰`]] }] }],
+          draw: [{ kind: "chan", title: tx("Sezione tipo dei fossi di scolo"), items: DRt.slice(0, 4).map((d) => ({ title: `F${d.n} · ${n0(d.q)} l/s`, b: d.sec!.b, y: d.sec!.y, fb: d.sec!.fb, m: d.sec!.m, lined: false,
+            notes: [tx("Terra inerbita") + " · n 0,03", `v = ${n2(d.sec!.v)} m/s`] })) }] } : null;
         // 4 — fasi di realizzazione (pivot colorati per fase)
         const PH_RGB: RGB[] = [[46, 224, 160], [0, 159, 227], [245, 158, 11], [225, 29, 72], [139, 92, 246], [16, 185, 129], [236, 72, 153], [99, 102, 241], [234, 179, 8], [20, 184, 166]];
         const shPh: TvSheet | null = nPhases > 1 ? { title: tx("Fasi di realizzazione"), fields: fieldsTv, vertices: false,
@@ -4596,8 +4697,15 @@ export default function Page() {
             rows: [[tx("FV") + " kWh/g", ...sm.rows.map((r) => n0(r.E))], [tx("sole sufficiente") + " h", ...sm.rows.map((r) => n1(r.hSun))], [tx("marcia") + " h", ...sm.rows.map((r) => (r.hNeed > 0.05 ? n1(r.hNeed) : "—"))],
               [tx("batteria") + " kWh", ...sm.rows.map((r) => (r.battNeed > 0.5 ? n0(r.battNeed) : "—"))]] } },
             { kv: [[tx("Campo FV"), `${n1(sm.z.kWp)} kWp · ${sm.z.n} × ${solarCfg.wp} Wp · ${n1(sm.z.kW)} kW`], [tx("Metodo"), tx("Irraggiamento medio mensile del sito (NASA POWER) sul piano dei moduli (+10%), rendimento d'impianto 0,80, potenza a mezza sinusoide sulla durata del giorno")]] }] }]; })() : [];
-        const shSch: TvSheet | null = out?.full && (schDraw.length || stations.length || cuTech.length || solTech.length) ? { title: tx("Schede tecniche"), noMap: true, fields: [], pivots: [], lines: [], points: [], column: [], cells: [],
-          tech: [...cuTech, ...solTech, ...(stations.length ? [{ title: tx("Pompe"), blocks: [{ table: { w: [24, 22, 6, 9, 10, 9, 10, 10],
+        const progTech: TvTech[] = (() => { const IP = irrigProgram(); if (!IP) return [];
+          const ml = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(pdfLang, { month: "short" }); } catch { return String(i + 1); } };
+          const on = IP.rows.filter((r) => r.G > 0); if (!on.length) return [];
+          return [{ title: tx("Programma irriguo mese per mese"), blocks: [{ table: { w: [16, ...on.map(() => Math.max(5, Math.floor(84 / on.length)))],
+            cols: [{ t: `P${pivots.indexOf(IP.pv) + 1}` }, ...on.map((r) => ({ t: ml(r.m), a: "r" as const }))],
+            rows: [["mm/g", ...on.map((r) => n1(r.G))], [tx("ore/giorno"), ...on.map((r) => n0(r.h))], [tx("dose") + " mm", ...on.map((r) => n0(r.D))], [tx("timer") + " %", ...on.map((r) => n0(r.timer))], [tx("giro") + " h", ...on.map((r) => n0(r.T))], [tx("giri/sett."), ...on.map((r) => n1(r.perWeek))]] } },
+            { kv: [[tx("Suolo"), soilSat ? `${tx(soilOf(soilSat.key).label)} · ${soilSat.usda} · ${n0(soilSat.taw_mm_m)} mm/m` : tx(soilOf(soilKey).label)], [tx("Assorbimento"), `${n1(infiltration)} mm/h`]] }] }]; })();
+        const shSch: TvSheet | null = out?.full && (schDraw.length || stations.length || cuTech.length || solTech.length || progTech.length) ? { title: tx("Schede tecniche"), noMap: true, fields: [], pivots: [], lines: [], points: [], column: [], cells: [],
+          tech: [...cuTech, ...progTech, ...solTech, ...(stations.length ? [{ title: tx("Pompe"), blocks: [{ table: { w: [24, 22, 6, 9, 10, 9, 10, 10],
             cols: [{ t: tx("Stazione") }, { t: tx("Pompa") }, { t: "n.", a: "r" }, { t: tx("giri/min"), a: "r" }, { t: "Q (l/s)", a: "r" }, { t: "H (m)", a: "r" }, { t: tx("Motore") + " (kW)", a: "r" }, { t: tx("Rendimento") + " (%)", a: "r" }],
             rows: stations.map((st) => [st.name, st.pick ? `Caprari ${st.pick.model}` : "—", fx(st.nTot), st.pick ? fx(st.pick.rpm) : "—", n1(st.qLs), n0(st.head), st.pick ? n1(st.pick.motor) : n1(st.kW), st.pick ? n0(st.pick.eta) : "—"]) } }] } as TvTech] : [])],
           draw: schDraw } : null;
@@ -4657,7 +4765,7 @@ export default function Page() {
           if (G.supply === "gen") wkJobs.push({ type: "gen", ctx: { kva: G.kva }, name: `${G.kva} kVA` });
         }
         type Ent = [TvKind, TvSheet | null, number?];
-        const all: Ent[] = [["plan", sh1], ["pipe", runs.length ? sh2 : null], ["elec", cabRows.length ? sh3 : null], ["can", shCan], ["phase", shPh], ["det", shDet],
+        const all: Ent[] = [["plan", sh1], ["pipe", runs.length ? sh2 : null], ["elec", cabRows.length ? sh3 : null], ["can", shCan], ["dr", shDr], ["phase", shPh], ["det", shDet],
           ...wkJobs.map((_, i) => ["wk", null, i] as Ent), ["sch", shSch], ["cmp", shCmp]];
         const kept = all.filter((x) => x[1] || x[0] === "wk");
         let nT = 0; const codes: string[] = [], titles: string[] = [];
@@ -5017,6 +5125,13 @@ export default function Page() {
             const slow = CK.filter((k) => k.sec!.slow).map((k) => `K${k.idx + 1}`);
             if (slow.length) ib.push({ p: tx("Nei canali {l} la velocità resta sotto 0,3 m/s: rischio di deposito e di crescita di erbe, da gestire con la manutenzione o con una pendenza maggiore.", { l: slow.join(", ") }) });
           }
+          const DR = drainCalcs().filter((d) => d.sec);
+          if (DR.length) {
+            ib.push({ h: tx("Fossi di scolo") });
+            ib.push({ p: tx("Ogni campo è circondato da un fosso di scolo che smaltisce {c} mm in 24 ore ({q} l/s per ettaro). Il fosso, in terra inerbita con scarpe 1:1,5 e pendenza di fondo {s}‰, ha la sezione dello sbocco per l'intera portata del campo; lo sbocco va nel punto più basso del perimetro, verso il ricettore.", { c: n2(drainC), q: n2(drainC / 8.64), s: n1(drainS) }) });
+            ib.push({ table: { header: [tx("Fosso"), tx("Campo"), "ha", "l/s", tx("Lunghezza") + " (m)", "b (m)", "y (m)", "v (m/s)", tx("Scavo") + " (m³)"],
+              rows: DR.map((d) => [`F${d.n}`, d.f.name, n1(d.ha), n0(d.q), n0(d.L), n2(d.sec!.b), n2(d.sec!.y), n2(d.sec!.v), n0(d.cut)]) } });
+          }
         }
         ch.push({ title: tx("Infrastrutture idriche esistenti e opere di presa"), blocks: ib });
         // Nota tecnica sulle stime – metodologia
@@ -5130,6 +5245,14 @@ export default function Page() {
         ch.push({ title: tx("Gestione e funzionamento"), blocks: [
           { p: tx("Nei mesi di punta l'impianto lavora {h} ore al giorno alla dose di progetto di {mm} mm. Il programma irriguo segue il fabbisogno della coltura, con turni assegnati ai pivot in modo da contenere la potenza impegnata e bilanciare le portate sulla rete.", { h: n1(hoursDay), mm: n1(mmDes) }) },
           { p: tx("Le stazioni di pompaggio sono dotate di quadri di comando e protezione e, dove previsto, di inverter per regolare la portata. La manutenzione ordinaria riguarda pompe, valvole, sfiati e scarichi della rete e le macchine di irrigazione.") },
+          ...(soilSat ? [{ h: tx("Suolo") }, { p: tx("Il suolo dei campi, dalla banca dati SoilGrids (ISRIC, 250 m, strato 0-30 cm, {n} punti), ha sabbia {s}%, limo {l}% e argilla {a}%: classe USDA «{u}», «{k}» nella classificazione del progetto. Con le equazioni di Saxton l'acqua disponibile è di {taw} mm per metro di suolo; l'assorbimento di base assunto è di {i} mm/h.", { n: String(soilSat.n), s: n0(soilSat.sand), l: n0(soilSat.silt), a: n0(soilSat.clay), u: soilSat.usda, k: tx(soilOf(soilSat.key).label).toLowerCase(), taw: n0(soilSat.taw_mm_m), i: n1(infiltration) }) }] : []),
+          ...((() => { const IP = irrigProgram(); if (!IP) return [];
+            const ml = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(pdfLang, { month: "long" }); } catch { return String(i + 1); } };
+            return [{ h: tx("Programma irriguo mese per mese") },
+              { p: tx("Programma per il pivot più grande (P{n}, {r} m; giro al 100% del timer in {h} h). La dose per giro è la minore fra l'acqua facilmente disponibile ({raw} mm: {taw} mm/m × {z} m di radici × {p}), la dose che il terreno assorbe senza ruscellamento in punta ({d}) e il fabbisogno di una settimana, e non scende sotto la dose al 100% del timer.", { n: String(pivots.indexOf(IP.pv) + 1), r: n0(IP.pv.r), h: n1(IP.T100), raw: n0(IP.RAW), taw: n0(IP.taw), z: n1(rootDepth), p: fx(rawP), d: Number.isFinite(IP.dRun) ? `${n1(IP.dRun)} mm` : tx("senza limite") }) },
+              { table: { header: [tx("Mese"), tx("Fabbisogno lordo") + " (mm/g)", tx("Ore di marcia") + " (h/g)", tx("Dose per giro") + " (mm)", tx("Timer") + " (%)", tx("Durata del giro") + " (h)", tx("Giri a settimana")],
+                rows: IP.rows.filter((r) => r.G > 0).map((r) => [ml(r.m), n1(r.G), n1(r.h), n0(r.D), n0(r.timer), n0(r.T), n1(r.perWeek)]) } },
+              ...(IP.simul < pivots.length ? [{ p: tx("Con {q} l/s disponibili alla fonte lavorano insieme {s} pivot su {n}: i pivot si alternano a turni.", { q: n0(srcQmax), s: String(IP.simul), n: String(pivots.length) }) }] : [])]; })()),
         ] });
         // Prossimi passi raccomandati
         ch.push({ title: tx("Prossimi passi raccomandati"), blocks: [{ numbered: [
@@ -5141,6 +5264,7 @@ export default function Page() {
         const what: Record<TvKind, [string, string]> = { plan: [tx("Planimetria generale"), tx("Campi, pivot, rete di distribuzione, adduttrice, vasca e stazioni di pompaggio su ortofoto in scala")],
           pipe: [tx("Tavola delle tubazioni"), tx("Tratti, nodi e raccordi, valvole e apparecchiature, sezioni tipo di scavo e profilo longitudinale")],
           elec: [tx("Tavola delle linee elettriche"), tx("Linee elettriche, sezioni tipo di scavo dei cavi e schema unifilare")],
+          dr: [tx("Tavola dei fossi di scolo"), tx("Fossi di scolo lungo i campi, portata di drenaggio, sezione tipo e scavi")],
           can: [tx("Tavola dei canali"), tx("Tracciato dei canali, sezione tipo con tirante e franco, profilo con fondo e pelo libero, scavi e rilevati")],
           phase: [tx("Fasi di realizzazione"), tx("Pivot e campi divisi per fase, con superficie e portata di ogni fase")],
           det: [tx("Pozzetti della rete"), tx("Pozzetti di sfiato e di scarico: schema tipo con le parti numerate")],
@@ -5222,6 +5346,7 @@ export default function Page() {
       const ceresWarn = "err" in cf ? " " + t("Attenzione: il file .ceres non è nel pacchetto.") + " " + cf.err : "";
       const plan = (mercuriusComputo(base, rev).planimetria as { elementi?: { features?: unknown[] } } | undefined)?.elementi?.features ?? [];
       if (plan.length) zip.file(`${base}-GEO_planimetria.geojson`, JSON.stringify({ type: "FeatureCollection", features: plan }));
+      { const dx = buildDxf(); if (dx) zip.file(`${base}-GEO_planimetria_UTM${dx.zone}.dxf`, dx.text); }
       step(4);
       const zb = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
       saveBlob(zb, `${base}_${safe(pname)}_progetto_rev${String(rev).padStart(2, "0")}.zip`);
@@ -5781,6 +5906,10 @@ export default function Page() {
           if (["concr", "liner", "stone"].includes(canalLin)) R.push({ codice: `ARGUS-CANALE-RIVEST-${canalLin.toUpperCase()}`, quantita: Math.round(k.ew.linedM2), unita: "m²", descrizione: `Rivestimento del canale ${k.idx + 1} in ${lab}` });
         }
       }
+      for (const d of drainCalcs()) {
+        R.push({ codice: "ARGUS-FOSSO-SCOLO", quantita: Math.round(d.L), unita: "m", descrizione: `Fosso di scolo F${d.n} (${d.f.name}), ${it(d.q)} l/s${d.sec ? `, base ${it(d.sec.b, 2)} m, tirante ${it(d.sec.y, 2)} m, scarpe 1:1,5, inerbito` : ""}` });
+        R.push({ codice: "ARGUS-FOSSO-SCAVO", quantita: Math.round(d.cut), unita: "m³", descrizione: `Scavo del fosso di scolo F${d.n}` });
+      }
       const mRoad = roads.filter((r) => r.kind === "service" && !r.hidden).reduce((a, r) => a + lenOf(r.coords), 0);
       R.push({ codice: "ARGUS-STRADA-SERVIZIO", quantita: Math.round(mRoad), unita: "m", descrizione: "Strada di servizio" });
       add("Rete di adduzione", R);
@@ -5868,7 +5997,7 @@ export default function Page() {
       ...(hydraNow() ? [["Rete di adduzione", `${it(hydraNow()!.byDn.reduce((a, x) => a + x[1], 0) / 1000, 2)} km`]] : []),
       ...((() => { const us = pivots.map((pv) => pivotCU(pv)).filter((u): u is CuResult => !!u); if (!us.length) return [];
         const lo = Math.min(...us.map((u) => u.CU)), hi = Math.max(...us.map((u) => u.CU));
-        return [["Uniformità dei pivot (CU)", `${it(lo, 1)}${hi - lo > 0.05 ? `–${it(hi, 1)}` : ""}% · ${us[0].model} · picco ${it(Math.max(...us.map((u) => u.peak)))} mm/h`]]; })()),
+        return [...(soilSat ? [["Suolo (SoilGrids)", `${soilOf(soilSat.key).label} · ${soilSat.usda} · sabbia ${it(soilSat.sand)}% argilla ${it(soilSat.clay)}% · ${it(soilSat.taw_mm_m)} mm/m`]] : []), ["Uniformità dei pivot (CU)", `${it(lo, 1)}${hi - lo > 0.05 ? `–${it(hi, 1)}` : ""}% · ${us[0].model} · picco ${it(Math.max(...us.map((u) => u.peak)))} mm/h`]]; })()),
       ...(pivots.some((p) => p.solar) ? [["Tara FV non irrigua", `${it(pivots.reduce((a, p) => a + (p.solar ? solarSize(p).taraM2 : 0), 0) / 1e4, 2)} ha · ${pivots.filter((p) => p.solar).length} pivot solari, cerchio attorno al perno`]] : []),
       ["Macchine", `${pivots.length} pivot${Object.keys(sysDesigns).length ? `, ${Object.keys(sysDesigns).length} campi con altri sistemi` : ""}`],
     ].map(([etichetta, valore]) => ({ etichetta: etichetta.slice(0, 80), valore: valore.slice(0, 120) })).slice(0, 40);
@@ -6258,6 +6387,48 @@ export default function Page() {
         <p className="text-[10px] text-sage-dark leading-snug">{t("Ogni variante salva pivot, tubazioni, sistemi dei campi, fonte d'acqua e alimentazione con i suoi numeri e il suo computo. ↺ la ricarica sulla mappa. Sotto ogni valore la differenza rispetto allo stato attuale (verde favorevole, rosso sfavorevole). Excel e PDF mettono a confronto anche tutte le quantità.")}</p>
       </div>
     );
+  }
+  // ---- DXF della planimetria (UTM, un layer per tipo di oggetto) ----------------
+  function buildDxf(): { text: string; zone: number; n: number } | null {
+    const allPts: number[][] = [...fields.flatMap((f) => f.geom.coordinates[0]), ...pivots.map((p) => [p.lng, p.lat])];
+    if (!allPts.length) return null;
+    const zone = utmZone(allPts.reduce((a, p) => a + p[0], 0) / allPts.length);
+    const U = (q: number[]) => toUtm(q[1], q[0], zone);            // [lng, lat] → [E, N]
+    const D = new Dxf([{ name: "CAMPI", color: 3 }, { name: "PIVOT", color: 2 }, { name: "PIVOT_TESTI", color: 7 }, { name: "IRRIGATORE_FINALE", color: 8 },
+      { name: "TUBAZIONI", color: 5 }, { name: "TUBAZIONI_TESTI", color: 5 }, { name: "ADDUTTRICE", color: 150 }, { name: "CAVI", color: 1 }, { name: "CANALI", color: 4 },
+      { name: "FOSSI_SCOLO", color: 34 }, { name: "STRADE", color: 9 }, { name: "STAZIONI", color: 6 }, { name: "FV_MODULI", color: 5 }, { name: "FV_TARA", color: 30 }]);
+    for (const f of fields) { D.poly("CAMPI", f.geom.coordinates[0].map(U), true); const r = f.geom.coordinates[0]; D.text("CAMPI", U([r.reduce((a, p) => a + p[0], 0) / r.length, r.reduce((a, p) => a + p[1], 0) / r.length]), 12, f.name); }
+    pivots.forEach((pv, k) => {
+      const c = U([pv.lng, pv.lat]), deg = Math.max(1, Math.min(360, pv.deg ?? 360)), az = pv.az ?? 0;
+      if (deg >= 359.5) D.circle("PIVOT", c, pv.r);
+      else {
+        D.arc("PIVOT", c, pv.r, 90 - (az + deg), 90 - az);
+        for (const b of [az, az + deg]) { const t2 = ((90 - b) * Math.PI) / 180; D.poly("PIVOT", [c, [c[0] + pv.r * Math.cos(t2), c[1] + pv.r * Math.sin(t2)]]); }
+      }
+      if (pv.gun && pv.gun > 0) { if (deg >= 359.5) D.circle("IRRIGATORE_FINALE", c, pv.r + pv.gun); else D.arc("IRRIGATORE_FINALE", c, pv.r + pv.gun, 90 - (az + deg), 90 - az); }
+      D.circle("PIVOT", c, 2);
+      D.text("PIVOT_TESTI", [c[0] + 6, c[1] + 6], 8, `P${k + 1} R${Math.round(pv.r)} ${fmt(Math.round(pivotFlow(pv)))} l/s`);
+      if (pv.solar) { for (const ring of solarPolys(pv)) D.poly("FV_MODULI", ring.map((q) => U([q[1], q[0]])), true); D.circle("FV_TARA", c, solarSize(pv).taraR); }
+    });
+    const dnLines = new Map((hydraNow()?.lines ?? []).map(([i, d]) => [i, d] as [number, number[]]));
+    pivotLines.forEach((l, i) => {
+      if (l.kind !== "pipe" || l.coords.length < 2) return;
+      const pts = l.coords.map(U); D.poly("TUBAZIONI", pts);
+      const dns = dnLines.get(i); if (dns?.length) dns.forEach((dn, k) => { if (!dn || !pts[k + 1]) return; D.text("TUBAZIONI_TESTI", [(pts[k][0] + pts[k + 1][0]) / 2, (pts[k][1] + pts[k + 1][1]) / 2], 5, `DN${dn}`); });
+    });
+    if (srcRoute && srcRoute.length >= 2) D.poly("ADDUTTRICE", srcRoute.map(U));
+    try { const st = pumpStationsList(); for (const c of cableRuns(st)) if (c.coords && c.coords.length >= 2) D.poly("CAVI", c.coords.map(U));
+      for (const s2 of st) if (s2.pt) { const p = U(s2.pt); D.circle("STAZIONI", p, 4); D.text("STAZIONI", [p[0] + 6, p[1] - 6], 6, s2.name); } } catch { /* senza stazioni */ }
+    for (const c of canals.filter((x) => !x.hidden)) D.poly("CANALI", c.geojson.coordinates.map(U));
+    for (const d of drainCalcs()) D.poly("FOSSI_SCOLO", d.ring.map(U), true);
+    for (const r of roads.filter((x) => !x.hidden)) D.poly("STRADE", r.coords.map(U));
+    return { text: D.toString(), zone, n: D.ents.length };
+  }
+  function downloadDxf() {
+    const r = buildDxf(); if (!r) { setMsg(t("Niente da esportare: disegna prima campi o pivot.")); return; }
+    const pname = projects.find((x) => x.id === projectId)?.name || "argus";
+    saveBlob(new Blob([r.text], { type: "application/dxf" }), `${safe(pname)}_planimetria_UTM${r.zone}.dxf`);
+    setMsg(t("DXF esportato: {n} oggetti, coordinate UTM fuso {z} (metri).", { n: fmt(r.n), z: r.zone }));
   }
   function downloadGeoJSON() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -6839,6 +7010,11 @@ export default function Page() {
     { const cd = (st as { canal_design?: { lin?: string; q?: number; fb?: number } }).canal_design ?? {};
       setCanalLin(LININGS.some((l) => l.id === cd.lin) ? (cd.lin as LiningId) : "earth"); setCanalQ(num(cd.q, 0)); setCanalFb(num(cd.fb, 0.3)); }
     { const cm = (st as { cu_model?: string }).cu_model; setCuModel(SPRINKLERS.some((x) => x.id === cm) ? cm! : "kpt_black"); }
+    { const dr = (st as { drain?: { on?: boolean; c?: number; s?: number; b?: number } }).drain ?? {};
+      setDrainOn(!!dr.on); setDrainC(num(dr.c, 12.96)); setDrainS(num(dr.s, 2)); setDrainB(num(dr.b, 0.5)); }
+    { const ss = (st as { soil_sat?: api.SoilOut & { n: number } }).soil_sat; setSoilSat(ss && typeof ss.sand === "number" ? ss : null);
+      const ip = (st as { irr_prog?: { root?: number; p?: number; v100?: number } }).irr_prog ?? {};
+      setRootDepth(num(ip.root, 0.8)); setRawP(num(ip.p, 0.5)); setV100(num(ip.v100, 2.3)); }
     const sy = (st as { systems?: Record<string, SysDesign> }).systems;
     setSysDesigns(sy && typeof sy === "object" ? sy : {});
     projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
@@ -6849,7 +7025,7 @@ export default function Page() {
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId) return;
     const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, fonte: fonteState(), terrain: { dem: demModel, smooth: demSmooth },
-      crops: { base: farmCrops, fields: fieldCrops }, solar_pv: solarCfg, canal_design: { lin: canalLin, q: canalQ, fb: canalFb }, cu_model: cuModel,
+      crops: { base: farmCrops, fields: fieldCrops }, solar_pv: solarCfg, canal_design: { lin: canalLin, q: canalQ, fb: canalFb }, cu_model: cuModel, drain: { on: drainOn, c: drainC, s: drainS, b: drainB }, soil_sat: soilSat, irr_prog: { root: rootDepth, p: rawP, v100 },
       systems: Object.fromEntries(Object.entries(sysDesigns).filter(([k]) => k.startsWith("a"))) };
     const js = JSON.stringify(payload);
     if (js === projSaved.current) return;
@@ -6862,7 +7038,7 @@ export default function Page() {
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
-    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
+    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, drainOn, drainC, drainS, drainB, soilSat, rootDepth, rawP, v100, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId || (!pivots.length && !fields.length)) return;
     const h = window.setTimeout(() => { void siteClimateCached(); }, 2500);
@@ -9374,6 +9550,26 @@ export default function Page() {
                 ); })}
               </ul>
             )}
+            <div className="mt-3 border-t border-black/5 pt-2" data-drain>
+              <label className="flex items-center gap-2 text-xs font-semibold text-brand-darker cursor-pointer">
+                <input type="checkbox" checked={drainOn} onChange={(e) => setDrainOn(e.target.checked)} />{t("Fossi di scolo dei campi")}</label>
+              {drainOn && (<>
+                <div className="grid grid-cols-3 gap-2 mt-1">
+                  <label className="text-[11px] text-sage-dark" title={t("Pioggia da smaltire in 24 ore: 12,96 mm/24h = 1,5 l/s per ettaro")}>{t("Coeff. (mm/24h)")}
+                    <input type="number" min={1} max={100} step={0.5} value={drainC} onChange={(e) => setDrainC(Math.max(1, Number(e.target.value) || 12.96))} className="field-input mt-0.5 py-1 text-sm" /></label>
+                  <label className="text-[11px] text-sage-dark">{t("Pendenza (‰)")}
+                    <input type="number" min={0.1} max={50} step={0.5} value={drainS} onChange={(e) => setDrainS(Math.max(0.1, Number(e.target.value) || 2))} className="field-input mt-0.5 py-1 text-sm" /></label>
+                  <label className="text-[11px] text-sage-dark">{t("Base (m)")}
+                    <input type="number" min={0.2} max={5} step={0.1} value={drainB} onChange={(e) => setDrainB(Math.max(0.2, Number(e.target.value) || 0.5))} className="field-input mt-0.5 py-1 text-sm" /></label>
+                </div>
+                <ul className="mt-1 space-y-0.5 text-[11px] text-sage-dark">
+                  {drainCalcs().map((d) => (
+                    <li key={d.f.id}><b className="text-brand-darker">F{d.n}</b> {d.f.name}: {fmt(d.ha, { maximumFractionDigits: 1 })} ha · <b>{fmt(Math.round(d.q))} l/s</b>{d.sec && <> · b {fmt(d.sec.b, { maximumFractionDigits: 2 })} m · y {fmt(d.sec.y, { maximumFractionDigits: 2 })} m · {t("ciglio")} {fmt(d.sec.topW, { maximumFractionDigits: 2 })} m · v {fmt(d.sec.v, { maximumFractionDigits: 2 })} m/s</>} · {fmt(Math.round(d.L))} m · {t("scavo")} <b>{fmt(Math.round(d.cut))} m³</b></li>
+                  ))}
+                </ul>
+                <p className="text-[10px] text-sage-dark mt-0.5 leading-snug">{t("Un fosso lungo tutto il perimetro di ogni campo con pivot, con la sezione dello sbocco (portata dell'intero campo). Lo sbocco va nel punto più basso del perimetro, verso il ricettore.")}</p>
+              </>)}
+            </div>
           </section>
 
           <section hidden={tab !== "impianti"}>
@@ -9772,6 +9968,14 @@ export default function Page() {
             {renderFieldCrops()}
 
             <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2">{t("Assorbimento del terreno")}</h3>
+            <div className="mb-2" data-soil>
+              <button className="btn-ghost w-full text-[12px]" disabled={busy === "soil" || (!fields.length && !srcPt)} onClick={readSoil}
+                title={t("Tessitura del suolo dei campi (SoilGrids, ISRIC, 250 m, 0-30 cm): classe USDA, acqua disponibile e assorbimento tipico.")}>
+                {busy === "soil" ? t("Leggo il suolo…") : soilSat ? t("🛰 Rileggi il suolo dal satellite") : t("🛰 Leggi il suolo dal satellite (SoilGrids)")}</button>
+              {soilSat && <p className="text-[11px] text-sage-dark mt-1 leading-snug">
+                {t("Sabbia")} <b>{fmt(soilSat.sand, { maximumFractionDigits: 0 })}%</b> · {t("limo")} <b>{fmt(soilSat.silt, { maximumFractionDigits: 0 })}%</b> · {t("argilla")} <b>{fmt(soilSat.clay, { maximumFractionDigits: 0 })}%</b> · {soilSat.usda} (USDA) → <b>{t(soilOf(soilSat.key).label)}</b> · {t("acqua disponibile")} <b>{fmt(soilSat.taw_mm_m)} mm/m</b> · {t("sostanza organica")} {fmt(soilSat.soc_gkg * 1.72 / 10, { maximumFractionDigits: 1 })}% · {soilSat.n} {soilSat.n === 1 ? t("punto") : t("punti")}
+              </p>}
+            </div>
             <div className="grid grid-cols-3 gap-2">
               <label className="text-[11px] text-sage-dark">{t("Assorbimento (mm/h)")}
                 <input type="number" min={0.5} step={0.5} value={infiltration}
@@ -9847,6 +10051,66 @@ export default function Page() {
                       </div>
                     ) : <div>{t("Nessun ruscellamento previsto")} ✓</div>;
                   })()}
+                </div>
+              );
+            })()}
+            {pivots.length > 0 && (() => {
+              // verifica per pivot con lo sprinkler chart reale (una riga per macchina diversa)
+              const seen = new Map<string, { names: string[]; r: ReturnType<typeof pivotRunoff>; pv: PivotItem }>();
+              pivots.forEach((pv, k) => { const r = pivotRunoff(pv); if (!r) return; const key = `${Math.round(pv.r)}|${r.peak.toFixed(0)}|${r.W.toFixed(1)}`;
+                const g = seen.get(key); if (g) g.names.push(`P${k + 1}`); else seen.set(key, { names: [`P${k + 1}`], r, pv }); });
+              if (!seen.size) return null;
+              return (
+                <div className="mt-2 overflow-x-auto" data-runoff>
+                  <div className="text-[11px] font-semibold text-sage-dark mb-0.5">{t("Ruscellamento pivot per pivot (irrigatori {m})", { m: [...seen.values()][0].r!.u.model })}</div>
+                  <table className="w-full text-[10.5px] tabular-nums">
+                    <thead><tr className="text-sage-dark text-left border-b border-black/10"><th className="font-medium">{t("Pivot")}</th><th className="font-medium text-right">{t("picco")} mm/h</th><th className="font-medium text-right">{t("bagnatura")} min</th><th className="font-medium text-right">{t("dose")} mm</th><th className="font-medium text-right">{t("dose max")} mm</th><th className="font-medium text-right">{t("giri/g min")}</th></tr></thead>
+                    <tbody>{[...seen.values()].map(({ names, r }, i) => (
+                      <tr key={i} className={r!.runoff > 0 ? "text-danger" : ""}>
+                        <td className="py-0.5">{names.length > 4 ? `${names.slice(0, 4).join(", ")} …` : names.join(", ")}</td>
+                        <td className={"text-right " + (r!.peak > infiltration ? "text-rust" : "")}>{fmt(r!.peak, { maximumFractionDigits: 0 })}</td>
+                        <td className="text-right">{fmt(r!.tw * 60, { maximumFractionDigits: 1 })}</td>
+                        <td className="text-right">{fmt(r!.dose, { maximumFractionDigits: 1 })}</td>
+                        <td className="text-right">{Number.isFinite(r!.dMax) ? fmt(r!.dMax, { maximumFractionDigits: 1 }) : "∞"}</td>
+                        <td className="text-right">{r!.need || "—"}</td>
+                      </tr>))}</tbody>
+                  </table>
+                </div>
+              );
+            })()}
+
+            <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2">{t("Programma irriguo")}</h3>
+            <div className="grid grid-cols-3 gap-2">
+              <label className="text-[11px] text-sage-dark">{t("Radici (m)")}
+                <input type="number" min={0.1} max={3} step={0.1} value={rootDepth} onChange={(e) => setRootDepth(Math.max(0.1, Math.min(3, Number(e.target.value) || 0.8)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+              <label className="text-[11px] text-sage-dark" title={t("Frazione dell'acqua disponibile che la coltura consuma senza stress (FAO-56: 0,5 per la maggior parte delle colture)")}>{t("Frazione p")}
+                <input type="number" min={0.2} max={0.8} step={0.05} value={rawP} onChange={(e) => setRawP(Math.max(0.2, Math.min(0.8, Number(e.target.value) || 0.5)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+              <label className="text-[11px] text-sage-dark" title={t("Velocità dell'ultima torre con il timer al 100%")}>{t("Torre al 100% (m/min)")}
+                <input type="number" min={0.5} max={6} step={0.1} value={v100} onChange={(e) => setV100(Math.max(0.5, Math.min(6, Number(e.target.value) || 2.3)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+            </div>
+            {(() => {
+              const IP = irrigProgram(); if (!IP) return null;
+              const mon = (i: number) => new Date(2000, i, 1).toLocaleString(lang, { month: "short" });
+              const on = IP.rows.filter((r) => r.G > 0);
+              return (
+                <div className="mt-2 text-[11px] text-sage-dark" data-program>
+                  <p className="leading-snug">{t("Pivot P{n} ({r} m): giro al 100% del timer {h} h. Acqua facilmente disponibile {raw} mm ({taw} mm/m × {z} m × {p}); dose massima senza ruscellamento {d}.", { n: pivots.indexOf(IP.pv) + 1, r: fmt(Math.round(IP.pv.r)), h: fmt(IP.T100, { maximumFractionDigits: 1 }), raw: fmt(IP.RAW, { maximumFractionDigits: 0 }), taw: fmt(IP.taw), z: fmt(rootDepth), p: fmt(rawP), d: Number.isFinite(IP.dRun) ? `${fmt(IP.dRun, { maximumFractionDigits: 1 })} mm` : t("senza limite") })}</p>
+                  <div className="overflow-x-auto mt-1">
+                    <table className="w-full text-[10px] tabular-nums">
+                      <thead><tr><th className="text-left font-normal"></th>{IP.rows.map((r) => <th key={r.m} className="font-normal">{mon(r.m)}</th>)}</tr></thead>
+                      <tbody>
+                        <tr><td className="pr-1">mm/{t("giorno")}</td>{IP.rows.map((r) => <td key={r.m} className="text-center">{r.G ? fmt(r.G, { maximumFractionDigits: 1 }) : "—"}</td>)}</tr>
+                        <tr><td className="pr-1">{t("ore/giorno")}</td>{IP.rows.map((r) => <td key={r.m} className="text-center">{r.G ? fmt(r.h, { maximumFractionDigits: 0 }) : "—"}</td>)}</tr>
+                        <tr><td className="pr-1">{t("dose")} mm</td>{IP.rows.map((r) => <td key={r.m} className="text-center font-semibold text-brand-darker">{r.G ? fmt(r.D, { maximumFractionDigits: 0 }) : "—"}</td>)}</tr>
+                        <tr><td className="pr-1">{t("timer")} %</td>{IP.rows.map((r) => <td key={r.m} className="text-center">{r.G ? fmt(r.timer, { maximumFractionDigits: 0 }) : "—"}</td>)}</tr>
+                        <tr><td className="pr-1">{t("giro")} h</td>{IP.rows.map((r) => <td key={r.m} className="text-center">{r.G ? fmt(r.T, { maximumFractionDigits: 0 }) : "—"}</td>)}</tr>
+                        <tr><td className="pr-1">{t("giri/sett.")}</td>{IP.rows.map((r) => <td key={r.m} className="text-center">{r.G ? fmt(r.perWeek, { maximumFractionDigits: 1 }) : "—"}</td>)}</tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  {on.length > 0 && <p className="mt-1 leading-snug">{IP.simul < pivots.length
+                    ? t("Con {q} l/s disponibili lavorano insieme {s} pivot su {n}: si fanno turni, e nel mese di punta ogni pivot ha {h} h al giorno contro le {need} che servono.", { q: fmt(srcQmax), s: IP.simul, n: pivots.length, h: fmt((Math.min(24, srcHours) * IP.simul) / pivots.length, { maximumFractionDigits: 1 }), need: fmt(Math.max(...on.map((r) => r.h)), { maximumFractionDigits: 1 }) })
+                    : t("La portata disponibile basta per far lavorare tutti i pivot insieme.")}</p>}
                 </div>
               );
             })()}
@@ -9935,6 +10199,8 @@ export default function Page() {
                 {busy === "pdf" ? t("Preparo…") : (pdfPick.length > 1 ? t("Scarica PDF (ZIP)") : t("Scarica PDF"))}
               </button>
               <button className="btn-ghost flex-1 basis-0" disabled={!laid.length} onClick={downloadGeoJSON}>{t("Layout GeoJSON")}</button>
+              <button className="btn-ghost flex-1 basis-0" disabled={!fields.length && !pivots.length} onClick={downloadDxf}
+                title={t("Planimetria in DXF per AutoCAD: coordinate UTM in metri, un layer per campi, pivot, tubazioni, cavi, canali, fossi, strade, stazioni e campo FV.")}>{t("Planimetria DXF")}</button>
             </div>
             <button className="btn-ghost w-full mt-2" disabled={!pivots.length && !Object.values(sysDesigns).some((d) => d.sys === "lineari")} onClick={exportCeres}
               title={t("Campi e pivot con le campate del produttore scelto in Impianti, da aprire in Ceres con File › Apri file. Contiene anche il computo per Mercurius (riferimento del progetto e revisione crescente).")}>{busy === "ceres" ? t("Preparo…") : t("Esporta per Ceres (.ceres)")}</button>
@@ -9947,7 +10213,7 @@ export default function Page() {
                 <div className="h-1.5 rounded-full bg-panel overflow-hidden"><div className="h-full rounded-full bg-sky-600 transition-all duration-500" style={{ width: `${((prog.k + 0.5) / prog.n) * 100}%` }} /></div>
                 <div className="text-[11px] text-sage-dark text-center mt-1">{prog.k + 1}/{prog.n} · {prog.lab}</div>
               </div>
-            ) : <div className="text-[11px] text-sage-dark text-center mt-1">{t("Relazione, tavole, particolari, schede tecniche e computo · .xlsx, .ceres, GeoJSON")}</div>}
+            ) : <div className="text-[11px] text-sage-dark text-center mt-1">{t("Relazione, tavole, particolari, schede tecniche e computo · .xlsx, .ceres, GeoJSON, DXF")}</div>}
             <div className="mt-2 flex gap-2 items-stretch">
               <button className="btn-ghost flex-1" disabled={busy === "rel" || (!pivots.length && !Object.keys(sysDesigns).length)} onClick={() => downloadRelazione()}
                 title={t("Relazione tecnica generale per il cliente, nella lingua di stampa scelta sopra: copertina con la foto del sito, capitoli su sito, clima e fabbisogno, portata, fonte, impianto, rete, pompaggio ed energia. Senza prezzi.")}>

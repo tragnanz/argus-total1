@@ -597,3 +597,17 @@ def river_flow(lat: float, lon: float, basin: int = 1, client=Depends(get_client
         except Exception as e:  # noqa: BLE001
             out["basin"] = {"error": str(e)[:200]}
     return out
+
+
+@router.get("/soil")
+def site_soil(lat: float, lon: float, user: User = Depends(get_current_user)):
+    """Tessitura del suolo (SoilGrids, 0-30 cm), classe USDA, acqua disponibile e infiltrazione di base."""
+    from analysis.soil import soil_at
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise HTTPException(422, "Coordinate non valide.")
+    try:
+        return soil_at(lat, lon)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"SoilGrids non raggiungibile: {str(e)[:160]}")
