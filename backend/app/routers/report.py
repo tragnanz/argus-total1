@@ -588,6 +588,15 @@ def river_flow(lat: float, lon: float, basin: int = 1, client=Depends(get_client
         out["glofas"] = glofas(lat, lon)
     except Exception as e:  # noqa: BLE001
         out["glofas"] = {"cells": [], "pick": -1, "error": str(e)[:200]}
+    # correzione con una stazione misurata sullo stesso fiume
+    try:
+        from analysis.river_obs import correction
+        gl = out["glofas"]
+        if gl.get("cells") and gl.get("pick", -1) >= 0:
+            out["corr"] = correction(lat, lon, gl["cells"][gl["pick"]], lambda a, b, n: glofas(a, b, n=n))
+    except Exception as e:  # noqa: BLE001
+        out["corr"] = None
+        out["corr_error"] = str(e)[:200]
     if basin:
         try:
             b = dem_basin(client, lon, lat)

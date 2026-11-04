@@ -82,10 +82,14 @@ def glofas(lat: float, lon: float, n: int = 3, step: float = 0.05,
     for i in range(-n, n + 1):
         for j in range(-n, n + 1):
             la.append(round(lat + i * step, 4)); lo.append(round(lon + j * step, 4))
-    r = requests.get(FLOOD_URL, params={
-        "latitude": ",".join(map(str, la)), "longitude": ",".join(map(str, lo)),
-        "daily": "river_discharge", "start_date": start, "end_date": end,
-    }, timeout=timeout)
+    for k in range(4):                                   # 429: l'API limita le richieste ravvicinate
+        r = requests.get(FLOOD_URL, params={
+            "latitude": ",".join(map(str, la)), "longitude": ",".join(map(str, lo)),
+            "daily": "river_discharge", "start_date": start, "end_date": end,
+        }, timeout=timeout)
+        if r.status_code != 429 or k == 3:
+            break
+        time.sleep(5 * (k + 1))
     r.raise_for_status()
     data = r.json()
     if isinstance(data, dict):

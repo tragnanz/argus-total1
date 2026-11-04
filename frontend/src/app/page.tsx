@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.226";
+const REV = "v0.6.227";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1423,7 +1423,7 @@ export default function Page() {
   // Portata del fiume alla presa (GloFAS + bacino dal DEM) e quota da lasciare al fiume
   // meas: portate misurate dall'ente (pick = -2): medie e magre mensili in m³/s, con la fonte del dato
   type RiverMeas = { mean: number[]; low: number[]; q347?: number; days?: number; years?: string[]; note?: string };
-  type RiverSt = { data: api.RiverOut; pick: number; dmv: number; c: number; meas?: RiverMeas | null };
+  type RiverSt = { data: api.RiverOut; pick: number; dmv: number; c: number; meas?: RiverMeas | null; corrOff?: boolean };
   const [river, setRiver] = useState<RiverSt | null>(null);
   const [bankSlope, setBankSlope] = useState(2);                     // pendenza della sponda (orizzontale : verticale)
   const [settleMm, setSettleMm] = useState(0.1);                     // particella da sedimentare (mm)
@@ -3774,11 +3774,20 @@ export default function Page() {
   function riverCalc(rv: RiverSt | null = river) {
     if (!rv) return null;
     const cell = rv.pick >= 0 ? rv.data.glofas.cells[rv.pick] : null, b = rv.data.basin;
-    let mean: number, mMean: number[], mLow: number[], src: string;
+    let mean: number, mMean: number[], mLow: number[], src: string, corr: api.RiverCorr | null = null, q347 = cell?.q347 ?? 0, qMin0 = cell?.min ?? 0;
     if (rv.pick === -2 && rv.meas && rv.meas.mean.length === 12) {
       mMean = rv.meas.mean; mLow = rv.meas.low.length === 12 ? rv.meas.low : rv.meas.mean.map((x) => x * 0.5);
       mean = mMean.reduce((a, x, i) => a + x * MDAYS[i], 0) / 365; src = "meas";
-    } else if (cell) { mean = cell.mean; mMean = cell.month_mean; mLow = cell.month_q80; src = "glofas"; }
+    } else if (cell) {
+      mean = cell.mean; mMean = cell.month_mean; mLow = cell.month_q80; src = "glofas";
+      // stazione misurata sullo stesso fiume: vale per le celle di portata simile a quella su cui è stata tarata
+      const c = rv.data.corr;
+      if (c && !rv.corrOff && c.f_month?.length === 12 && Math.abs(Math.log(cell.mean / c.ref_mean)) < Math.log(3)) {
+        corr = c; src = "corr";
+        mMean = cell.month_mean.map((q, i) => q * c.f_month[i]); mLow = cell.month_q80.map((q, i) => q * c.f_month[i]);
+        mean = mMean.reduce((a, x, i) => a + x * MDAYS[i], 0) / 365; q347 = cell.q347 * c.f_year; qMin0 = cell.min * c.f_year;
+      }
+    }
     else if (b?.area_km2 && b.rain_month_mm?.length === 12) {
       mMean = b.rain_month_mm.map((r, i) => (b.area_km2! * 1e6 * (r / 1000) * rv.c) / (MDAYS[i] * 86400));
       mean = mMean.reduce((a, x, i) => a + x * MDAYS[i], 0) / 365; mLow = mMean.map((x) => x * 0.5); src = "basin";
@@ -3790,7 +3799,7 @@ export default function Page() {
     const bal = riverBalance(avail, needM3, srcHours);
     const irr = needM3.map((v, i) => (v > 0 ? i : -1)).filter((i) => i >= 0);
     const qMin = irr.length ? Math.min(...irr.map((i) => avail[i])) : Math.min(...avail);
-    return { src, cell, mean, mMean, mLow, dmv, avail, needM3, bal, qMin: Math.floor(qMin), irr };
+    return { src, cell, corr, q347, qMin0, mean, mMean, mLow, dmv, avail, needM3, bal, qMin: Math.floor(qMin), irr };
   }
   // Fiume come fonte: la portata si stima da sola appena c'è il punto di presa (e di nuovo se la presa si sposta di oltre 300 m)
   const riverAuto = useRef("");
@@ -3876,6 +3885,15 @@ export default function Page() {
                 {b?.area_km2 && b.rain_month_mm && <option value={-1}>{t("Metodo del bacino (piogge × coefficiente di deflusso)")}</option>}
                 <option value={-2}>{river.meas ? t("Portate misurate dall'ente") + (river.meas.years ? ` · ${river.meas.years.join("–")}` : "") : t("Portate misurate dall'ente (da inserire)")}</option>
               </select></label>
+            {d.corr && river.pick >= 0 && (
+              <div className="col-span-3 text-[11px] leading-snug rounded border border-black/10 p-1.5" data-river-corr>
+                <label className="flex items-start gap-1.5">
+                  <input type="checkbox" className="mt-0.5" checked={!river.corrOff} onChange={(e) => setRiver({ ...river, corrOff: !e.target.checked })} />
+                  <span>{t("Corretta con la stazione misurata {s} ({r}, {d} km): osservati {o} m³/s contro {g} m³/s di GloFAS, fattore {f}", { s: d.corr.station.name, r: d.corr.station.river, d: fmt(Math.round(d.corr.station.dist_km)), o: f1(d.corr.obs_mean), g: f1(d.corr.sim_mean), f: fmt(d.corr.f_year, { maximumFractionDigits: 2 }) })}
+                    <span className="block text-[10px] text-sage-dark">{d.corr.station.source} · {d.corr.station.years.join("–")}</span></span>
+                </label>
+              </div>
+            )}
             {river.pick === -2 && (
               <div className="col-span-3 space-y-1" data-river-meas>
                 <textarea className="field-input w-full text-[11px] font-mono" rows={3} value={measText} onChange={(e) => setMeasText(e.target.value)}
@@ -3896,7 +3914,7 @@ export default function Page() {
           </div>
           {R && (<>
             <div className="text-[11px] text-sage-dark leading-snug">
-              {t("Portata media")} <b>{f1(R.mean)} m³/s</b>{R.cell && <> · Q347 {f1(R.cell.q347)} m³/s · {t("minima")} {f1(R.cell.min)} m³/s · {R.cell.years.join("–")}</>} · {t("lasciati al fiume")} {f1(R.dmv)} m³/s
+              {t("Portata media")} <b>{f1(R.mean)} m³/s</b>{R.cell && <> · Q347 {f1(R.q347)} m³/s · {t("minima")} {f1(R.qMin0)} m³/s · {R.cell.years.join("–")}</>} · {t("lasciati al fiume")} {f1(R.dmv)} m³/s
             </div>
             {(() => {
               // grafico: portata media del mese (barra), magra (barra scura) e quota prelevabile; linea = portata che serve all'impianto
@@ -3953,7 +3971,8 @@ export default function Page() {
             </div>
             <button className="btn-ghost w-full text-[12px]" disabled={R.qMin <= 0 || srcQmax === R.qMin} onClick={() => setSrcQmax(R.qMin)}
               title={t("Imposta come portata disponibile il prelevabile del mese irriguo più scarso.")}>{t("Usa {q} l/s come portata disponibile", { q: fmt(R.qMin) })}</button>
-            <p className="text-[10px] text-sage-dark leading-snug text-justify">{R.src === "meas" ? t("Portate misurate dall'ente: sostituiscono la stima GloFAS nel bilancio del fiume.") : R.src === "glofas"
+            <p className="text-[10px] text-sage-dark leading-snug text-justify">{R.src === "meas" ? t("Portate misurate dall'ente: sostituiscono la stima GloFAS nel bilancio del fiume.") : R.src === "corr"
+              ? t("Serie GloFAS della presa riportata, mese per mese, alle portate osservate della stazione: l'andamento dei mesi è quello del modello, i volumi quelli misurati.") : R.src === "glofas"
               ? t("Rianalisi GloFAS a ~5 km: sui fiumi grandi è affidabile, sui torrenti e vicino a dighe o derivazioni va confrontata con le misure dell'ente gestore. «Magra» = portata superata l'80% dei giorni del mese.")
               : t("Stima di larga massima dalle piogge medie del bacino: la magra è posta a metà della media mensile. Da confrontare con misure di portata.")}</p>
           </>)}
@@ -5299,6 +5318,8 @@ export default function Page() {
             fb.push({ p: (b?.area_km2 ? tx("Il bacino che drena fino alla presa, ricavato dal modello digitale del terreno, misura {a} km².", { a: (b.truncated ? "≥ " : "") + ff(b.area_km2) }) + " " : "")
               + (RV.src === "meas"
                 ? tx("La portata è quella misurata dall'ente gestore{y}: portata media {q} m³/s; la magra di ogni mese è {how}.", { y: river?.meas?.years ? ` (${river.meas.years.join("–")})` : "", q: ff(RV.mean), how: river?.meas?.days ? tx("la portata superata l'80% dei giorni del mese") : river?.meas?.low.length === 12 ? tx("quella indicata dall'ente") : tx("posta a metà della media") })
+                : RV.src === "corr" && RV.corr
+                ? tx("La portata parte dalla rianalisi idrologica GloFAS (Copernicus Emergency Management Service) sulla cella del fiume più vicina alla presa, serie giornaliera {y}, ed è corretta mese per mese con le portate osservate alla stazione di {s} sul fiume {r} ({d} km dalla presa, {yo}; fonte {src}): lì GloFAS dà {g} m³/s contro {o} m³/s misurati. Portata media corretta {q} m³/s, Q347 {q3} m³/s.", { y: RV.cell!.years.join("–"), s: RV.corr.station.name, r: RV.corr.station.river, d: n0(RV.corr.station.dist_km), yo: RV.corr.station.years.join("–"), src: RV.corr.station.source, g: ff(RV.corr.sim_mean), o: ff(RV.corr.obs_mean), q: ff(RV.mean), q3: ff(RV.q347) })
                 : RV.src === "glofas"
                 ? tx("La portata è stimata dalla rianalisi idrologica GloFAS (Copernicus Emergency Management Service) sulla cella del fiume più vicina alla presa, serie giornaliera {y}: portata media {q} m³/s, Q347 {q3} m³/s. La portata di magra di ogni mese è quella superata l'80% dei giorni del mese.", { y: RV.cell!.years.join("–"), q: ff(RV.mean), q3: ff(RV.cell!.q347) })
                 : tx("La portata è stimata dalle piogge medie mensili del bacino con un coefficiente di deflusso di {c}: portata media {q} m³/s. La portata di magra è posta a metà della media del mese.", { c: fx(river!.c), q: ff(RV.mean) }))
