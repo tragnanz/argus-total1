@@ -91,6 +91,37 @@ def reaches_near(lat: float, lon: float, radius_km: float, min_area: float = 0.0
     return out
 
 
+@lru_cache(maxsize=1)
+def _by_reach():
+    ix = index()
+    o = np.argsort(ix["pr"], kind="stable")
+    starts = np.searchsorted(ix["pr"][o], np.arange(len(ix["col"]) + 1))
+    return o, starts
+
+
+def reach_centroid(i: int) -> list[float] | None:
+    ix = index(); o, st = _by_reach()
+    k = o[st[i]:st[i + 1]]
+    if not len(k):
+        return None
+    return [round(float(ix["plon"][k].mean()), 5), round(float(ix["plat"][k].mean()), 5)]
+
+
+def path_between(a: int, b: int, max_pts: int = 400) -> list[list[float]]:
+    """Tracciato (centri dei tratti) lungo la rete fra due tratti dello stesso fiume, da monte a valle."""
+    da = downstream(a)
+    if b in da:
+        seq = da[:da.index(b) + 1]
+    else:
+        db = downstream(b)
+        if a not in db:
+            return []
+        seq = db[:db.index(a) + 1]
+    step = max(1, len(seq) // max_pts)
+    pts = [reach_centroid(i) for i in seq[::step] + ([seq[-1]] if (len(seq) - 1) % step else [])]
+    return [p for p in pts if p]
+
+
 def downstream(i: int, limit: int = 20000) -> list[int]:
     ix = index(); path = [i]
     while len(path) < limit:
@@ -114,8 +145,14 @@ def _chunk(c: int) -> np.ndarray:
             _CH.move_to_end(c)
             return _CH[c]
     from numcodecs import Blosc
-    r = requests.get(f"{ZARR}/Q/0.{c}", timeout=60)
-    r.raise_for_status()
+    for k in range(3):                                   # S3: un errore di rete passeggero non deve perdere la stima
+        try:
+            r = requests.get(f"{ZARR}/Q/0.{c}", timeout=60)
+            r.raise_for_status()
+            break
+        except Exception:  # noqa: BLE001
+            if k == 2:
+                raise
     a = np.frombuffer(Blosc().decode(r.content), dtype="<f4").reshape(1020, 250)
     with _LOCK:
         _CH[c] = a
@@ -156,7 +193,6 @@ def correction(reach: dict, radius_km: float = 800.0) -> dict | None:
     from analysis.river_obs import stations, _dist_km, SOURCES
     i, a0, q0 = reach["i"], reach["area_km2"], float(reach.get("mean") or 0)
     down = set(downstream(i))
-    best = None
     cand = []
     for s in stations():
         if abs(s["lat"] - reach["lat"]) > radius_km / 100 or s["mean"] <= 0 or (s.get("n", 0) < 10 and s["src"] != "kzh"):   # almeno 10 anni di misure
@@ -168,6 +204,7 @@ def correction(reach: dict, radius_km: float = 800.0) -> dict | None:
         if d <= radius_km:
             cand.append((d, s))
     cand.sort(key=lambda x: x[0])
+    best: dict[str, tuple] = {}                        # la migliore a valle e la migliore a monte
     for d, s in cand[:80]:
         j = _station_reach(s)
         if j is None:
@@ -175,32 +212,57 @@ def correction(reach: dict, radius_km: float = 800.0) -> dict | None:
         aj = float(index()["area"][j])
         if not (a0 / 6 <= aj <= a0 * 6):
             continue
-        if not (j in down or i in set(downstream(j))):
+        dn = j in down
+        if not (dn or i in set(downstream(j))):
             continue                                   # non è lo stesso fiume
         # stesso tratto "idraulico": la portata simulata alla stazione è simile a quella della presa
         # (a una confluenza il bacino cresce poco ma la portata può raddoppiare)
-        sim = climatology(j)
+        try:
+            sim = climatology(j)
+        except Exception:  # noqa: BLE001
+            continue
         if sim["mean"] <= 0 or q0 <= 0:
             continue
         same = abs(math.log(sim["mean"] / q0))
-        if same > math.log(2.5) or not (0.05 <= s["mean"] / sim["mean"] <= 10):
+        if same > math.log(1.5) or not (0.05 <= s["mean"] / sim["mean"] <= 10):
             continue                                   # tratto diverso, o stazione di un canale/derivazione
         score = same + d / 1000.0
-        if best is None or score < best[0]:
-            best = (score, s, j, d, sim)
-    if best is None:
+        side = "down" if dn else "up"
+        if side not in best or score < best[side][0]:
+            best[side] = (score, s, j, d, sim)
+    if not best:
         return None
-    _, s, j, d, sim = best
     clamp = lambda x: max(0.05, min(20.0, x))  # noqa: E731
-    f_year = clamp(s["mean"] / sim["mean"])
-    f_month = [round(clamp(o / m), 4) if m > 0 else round(f_year, 4) for o, m in zip(s["mm"], sim["month_mean"])]
+
+    def one(b):
+        _, s, j, d, sim = b
+        fy = clamp(s["mean"] / sim["mean"])
+        fm = [clamp(o / m) if m > 0 else fy for o, m in zip(s["mm"], sim["month_mean"])]
+        st = {"id": s["id"], "name": s["station"], "river": s["river"], "country": s["cc"], "lat": s["lat"], "lon": s["lon"],
+              "area_km2": s.get("area"), "years": s["yrs"], "dist_km": round(d, 1), "source": SOURCES.get(s["src"], s["src"]),
+              "downstream": j in down, "f_year": round(fy, 4)}
+        return st, fy, fm, s, sim, j, d
+
+    parts = sorted((one(b) for b in best.values()), key=lambda x: x[6])
+    st, fy, fm, s, sim, j, d = parts[0]                # la più vicina è quella mostrata
+    if len(parts) == 2:
+        # presa fra due stazioni: fattori mediati in scala logaritmica, pesati sull'inverso della distanza
+        w = [1.0 / max(p[6], 1.0) for p in parts]
+        W = sum(w)
+        fy = math.exp(sum(wk * math.log(p[1]) for wk, p in zip(w, parts)) / W)
+        fm = [math.exp(sum(wk * math.log(p[2][m]) for wk, p in zip(w, parts)) / W) for m in range(12)]
+        for wk, p in zip(w, parts):
+            p[0]["weight"] = round(wk / W, 3)
+    for p in parts:
+        try:
+            p[0]["path"] = path_between(i, p[5])         # per disegnare sulla mappa il fiume fino alla stazione
+        except Exception:  # noqa: BLE001
+            p[0]["path"] = []
     return {
-        "station": {"id": s["id"], "name": s["station"], "river": s["river"], "country": s["cc"], "lat": s["lat"], "lon": s["lon"],
-                    "area_km2": s.get("area"), "years": s["yrs"], "dist_km": round(d, 1), "source": SOURCES.get(s["src"], s["src"]),
-                    "downstream": j in down},
+        "station": st, "stations": [p[0] for p in parts],
         "obs_mean": s["mean"], "obs_month": s["mm"], "sim_mean": sim["mean"], "sim_month": sim["month_mean"],
-        "sim_area_km2": round(float(index()["area"][j])), "ref_mean": None, "f_year": round(f_year, 4), "f_month": f_month,
-        "model": "geoglows",
+        "sim_area_km2": round(float(index()["area"][j])), "ref_mean": None, "f_year": round(fy, 4),
+        "f_month": [round(x, 4) for x in fm], "model": "geoglows",
     }
 
 

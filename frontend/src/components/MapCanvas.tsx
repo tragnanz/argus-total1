@@ -72,7 +72,8 @@ export type MapHandle = {
   drawRoadManual: (cb: (coords: number[][]) => void) => void;
   clearRoads: () => void;
   // idrologia: contorno del bacino a monte della presa e fossi di scolo dei campi ([lng, lat])
-  setHydro: (d: { basin?: number[][] | null; basinLabel?: string; ditches?: { ring: number[][]; outlet?: number[] | null; label?: string }[] }) => void;
+  setHydro: (d: { basin?: number[][] | null; basinLabel?: string; ditches?: { ring: number[][]; outlet?: number[] | null; label?: string }[];
+    river?: { pt?: number[] | null; label?: string; stations?: { pt: number[]; path?: number[][]; label: string }[] } | null }) => void;
   showMacroareas: (items: { geom: Polygon; label: string }[]) => void;
   clearMacroareas: () => void;
   showCanals: (canals: { coords: number[][]; start: number[]; end: number[]; width_m?: number }[], startLabel: string, endLabel: string, fit?: boolean) => void;
@@ -1004,6 +1005,21 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           if (dt.label) pl.bindTooltip(dt.label, { sticky: true });
           g.addLayer(pl);
           if (dt.outlet) g.addLayer(L.circleMarker([dt.outlet[1], dt.outlet[0]], { className: "hy-ditch", radius: 5, color: "#fff", weight: 2, fillColor: "#8a6d3b", fillOpacity: 1, interactive: false }));
+        }
+        // fiume scelto e stazioni misurate usate per correggere la portata, col tracciato lungo la rete
+        const rv = d.river;
+        if (rv) {
+          for (const st of rv.stations ?? []) {
+            if (st.path && st.path.length >= 2) g.addLayer(L.polyline(LLs(st.path), { className: "hy-basin hy-river", color: "#0369a1", weight: 3, opacity: 0.75, dashArray: "2 6", lineCap: "round", interactive: false }));
+            const m = L.circleMarker([st.pt[1], st.pt[0]], { className: "hy-basin hy-station", radius: 7, color: "#fff", weight: 2, fillColor: "#0369a1", fillOpacity: 1 });
+            m.bindTooltip(st.label, { permanent: true, direction: "right", className: "field-label" });
+            g.addLayer(m);
+          }
+          if (rv.pt) {
+            const m = L.circleMarker([rv.pt[1], rv.pt[0]], { className: "hy-basin hy-river", radius: 6, color: "#0369a1", weight: 2.5, fillColor: "#e0f2fe", fillOpacity: 1 });
+            if (rv.label) m.bindTooltip(rv.label, { sticky: true });
+            g.addLayer(m);
+          }
         }
       },
       showMacroareas(items) {

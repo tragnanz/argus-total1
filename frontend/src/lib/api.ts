@@ -516,7 +516,8 @@ export async function siteSoil(lat: number, lon: number): Promise<SoilOut> {
 export type RiverCell = { lat: number; lon: number; dist_km: number; mean: number; q347: number; min: number; max: number;
   month_mean: number[]; month_q80: number[]; month_min: number[]; years: string[]; n_days: number };
 // Correzione di GloFAS con una stazione misurata sullo stesso fiume (fattori osservato/simulato)
-export type RiverCorr = { station: { id: string; name: string; river: string; country: string; lat: number; lon: number; area_km2?: number; years: number[]; dist_km: number; source: string };
+export type RiverCorr = { station: { id: string; name: string; river: string; country: string; lat: number; lon: number; area_km2?: number; years: number[]; dist_km: number; source: string; downstream?: boolean; weight?: number; path?: number[][] };
+  stations?: RiverCorr["station"][];
   obs_mean: number; obs_month: number[]; sim_mean: number; sim_month: number[]; sim_cell: number[]; ref_mean: number; f_year: number; f_month: number[] };
 export type RiverOut = { lat: number; lon: number;
   glofas: { source?: string; period?: string[]; cells: RiverCell[]; pick: number; error?: string };

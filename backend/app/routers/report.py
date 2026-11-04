@@ -585,7 +585,7 @@ def river_flow(lat: float, lon: float, basin: int = 1, client=Depends(get_client
         raise HTTPException(422, "Coordinate non valide.")
     out: dict[str, Any] = {"lat": lat, "lon": lon}
     try:
-        out["glofas"] = glofas(lat, lon)
+        out["glofas"] = glofas(lat, lon, n=2, start="2004-01-01")   # 25 celle × 20 anni: ~3 volte meno peso sul limite di Open-Meteo
     except Exception as e:  # noqa: BLE001
         out["glofas"] = {"cells": [], "pick": -1, "error": str(e)[:200]}
     # correzione con una stazione misurata sullo stesso fiume
@@ -613,6 +613,25 @@ def river_flow(lat: float, lon: float, basin: int = 1, client=Depends(get_client
             out["basin"]["rain_month_mm"] = [round(float(x), 1) for x in clim["rain"]]
         except Exception as e:  # noqa: BLE001
             out["basin"] = {"error": str(e)[:200]}
+    # presa su un fiume della rete GEOGLOWS: il bacino vero è quello della rete (il DEM locale vede solo
+    # la finestra attorno alla presa e si aggancia spesso a un fosso vicino)
+    try:
+        G = out.get("geoglows") or {}
+        if basin and G.get("pick", -1) >= 0:
+            c = G["cells"][G["pick"]]
+            b = out.get("basin") or {}
+            if not b.get("area_km2") or b["area_km2"] < 0.5 * c["area_km2"]:
+                nb = {"area_km2": float(c["area_km2"]), "source": "geoglows", "dem_area_km2": b.get("area_km2"),
+                      "truncated": False, "outlet": [c["lon"], c["lat"]], "ring": []}
+                try:
+                    clim, _el = _get_climate_cached(lat, lon, True)
+                    nb["rain_month_mm"] = [round(float(x), 1) for x in clim["rain"]]
+                    nb["rain_at"] = "presa"
+                except Exception:  # noqa: BLE001
+                    pass
+                out["basin"] = nb
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 

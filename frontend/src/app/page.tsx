@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.233";
+const REV = "v0.6.234";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3858,7 +3858,7 @@ export default function Page() {
         const qb = b.rain_month_mm.reduce((a, r) => a + r, 0) / 1000 * b.area_km2 * 1e6 * 0.2 / (365 * 86400);
         // un grande fiume sulla presa (≥ 50 m³/s, mille volte quello che il bacino locale può dare)
         // ha un bacino che il DEM non contiene: resta la cella GloFAS proposta
-        const big = pick >= 0 && d.glofas.cells[pick].mean >= 50 && d.glofas.cells[pick].mean > 1000 * qb;
+        const big = pick >= 0 && d.glofas.cells[pick].mean >= 50 && d.glofas.cells[pick].mean > 1000 * qb && d.glofas.cells[pick].dist_km <= 7;
         if (qb > 0 && !big) pick = d.glofas.cells.map((c, i) => ({ i, e: Math.abs(Math.log(c.mean / qb)) })).sort((x, y) => x.e - y.e)[0].i;
       }
       if (!d.glofas.cells.length) pick = -1;
@@ -3880,7 +3880,7 @@ export default function Page() {
           {busy === "river" ? t("Calcolo il bacino e leggo le portate…") : river ? t("🌊 Ricalcola la portata del fiume") : t("🌊 Stima la portata del fiume alla presa")}</button>
         {river && d && (<>
           <div className="text-[11px] text-sage-dark leading-snug">
-            {b?.area_km2 ? <>{t("Bacino a monte della presa")}: <b>{b.truncated ? "≥ " : ""}{fmt(b.area_km2, { maximumFractionDigits: b.area_km2 < 100 ? 1 : 0 })} km²</b>{b.z_max != null && <> · {t("quota massima")} {fmt(Math.round(b.z_max))} m</>}{b.truncated && <> · <span className="text-rust">{t("bacino più grande della finestra del DEM: vale la serie GloFAS")}</span></>}</> : <span className="text-rust">{t("Bacino non calcolato")}{b?.error ? `: ${b.error}` : ""}</span>}
+            {b?.area_km2 ? <>{(b as { source?: string }).source === "geoglows" ? t("Bacino a monte della presa (rete idrografica GEOGLOWS)") : t("Bacino a monte della presa")}: <b>{b.truncated ? "≥ " : ""}{fmt(b.area_km2, { maximumFractionDigits: b.area_km2 < 100 ? 1 : 0 })} km²</b>{b.z_max != null && <> · {t("quota massima")} {fmt(Math.round(b.z_max))} m</>}{b.truncated && <> · <span className="text-rust">{t("bacino più grande della finestra del DEM: vale la serie GloFAS")}</span></>}</> : <span className="text-rust">{t("Bacino non calcolato")}{b?.error ? `: ${b.error}` : ""}</span>}
           </div>
           <div className="grid grid-cols-3 gap-2">
             <label className="text-[11px] text-sage-dark col-span-3">{t("Serie di portata")}
@@ -3897,6 +3897,7 @@ export default function Page() {
                   <input type="checkbox" className="mt-0.5" checked={!river.corrOff} onChange={(e) => setRiver({ ...river, corrOff: !e.target.checked })} />
                   <span>{t("Corretta con la stazione misurata {s} ({r}, {d} km): osservati {o} m³/s contro {g} m³/s del modello, fattore {f}", { s: cc.station.name, r: cc.station.river, d: fmt(Math.round(cc.station.dist_km)), o: f1(cc.obs_mean), g: f1(cc.sim_mean), f: fmt(cc.f_year, { maximumFractionDigits: 2 }) })}
                     <span className="block text-[10px] text-sage-dark">{cc.station.source} · {t("misure {a}, modello {b}", { a: cc.station.years.join("–"), b: (river.pick >= 100 ? d.geoglows?.period : d.glofas.period)?.join("–") ?? "" })}
+                      {((cc as { stations?: (api.RiverCorr["station"] & { weight?: number })[] }).stations ?? []).length === 2 && (() => { const s2 = (cc as { stations: (api.RiverCorr["station"] & { weight?: number })[] }).stations; return <span className="block">{t("media pesata con {s} ({d} km, {w}): pesi {p1}% e {p2}%", { s: s2[1].name, d: fmt(Math.round(s2[1].dist_km)), w: s2[1].downstream ? t("a valle") : t("a monte"), p1: fmt(Math.round((s2[0].weight ?? 0) * 100)), p2: fmt(Math.round((s2[1].weight ?? 0) * 100)) })}</span>; })()}
                       {cc.station.years[1] < 1994 && <span className="text-rust"> · {t("misure più vecchie del periodo del modello: se nel frattempo sono cambiate dighe o prelievi il fattore ne risente")}</span>}</span></span>
                 </label>
               </div>
@@ -4114,7 +4115,14 @@ export default function Page() {
   // bacino e fossi di scolo sulla mappa
   useEffect(() => {
     const b = river?.data.basin;
-    mapApi.current?.setHydro?.({ basin: b?.ring ?? null, basinLabel: b?.area_km2 ? `${t("Bacino a monte della presa")}: ${b.truncated ? "≥ " : ""}${fmt(b.area_km2, { maximumFractionDigits: 1 })} km²` : undefined,
+    const RCh = river ? riverCalc() : null, ggc = river && river.pick >= 100 ? river.data.geoglows?.cells?.[river.pick - 100] : null;
+    const rvMap = river && (ggc || RCh?.corr) ? {
+      pt: ggc ? [ggc.lon, ggc.lat] : null,
+      label: ggc ? t("Fiume alla presa: bacino {a} km², media {q} m³/s", { a: fmt(ggc.area_km2), q: fmt(Math.round(RCh?.mean ?? ggc.mean)) }) : undefined,
+      stations: ((RCh?.corr as (api.RiverCorr & { stations?: (api.RiverCorr["station"] & { path?: number[][] })[] }) | null)?.stations ?? (RCh?.corr ? [RCh.corr.station] : []))
+        .map((st) => ({ pt: [st.lon, st.lat], path: (st as { path?: number[][] }).path, label: `${st.name} · ${st.river} · ${st.years.join("–")}` })),
+    } : null;
+    mapApi.current?.setHydro?.({ river: rvMap, basin: b?.ring ?? null, basinLabel: b?.area_km2 ? `${t("Bacino a monte della presa")}: ${b.truncated ? "≥ " : ""}${fmt(b.area_km2, { maximumFractionDigits: 1 })} km²` : undefined,
       ditches: drainCalcs().map((d) => ({ ring: drainProf[String(d.f.id)]?.pts ? [...drainProf[String(d.f.id)].pts, drainProf[String(d.f.id)].pts[0]] : d.ring, outlet: d.outlet, label: `F${d.n} · ${fmt(Math.round(d.q))} l/s${d.sec ? ` · b ${fmt(d.sec.b, { maximumFractionDigits: 2 })} m · y ${fmt(d.sec.y, { maximumFractionDigits: 2 })} m` : ""}` })) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [river, drainOn, drainC, drainS, drainB, drainProf, fields, pivots]);
@@ -5323,7 +5331,9 @@ export default function Page() {
           if (RV) {
             const b = river?.data.basin, ff = (x: number) => fx(x, { maximumFractionDigits: x < 10 ? 2 : x < 100 ? 1 : 0 });
             fb.push({ h: tx("Portata del fiume alla presa") });
-            fb.push({ p: (b?.area_km2 ? tx("Il bacino che drena fino alla presa, ricavato dal modello digitale del terreno, misura {a} km².", { a: (b.truncated ? "≥ " : "") + ff(b.area_km2) }) + " " : "")
+            fb.push({ p: (b?.area_km2 ? ((b as { source?: string }).source === "geoglows"
+                ? tx("Il bacino che drena fino alla presa, dalla rete idrografica GEOGLOWS (TDX-Hydro), misura {a} km².", { a: ff(b.area_km2) })
+                : tx("Il bacino che drena fino alla presa, ricavato dal modello digitale del terreno, misura {a} km².", { a: (b.truncated ? "≥ " : "") + ff(b.area_km2) })) + " " : "")
               + (RV.src === "meas"
                 ? tx("La portata è quella misurata dall'ente gestore{y}: portata media {q} m³/s; la magra di ogni mese è {how}.", { y: river?.meas?.years ? ` (${river.meas.years.join("–")})` : "", q: ff(RV.mean), how: river?.meas?.days ? tx("la portata superata l'80% dei giorni del mese") : river?.meas?.low.length === 12 ? tx("quella indicata dall'ente") : tx("posta a metà della media") })
                 : RV.src === "ggcorr" && RV.corr
@@ -5336,6 +5346,16 @@ export default function Page() {
                 ? tx("La portata è stimata dalla rianalisi idrologica GloFAS (Copernicus Emergency Management Service) sulla cella del fiume più vicina alla presa, serie giornaliera {y}: portata media {q} m³/s, Q347 {q3} m³/s. La portata di magra di ogni mese è quella superata l'80% dei giorni del mese.", { y: RV.cell!.years.join("–"), q: ff(RV.mean), q3: ff(RV.cell!.q347) })
                 : tx("La portata è stimata dalle piogge medie mensili del bacino con un coefficiente di deflusso di {c}: portata media {q} m³/s. La portata di magra è posta a metà della media del mese.", { c: fx(river!.c), q: ff(RV.mean) }))
               + " " + tx("In alveo restano {p}% della portata media ({d} m³/s); il resto della magra è il prelevabile del mese, da confrontare con il fabbisogno lordo dell'impianto per {h} ore di prelievo al giorno.", { p: fx(river!.dmv), d: ff(RV.dmv), h: n0(srcHours) }) });
+            { const sts = ((RV.corr as { stations?: (api.RiverCorr["station"] & { weight?: number })[] } | null)?.stations ?? []);
+              if (sts.length === 2) fb.push({ p: tx("La presa sta fra due stazioni sullo stesso fiume: il fattore di correzione è la media, pesata sull'inverso della distanza, di quelli di {a} ({da} km, peso {pa}%) e di {b} ({db} km, peso {pb}%).", { a: sts[0].name, da: n0(sts[0].dist_km), pa: n0((sts[0].weight ?? 0) * 100), b: sts[1].name, db: n0(sts[1].dist_km), pb: n0((sts[1].weight ?? 0) * 100) }) });
+              const fonti: string[] = [];
+              if (RV.src === "geoglows" || RV.src === "ggcorr") fonti.push("GEOGLOWS v2 (ECMWF, AWS Open Data, CC BY 4.0)");
+              if (RV.src === "glofas" || RV.src === "corr") fonti.push("GloFAS v4 (Copernicus Emergency Management Service, Open-Meteo)");
+              for (const st of sts.length ? sts : RV.corr ? [RV.corr.station] : []) fonti.push(`${st.name} (${st.river}, ${st.years.join("–")}): ${st.source}`);
+              if (RV.src === "meas") fonti.push(tx("portate misurate fornite dall'ente gestore"));
+              if (b?.area_km2) fonti.push((b as { source?: string }).source === "geoglows" ? "GEOGLOWS / TDX-Hydro" : "Copernicus DEM GLO-30");
+              if (b?.rain_month_mm) fonti.push("NASA POWER");
+              if (fonti.length) fb.push({ p: tx("Fonti dei dati: {f}.", { f: fonti.join("; ") }) }); }
             fb.push({ table: { header: [tx("Mese"), tx("Media") + " (m³/s)", tx("Magra") + " (m³/s)", tx("Prelevabile") + " (l/s)", tx("Fabbisogno lordo") + " (m³)", tx("Ore di prelievo")],
               rows: RV.bal.rows.map((r, i) => [monthLong(i), ff(RV.mMean[i]), ff(RV.mLow[i]), n0(RV.avail[i]), r.needM3 > 0 ? n0(r.needM3) : "—", r.needM3 > 0 ? (Number.isFinite(r.hours) ? n1(r.hours) : "∞") : "—"]) } });
             fb.push({ p: RV.bal.deficitM3 <= 1

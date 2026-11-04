@@ -299,6 +299,12 @@ try {
   const rvTxt = await page.locator("[data-river]").first().innerText().catch(() => "");
   ok(/prelevabile/i.test(rvTxt) && /km²/.test(rvTxt), `Fonte: portata del fiume alla presa e bilancio mese per mese (${(rvTxt.match(/Portata media[^·]*/) || [""])[0].trim()})`);
   if (process.env.ARGUS_SHOT_RIVER) await page.screenshot({ path: process.env.ARGUS_SHOT_RIVER });
+  // grandi fiumi: GEOGLOWS sul Nilo a Shendi corretto con la stazione misurata di Dongola (stessa rete, a valle)
+  { const rs = await fetch(`${API}/project/river?lat=16.69&lon=33.43&basin=0`, { headers: { Authorization: `Bearer ${tok}` } }).then((r) => r.json()).catch(() => ({}));
+    const G = rs.geoglows || {}, c = G.cells?.[G.pick], k = G.corr;
+    const qc = c && k ? c.month_mean.reduce((a, q, i) => a + q * k.f_month[i], 0) / 12 : 0;
+    ok(!!c && c.area_km2 > 1.5e6 && k?.station?.name === "Dongola" && qc > 1500 && qc < 3500 && (k.station.path?.length ?? 0) > 10,
+      `Fiume: GEOGLOWS corretto con la stazione sullo stesso fiume (Nilo a Shendi ${Math.round(c?.mean ?? 0)} → ${Math.round(qc)} m³/s con ${k?.station?.name ?? "—"})`); }
   // portate misurate dall'ente: 12 medie mensili inserite a mano sostituiscono GloFAS
   await page.locator("[data-river] select").first().selectOption("-2"); await page.waitForTimeout(400);
   await page.locator("[data-river-meas] textarea").fill("3,1 3,4 3,0 2,6 2,2 1,6 1,1 0,9 1,2 1,9 2,8 3,2"); await page.locator('[data-river-meas] button:has-text("Applica")').click(); await page.waitForTimeout(600);
