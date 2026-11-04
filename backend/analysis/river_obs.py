@@ -69,11 +69,13 @@ def correction(lat: float, lon: float, pick: dict, glofas_fn) -> dict | None:
         return None
     best = None
     for s in candidates(lat, lon, q):
-        try:
-            g = glofas_fn(s["lat"], s["lon"], 1)
-        except Exception:  # noqa: BLE001
-            continue
-        cells = g.get("cells") or []
+        if "sc" in s:                                    # GloFAS della stazione già calcolato (data/)
+            cells = [{"lat": c[0], "lon": c[1], "mean": c[2], "month_mean": c[3]} for c in s["sc"]]
+        else:
+            try:
+                cells = glofas_fn(s["lat"], s["lon"], 1).get("cells") or []
+            except Exception:  # noqa: BLE001
+                continue
         if not cells:
             continue
         # la cella della stazione: fra quelle attorno, quella più vicina alla portata osservata
