@@ -635,6 +635,33 @@ def river_flow(lat: float, lon: float, basin: int = 1, client=Depends(get_client
     return out
 
 
+@router.get("/river-extra")
+def river_extra(lat: float, lon: float, user: User = Depends(get_current_user)):
+    """Sul fiume della presa (rete GEOGLOWS): piogge medie del bacino a monte, previsione a 15 giorni
+    e livelli dell'acqua dall'altimetria satellitare. Chiamata a parte perché più lenta (~15 s la prima volta)."""
+    from concurrent.futures import ThreadPoolExecutor
+    from analysis import geoglows as G
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise HTTPException(422, "Coordinate non valide.")
+    near = [r for r in G.reaches_near(lat, lon, 3.0)]
+    if not near:
+        return {"reach": None}
+    r = max(near, key=lambda x: x["area_km2"])
+    i = r["i"]
+    out: dict[str, Any] = {"reach": i, "area_km2": r["area_km2"]}
+    def safe(fn, *a):
+        try:
+            return fn(*a)
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)[:200]}
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        fr = ex.submit(safe, G.basin_rain, i, lat, lon)
+        ff = ex.submit(safe, G.forecast, i)
+        fl = ex.submit(safe, G.levels, i)
+        out["basin_rain"], out["forecast"], out["levels"] = fr.result(), ff.result(), fl.result()
+    return out
+
+
 @router.get("/soil")
 def site_soil(lat: float, lon: float, user: User = Depends(get_current_user)):
     """Tessitura del suolo (SoilGrids, 0-30 cm), classe USDA, acqua disponibile e infiltrazione di base."""

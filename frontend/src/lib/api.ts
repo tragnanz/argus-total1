@@ -514,7 +514,7 @@ export async function siteSoil(lat: number, lon: number): Promise<SoilOut> {
 }
 // Portata del fiume alla presa: celle GloFAS vicine e bacino dal DEM
 export type RiverCell = { lat: number; lon: number; dist_km: number; mean: number; q347: number; min: number; max: number;
-  month_mean: number[]; month_q80: number[]; month_min: number[]; years: string[]; n_days: number };
+  month_mean: number[]; month_q80: number[]; month_p10?: number[]; month_min: number[]; years: string[]; n_days: number };
 // Correzione di GloFAS con una stazione misurata sullo stesso fiume (fattori osservato/simulato)
 export type RiverCorr = { station: { id: string; name: string; river: string; country: string; lat: number; lon: number; area_km2?: number; years: number[]; dist_km: number; source: string; downstream?: boolean; weight?: number; path?: number[][] };
   stations?: RiverCorr["station"][];
@@ -527,6 +527,17 @@ export type RiverOut = { lat: number; lon: number;
 export async function riverFlow(lat: number, lon: number): Promise<RiverOut> {
   const tok = getToken();
   const res = await fetch(`${API_BASE}/api/project/river?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}`, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} });
+  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  return res.json();
+}
+// Fiume della presa (rete GEOGLOWS): piogge sul bacino, previsione a 15 giorni, livelli dall'altimetria
+export type RiverExtra = { reach: number | null; area_km2?: number;
+  basin_rain?: { rain_month_mm: number[]; cells: number; samples: number; reaches: number; error?: string } | null;
+  forecast?: { river_id: number; gen?: string; days: { date: string; q: number; lo: number; hi: number }[]; error?: string } | null;
+  levels?: { dist_km: number; pt: number[]; area_km2: number; high: number[]; median: number[]; low: number[]; min: number[]; max: number[]; source: string; error?: string } | null };
+export async function riverExtra(lat: number, lon: number): Promise<RiverExtra> {
+  const tok = getToken();
+  const res = await fetch(`${API_BASE}/api/project/river-extra?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}`, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} });
   if (!res.ok) throw new ApiError(res.status, res.statusText);
   return res.json();
 }

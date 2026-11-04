@@ -53,7 +53,8 @@ def index():
     plat = (np.repeat(tl, reps) + z["dla"].astype(np.float64) / 1e4).astype(np.float32)
     plon = (np.repeat(tn, reps) + z["dlo"].astype(np.float64) / 1e4).astype(np.float32)
     tpos = {int(t): (int(a), int(b)) for t, a, b in zip(tiles, tstart, tend)}
-    return {"col": col, "ds": ds, "area": area, "pr": pr, "plat": plat, "plon": plon, "tpos": tpos}
+    rid = z["rid"].astype(np.int64) if "rid" in z.files else None
+    return {"col": col, "ds": ds, "area": area, "pr": pr, "plat": plat, "plon": plon, "tpos": tpos, "rid": rid}
 
 
 def reaches_near(lat: float, lon: float, radius_km: float, min_area: float = 0.0) -> list[dict]:
@@ -169,9 +170,10 @@ def climatology(i: int) -> dict:
     by = q.reshape(-1, 12)
     mm = np.nanmean(by, axis=0)
     low = np.nanpercentile(by, 20, axis=0)          # magra: mese superato in 4 anni su 5
+    p10 = np.nanpercentile(by, 10, axis=0)          # anno secco 1 su 10
     allv = q[np.isfinite(q)]
     return {"mean": round(float(np.nanmean(mm)), 3), "month_mean": [round(float(x), 3) for x in mm],
-            "month_q80": [round(float(x), 3) for x in low], "month_min": [round(float(x), 3) for x in np.nanmin(by, axis=0)],
+            "month_q80": [round(float(x), 3) for x in low], "month_p10": [round(float(x), 3) for x in p10], "month_min": [round(float(x), 3) for x in np.nanmin(by, axis=0)],
             "q347": round(float(np.percentile(allv, 5)), 3), "min": round(float(allv.min()), 3), "max": round(float(allv.max()), 3),
             "years": [str(Y0), str(Y1)], "n_days": 0}
 
@@ -302,3 +304,139 @@ def at(lat: float, lon: float, radius_km: float = 12.0, k: int = 6) -> dict:
         corr = None
         pick["corr_error"] = str(e)[:200]
     return {"source": SOURCE, "period": [str(Y0), str(Y1)], "cells": cells, "pick": pi, "corr": corr}
+
+
+# ------------------------------------------------------------------ rete a monte, piogge del bacino
+@lru_cache(maxsize=1)
+def _upstream_csr():
+    ds = index()["ds"]
+    n = len(ds)
+    src = np.where(ds >= 0)[0]
+    dst = ds[src]
+    o = np.argsort(dst, kind="stable")
+    starts = np.searchsorted(dst[o], np.arange(n + 1))
+    return src[o], starts
+
+
+def upstream(i: int, limit: int = 400000) -> np.ndarray:
+    """Tutti i tratti (≥ 1.000 km²) a monte di i, i compreso."""
+    src, st = _upstream_csr()
+    seen = np.zeros(len(st) - 1, dtype=bool)
+    stack = [i]; seen[i] = True; out = [i]
+    while stack and len(out) < limit:
+        k = stack.pop()
+        for j in src[st[k]:st[k + 1]]:
+            if not seen[j]:
+                seen[j] = True; stack.append(int(j)); out.append(int(j))
+    return np.array(out, dtype=np.int64)
+
+
+def basin_rain(i: int, lat: float, lon: float, k: int = 12) -> dict | None:
+    """Pioggia media mensile sul bacino a monte del tratto i (NASA POWER, fino a k celle di 1° sulla rete).
+    I bacini sotto i ~1.000 km² non sono nella rete: si usa la pioggia della presa."""
+    from concurrent.futures import ThreadPoolExecutor
+    from analysis.suitability import _get_climate_cached
+    ix = index()
+    up = upstream(i)
+    m = np.isin(ix["pr"], up)
+    if not m.any():
+        return None
+    cl = np.floor(ix["plat"][m]).astype(np.int64); cn = np.floor(ix["plon"][m]).astype(np.int64)
+    cells, cnt = np.unique(np.stack([cl, cn], 1), axis=0, return_counts=True)
+    sel = np.linspace(0, len(cells) - 1, min(k, len(cells))).round().astype(int) if len(cells) > k else np.arange(len(cells))
+    pts = [(float(cells[j][0]) + 0.5, float(cells[j][1]) + 0.5, float(cnt[j])) for j in sel]
+    def one(p):
+        try:
+            c, _ = _get_climate_cached(p[0], p[1], True)
+            return [float(x) for x in c["rain"]], p[2]
+        except Exception:  # noqa: BLE001
+            return None
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        res = [r for r in ex.map(one, pts) if r]
+    if not res:
+        return None
+    W = sum(w for _, w in res)
+    rain = [round(sum(r[mm] * w for r, w in res) / W, 1) for mm in range(12)]
+    return {"rain_month_mm": rain, "cells": len(cells), "samples": len(res), "reaches": int(len(up))}
+
+
+# ------------------------------------------------------------------ previsione a 15 giorni (REST GEOGLOWS)
+API = "https://geoglows.ecmwf.int/api/v2"
+
+
+def forecast(i: int) -> dict | None:
+    ix = index()
+    if ix["rid"] is None:
+        return None
+    rid = int(ix["rid"][i])
+    r = requests.get(f"{API}/forecast/{rid}", params={"format": "json"}, timeout=60)
+    r.raise_for_status()
+    d = r.json()
+    by: dict[str, list[float]] = {}
+    lo: dict[str, list[float]] = {}; hi: dict[str, list[float]] = {}
+    for t, q, a, b in zip(d["datetime"], d["flow_median"], d["flow_uncertainty_lower"], d["flow_uncertainty_upper"]):
+        if q is None:
+            continue
+        day = t[:10]
+        by.setdefault(day, []).append(float(q)); lo.setdefault(day, []).append(float(a)); hi.setdefault(day, []).append(float(b))
+    days = sorted(by)
+    return {"river_id": rid, "gen": d.get("metadata", {}).get("gen_date"),
+            "days": [{"date": k, "q": round(sum(by[k]) / len(by[k]), 2), "lo": round(min(lo[k]), 2), "hi": round(max(hi[k]), 2)} for k in days]}
+
+
+# ------------------------------------------------------------------ livelli dell'acqua (altimetria Hydroweb)
+HW = "https://geoglows-v2.s3-us-west-2.amazonaws.com/transformers/hydroweb.zarr"
+
+
+@lru_cache(maxsize=1)
+def _hw_ids() -> dict:
+    from numcodecs import Blosc
+    b = requests.get(f"{HW}/river_id/0", timeout=60).content
+    ids = np.frombuffer(Blosc().decode(b), dtype="<i8")
+    return {int(r): k for k, r in enumerate(ids)}
+
+
+def levels(i: int, max_km: float = 60.0) -> dict | None:
+    """Quota dell'acqua mese per mese (m s.l.m., quantili) dal punto altimetrico Hydroweb
+    più vicino sullo stesso fiume, entro max_km lungo la rete."""
+    from numcodecs import Blosc
+    ix = index()
+    if ix["rid"] is None:
+        return None
+    hw = _hw_ids()
+    # candidati: il tratto, la rete a valle e l'asta principale a monte (il ramo col bacino più grande)
+    src, st = _upstream_csr()
+    c0 = reach_centroid(i)
+    if not c0:
+        return None
+    cand = []
+    for seq in (downstream(i, 400), None):
+        if seq is None:
+            seq = [i]
+            while len(seq) < 400:
+                ups = src[st[seq[-1]]:st[seq[-1] + 1]]
+                if not len(ups):
+                    break
+                seq.append(int(max(ups, key=lambda u: ix["area"][u])))
+        dist = 0.0; prev = c0
+        for k in seq:
+            c = reach_centroid(k) or prev
+            dist += math.hypot((c[1] - prev[1]) * 110.6, (c[0] - prev[0]) * 111.3 * math.cos(math.radians(c[1])))
+            prev = c
+            if dist > max_km:
+                break
+            rid = int(ix["rid"][k])
+            if rid in hw:
+                cand.append((dist, k, hw[rid], c))
+                break
+    if not cand:
+        return None
+    dist, k, h, c = min(cand, key=lambda x: x[0])
+    b = requests.get(f"{HW}/wse/0.0.{h // 200}", timeout=60).content
+    a = np.frombuffer(Blosc().decode(b), dtype="<f8").reshape(12, 101, 200)[:, :, h % 200]
+    if not np.isfinite(a).any():
+        return None
+    f = lambda p: [round(float(x), 2) for x in a[:, p]]  # noqa: E731
+    return {"dist_km": round(dist, 1), "pt": c, "area_km2": round(float(ix["area"][k])),
+            "high": f(95), "median": f(50), "low": f(5), "min": f(0), "max": f(100),   # quantili: p = % del tempo sotto quel livello
+            "source": "GEOGLOWS · Hydroweb (altimetria satellitare)"}

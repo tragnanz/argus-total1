@@ -45,11 +45,13 @@ def _stats(times: list[str], vals: list) -> dict | None:
     """Statistiche di una serie giornaliera (m³/s)."""
     by_m: list[list[float]] = [[] for _ in range(12)]
     allv: list[float] = []
+    ym: dict[tuple[str, int], list[float]] = {}
     for t, v in zip(times, vals):
         if v is None:
             continue
         m = int(t[5:7]) - 1
         by_m[m].append(float(v)); allv.append(float(v))
+        ym.setdefault((t[:4], m), []).append(float(v))
     if len(allv) < 365:
         return None
     a = np.array(allv)
@@ -65,6 +67,8 @@ def _stats(times: list[str], vals: list) -> dict | None:
         "max": round(float(a.max()), 3),
         "month_mean": [round(float(np.mean(x)), 3) if x else 0.0 for x in by_m],
         "month_q80": [round(pct(x, 20), 3) for x in by_m],   # magra: superata l'80% dei giorni del mese
+        # anno secco 1 su 10: media del mese superata in 9 anni su 10
+        "month_p10": [round(pct([sum(v) / len(v) for (y, mm), v in ym.items() if mm == m and len(v) >= 20], 10), 3) for m in range(12)],
         "month_min": [round(float(np.min(x)), 3) if x else 0.0 for x in by_m],
         "years": [years[0], years[-1]] if years else [],
         "n_days": len(allv),

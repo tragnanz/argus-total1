@@ -13,3 +13,11 @@ def test_indice_e_rete():
     assert G.same_river(big["i"], dongola["i"])
     po = max(G.reaches_near(45.13, 10.02, 3.0), key=lambda r: r["area_km2"])
     assert not G.same_river(big["i"], po["i"])
+
+
+def test_rete_a_monte():
+    near = G.reaches_near(16.69, 33.43, 3.0)
+    big = max(near, key=lambda r: r["area_km2"])
+    up = G.upstream(big["i"])
+    assert len(up) > 10_000                       # il Nilo a Shendi raccoglie decine di migliaia di tratti
+    assert big["i"] in set(up.tolist())

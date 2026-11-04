@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.234";
+const REV = "v0.6.235";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1423,7 +1423,7 @@ export default function Page() {
   // Portata del fiume alla presa (GloFAS + bacino dal DEM) e quota da lasciare al fiume
   // meas: portate misurate dall'ente (pick = -2): medie e magre mensili in m³/s, con la fonte del dato
   type RiverMeas = { mean: number[]; low: number[]; q347?: number; days?: number; years?: string[]; note?: string };
-  type RiverSt = { data: api.RiverOut; pick: number; dmv: number; c: number; meas?: RiverMeas | null; corrOff?: boolean };
+  type RiverSt = { data: api.RiverOut; pick: number; dmv: number; c: number; meas?: RiverMeas | null; corrOff?: boolean; risk?: "q80" | "p10" | "mean"; extra?: api.RiverExtra | null };
   const [river, setRiver] = useState<RiverSt | null>(null);
   const [bankSlope, setBankSlope] = useState(2);                     // pendenza della sponda (orizzontale : verticale)
   const [settleMm, setSettleMm] = useState(0.1);                     // particella da sedimentare (mm)
@@ -3780,12 +3780,14 @@ export default function Page() {
       mMean = rv.meas.mean; mLow = rv.meas.low.length === 12 ? rv.meas.low : rv.meas.mean.map((x) => x * 0.5);
       mean = mMean.reduce((a, x, i) => a + x * MDAYS[i], 0) / 365; src = "meas";
     } else if (cell) {
-      mean = cell.mean; mMean = cell.month_mean; mLow = cell.month_q80; src = gg ? "geoglows" : "glofas";
+      // rischio di progetto: magra tipica (4 anni su 5), anno secco 1 su 10, oppure anno medio
+      const lowOf = (c0: api.RiverCell) => rv.risk === "mean" ? c0.month_mean : rv.risk === "p10" && c0.month_p10?.length === 12 ? c0.month_p10 : c0.month_q80;
+      mean = cell.mean; mMean = cell.month_mean; mLow = lowOf(cell); src = gg ? "geoglows" : "glofas";
       // stazione misurata sullo stesso fiume: vale per le celle di portata simile a quella su cui è stata tarata
       const c = gg ? rv.data.geoglows?.corr : rv.data.corr;
       if (c && !rv.corrOff && c.f_month?.length === 12 && Math.abs(Math.log(cell.mean / c.ref_mean)) < Math.log(3)) {
         corr = c; src = gg ? "ggcorr" : "corr";
-        mMean = cell.month_mean.map((q, i) => q * c.f_month[i]); mLow = cell.month_q80.map((q, i) => q * c.f_month[i]);
+        mMean = cell.month_mean.map((q, i) => q * c.f_month[i]); mLow = lowOf(cell).map((q, i) => q * c.f_month[i]);
         mean = mMean.reduce((a, x, i) => a + x * MDAYS[i], 0) / 365; q347 = cell.q347 * c.f_year; qMin0 = cell.min * c.f_year;
       }
     }
@@ -3865,9 +3867,71 @@ export default function Page() {
       // GEOGLOWS: con una stazione misurata sullo stesso fiume è la stima migliore; senza GloFAS è l'unica
       const G = d.geoglows;
       if (G?.cells?.length && G.pick >= 0 && (G.corr || pick < 0)) pick = 100 + G.pick;
-      setRiver({ data: d, pick, dmv: river?.dmv ?? 10, c: river?.c ?? 0.2 });
+      setRiver({ data: d, pick, dmv: river?.dmv ?? 10, c: river?.c ?? 0.2, risk: river?.risk ?? "q80", extra: null });
+      // fiume della rete: piogge sul bacino, previsione e livelli arrivano dopo (chiamata più lenta)
+      if (d.geoglows?.pick != null && d.geoglows.pick >= 0) {
+        api.riverExtra(srcPt[1], srcPt[0]).then((x) => setRiver((rv) => {
+          if (!rv || rv.data !== d) return rv;
+          const nd = { ...rv.data };
+          if (nd.basin && (nd.basin as { source?: string }).source === "geoglows" && x.basin_rain?.rain_month_mm?.length === 12)
+            nd.basin = { ...nd.basin, rain_month_mm: x.basin_rain.rain_month_mm, rain_at: "bacino" } as typeof nd.basin;
+          return { ...rv, data: nd, extra: x };
+        })).catch(() => {});
+      }
       setMsg(d.glofas.cells.length || d.geoglows?.cells?.length || d.basin?.area_km2 ? t("Portata del fiume stimata ✓") : t("Nessun dato di portata per questo punto."));
     } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  // oggi e prossimi giorni (previsione GEOGLOWS), livelli dall'altimetria, piogge del bacino
+  function renderRiverExtra(R: NonNullable<ReturnType<typeof riverCalc>>) {
+    const x = river?.extra;
+    if (!river || river.pick < 100) return null;
+    if (!x) return <p className="text-[10px] text-sage-dark">{t("Leggo previsione, livelli e piogge del bacino…")}</p>;
+    const cell = R.cell, fc = x.forecast && !x.forecast.error ? x.forecast : null, lv = x.levels && !x.levels.error ? x.levels : null;
+    const mon = (i: number) => new Date(2000, i, 1).toLocaleString(lang, { month: "long" });
+    const f1 = (q: number) => fmt(q, { maximumFractionDigits: q < 10 ? 2 : q < 100 ? 1 : 0 });
+    const cf = (d: string) => { const m = Number(d.slice(5, 7)) - 1; return R.corr?.f_month?.[m] ?? 1; };
+    return (
+      <div className="text-[11px] leading-snug space-y-0.5" data-river-extra>
+        {fc && cell && fc.days.length > 0 && (() => {
+          const d0 = fc.days[0], dl = fc.days[fc.days.length - 1], m0 = Number(d0.date.slice(5, 7)) - 1;
+          const pct = cell.month_mean[m0] > 0 ? Math.round((d0.q / cell.month_mean[m0]) * 100) : null;
+          return <div data-river-forecast>{t("Oggi il fiume porta {q} m³/s", { q: f1(d0.q * cf(d0.date)) })}{pct != null && <> · <b className={pct < 60 ? "text-rust" : ""}>{t("{p}% della media di {m}", { p: fmt(pct), m: mon(m0) })}</b></>} · {t("fra {n} giorni {q} m³/s", { n: fmt(fc.days.length - 1), q: f1(dl.q * cf(dl.date)) })}
+            <span className="block text-[10px] text-sage-dark">{t("Previsione GEOGLOWS (ECMWF) del {d}{c}", { d: (fc.gen ?? d0.date).slice(0, 10), c: R.corr ? t(", riportata alla stazione misurata") : "" })}</span></div>;
+        })()}
+        {lv && (() => {
+          const lo = Math.min(...lv.low), hi = Math.max(...lv.high);
+          return <div data-river-levels>{t("Livello dell'acqua: da {a} m in magra a {b} m in piena (escursione {e} m)", { a: fmt(lo, { maximumFractionDigits: 1 }), b: fmt(hi, { maximumFractionDigits: 1 }), e: fmt(hi - lo, { maximumFractionDigits: 1 }) })}
+            <span className="block text-[10px] text-sage-dark">{lv.source} · {lv.dist_km > 0.5 ? t("punto altimetrico a {d} km lungo il fiume", { d: fmt(lv.dist_km, { maximumFractionDigits: 1 }) }) : t("punto altimetrico sul tratto della presa")} · {t("quote dei satelliti, da verificare con un rilievo")}</span></div>;
+        })()}
+        {!lv && <div className="text-[10px] text-sage-dark">{t("Nessun punto altimetrico sul fiume entro 60 km: i livelli vanno chiesti all'ente o rilevati.")}</div>}
+        {x.basin_rain?.rain_month_mm && <div className="text-[10px] text-sage-dark">{t("Piogge medie sul bacino a monte: {r} mm/anno ({n} celle NASA POWER su {c})", { r: fmt(Math.round(x.basin_rain.rain_month_mm.reduce((a, b) => a + b, 0))), n: fmt(x.basin_rain.samples), c: fmt(x.basin_rain.cells) })}</div>}
+      </div>
+    );
+  }
+  function downloadRiverCsv(R: NonNullable<ReturnType<typeof riverCalc>>) {
+    const d = river?.data, x = river?.extra, sep = ";", nf = (v: number, k = 2) => (Number.isFinite(v) ? v.toFixed(k).replace(".", ",") : "");
+    const lines: string[] = [];
+    const q = (s0: string) => `"${String(s0).replace(/"/g, '""')}"`;
+    lines.push([q(t("Portata del fiume alla presa")), q(projects.find((p) => p.id === projectId)?.name ?? "")].join(sep));
+    if (srcPt) lines.push([q("lat"), nf(srcPt[1], 5), q("lon"), nf(srcPt[0], 5)].join(sep));
+    const srcName = R.src === "meas" ? t("Portate misurate dall'ente") : R.src === "geoglows" || R.src === "ggcorr" ? "GEOGLOWS v2 (ECMWF)" : R.src === "glofas" || R.src === "corr" ? "GloFAS v4 (Copernicus EMS)" : t("Metodo del bacino (piogge × coefficiente di deflusso)");
+    lines.push([q(t("Fonte")), q(srcName), q(t("Rischio di progetto")), q(river?.risk ?? "q80")].join(sep));
+    if (d?.basin?.area_km2) lines.push([q(t("Bacino a monte della presa")), nf(d.basin.area_km2, 0), q("km²")].join(sep));
+    for (const st of (R.corr as { stations?: api.RiverCorr["station"][] } | null)?.stations ?? (R.corr ? [R.corr.station] : []))
+      lines.push([q(t("Stazione misurata")), q(st.name), q(st.river), q(st.years.join("-")), nf(st.dist_km, 1), q("km"), q(st.source)].join(sep));
+    if (R.corr) lines.push([q(t("Fattore di correzione")), ...R.corr.f_month.map((f) => nf(f, 4))].join(sep));
+    lines.push("");
+    const months = Array.from({ length: 12 }, (_, i) => q(new Date(2000, i, 1).toLocaleString(lang, { month: "short" })));
+    lines.push([q(""), ...months].join(sep));
+    lines.push([q(t("media") + " m³/s"), ...R.mMean.map((v) => nf(v))].join(sep));
+    lines.push([q(t("magra") + " m³/s"), ...R.mLow.map((v) => nf(v))].join(sep));
+    lines.push([q(t("prelevabile") + " l/s"), ...R.avail.map((v) => nf(v, 0))].join(sep));
+    lines.push([q(t("Fabbisogno lordo") + " m³"), ...R.needM3.map((v) => nf(v, 0))].join(sep));
+    lines.push([q(t("ore di prelievo")), ...R.bal.rows.map((r) => (r.needM3 > 0 && Number.isFinite(r.hours) ? nf(r.hours, 1) : ""))].join(sep));
+    if (x?.levels?.median?.length === 12) { lines.push([q(t("livello") + " m (p50)"), ...x.levels.median.map((v) => nf(v))].join(sep)); lines.push([q(t("livello") + " m (p5)"), ...x.levels.low.map((v) => nf(v))].join(sep)); lines.push([q(t("livello") + " m (p95)"), ...x.levels.high.map((v) => nf(v))].join(sep)); }
+    if (d?.basin?.rain_month_mm?.length === 12) lines.push([q(t("pioggia") + " mm"), ...d.basin.rain_month_mm.map((v) => nf(v, 1))].join(sep));
+    const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `fiume-presa-${projectId ?? "progetto"}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   }
   function renderRiver() {
     const R = riverCalc(), d = river?.data, b = d?.basin;
@@ -3915,6 +3979,12 @@ export default function Page() {
                 {river.meas && <p className="text-[10px] text-sage-dark">{t("In uso: {n}", { n: river.meas.days ? t("{d} giorni misurati ({y})", { d: fmt(river.meas.days), y: (river.meas.years ?? []).join("–") }) : t("12 medie mensili inserite") })}{river.meas.note ? ` · ${river.meas.note}` : ""}</p>}
               </div>
             )}
+            {river.pick >= 0 && <label className="text-[11px] text-sage-dark col-span-3" data-river-risk title={t("Portata del fiume su cui si fa il bilancio: la magra tipica è superata 4 anni su 5, l'anno secco 1 su 10 è la media mensile superata 9 anni su 10.")}>{t("Rischio di progetto")}
+              <select className="field-input mt-0.5 py-1 text-[12px]" value={river.risk ?? "q80"} onChange={(e) => setRiver({ ...river, risk: e.target.value as "q80" | "p10" | "mean" })}>
+                <option value="q80">{t("Magra tipica (4 anni su 5)")}</option>
+                <option value="p10">{t("Anno secco (1 su 10)")}</option>
+                <option value="mean">{t("Anno medio")}</option>
+              </select></label>}
             <label className="text-[11px] text-sage-dark" title={t("Deflusso minimo da lasciare in alveo, in percentuale della portata media (es. 10%): va verificato con l'ente che rilascia la concessione.")}>{t("Da lasciare al fiume (%)")}
               <input type="number" min={0} max={100} step={1} value={river.dmv} onChange={(e) => setRiver({ ...river, dmv: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
             {river.pick < 0 && <label className="text-[11px] text-sage-dark" title={t("Quota della pioggia che arriva al fiume: 0,1 terreni permeabili e clima arido, 0,3–0,5 bacini montani e argillosi.")}>{t("Coeff. di deflusso")}
@@ -3964,6 +4034,7 @@ export default function Page() {
                 <tbody>
                   <tr><td className="text-sage-dark pr-1">{t("media")} m³/s</td>{R.mMean.map((q, i) => <td key={i} className="text-center">{f1(q)}</td>)}</tr>
                   <tr><td className="text-sage-dark pr-1">{t("magra")} m³/s</td>{R.mLow.map((q, i) => <td key={i} className="text-center">{f1(q)}</td>)}</tr>
+                  {river.extra?.levels?.median?.length === 12 && <tr><td className="text-sage-dark pr-1">{t("livello")} m</td>{river.extra.levels.median.map((z, i) => <td key={i} className="text-center">{fmt(z, { maximumFractionDigits: 1 })}</td>)}</tr>}
                   <tr><td className="text-sage-dark pr-1">{t("prelevabile")} l/s</td>{R.avail.map((q, i) => <td key={i} className="text-center font-semibold text-brand-darker">{fmt(Math.round(q))}</td>)}</tr>
                   <tr><td className="text-sage-dark pr-1">{t("serve")} l/s</td>{R.bal.rows.map((r, i) => <td key={i} className="text-center">{r.qNeed24 > 0 ? fmt(Math.round(r.qNeed24)) : "—"}</td>)}</tr>
                   <tr><td className="text-sage-dark pr-1">{t("ore di prelievo")}</td>{R.bal.rows.map((r, i) => <td key={i} className={"text-center " + (r.hours > srcHours ? "text-danger font-semibold" : "")}>{r.needM3 > 0 ? (Number.isFinite(r.hours) ? fmt(Math.ceil(r.hours)) : "∞") : "—"}</td>)}</tr>
@@ -3977,6 +4048,8 @@ export default function Page() {
                   ? <span className="text-rust">{t("Nei mesi segnati il fiume non basta: servono {v} m³ di vasca di compenso, riempita con l'acqua dei mesi in avanzo (deficit {d} m³).", { v: fmt(Math.ceil(R.bal.storeM3 / 100) * 100), d: fmt(Math.round(R.bal.deficitM3)) })}</span>
                   : <span className="text-danger">{t("Il fiume non basta nemmeno sull'anno: mancano {d} m³. Serve un'altra fonte o meno superficie irrigata.", { d: fmt(Math.round(R.bal.deficitM3 - R.bal.rows.reduce((a, r) => a + r.surplus, 0))) })}</span>}
             </div>
+            {renderRiverExtra(R)}
+            <button className="btn-ghost w-full text-[12px]" onClick={() => downloadRiverCsv(R)} data-river-csv>{t("⬇ Dati del fiume (CSV per Excel)")}</button>
             <button className="btn-ghost w-full text-[12px]" disabled={R.qMin <= 0 || srcQmax === R.qMin} onClick={() => setSrcQmax(R.qMin)}
               title={t("Imposta come portata disponibile il prelevabile del mese irriguo più scarso.")}>{t("Usa {q} l/s come portata disponibile", { q: fmt(R.qMin) })}</button>
             <p className="text-[10px] text-sage-dark leading-snug text-justify">{R.src === "meas" ? t("Portate misurate dall'ente: sostituiscono la stima GloFAS nel bilancio del fiume.") : R.src === "corr" || R.src === "ggcorr"
@@ -5355,6 +5428,14 @@ export default function Page() {
               if (RV.src === "meas") fonti.push(tx("portate misurate fornite dall'ente gestore"));
               if (b?.area_km2) fonti.push((b as { source?: string }).source === "geoglows" ? "GEOGLOWS / TDX-Hydro" : "Copernicus DEM GLO-30");
               if (b?.rain_month_mm) fonti.push("NASA POWER");
+              const lv = river?.extra?.levels && !river.extra.levels.error ? river.extra.levels : null;
+              if (lv) fonti.push(lv.source);
+              if (RV.src !== "meas" && RV.src !== "basin") fb.push({ p: river?.risk === "p10"
+                ? tx("Il bilancio è fatto sull'anno secco 1 su 10: per ogni mese la portata media superata in 9 anni su 10 della serie.")
+                : river?.risk === "mean" ? tx("Il bilancio è fatto sull'anno medio: per ogni mese la portata media della serie, senza margine per gli anni secchi.")
+                : tx("Il bilancio è fatto sulla magra tipica: per ogni mese la portata superata 4 anni su 5.") });
+              if (lv) fb.push({ p: tx("Dall'altimetria satellitare il livello dell'acqua presso la presa va da {a} m s.l.m. in magra a {b} m s.l.m. in piena (escursione {e} m): ne dipendono la quota di aspirazione delle pompe e l'opera di presa, da confermare con un rilievo.", { a: fx(Math.min(...lv.low), { maximumFractionDigits: 1 }), b: fx(Math.max(...lv.high), { maximumFractionDigits: 1 }), e: fx(Math.max(...lv.high) - Math.min(...lv.low), { maximumFractionDigits: 1 }) }) });
+              if ((b as { rain_at?: string } | undefined)?.rain_at === "bacino" && b?.rain_month_mm) fb.push({ p: tx("Sul bacino a monte cadono in media {r} mm di pioggia l'anno (NASA POWER, media su più punti della rete).", { r: n0(b.rain_month_mm.reduce((a, x) => a + x, 0)) }) });
               if (fonti.length) fb.push({ p: tx("Fonti dei dati: {f}.", { f: fonti.join("; ") }) }); }
             fb.push({ table: { header: [tx("Mese"), tx("Media") + " (m³/s)", tx("Magra") + " (m³/s)", tx("Prelevabile") + " (l/s)", tx("Fabbisogno lordo") + " (m³)", tx("Ore di prelievo")],
               rows: RV.bal.rows.map((r, i) => [monthLong(i), ff(RV.mMean[i]), ff(RV.mLow[i]), n0(RV.avail[i]), r.needM3 > 0 ? n0(r.needM3) : "—", r.needM3 > 0 ? (Number.isFinite(r.hours) ? n1(r.hours) : "∞") : "—"]) } });

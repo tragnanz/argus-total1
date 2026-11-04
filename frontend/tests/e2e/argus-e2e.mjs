@@ -305,6 +305,10 @@ try {
     const qc = c && k ? c.month_mean.reduce((a, q, i) => a + q * k.f_month[i], 0) / 12 : 0;
     ok(!!c && c.area_km2 > 1.5e6 && k?.station?.name === "Dongola" && qc > 1500 && qc < 3500 && (k.station.path?.length ?? 0) > 10,
       `Fiume: GEOGLOWS corretto con la stazione sullo stesso fiume (Nilo a Shendi ${Math.round(c?.mean ?? 0)} → ${Math.round(qc)} m³/s con ${k?.station?.name ?? "—"})`); }
+  { const x = await fetch(`${API}/project/river-extra?lat=16.69&lon=33.43`, { headers: { Authorization: `Bearer ${tok}` } }).then((r) => r.json()).catch(() => ({}));
+    const rain = (x.basin_rain?.rain_month_mm ?? []).reduce((a, b) => a + b, 0), lv = x.levels;
+    ok((x.forecast?.days?.length ?? 0) >= 10 && rain > 300 && !!lv && Math.max(...lv.high) > Math.min(...lv.low),
+      `Fiume: previsione ${x.forecast?.days?.length ?? 0} giorni, piogge sul bacino ${Math.round(rain)} mm, livelli ${lv ? Math.min(...lv.low).toFixed(1) + "–" + Math.max(...lv.high).toFixed(1) + " m" : "—"}`); }
   // portate misurate dall'ente: 12 medie mensili inserite a mano sostituiscono GloFAS
   await page.locator("[data-river] select").first().selectOption("-2"); await page.waitForTimeout(400);
   await page.locator("[data-river-meas] textarea").fill("3,1 3,4 3,0 2,6 2,2 1,6 1,1 0,9 1,2 1,9 2,8 3,2"); await page.locator('[data-river-meas] button:has-text("Applica")').click(); await page.waitForTimeout(600);
