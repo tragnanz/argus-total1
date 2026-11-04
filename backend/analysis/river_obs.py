@@ -57,7 +57,7 @@ def candidates(lat: float, lon: float, q_ref: float, radius_km: float = 800.0, k
     Il margine è ampio (1/12 … 3×) perché GloFAS stesso può sbagliare di volte."""
     out = []
     for s in stations():
-        if abs(s["lat"] - lat) > radius_km / 100 or s["mean"] <= 0:
+        if abs(s["lat"] - lat) > radius_km / 100 or s["mean"] <= 0 or (s.get("n", 0) < 10 and s["src"] != "kzh"):   # almeno 10 anni di misure
             continue
         d = _dist_km(lat, lon, s["lat"], s["lon"])
         if d > radius_km or not (q_ref / 12 <= s["mean"] <= q_ref * 3):

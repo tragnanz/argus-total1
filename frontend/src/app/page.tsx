@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.232";
+const REV = "v0.6.233";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3896,7 +3896,8 @@ export default function Page() {
                 <label className="flex items-start gap-1.5">
                   <input type="checkbox" className="mt-0.5" checked={!river.corrOff} onChange={(e) => setRiver({ ...river, corrOff: !e.target.checked })} />
                   <span>{t("Corretta con la stazione misurata {s} ({r}, {d} km): osservati {o} m³/s contro {g} m³/s del modello, fattore {f}", { s: cc.station.name, r: cc.station.river, d: fmt(Math.round(cc.station.dist_km)), o: f1(cc.obs_mean), g: f1(cc.sim_mean), f: fmt(cc.f_year, { maximumFractionDigits: 2 }) })}
-                    <span className="block text-[10px] text-sage-dark">{cc.station.source} · {cc.station.years.join("–")}</span></span>
+                    <span className="block text-[10px] text-sage-dark">{cc.station.source} · {t("misure {a}, modello {b}", { a: cc.station.years.join("–"), b: (river.pick >= 100 ? d.geoglows?.period : d.glofas.period)?.join("–") ?? "" })}
+                      {cc.station.years[1] < 1994 && <span className="text-rust"> · {t("misure più vecchie del periodo del modello: se nel frattempo sono cambiate dighe o prelievi il fattore ne risente")}</span>}</span></span>
                 </label>
               </div>
             ) : null; })()}

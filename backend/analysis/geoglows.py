@@ -159,7 +159,7 @@ def correction(reach: dict, radius_km: float = 800.0) -> dict | None:
     best = None
     cand = []
     for s in stations():
-        if abs(s["lat"] - reach["lat"]) > radius_km / 100 or s["mean"] <= 0:
+        if abs(s["lat"] - reach["lat"]) > radius_km / 100 or s["mean"] <= 0 or (s.get("n", 0) < 10 and s["src"] != "kzh"):   # almeno 10 anni di misure
             continue
         sa = float(s.get("area") or 0)
         if sa > 0 and not (a0 / 4 <= sa <= a0 * 4):
