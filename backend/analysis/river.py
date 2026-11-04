@@ -182,7 +182,7 @@ def _window(client, lon: float, lat: float, half_m: float, px: int):
     return dem, dict(minx=minx, maxy=maxy, res=res, to_wgs=to_wgs, x0=x0, y0=y0)
 
 
-def basin(client, lon: float, lat: float, snap_m: float = 500.0) -> dict:
+def basin(client, lon: float, lat: float, snap_m: float = 1000.0) -> dict:
     """Bacino che drena fino alla presa (superficie km², sbocco, contorno)."""
     key = ("basin", round(lat, 4), round(lon, 4))
     hit = _cache_get(key)

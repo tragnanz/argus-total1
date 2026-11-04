@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.224";
+const REV = "v0.6.225";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3843,7 +3843,8 @@ export default function Page() {
       let pick = d.glofas.pick;
       // con un bacino misurato (non troncato) si propone la cella GloFAS più coerente con le piogge del bacino
       const b = d.basin;
-      if (b?.area_km2 && !b.truncated && b.rain_month_mm?.length === 12 && d.glofas.cells.length) {
+      // (solo con un bacino vero: sotto 20 km² lo sbocco è un fosso vicino alla presa, non il fiume)
+      if (b?.area_km2 && b.area_km2 >= 20 && !b.truncated && b.rain_month_mm?.length === 12 && d.glofas.cells.length) {
         const qb = b.rain_month_mm.reduce((a, r) => a + r, 0) / 1000 * b.area_km2 * 1e6 * 0.2 / (365 * 86400);
         if (qb > 0) pick = d.glofas.cells.map((c, i) => ({ i, e: Math.abs(Math.log(c.mean / qb)) })).sort((x, y) => x.e - y.e)[0].i;
       }
