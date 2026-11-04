@@ -299,6 +299,11 @@ try {
   const rvTxt = await page.locator("[data-river]").first().innerText().catch(() => "");
   ok(/prelevabile/i.test(rvTxt) && /km²/.test(rvTxt), `Fonte: portata del fiume alla presa e bilancio mese per mese (${(rvTxt.match(/Portata media[^·]*/) || [""])[0].trim()})`);
   if (process.env.ARGUS_SHOT_RIVER) await page.screenshot({ path: process.env.ARGUS_SHOT_RIVER });
+  // portate misurate dall'ente: 12 medie mensili inserite a mano sostituiscono GloFAS
+  await page.locator("[data-river] select").first().selectOption("-2"); await page.waitForTimeout(400);
+  await page.locator("[data-river-meas] textarea").fill("3,1 3,4 3,0 2,6 2,2 1,6 1,1 0,9 1,2 1,9 2,8 3,2"); await page.locator('[data-river-meas] button:has-text("Applica")').click(); await page.waitForTimeout(600);
+  const rvMeas = await page.locator("[data-river]").first().innerText().catch(() => "");
+  ok(/12 medie mensili inserite/.test(rvMeas) && /Portata media 2,24 m³\/s/.test(rvMeas), `Fonte: portate misurate dall'ente al posto di GloFAS (${(rvMeas.match(/Portata media [\d,]+ m³\/s/) || [""])[0]})`);
   // Irrigazione: suolo dal satellite, ruscellamento pivot per pivot e programma irriguo mensile
   await page.locator('button[title="Irrigazione"]').first().click(); await page.waitForTimeout(1200);
   await page.locator("[data-soil] button").first().click();
@@ -308,12 +313,26 @@ try {
   ok((await page.locator("[data-runoff] tbody tr").count()) >= 1, "Ruscellamento pivot per pivot con gli irrigatori reali");
   const prgTxt = await page.locator("[data-program]").first().innerText().catch(() => "");
   ok(/timer/.test(prgTxt) && /giri\/sett/.test(prgTxt), "Programma irriguo mese per mese (dose, timer, giri)");
+  await page.locator("h3:has-text('Fertirrigazione') input[type=checkbox]").check(); await page.waitForTimeout(500);
+  const feTxt = await page.locator("[data-fert]").first().innerText().catch(() => "");
+  ok(/l\/h/.test(feTxt) && /serbatoio/i.test(feTxt), "Fertirrigazione: prodotto, pompa dosatrice e serbatoio");
+  await page.locator("[data-ndvi] button").first().click();
+  await page.locator("[data-ndvi] table").first().waitFor({ timeout: 60000 }).catch(() => {});
+  ok((await page.locator("[data-ndvi] tbody tr").count()) >= 1, "NDVI dei pivot da Sentinel-2 (media, uniformità, anelli)");
+  await page.locator('button[title="Tubazioni"]').first().click(); await page.waitForTimeout(1000);
+  if (!(await page.locator("[data-hammer]").count())) { await page.locator('button:has-text("Calcola diametri")').first().click().catch(() => {}); await page.waitForTimeout(2500); }
+  const whTxt = await page.locator("[data-hammer]").first().innerText().catch(() => "");
+  ok(/PN/.test(whTxt) && /Celerità/.test(whTxt), "Colpo d'ariete all'arresto delle pompe (ΔH, PN, tempo di chiusura)");
   if (process.env.ARGUS_SHOT_IRR) await page.screenshot({ path: process.env.ARGUS_SHOT_IRR });
   // Rilievo: fossi di scolo dei campi
   await page.locator('button[title="Rilievo"]').first().click(); await page.waitForTimeout(1000);
   await page.locator("[data-drain] input[type=checkbox]").first().check(); await page.waitForTimeout(800);
   const drTxt = await page.locator("[data-drain]").first().innerText().catch(() => "");
   ok(/F1/.test(drTxt) && /l\/s/.test(drTxt) && /m³/.test(drTxt), "Fossi di scolo dei campi dimensionati");
+  await page.locator('[data-drain] button:has-text("quote del perimetro")').click();
+  await page.locator('[data-drain] :text("sbocco a quota")').first().waitFor({ timeout: 60000 }).catch(() => {});
+  const drTxt2 = await page.locator("[data-drain]").first().innerText().catch(() => "");
+  ok(/sbocco a quota/.test(drTxt2) && (await page.locator("path.hy-ditch").count()) >= 1, "Fossi di scolo sul DEM: sbocco nel punto più basso e fossi sulla mappa");
   // Esporta: planimetria DXF
   await page.locator('[title="Esporta"], button:has-text("Esporta")').first().click(); await page.waitForTimeout(800);
   const dxf = await readBytes(await download(() => page.locator('button:has-text("Planimetria DXF")').click(), "DXF"));

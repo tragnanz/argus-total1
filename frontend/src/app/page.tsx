@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.223";
+const REV = "v0.6.224";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -1313,7 +1313,14 @@ export default function Page() {
   const [cuModel, setCuModel] = useState("kpt_black");   // irrigatori del calcolo di uniformità (Nereus pag. 18)
   const cuMemo = useRef(new Map<string, CuResult | null>());
   // Fossi di scolo dei campi (Nereus pag. 17, scheda «Fosso»): coefficiente di drenaggio in mm/24h
+  // Fertirrigazione: prodotto liquido, dose di N per intervento, interventi per stagione
+  const FERTS = [{ k: "uan32", label: "UAN 32 (soluzione azotata 32% N)", n: 32, rho: 1.32 }, { k: "an20", label: "Nitrato ammonico liquido (20% N)", n: 20, rho: 1.27 },
+    { k: "urea20", label: "Urea in soluzione (20% N)", n: 20, rho: 1.13 }, { k: "custom", label: "Altro prodotto", n: 15, rho: 1.2 }] as const;
+  const [fert, setFert] = useState<{ on: boolean; k: string; n: number; rho: number; dose: number; times: number }>({ on: false, k: "uan32", n: 32, rho: 1.32, dose: 30, times: 6 });
+  const [ndvi, setNdvi] = useState<(api.NdviOut & { sig: string }) | null>(null);   // ultima lettura NDVI dei pivot
   const [drainOn, setDrainOn] = useState(false);
+  // quote del perimetro di ogni campo (DEM), punti ogni ~25 m: { pts [lng, lat], z }
+  const [drainProf, setDrainProf] = useState<Record<string, { pts: number[][]; z: (number | null)[] }>>({});
   const [drainC, setDrainC] = useState(12.96);         // mm/24h = 1,5 l/s·ha
   const [drainS, setDrainS] = useState(2);             // pendenza del fondo (‰)
   const [drainB, setDrainB] = useState(0.5);           // base del fosso (m)
@@ -1368,7 +1375,7 @@ export default function Page() {
   const [effPct, setEffPct] = useState(85);          // efficienza dell'impianto (%)
   // Etichette sulla mappa con superficie e portata di ogni pivot (spegnibili).
   // Vista mappa: etichette e livelli nascosti (per utente, nel browser)
-  const MAP_VIEW = [["field", "Nomi di campi e punti"], ["pivot", "Ettari e portata dei pivot"], ["stn", "Sigle delle stazioni"], ["solar", "Etichette kWp"], ["mod", "Pannelli FV"], ["tara", "Tara FV"]] as const;
+  const MAP_VIEW = [["field", "Nomi di campi e punti"], ["pivot", "Ettari e portata dei pivot"], ["stn", "Sigle delle stazioni"], ["solar", "Etichette kWp"], ["mod", "Pannelli FV"], ["tara", "Tara FV"], ["basin", "Bacino del fiume"], ["ditch", "Fossi di scolo"]] as const;
   const [mapHide, setMapHide] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem("argus.mapHide") || "[]"); } catch { return []; } });
   useEffect(() => {
     try { localStorage.setItem("argus.mapHide", JSON.stringify(mapHide)); } catch { /* */ }
@@ -1414,7 +1421,9 @@ export default function Page() {
   const [srcMonthly, setSrcMonthly] = useState<number[] | null>(null); // livello minimo mese per mese (m sotto il punto di presa)
   const [srcSectors, setSrcSectors] = useState(0);                   // settori di rilancio (0 = automatico)
   // Portata del fiume alla presa (GloFAS + bacino dal DEM) e quota da lasciare al fiume
-  type RiverSt = { data: api.RiverOut; pick: number; dmv: number; c: number };
+  // meas: portate misurate dall'ente (pick = -2): medie e magre mensili in m³/s, con la fonte del dato
+  type RiverMeas = { mean: number[]; low: number[]; q347?: number; days?: number; years?: string[]; note?: string };
+  type RiverSt = { data: api.RiverOut; pick: number; dmv: number; c: number; meas?: RiverMeas | null };
   const [river, setRiver] = useState<RiverSt | null>(null);
   const [bankSlope, setBankSlope] = useState(2);                     // pendenza della sponda (orizzontale : verticale)
   const [settleMm, setSettleMm] = useState(0.1);                     // particella da sedimentare (mm)
@@ -3766,7 +3775,10 @@ export default function Page() {
     if (!rv) return null;
     const cell = rv.pick >= 0 ? rv.data.glofas.cells[rv.pick] : null, b = rv.data.basin;
     let mean: number, mMean: number[], mLow: number[], src: string;
-    if (cell) { mean = cell.mean; mMean = cell.month_mean; mLow = cell.month_q80; src = "glofas"; }
+    if (rv.pick === -2 && rv.meas && rv.meas.mean.length === 12) {
+      mMean = rv.meas.mean; mLow = rv.meas.low.length === 12 ? rv.meas.low : rv.meas.mean.map((x) => x * 0.5);
+      mean = mMean.reduce((a, x, i) => a + x * MDAYS[i], 0) / 365; src = "meas";
+    } else if (cell) { mean = cell.mean; mMean = cell.month_mean; mLow = cell.month_q80; src = "glofas"; }
     else if (b?.area_km2 && b.rain_month_mm?.length === 12) {
       mMean = b.rain_month_mm.map((r, i) => (b.area_km2! * 1e6 * (r / 1000) * rv.c) / (MDAYS[i] * 86400));
       mean = mMean.reduce((a, x, i) => a + x * MDAYS[i], 0) / 365; mLow = mMean.map((x) => x * 0.5); src = "basin";
@@ -3792,6 +3804,37 @@ export default function Page() {
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srcType, srcPt, projectId, river]);
+  // Portate misurate: CSV giornaliero (data;valore) → medie e magre mensili come GloFAS; oppure 12 valori
+  // mensili (uno per mese, gennaio→dicembre), opzionalmente seguiti da 12 valori di magra. Unità m³/s (o l/s se indicato).
+  function parseRiverMeas(text: string, unitLs: boolean): RiverMeas | null {
+    const k = unitLs ? 0.001 : 1, lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const daily: { m: number; y: string; v: number }[] = [];
+    for (const l of lines) {
+      const mm = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})[\s;,\t]+(-?[\d.,]+)/.exec(l) ?? /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})[\s;,\t]+(-?[\d.,]+)/.exec(l);
+      if (!mm) continue;
+      const iso = mm[1].length === 4, y = iso ? mm[1] : mm[3], m = Number(iso ? mm[2] : mm[2]) - 1, v = Number(mm[4].replace(",", ".")) * k;
+      if (m >= 0 && m < 12 && Number.isFinite(v) && v >= 0) daily.push({ m, y, v });
+    }
+    if (daily.length >= 60) {
+      const pct = (a: number[], p: number) => { const s2 = [...a].sort((x, y2) => x - y2); return s2.length ? s2[Math.min(s2.length - 1, Math.floor((p / 100) * (s2.length - 1)))] : 0; };
+      const by = MDAYS.map((_, i) => daily.filter((d) => d.m === i).map((d) => d.v));
+      if (by.some((a) => !a.length)) return null;
+      const ys = [...new Set(daily.map((d) => d.y))].sort();
+      return { mean: by.map((a) => a.reduce((s2, x) => s2 + x, 0) / a.length), low: by.map((a) => pct(a, 20)), q347: pct(daily.map((d) => d.v), 5), days: daily.length, years: [ys[0], ys[ys.length - 1]] };
+    }
+    const nums = text.replace(/(\d),(\d)/g, "$1.$2").split(/[\s;\t\n]+/).map(Number).filter((x) => Number.isFinite(x) && x >= 0).map((x) => x * k);
+    if (nums.length >= 24) return { mean: nums.slice(0, 12), low: nums.slice(12, 24) };
+    if (nums.length >= 12) return { mean: nums.slice(0, 12), low: [] };
+    return null;
+  }
+  const [measText, setMeasText] = useState("");
+  const [measLs, setMeasLs] = useState(false);
+  function applyRiverMeas(text: string, note?: string) {
+    const m = parseRiverMeas(text, measLs);
+    if (!m) { setMsg(t("Portate non riconosciute: servono 12 valori mensili (gennaio→dicembre) o un CSV giornaliero data;valore.")); return; }
+    setRiver((r) => (r ? { ...r, pick: -2, meas: { ...m, note } } : { data: { lat: srcPt?.[1] ?? 0, lon: srcPt?.[0] ?? 0, glofas: { cells: [], pick: -1 } }, pick: -2, dmv: 10, c: 0.2, meas: { ...m, note } }));
+    setMsg(t("Portate misurate applicate ✓"));
+  }
   async function estimateRiver() {
     if (!srcPt) return;
     setBusy("river");
@@ -3827,7 +3870,21 @@ export default function Page() {
               <select className="field-input mt-0.5 py-1 text-[12px]" value={river.pick} onChange={(e) => setRiver({ ...river, pick: Number(e.target.value) })}>
                 {d.glofas.cells.map((c, i) => <option key={i} value={i}>GloFAS · {t("cella a {d} km", { d: fmt(c.dist_km, { maximumFractionDigits: 1 }) })} · {t("media")} {f1(c.mean)} m³/s</option>)}
                 {b?.area_km2 && b.rain_month_mm && <option value={-1}>{t("Metodo del bacino (piogge × coefficiente di deflusso)")}</option>}
+                <option value={-2}>{river.meas ? t("Portate misurate dall'ente") + (river.meas.years ? ` · ${river.meas.years.join("–")}` : "") : t("Portate misurate dall'ente (da inserire)")}</option>
               </select></label>
+            {river.pick === -2 && (
+              <div className="col-span-3 space-y-1" data-river-meas>
+                <textarea className="field-input w-full text-[11px] font-mono" rows={3} value={measText} onChange={(e) => setMeasText(e.target.value)}
+                  placeholder={t("12 portate medie mensili (gen→dic), eventualmente seguite da 12 portate di magra; oppure un CSV giornaliero «data;portata»")} />
+                <div className="flex items-center gap-2 text-[11px] text-sage-dark">
+                  <label className="flex items-center gap-1"><input type="checkbox" checked={measLs} onChange={(e) => setMeasLs(e.target.checked)} />{t("valori in l/s")}</label>
+                  <button className="btn-ghost text-[11px] py-0.5 ml-auto" disabled={!measText.trim()} onClick={() => applyRiverMeas(measText)}>{t("Applica")}</button>
+                  <label className="btn-ghost text-[11px] py-0.5 cursor-pointer">{t("Importa CSV")}
+                    <input type="file" accept=".csv,.txt" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (f) { const tx2 = await f.text(); setMeasText(tx2.slice(0, 200000)); applyRiverMeas(tx2, f.name); } e.target.value = ""; }} /></label>
+                </div>
+                {river.meas && <p className="text-[10px] text-sage-dark">{t("In uso: {n}", { n: river.meas.days ? t("{d} giorni misurati ({y})", { d: fmt(river.meas.days), y: (river.meas.years ?? []).join("–") }) : t("12 medie mensili inserite") })}{river.meas.note ? ` · ${river.meas.note}` : ""}</p>}
+              </div>
+            )}
             <label className="text-[11px] text-sage-dark" title={t("Deflusso minimo da lasciare in alveo, in percentuale della portata media (es. 10%): va verificato con l'ente che rilascia la concessione.")}>{t("Da lasciare al fiume (%)")}
               <input type="number" min={0} max={100} step={1} value={river.dmv} onChange={(e) => setRiver({ ...river, dmv: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
             {river.pick < 0 && <label className="text-[11px] text-sage-dark" title={t("Quota della pioggia che arriva al fiume: 0,1 terreni permeabili e clima arido, 0,3–0,5 bacini montani e argillosi.")}>{t("Coeff. di deflusso")}
@@ -3892,7 +3949,7 @@ export default function Page() {
             </div>
             <button className="btn-ghost w-full text-[12px]" disabled={R.qMin <= 0 || srcQmax === R.qMin} onClick={() => setSrcQmax(R.qMin)}
               title={t("Imposta come portata disponibile il prelevabile del mese irriguo più scarso.")}>{t("Usa {q} l/s come portata disponibile", { q: fmt(R.qMin) })}</button>
-            <p className="text-[10px] text-sage-dark leading-snug text-justify">{R.src === "glofas"
+            <p className="text-[10px] text-sage-dark leading-snug text-justify">{R.src === "meas" ? t("Portate misurate dall'ente: sostituiscono la stima GloFAS nel bilancio del fiume.") : R.src === "glofas"
               ? t("Rianalisi GloFAS a ~5 km: sui fiumi grandi è affidabile, sui torrenti e vicino a dighe o derivazioni va confrontata con le misure dell'ente gestore. «Magra» = portata superata l'80% dei giorni del mese.")
               : t("Stima di larga massima dalle piogge medie del bacino: la magra è posta a metà della media mensile. Da confrontare con misure di portata.")}</p>
           </>)}
@@ -3991,10 +4048,119 @@ export default function Page() {
       const ring = f.geom.coordinates[0], ha = ringAreaHa(f.geom.coordinates);
       const L = ring.reduce((a, p, k) => a + (k ? distM(ring[k - 1], p) : 0), 0);
       const q = (drainC * ha * 10) / 86.4;
+      const base = { f, n: i + 1, ha, L, q, ring };
+      const pr = drainProf[String(f.id)];
+      // con le quote: sbocco nel punto più basso, spartiacque nel più alto, due rami lungo il perimetro;
+      // ogni ramo in 3 tratti, sezione per la portata a valle del tratto e pendenza dal terreno (minimo quella impostata)
+      if (pr && pr.z.filter((z) => z != null).length >= 6) {
+        const n = pr.pts.length, z = pr.z.map((v, k) => v ?? pr.z.slice(0, k).reverse().find((x) => x != null) ?? pr.z.find((x) => x != null) ?? 0) as number[];
+        const iOut = z.indexOf(Math.min(...z)), iTop = z.indexOf(Math.max(...z));
+        const seg = (k: number) => distM(pr.pts[k], pr.pts[(k + 1) % n]);
+        const walk = (dir: 1 | -1) => { const idx: number[] = [iTop]; let k = iTop; while (k !== iOut) { k = (k + dir + n) % n; idx.push(k); } return idx; };
+        const reaches: { L: number; q: number; S: number; sec: CanalSection | null; cut: number; z0: number; z1: number }[] = [];
+        const qPerM = q / Math.max(1, L);
+        for (const dir of [1, -1] as const) {
+          const idx = walk(dir); let acc = 0; const cum = [0];
+          for (let k = 1; k < idx.length; k++) { acc += dir === 1 ? seg(idx[k - 1]) : seg(idx[k]); cum.push(acc); }
+          const Lb = acc; if (Lb < 1) continue;
+          for (let r = 0; r < 3; r++) {
+            const a = (r * Lb) / 3, b2 = ((r + 1) * Lb) / 3, ia = cum.findIndex((c) => c >= a), ib = cum.findIndex((c) => c >= b2 - 1e-6);
+            const z0 = z[idx[Math.max(0, ia)]], z1 = z[idx[ib < 0 ? idx.length - 1 : ib]], Lr = b2 - a;
+            const S = Math.max(drainS, ((z0 - z1) / Math.max(1, Lr)) * 1000);
+            const sec = designCanal(qPerM * b2, S, "grass", { b: drainB, m: 1.5, fb: 0.3 });
+            reaches.push({ L: Lr, q: qPerM * b2, S, sec, cut: sec ? (sec.b + sec.m * sec.H) * sec.H * Lr : 0, z0, z1 });
+          }
+        }
+        const sec = designCanal(q, Math.max(drainS, Math.min(...reaches.map((r) => r.S))), "grass", { b: drainB, m: 1.5, fb: 0.3 });
+        return { ...base, sec, cut: reaches.reduce((a, r) => a + r.cut, 0), dem: true as const, outlet: pr.pts[iOut], zOut: z[iOut], zTop: z[iTop], reaches,
+          sMean: (L > 0 ? ((z[iTop] - z[iOut]) / (L / 2)) * 1000 : 0) };
+      }
       const sec = designCanal(q, Math.max(0.1, drainS), "grass", { b: drainB, m: 1.5, fb: 0.3 });
       const A = sec ? (sec.b + sec.m * sec.H) * sec.H : 0;
-      return { f, n: i + 1, ha, L, q, sec, cut: A * L, ring };
+      return { ...base, sec, cut: A * L, dem: false as const, outlet: null as number[] | null, zOut: null as number | null, zTop: null as number | null, reaches: [] as { L: number; q: number; S: number; sec: CanalSection | null; cut: number; z0: number; z1: number }[], sMean: 0 };
     });
+  }
+  // bacino e fossi di scolo sulla mappa
+  useEffect(() => {
+    const b = river?.data.basin;
+    mapApi.current?.setHydro?.({ basin: b?.ring ?? null, basinLabel: b?.area_km2 ? `${t("Bacino a monte della presa")}: ${b.truncated ? "≥ " : ""}${fmt(b.area_km2, { maximumFractionDigits: 1 })} km²` : undefined,
+      ditches: drainCalcs().map((d) => ({ ring: drainProf[String(d.f.id)]?.pts ? [...drainProf[String(d.f.id)].pts, drainProf[String(d.f.id)].pts[0]] : d.ring, outlet: d.outlet, label: `F${d.n} · ${fmt(Math.round(d.q))} l/s${d.sec ? ` · b ${fmt(d.sec.b, { maximumFractionDigits: 2 })} m · y ${fmt(d.sec.y, { maximumFractionDigits: 2 })} m` : ""}` })) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [river, drainOn, drainC, drainS, drainB, drainProf, fields, pivots]);
+  // ---- NDVI DEI PIVOT DAL SATELLITE ------------------------------------------------
+  const pivSig = () => pivots.map((p) => `${p.lat.toFixed(5)},${p.lng.toFixed(5)},${Math.round(p.r)}`).join("|");
+  async function readNdvi() {
+    if (!pivots.length) return;
+    setBusy("ndvi");
+    try {
+      const r = await api.pivotNdvi(pivots.map((p) => ({ lat: p.lat, lng: p.lng, r: p.r, deg: p.deg, az: p.az })));
+      setNdvi({ ...r, sig: pivSig() }); setMsg(t("NDVI letto dalla scena Sentinel-2 del {d} ✓", { d: r.date }));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  // ---- FERTIRRIGAZIONE ------------------------------------------------------------
+  // Per ogni pivot diverso: prodotto per intervento (kg e litri), iniezione distribuita su un giro
+  // del mese di punta, portata della pompa dosatrice, concentrazione di N nell'acqua; serbatoio per
+  // un intervento su tutti i pivot con il 20% di scorta, prodotto della stagione.
+  function fertCalc() {
+    if (!fert.on || !pivots.length) return null;
+    const IP = irrigProgram(), Tpeak = IP ? Math.max(1, ...IP.rows.map((r) => r.T)) : hoursDay;
+    const groups = new Map<string, { names: string[]; ha: number; q: number; T: number }>();
+    pivots.forEach((pv, k) => {
+      const ha = pvAreaM2(pv) / 1e4, q = pivotFlow(pv) * 3.6, T = IP ? Tpeak * (pv.r / IP.pv.r) : Tpeak;      // giro proporzionale al raggio
+      const key = `${Math.round(ha * 10)}|${Math.round(q)}`, g = groups.get(key);
+      if (g) g.names.push(`P${k + 1}`); else groups.set(key, { names: [`P${k + 1}`], ha, q, T });
+    });
+    const rows = [...groups.values()].map((g) => {
+      const kgN = fert.dose * g.ha, kg = kgN / (fert.n / 100), l = kg / fert.rho;
+      const ppm = (kgN * 1000) / Math.max(1, g.q * g.T);                  // g/m³ = mg/l di N
+      return { ...g, kgN, kg, l, lh: l / g.T, ppm };
+    });
+    const lAll = rows.reduce((a, r) => a + r.l * r.names.length, 0);
+    return { rows, lAll, tank: Math.ceil((lAll * 1.2) / 500) * 500, season: lAll * fert.times, kgSeason: rows.reduce((a, r) => a + r.kg * r.names.length, 0) * fert.times, nPumps: pivots.length };
+  }
+  // ---- COLPO D'ARIETE (arresto improvviso delle pompe) --------------------------
+  // Joukowsky ΔH = a·Δv/g con celerità dell'onda per tubo in PE100 SDR17 (a = 1425/√(1 + K/E·SDR),
+  // K acqua 2,07 GPa, E PE100 ≈ 1,0 GPa a breve termine). Δv = velocità di esercizio (la colonna si ferma).
+  // Massimo = prevalenza di esercizio + ΔH; minimo = prevalenza − ΔH (sotto −5 m rischio di cavitazione).
+  function waterHammer() {
+    const H = hydraNow(); if (!H?.lines?.length) return null;
+    const a = 1425 / Math.sqrt(1 + (2.07 / 1.0) * 17), g = 9.81;
+    const byDn = new Map<number, { v: number; L: number }>();
+    let Lmax = 0;
+    for (const [, dns, lens, qs] of H.lines) {
+      let Ll = 0;
+      dns.forEach((dn, k) => {
+        const L = lens[k] ?? 0; Ll += L; if (!dn) return;
+        const Di = (dn * (1 - 2 / 17)) / 1000, v = ((qs?.[k] ?? 0) / 1000) / ((Math.PI * Di * Di) / 4);
+        const e = byDn.get(dn) ?? { v: 0, L: 0 }; e.v = Math.max(e.v, v); e.L += L; byDn.set(dn, e);
+      });
+      Lmax = Math.max(Lmax, Ll);
+    }
+    const Hop = Math.max(10, H.headMax);
+    const rows = [...byDn.entries()].sort((x, y) => y[0] - x[0]).map(([dn, e]) => {
+      const dH = (a * e.v) / g, hMax = Hop + dH, hMin = Hop - dH;
+      const pn = [6, 10, 16, 20, 25].find((p) => p * 10.2 >= hMax) ?? 25;
+      return { dn, v: e.v, L: e.L, dH, hMax, hMin, pn, over: hMax > 10 * 10.2, vac: hMin < -5 };
+    });
+    const tCrit = (2 * Lmax) / a;
+    return { a, Hop, rows, Lmax, tCrit, over: rows.some((r) => r.over), vac: rows.some((r) => r.vac), dHmax: Math.max(0, ...rows.map((r) => r.dH)) };
+  }
+  async function readDrainDem() {
+    const used = new Set<number>(pivots.map((p) => p.field).filter((x): x is number => x != null));
+    const fs = fields.filter((f) => !used.size || used.has(f.id));
+    if (!fs.length) return needField();
+    setBusy("drainDem");
+    try {
+      const out: Record<string, { pts: number[][]; z: (number | null)[] }> = {};
+      for (const f of fs) {
+        const ring = f.geom.coordinates[0].slice(); if (ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]) ring.pop();
+        const L = ring.reduce((a, p, k) => a + distM(p, ring[(k + 1) % ring.length]), 0), step = Math.max(25, L / 200), pts: number[][] = [];
+        ring.forEach((p, k) => { const q = ring[(k + 1) % ring.length], d = distM(p, q), m = Math.max(1, Math.round(d / step)); for (let j = 0; j < m; j++) pts.push([p[0] + ((q[0] - p[0]) * j) / m, p[1] + ((q[1] - p[1]) * j) / m]); });
+        const r = await api.fetchElevation(pts);
+        out[String(f.id)] = { pts: pts.map((p) => [Math.round(p[0] * 1e6) / 1e6, Math.round(p[1] * 1e6) / 1e6]), z: r.points.map((x) => (x.elev_m == null ? null : Math.round(x.elev_m * 100) / 100)) };
+      }
+      setDrainProf(out); setMsg(t("Quote del perimetro lette dal DEM ✓"));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   // Sezione e movimenti di terra di ogni canale visibile (pendenza di progetto = target del tracciato)
   function canalCalcs() {
@@ -4104,6 +4270,13 @@ export default function Page() {
         if (k.ew.fill > 1) R.push({ cat: cC, key: "canal", item: tx("{n}: rilevato degli argini", { n: nm }), qty: Math.round(k.ew.fill), unit: "m³" });
         if (k.sec && (k.sec.lin === "concr" || k.sec.lin === "liner" || k.sec.lin === "stone"))
           R.push({ cat: cC, key: "canal", item: tx("{n}: rivestimento in {lin}", { n: nm, lin: tx(lining(k.sec.lin).label).toLowerCase() }), qty: Math.round(k.ew.linedM2), unit: "m²" });
+      }
+    }
+    { const FC = common ? fertCalc() : null;
+      if (FC) {
+        const cFe = tx("Fertirrigazione");
+        R.push({ cat: cFe, key: "fert", item: tx("Pompa dosatrice per fertirrigazione"), qty: FC.nPumps, unit: tx("n."), note: `${fx(Math.max(...FC.rows.map((r) => r.lh)), { maximumFractionDigits: 1 })} l/h max` });
+        R.push({ cat: cFe, key: "fert", item: tx("Serbatoio del fertilizzante"), qty: FC.tank, unit: "l" });
       }
     }
     if (common) for (const d of drainCalcs()) {
@@ -5120,7 +5293,9 @@ export default function Page() {
             const b = river?.data.basin, ff = (x: number) => fx(x, { maximumFractionDigits: x < 10 ? 2 : x < 100 ? 1 : 0 });
             fb.push({ h: tx("Portata del fiume alla presa") });
             fb.push({ p: (b?.area_km2 ? tx("Il bacino che drena fino alla presa, ricavato dal modello digitale del terreno, misura {a} km².", { a: (b.truncated ? "≥ " : "") + ff(b.area_km2) }) + " " : "")
-              + (RV.src === "glofas"
+              + (RV.src === "meas"
+                ? tx("La portata è quella misurata dall'ente gestore{y}: portata media {q} m³/s; la magra di ogni mese è {how}.", { y: river?.meas?.years ? ` (${river.meas.years.join("–")})` : "", q: ff(RV.mean), how: river?.meas?.days ? tx("la portata superata l'80% dei giorni del mese") : river?.meas?.low.length === 12 ? tx("quella indicata dall'ente") : tx("posta a metà della media") })
+                : RV.src === "glofas"
                 ? tx("La portata è stimata dalla rianalisi idrologica GloFAS (Copernicus Emergency Management Service) sulla cella del fiume più vicina alla presa, serie giornaliera {y}: portata media {q} m³/s, Q347 {q3} m³/s. La portata di magra di ogni mese è quella superata l'80% dei giorni del mese.", { y: RV.cell!.years.join("–"), q: ff(RV.mean), q3: ff(RV.cell!.q347) })
                 : tx("La portata è stimata dalle piogge medie mensili del bacino con un coefficiente di deflusso di {c}: portata media {q} m³/s. La portata di magra è posta a metà della media del mese.", { c: fx(river!.c), q: ff(RV.mean) }))
               + " " + tx("In alveo restano {p}% della portata media ({d} m³/s); il resto della magra è il prelevabile del mese, da confrontare con il fabbisogno lordo dell'impianto per {h} ore di prelievo al giorno.", { p: fx(river!.dmv), d: ff(RV.dmv), h: n0(srcHours) }) });
@@ -5176,8 +5351,9 @@ export default function Page() {
           if (DR.length) {
             ib.push({ h: tx("Fossi di scolo") });
             ib.push({ p: tx("Ogni campo è circondato da un fosso di scolo che smaltisce {c} mm in 24 ore ({q} l/s per ettaro). Il fosso, in terra inerbita con scarpe 1:1,5 e pendenza di fondo {s}‰, ha la sezione dello sbocco per l'intera portata del campo; lo sbocco va nel punto più basso del perimetro, verso il ricettore.", { c: n2(drainC), q: n2(drainC / 8.64), s: n1(drainS) }) });
-            ib.push({ table: { header: [tx("Fosso"), tx("Campo"), "ha", "l/s", tx("Lunghezza") + " (m)", "b (m)", "y (m)", "v (m/s)", tx("Scavo") + " (m³)"],
-              rows: DR.map((d) => [`F${d.n}`, d.f.name, n1(d.ha), n0(d.q), n0(d.L), n2(d.sec!.b), n2(d.sec!.y), n2(d.sec!.v), n0(d.cut)]) } });
+            if (DR.some((d) => d.dem)) ib.push({ p: tx("Le quote del perimetro sono lette dal modello digitale del terreno: lo sbocco di ogni fosso è nel punto più basso del perimetro, i due rami partono dal punto più alto e la loro sezione cresce verso valle con la portata raccolta; la pendenza di ogni tratto segue il terreno e non scende sotto il valore minimo impostato.") });
+            ib.push({ table: { header: [tx("Fosso"), tx("Campo"), "ha", "l/s", tx("Lunghezza") + " (m)", "b (m)", "y (m)", "v (m/s)", tx("Sbocco") + " (m)", tx("Scavo") + " (m³)"],
+              rows: DR.map((d) => [`F${d.n}`, d.f.name, n1(d.ha), n0(d.q), n0(d.L), n2(d.sec!.b), n2(d.sec!.y), n2(d.sec!.v), d.zOut != null ? n1(d.zOut) : "—", n0(d.cut)]) } });
           }
         }
         ch.push({ title: tx("Infrastrutture idriche esistenti e opere di presa"), blocks: ib });
@@ -5245,6 +5421,14 @@ export default function Page() {
           lb.push({ table: { header: [tx("Stazione"), "l/s", "m", tx("Pompa"), tx("Motore") + " (kW)", "η (%)"], widths: [28, 9, 9, 32, 12, 10],
             rows: stations.map((st) => [st.name, n0(st.qLs), n0(st.head), st.pick ? `${st.nTot > 1 ? `${st.nTot} × ` : ""}Caprari ${st.pick.model}` : "—", st.pick ? n1(st.pick.motor) : n1(st.kW), st.pick ? n0(st.pick.eta) : "—"]) } });
         }
+        { const WH = waterHammer();
+          if (WH) {
+            lb.push({ h: tx("Colpo d'ariete") });
+            lb.push({ p: tx("All'arresto improvviso delle pompe la colonna d'acqua si ferma e genera un'onda di pressione (Joukowsky, ΔH = a·Δv/g). Con tubi in PE100 SDR17 la celerità dell'onda è di circa {a} m/s; sulla prevalenza di esercizio di {h} m la sovrappressione massima è di {d} m. Le valvole vanno chiuse in almeno {t} s (due volte il tempo di percorrenza della linea più lunga).", { a: n0(WH.a), h: n0(WH.Hop), d: n0(WH.dHmax), t: n0(Math.ceil(WH.tCrit)) })
+              + " " + (WH.over || WH.vac ? tx("In alcuni tratti la pressione esce dai limiti del PN10: sono previsti tubi della classe indicata in tabella e una protezione contro il colpo d'ariete (cassa d'aria o valvola anticipatrice) all'uscita della stazione.") : tx("Con le velocità di progetto i tubi PN10 reggono il colpo d'ariete; sono comunque previsti sfiati nei punti alti e avvio e arresto graduali delle pompe.")) });
+            lb.push({ table: { header: ["DN", "v (m/s)", "ΔH (m)", tx("Massimo") + " (m)", tx("Minimo") + " (m)", "PN"], rows: WH.rows.map((r) => [String(r.dn), n2(r.v), n0(r.dH), n0(r.hMax), n0(r.hMin), String(r.pn)]) } });
+          }
+        }
         { const us = pivots.map((pv) => pivotCU(pv)).filter((u): u is CuResult => !!u);
           if (us.length) {
             const lo = Math.min(...us.map((u) => u.CU)), hi = Math.max(...us.map((u) => u.CU)), pk = Math.max(...us.map((u) => u.peak));
@@ -5292,6 +5476,11 @@ export default function Page() {
         ch.push({ title: tx("Gestione e funzionamento"), blocks: [
           { p: tx("Nei mesi di punta l'impianto lavora {h} ore al giorno alla dose di progetto di {mm} mm. Il programma irriguo segue il fabbisogno della coltura, con turni assegnati ai pivot in modo da contenere la potenza impegnata e bilanciare le portate sulla rete.", { h: n1(hoursDay), mm: n1(mmDes) }) },
           { p: tx("Le stazioni di pompaggio sono dotate di quadri di comando e protezione e, dove previsto, di inverter per regolare la portata. La manutenzione ordinaria riguarda pompe, valvole, sfiati e scarichi della rete e le macchine di irrigazione.") },
+          ...((() => { const FC = fertCalc(); if (!FC) return [];
+            const pr = FERTS.find((x) => x.k === fert.k);
+            return [{ h: tx("Fertirrigazione") },
+              { p: tx("Il concime liquido ({p}, {n}% di N, {r} kg/l) è iniettato nella mandata di ogni pivot con una pompa dosatrice, distribuito su un giro intero: {d} kg di N per ettaro a intervento, {t} interventi per stagione. Un intervento su tutti i pivot richiede {l} l di prodotto; il serbatoio previsto è di {v} l.", { p: tx(pr?.label ?? "Altro prodotto"), n: n0(fert.n), r: n2(fert.rho), d: n0(fert.dose), t: n0(fert.times), l: n0(FC.lAll), v: n0(FC.tank) }) },
+              { table: { header: [tx("Pivot"), "ha", tx("Prodotto") + " (l)", tx("Durata del giro") + " (h)", tx("Pompa") + " (l/h)", "N (mg/l)"], rows: FC.rows.map((r) => [r.names.join(", "), n1(r.ha), n0(r.l), n0(r.T), n1(r.lh), n0(r.ppm)]) } }]; })()),
           ...(soilSat ? [{ h: tx("Suolo") }, { p: tx("Il suolo dei campi, dalla banca dati SoilGrids (ISRIC, 250 m, strato 0-30 cm, {n} punti), ha sabbia {s}%, limo {l}% e argilla {a}%: classe USDA «{u}», «{k}» nella classificazione del progetto. Con le equazioni di Saxton l'acqua disponibile è di {taw} mm per metro di suolo; l'assorbimento di base assunto è di {i} mm/h.", { n: String(soilSat.n), s: n0(soilSat.sand), l: n0(soilSat.silt), a: n0(soilSat.clay), u: soilSat.usda, k: tx(soilOf(soilSat.key).label).toLowerCase(), taw: n0(soilSat.taw_mm_m), i: n1(infiltration) }) }] : []),
           ...((() => { const IP = irrigProgram(); if (!IP) return [];
             const ml = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(pdfLang, { month: "long" }); } catch { return String(i + 1); } };
@@ -5951,6 +6140,12 @@ export default function Page() {
           R.push({ codice: "ARGUS-CANALE-SCAVO", quantita: Math.round(k.ew.cut), unita: "m³", descrizione: `Scavo del canale ${k.idx + 1}` });
           if (k.ew.fill > 1) R.push({ codice: "ARGUS-CANALE-RILEVATO", quantita: Math.round(k.ew.fill), unita: "m³", descrizione: `Rilevato degli argini del canale ${k.idx + 1}, compattato` });
           if (["concr", "liner", "stone"].includes(canalLin)) R.push({ codice: `ARGUS-CANALE-RIVEST-${canalLin.toUpperCase()}`, quantita: Math.round(k.ew.linedM2), unita: "m²", descrizione: `Rivestimento del canale ${k.idx + 1} in ${lab}` });
+        }
+      }
+      { const FC = fertCalc();
+        if (FC) {
+          R.push({ codice: "ARGUS-FERT-POMPA", quantita: FC.nPumps, unita: "pz", descrizione: `Pompa dosatrice per fertirrigazione, fino a ${it(Math.max(...FC.rows.map((r) => r.lh)), 1)} l/h, con quadro e attacco alla mandata del pivot` });
+          R.push({ codice: "ARGUS-FERT-SERBATOIO", quantita: FC.tank, unita: "l", descrizione: "Serbatoio in PE per il fertilizzante liquido, con bacino di contenimento" });
         }
       }
       for (const d of drainCalcs()) {
@@ -6935,7 +7130,7 @@ export default function Page() {
     setSrcMonthly(Array.isArray(fo.monthly) && (fo.monthly as unknown[]).length === 12 ? (fo.monthly as number[]) : null);
     setSrcSectors(num(fo.sectors, 0)); setResDepth(num(fo.resDepth, 4)); setResDays(num(fo.resDays, 3)); setResEvapK(num(fo.resEvapK, 1.1));
     setWtwEta(num(fo.eta, 75)); setCanalSlope(num(fo.canalSlope, 0.3)); setBankSlope(num(fo.bankSlope, 2));
-    { const rv = fo.river as RiverSt | null | undefined; setRiver(rv && rv.data && Array.isArray(rv.data.glofas?.cells) ? { data: rv.data, pick: num(rv.pick, -1), dmv: num(rv.dmv, 10), c: num(rv.c, 0.2) } : null); }
+    { const rv = fo.river as RiverSt | null | undefined; setRiver(rv && rv.data && Array.isArray(rv.data.glofas?.cells) ? { data: rv.data, pick: num(rv.pick, -1), dmv: num(rv.dmv, 10), c: num(rv.c, 0.2), meas: rv.meas && Array.isArray(rv.meas.mean) ? rv.meas : null } : null); }
     setSettleMm(num(fo.settleMm, 0.1)); setFilterCap(num(fo.filterCap, 400)); setWellQ(num(fo.wellQ, 30));
     setSrcShown(typeof fo.shown === "string" ? fo.shown : null); setSrcElev(null); setCableM(num(fo.cableM, 50));
     const co = (fo.costs ?? {}) as Record<string, unknown>;
@@ -7057,8 +7252,12 @@ export default function Page() {
     { const cd = (st as { canal_design?: { lin?: string; q?: number; fb?: number } }).canal_design ?? {};
       setCanalLin(LININGS.some((l) => l.id === cd.lin) ? (cd.lin as LiningId) : "earth"); setCanalQ(num(cd.q, 0)); setCanalFb(num(cd.fb, 0.3)); }
     { const cm = (st as { cu_model?: string }).cu_model; setCuModel(SPRINKLERS.some((x) => x.id === cm) ? cm! : "kpt_black"); }
+    { const nv = (st as { ndvi?: api.NdviOut & { sig: string } }).ndvi; setNdvi(nv && Array.isArray(nv.pivots) ? nv : null); }
+    { const fe = (st as { fert?: Partial<typeof fert> }).fert ?? {};
+      setFert({ on: !!fe.on, k: typeof fe.k === "string" ? fe.k : "uan32", n: num(fe.n, 32), rho: num(fe.rho, 1.32), dose: num(fe.dose, 30), times: num(fe.times, 6) }); }
     { const dr = (st as { drain?: { on?: boolean; c?: number; s?: number; b?: number } }).drain ?? {};
-      setDrainOn(!!dr.on); setDrainC(num(dr.c, 12.96)); setDrainS(num(dr.s, 2)); setDrainB(num(dr.b, 0.5)); }
+      setDrainOn(!!dr.on); setDrainC(num(dr.c, 12.96)); setDrainS(num(dr.s, 2)); setDrainB(num(dr.b, 0.5));
+      setDrainProf(((dr as { prof?: Record<string, { pts: number[][]; z: (number | null)[] }> }).prof) ?? {}); }
     { const ss = (st as { soil_sat?: api.SoilOut & { n: number } }).soil_sat; setSoilSat(ss && typeof ss.sand === "number" ? ss : null);
       const ip = (st as { irr_prog?: { root?: number; p?: number; v100?: number } }).irr_prog ?? {};
       setRootDepth(num(ip.root, 0.8)); setRawP(num(ip.p, 0.5)); setV100(num(ip.v100, 2.3)); }
@@ -7072,7 +7271,7 @@ export default function Page() {
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId) return;
     const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, fonte: fonteState(), terrain: { dem: demModel, smooth: demSmooth },
-      crops: { base: farmCrops, fields: fieldCrops }, solar_pv: solarCfg, canal_design: { lin: canalLin, q: canalQ, fb: canalFb }, cu_model: cuModel, drain: { on: drainOn, c: drainC, s: drainS, b: drainB }, soil_sat: soilSat, irr_prog: { root: rootDepth, p: rawP, v100 },
+      crops: { base: farmCrops, fields: fieldCrops }, solar_pv: solarCfg, canal_design: { lin: canalLin, q: canalQ, fb: canalFb }, cu_model: cuModel, fert, ndvi, drain: { on: drainOn, c: drainC, s: drainS, b: drainB, prof: drainProf }, soil_sat: soilSat, irr_prog: { root: rootDepth, p: rawP, v100 },
       systems: Object.fromEntries(Object.entries(sysDesigns).filter(([k]) => k.startsWith("a"))) };
     const js = JSON.stringify(payload);
     if (js === projSaved.current) return;
@@ -7085,7 +7284,7 @@ export default function Page() {
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
-    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, drainOn, drainC, drainS, drainB, soilSat, rootDepth, rawP, v100, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
+    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, fert, ndvi, drainOn, drainC, drainS, drainB, drainProf, soilSat, rootDepth, rawP, v100, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId || (!pivots.length && !fields.length)) return;
     const h = window.setTimeout(() => { void siteClimateCached(); }, 2500);
@@ -9609,12 +9808,15 @@ export default function Page() {
                   <label className="text-[11px] text-sage-dark">{t("Base (m)")}
                     <input type="number" min={0.2} max={5} step={0.1} value={drainB} onChange={(e) => setDrainB(Math.max(0.2, Number(e.target.value) || 0.5))} className="field-input mt-0.5 py-1 text-sm" /></label>
                 </div>
+                <button className="btn-ghost w-full text-[11px] mt-1" disabled={busy === "drainDem"} onClick={readDrainDem}
+                  title={t("Quote del perimetro di ogni campo dal modello del terreno: sbocco nel punto più basso, pendenza dal terreno e sezione che cresce verso valle.")}>
+                  {busy === "drainDem" ? t("Leggo le quote…") : Object.keys(drainProf).length ? t("⛰ Rileggi le quote del perimetro") : t("⛰ Leggi le quote del perimetro (DEM)")}</button>
                 <ul className="mt-1 space-y-0.5 text-[11px] text-sage-dark">
                   {drainCalcs().map((d) => (
-                    <li key={d.f.id}><b className="text-brand-darker">F{d.n}</b> {d.f.name}: {fmt(d.ha, { maximumFractionDigits: 1 })} ha · <b>{fmt(Math.round(d.q))} l/s</b>{d.sec && <> · b {fmt(d.sec.b, { maximumFractionDigits: 2 })} m · y {fmt(d.sec.y, { maximumFractionDigits: 2 })} m · {t("ciglio")} {fmt(d.sec.topW, { maximumFractionDigits: 2 })} m · v {fmt(d.sec.v, { maximumFractionDigits: 2 })} m/s</>} · {fmt(Math.round(d.L))} m · {t("scavo")} <b>{fmt(Math.round(d.cut))} m³</b></li>
+                    <li key={d.f.id}>{d.dem && <span className="block text-[10px]">{t("sbocco a quota {z} m (spartiacque {t2} m) · pendenza media {s}‰ · 2 rami in 3 tratti", { z: fmt(d.zOut ?? 0, { maximumFractionDigits: 1 }), t2: fmt(d.zTop ?? 0, { maximumFractionDigits: 1 }), s: fmt(d.sMean, { maximumFractionDigits: 1 }) })}</span>}<b className="text-brand-darker">F{d.n}</b> {d.f.name}: {fmt(d.ha, { maximumFractionDigits: 1 })} ha · <b>{fmt(Math.round(d.q))} l/s</b>{d.sec && <> · b {fmt(d.sec.b, { maximumFractionDigits: 2 })} m · y {fmt(d.sec.y, { maximumFractionDigits: 2 })} m · {t("ciglio")} {fmt(d.sec.topW, { maximumFractionDigits: 2 })} m · v {fmt(d.sec.v, { maximumFractionDigits: 2 })} m/s</>} · {fmt(Math.round(d.L))} m · {t("scavo")} <b>{fmt(Math.round(d.cut))} m³</b></li>
                   ))}
                 </ul>
-                <p className="text-[10px] text-sage-dark mt-0.5 leading-snug">{t("Un fosso lungo tutto il perimetro di ogni campo con pivot, con la sezione dello sbocco (portata dell'intero campo). Lo sbocco va nel punto più basso del perimetro, verso il ricettore.")}</p>
+                <p className="text-[10px] text-sage-dark mt-0.5 leading-snug">{Object.keys(drainProf).length ? t("Con le quote: sbocco nel punto più basso del perimetro, portata che cresce verso valle e pendenza dal terreno (non meno di quella impostata). La sezione indicata è quella dello sbocco.") : t("Un fosso lungo tutto il perimetro di ogni campo con pivot, con la sezione dello sbocco (portata dell'intero campo). Lo sbocco va nel punto più basso del perimetro, verso il ricettore.")}</p>
               </>)}
             </div>
           </section>
@@ -9955,6 +10157,21 @@ export default function Page() {
                       ))}
                     </tbody>
                   </table>
+                  {(() => { const WH = waterHammer(); if (!WH) return null;
+                    return (
+                      <div className="mt-2 pt-2 border-t border-black/5" data-hammer>
+                        <b>{t("Colpo d'ariete all'arresto delle pompe")}</b>
+                        <table className="w-full tabular-nums mt-0.5">
+                          <thead><tr className="text-left"><th className="font-normal">DN</th><th className="font-normal text-right">v m/s</th><th className="font-normal text-right">ΔH m</th><th className="font-normal text-right">{t("max")} m</th><th className="font-normal text-right">{t("min")} m</th><th className="font-normal text-right">PN</th></tr></thead>
+                          <tbody>{WH.rows.map((r) => (
+                            <tr key={r.dn} className={r.over || r.vac ? "text-danger" : ""}><td>{r.dn}</td><td className="text-right">{fmt(r.v, { maximumFractionDigits: 2 })}</td><td className="text-right">{fmt(Math.round(r.dH))}</td><td className="text-right">{fmt(Math.round(r.hMax))}</td><td className="text-right">{fmt(Math.round(r.hMin))}</td><td className="text-right">{r.pn}</td></tr>))}</tbody>
+                        </table>
+                        <p className="mt-0.5 leading-snug">{t("Celerità dell'onda {a} m/s (PE100 SDR17), prevalenza di esercizio {h} m. Valvole e saracinesche vanno chiuse in almeno {t2} s (2L/a sulla linea più lunga, {l} m).", { a: fmt(Math.round(WH.a)), h: fmt(Math.round(WH.Hop)), t2: fmt(Math.ceil(WH.tCrit)), l: fmt(Math.round(WH.Lmax)) })}
+                          {WH.over && <> <span className="text-danger">{t("Con il PN10 la sovrappressione supera la classe del tubo: serve una protezione (cassa d'aria o valvola anticipatrice) oppure tubi della classe PN indicata.")}</span></>}
+                          {WH.vac && <> <span className="text-danger">{t("Nella fase di depressione la pressione scende sotto −5 m: rischio di cavitazione e schiacciamento; servono cassa d'aria o valvole di aspirazione dell'aria nei punti alti.")}</span></>}
+                          {!WH.over && !WH.vac && <> {t("Con le velocità di progetto i tubi PN10 reggono il colpo d'ariete; restano consigliati gli sfiati nei punti alti e l'avvio e l'arresto graduali delle pompe (inverter o avviatore).")}</>}</p>
+                      </div>
+                    ); })()}
                   {hydra.unserved > 0 && (
                     <div className="text-danger mt-1">{t("{n} pivot non sono su nessuna tubazione: la loro portata non è conteggiata.", { n: hydra.unserved })}</div>
                   )}
@@ -10122,6 +10339,54 @@ export default function Page() {
                         <td className="text-right">{r!.need || "—"}</td>
                       </tr>))}</tbody>
                   </table>
+                </div>
+              );
+            })()}
+
+            <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2">{t("Controllo dal satellite (NDVI)")}</h3>
+            <div className="text-[11px] text-sage-dark" data-ndvi>
+              <button className="btn-ghost w-full text-[12px]" disabled={busy === "ndvi" || !pivots.length} onClick={readNdvi}
+                title={t("Ultima scena Sentinel-2 poco nuvolosa degli ultimi 4 mesi: NDVI medio di ogni pivot, uniformità e anelli dal centro alla punta.")}>
+                {busy === "ndvi" ? t("Leggo la scena Sentinel-2…") : ndvi ? t("🛰 Aggiorna l'NDVI dei pivot") : t("🛰 Leggi l'NDVI dei pivot (Sentinel-2)")}</button>
+              {ndvi && (<>
+                <p className="mt-1">{t("Scena del {d} · nuvolosità {c}% · {r} m/pixel", { d: ndvi.date, c: ndvi.cloud != null ? fmt(ndvi.cloud) : "—", r: fmt(ndvi.res_m) })}{ndvi.sig !== pivSig() && <span className="text-rust"> · {t("i pivot sono cambiati: aggiorna")}</span>}</p>
+                <table className="w-full tabular-nums mt-0.5 text-[10.5px]">
+                  <thead><tr className="text-left border-b border-black/10"><th className="font-medium">{t("Pivot")}</th><th className="font-medium text-right">NDVI</th><th className="font-medium text-right">CV %</th><th className="font-medium text-right">{t("deboli")} %</th><th className="font-medium pl-2">{t("centro → punta")}</th></tr></thead>
+                  <tbody>{ndvi.pivots.map((p) => (
+                    <tr key={p.i} className={p.ok && ((p.cv ?? 0) > 25 || (p.weak_pct ?? 0) > 15) ? "text-rust" : ""}>
+                      <td>P{p.i + 1}</td>
+                      {p.ok ? <><td className="text-right">{fmt(p.mean!, { maximumFractionDigits: 2 })}</td><td className="text-right">{fmt(p.cv!, { maximumFractionDigits: 0 })}</td><td className="text-right">{fmt(p.weak_pct!, { maximumFractionDigits: 0 })}</td>
+                        <td className="pl-2"><span className="inline-flex gap-px align-middle">{(p.rings ?? []).map((v, j) => <i key={j} className="inline-block w-3 h-3 rounded-sm" title={v != null ? fmt(v, { maximumFractionDigits: 2 }) : "—"} style={{ background: v == null ? "#ddd" : `hsl(${Math.round(Math.max(0, Math.min(1, (v - 0.1) / 0.7)) * 120)},55%,45%)` }} />)}</span></td></>
+                        : <td colSpan={4} className="text-right">{t("nuvole sul pivot ({p}% visibile)", { p: p.valid_pct })}</td>}
+                    </tr>))}</tbody>
+                </table>
+                <p className="mt-0.5 leading-snug">{t("CV oltre il 25% o più del 15% di superficie debole indicano un pivot da controllare: punta più chiara = portata o pressione insufficienti in fondo; un anello chiaro = ugelli sbagliati in quella campata.")}</p>
+              </>)}
+            </div>
+
+            <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2 flex items-center gap-2">
+              <input type="checkbox" checked={fert.on} onChange={(e) => setFert({ ...fert, on: e.target.checked })} />{t("Fertirrigazione")}</h3>
+            {fert.on && (() => {
+              const FC = fertCalc();
+              return (
+                <div className="text-[11px] text-sage-dark" data-fert>
+                  <div className="grid grid-cols-3 gap-2">
+                    <label className="col-span-3">{t("Prodotto")}
+                      <select className="field-input mt-0.5 py-1 text-sm" value={fert.k} onChange={(e) => { const f2 = FERTS.find((x) => x.k === e.target.value) ?? FERTS[0]; setFert({ ...fert, k: f2.k, n: f2.n, rho: f2.rho }); }}>
+                        {FERTS.map((x) => <option key={x.k} value={x.k}>{t(x.label)}</option>)}</select></label>
+                    <label>{t("N nel prodotto (%)")}<input type="number" min={1} max={46} step={1} value={fert.n} onChange={(e) => setFert({ ...fert, n: Math.max(1, Math.min(46, Number(e.target.value) || 32)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
+                    <label>{t("Densità (kg/l)")}<input type="number" min={0.8} max={1.6} step={0.01} value={fert.rho} onChange={(e) => setFert({ ...fert, rho: Math.max(0.8, Math.min(1.6, Number(e.target.value) || 1.3)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
+                    <label>{t("kg N/ha per intervento")}<input type="number" min={1} max={150} step={1} value={fert.dose} onChange={(e) => setFert({ ...fert, dose: Math.max(1, Math.min(150, Number(e.target.value) || 30)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
+                    <label>{t("Interventi per stagione")}<input type="number" min={1} max={30} step={1} value={fert.times} onChange={(e) => setFert({ ...fert, times: Math.max(1, Math.min(30, Number(e.target.value) || 6)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
+                  </div>
+                  {FC && (<>
+                    <table className="w-full tabular-nums mt-1 text-[10.5px]">
+                      <thead><tr className="text-left border-b border-black/10"><th className="font-medium">{t("Pivot")}</th><th className="font-medium text-right">ha</th><th className="font-medium text-right">{t("prodotto")} l</th><th className="font-medium text-right">{t("giro")} h</th><th className="font-medium text-right">{t("pompa")} l/h</th><th className="font-medium text-right">N mg/l</th></tr></thead>
+                      <tbody>{FC.rows.map((r, i) => (<tr key={i} className={r.ppm > 200 ? "text-rust" : ""}><td>{r.names.length > 3 ? `${r.names.slice(0, 3).join(", ")} …` : r.names.join(", ")}</td><td className="text-right">{fmt(r.ha, { maximumFractionDigits: 1 })}</td><td className="text-right">{fmt(Math.round(r.l))}</td><td className="text-right">{fmt(r.T, { maximumFractionDigits: 0 })}</td><td className="text-right">{fmt(r.lh, { maximumFractionDigits: 1 })}</td><td className="text-right">{fmt(Math.round(r.ppm))}</td></tr>))}</tbody>
+                    </table>
+                    <p className="mt-1 leading-snug">{t("Un intervento su tutti i pivot: {l} l di prodotto; serbatoio consigliato {v} l (+20%). Stagione: {s} l ({kg} t). Una pompa dosatrice per pivot, iniezione distribuita su un giro intero del mese di punta.", { l: fmt(Math.round(FC.lAll)), v: fmt(FC.tank), s: fmt(Math.round(FC.season)), kg: fmt(FC.kgSeason / 1000, { maximumFractionDigits: 1 }) })}
+                      {FC.rows.some((r) => r.ppm > 200) && <> <span className="text-rust">{t("Sopra 200 mg/l di N l'acqua può bruciare le foglie: dividi la dose in più interventi.")}</span></>}</p>
+                  </>)}
                 </div>
               );
             })()}

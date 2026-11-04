@@ -611,3 +611,21 @@ def site_soil(lat: float, lon: float, user: User = Depends(get_current_user)):
         raise HTTPException(404, str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"SoilGrids non raggiungibile: {str(e)[:160]}")
+
+
+class PivotNdviIn(BaseModel):
+    pivots: list[dict[str, Any]] = Field(..., min_length=1, max_length=300)
+    days: int = 120
+    max_cloud: float = 30.0
+
+
+@router.post("/pivot-ndvi")
+def pivot_ndvi(body: PivotNdviIn, client=Depends(get_client), user: User = Depends(get_current_user)):
+    """NDVI per pivot dall'ultima scena Sentinel-2 poco nuvolosa: media, uniformità, zone deboli, anelli."""
+    from analysis.pivot_ndvi import pivots_ndvi
+    try:
+        return pivots_ndvi(client, body.pivots, days=max(10, min(365, body.days)), max_cloud=max(5.0, min(90.0, body.max_cloud)))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Sentinel-2 non disponibile: {str(e)[:200]}")

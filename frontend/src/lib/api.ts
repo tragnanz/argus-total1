@@ -499,6 +499,11 @@ export async function siteClimate(lat: number, lon: number): Promise<SiteClimate
   if (!res.ok) throw new ApiError(res.status, res.statusText);
   return res.json();
 }
+// NDVI per pivot (Sentinel-2): media, uniformità, zone deboli, anelli dal centro alla punta
+export type PivotNdvi = { i: number; ok: boolean; mean?: number; cv?: number; weak_pct?: number; p10?: number; p90?: number; rings?: (number | null)[]; valid_pct: number };
+export type NdviOut = { date: string; cloud: number | null; res_m: number; pivots: PivotNdvi[]; source: string };
+export const pivotNdvi = (pivots: { lat: number; lng: number; r: number; deg?: number; az?: number }[]) =>
+  req<NdviOut>("/api/project/pivot-ndvi", { method: "POST", body: JSON.stringify({ pivots }) });
 // Suolo del sito (SoilGrids 0-30 cm): tessitura, classe USDA, acqua disponibile, infiltrazione di base
 export type SoilOut = { sand: number; silt: number; clay: number; soc_gkg: number; usda: string; key: string; inf_mmh: number; fc: number; wp: number; taw_mm_m: number; source: string };
 export async function siteSoil(lat: number, lon: number): Promise<SoilOut> {

@@ -71,6 +71,8 @@ export type MapHandle = {
   showRoads: (roads: { coords: number[][]; width_m?: number; kind?: string }[], onRemove?: (i: number) => void) => void;
   drawRoadManual: (cb: (coords: number[][]) => void) => void;
   clearRoads: () => void;
+  // idrologia: contorno del bacino a monte della presa e fossi di scolo dei campi ([lng, lat])
+  setHydro: (d: { basin?: number[][] | null; basinLabel?: string; ditches?: { ring: number[][]; outlet?: number[] | null; label?: string }[] }) => void;
   showMacroareas: (items: { geom: Polygon; label: string }[]) => void;
   clearMacroareas: () => void;
   showCanals: (canals: { coords: number[][]; start: number[]; end: number[]; width_m?: number }[], startLabel: string, endLabel: string, fit?: boolean) => void;
@@ -231,6 +233,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const waterPreviewRef = useRef<L.FeatureGroup | null>(null);
   const drawModeRef = useRef<"river" | "basin" | "canal-manual" | "road-manual" | "pipe-manual" | null>(null);
   const roadsRef = useRef<L.LayerGroup | null>(null);
+  const hydroRef = useRef<L.LayerGroup | null>(null);
   const roadManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
   const waterRemoveRef = useRef(false);
   const canalManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
@@ -302,6 +305,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     exclRef.current = L.layerGroup().addTo(map);
     layoutRef.current = L.layerGroup().addTo(map);
     roadsRef.current = L.layerGroup().addTo(map);
+    hydroRef.current = L.layerGroup().addTo(map);
     pivotsRef.current = L.layerGroup().addTo(map);
     measureRef.current = L.layerGroup().addTo(map);
     circlesRef.current = L.layerGroup().addTo(map);
@@ -985,6 +989,23 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         try { (map as any).pm.enableDraw("Line", { allowSelfIntersection: true }); } catch { /* */ }
       },
       clearRoads() { roadsRef.current?.clearLayers(); },
+      setHydro(d) {
+        const g = hydroRef.current; if (!g) return;
+        g.clearLayers();
+        const LLs = (r: number[][]) => r.map((p) => [p[1], p[0]] as [number, number]);
+        if (d.basin && d.basin.length >= 4) {
+          const pg = L.polygon(LLs(d.basin), { className: "hy-basin", color: "#1d4ed8", weight: 1.6, dashArray: "6 4", fillColor: "#38bdf8", fillOpacity: 0.08, interactive: true });
+          if (d.basinLabel) pg.bindTooltip(d.basinLabel, { sticky: true });
+          g.addLayer(pg);
+        }
+        for (const dt of d.ditches ?? []) {
+          if (dt.ring.length < 2) continue;
+          const pl = L.polyline(LLs(dt.ring), { className: "hy-ditch", color: "#8a6d3b", weight: 2.2, dashArray: "5 3", opacity: 0.95, interactive: true });
+          if (dt.label) pl.bindTooltip(dt.label, { sticky: true });
+          g.addLayer(pl);
+          if (dt.outlet) g.addLayer(L.circleMarker([dt.outlet[1], dt.outlet[0]], { className: "hy-ditch", radius: 5, color: "#fff", weight: 2, fillColor: "#8a6d3b", fillOpacity: 1, interactive: false }));
+        }
+      },
       showMacroareas(items) {
         const map = mapRef.current, g = macroRef.current;
         if (!map || !g) return;

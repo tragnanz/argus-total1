@@ -151,4 +151,5 @@ body {
 
 /* Vista mappa: etichette e livelli attivabili dal pannello di sinistra */
 body.mh-field .field-label, body.mh-pivot .pivot-label, body.mh-stn .stn-badge,
-body.mh-solar .solar-tag, body.mh-mod .solar-mod, body.mh-tara .solar-tara { display: none !important; }
+body.mh-solar .solar-tag, body.mh-mod .solar-mod, body.mh-tara .solar-tara,
+body.mh-basin .hy-basin, body.mh-ditch .hy-ditch { display: none !important; }
