@@ -8,7 +8,8 @@ import { useI18n, LANGS, type Lang, translateError, translatorFor } from "@/lib/
 import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
 import { buildXlsx } from "@/lib/xlsx";
-import type { LL, RGB, TvSheet, TvCommon, TvPivot, TvLine, TvPoint, TvColItem, TvTrenchItem, TvDraw } from "@/lib/tavole";
+import { designCanal, canalEarthworks, LININGS, lining, pivotUniformity, cuGrade, SPRINKLERS, solarMonths, riverBalance, type LiningId, type CanalSection, type CuResult } from "@/lib/hydro";
+import type { LL, RGB, TvSheet, TvCommon, TvPivot, TvLine, TvPoint, TvColItem, TvTrenchItem, TvDraw, TvTech } from "@/lib/tavole";
 import { linearLayout, reelLayout, dripLayout, type LL as SysLL } from "@/lib/systems";
 import type {
   Area, Client, Polygon, Project, Scene, ColorScale, SuitMeta, SuitWeights,
@@ -16,7 +17,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.220";
+const REV = "v0.6.221";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -119,7 +120,7 @@ type Field = {
 
 // Wrapper front-end con visibilità per-oggetto e proprietario (campo) per il
 // pannello Livelli stile Photoshop: owner = id del campo a cui l'oggetto appartiene.
-type CanalL = Canal & { hidden?: boolean; uid?: number; owner?: number };
+type CanalL = Canal & { hidden?: boolean; uid?: number; owner?: number; exist?: boolean };   // exist: canale esistente (non entra nel computo)
 type WaterL = Watercourse & { hidden?: boolean; uid?: number; owner?: number };
 // kind: assente/"existing" = strada preesistente tracciata o importata; "osm" = da
 // OpenStreetMap (preesistente); "service" = viabilità di servizio generata per i
@@ -1304,6 +1305,12 @@ export default function Page() {
   const [macroMinHa, setMacroMinHa] = useState(10);
   // canale principale (M6, fase 2) — più canali, presa/finale manuali
   const [canals, setCanals] = useState<CanalL[]>([]);
+  // Dimensionamento dei canali (moto uniforme, Manning — come Nereus pag. 03)
+  const [canalLin, setCanalLin] = useState<LiningId>("earth");
+  const [canalQ, setCanalQ] = useState(0);            // portata del canale (l/s); 0 = portata di progetto
+  const [canalFb, setCanalFb] = useState(0.3);        // franco minimo (m)
+  const [cuModel, setCuModel] = useState("kpt_black");   // irrigatori del calcolo di uniformità (Nereus pag. 18)
+  const cuMemo = useRef(new Map<string, CuResult | null>());
   const [canalPermille, setCanalPermille] = useState(1);
   const [canalStart, setCanalStart] = useState<number[] | null>(null);
   const [canalEnd, setCanalEnd] = useState<number[] | null>(null);
@@ -1400,6 +1407,9 @@ export default function Page() {
   const [srcRoute, setSrcRoute] = useState<number[][] | null>(null);   // tracciato disegnato presa → vasca ([lng, lat])
   const [srcMonthly, setSrcMonthly] = useState<number[] | null>(null); // livello minimo mese per mese (m sotto il punto di presa)
   const [srcSectors, setSrcSectors] = useState(0);                   // settori di rilancio (0 = automatico)
+  // Portata del fiume alla presa (GloFAS + bacino dal DEM) e quota da lasciare al fiume
+  type RiverSt = { data: api.RiverOut; pick: number; dmv: number; c: number };
+  const [river, setRiver] = useState<RiverSt | null>(null);
   const [bankSlope, setBankSlope] = useState(2);                     // pendenza della sponda (orizzontale : verticale)
   const [settleMm, setSettleMm] = useState(0.1);                     // particella da sedimentare (mm)
   const [filterCap, setFilterCap] = useState(400);                   // portata di un filtro autopulente (m³/h)
@@ -1799,8 +1809,10 @@ export default function Page() {
     mapApi.current?.showMacroareas([...committed, ...candItems]);
   }
   // Rendering centralizzato con visibilità per-oggetto (pannello Livelli).
-  function renderCanals(list: CanalL[] = canals) {
-    mapApi.current?.showCanals(list.filter((c) => !c.hidden).map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end, width_m: canalWidth })), t("Presa"), t("Sbocco"));
+  // fit = inquadra i canali (solo dopo un tracciamento, un'importazione o un caricamento esplicito;
+  // non con Annulla, lo spessore o la visibilità, che non devono spostare la vista)
+  function renderCanals(list: CanalL[] = canals, fit = false) {
+    mapApi.current?.showCanals(list.filter((c) => !c.hidden).map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end, width_m: canalWidth })), t("Presa"), t("Sbocco"), fit);
   }
   function renderWater(list: WaterL[] = watercourses) {
     mapApi.current?.showWater(list.filter((w) => !w.hidden).map((w) => ({ geom: w.geojson, kind: w.kind })));
@@ -2437,7 +2449,7 @@ export default function Page() {
       setCanalStart(null); setCanalEnd(null);
       mapApi.current?.showPending(null, null, t("Presa"), t("Finale"));
       mapApi.current?.clearReachable();
-      renderCanals(next);
+      renderCanals(next, true);
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   // importa canali da KMZ/KML/GeoJSON: ogni polilinea diventa un canale
@@ -2464,7 +2476,7 @@ export default function Page() {
         }
       }
       setCanals(next);
-      renderCanals(next);
+      renderCanals(next, true);
       setMsg(added ? t("Importati {n} canali da file.", { n: added }) : t("Nessuna linea trovata nei file (KMZ/KML/GeoJSON)."));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
@@ -2552,7 +2564,7 @@ export default function Page() {
       const c = l.data as unknown as Canal;
       setCanals((prev) => {
         const next = [...prev, c];
-        renderCanals(next);
+        renderCanals(next, true);
         return next;
       });
       goTab("rilievo");
@@ -3736,6 +3748,135 @@ export default function Page() {
   // Voci del progetto così com'è sulla mappa: pivot e campate, tubazioni per
   // diametro, canali, strade di servizio, pompe e opere della fonte d'acqua,
   // fotovoltaico. Niente prezzi: è il computo delle quantità.
+  // Fiume alla presa, mese per mese: portata media e di magra (GloFAS o bacino), quota lasciata al
+  // fiume, prelevabile, fabbisogno lordo dei mesi e bilancio (ore di prelievo, vasca di compenso).
+  const MDAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  function riverCalc(rv: RiverSt | null = river) {
+    if (!rv) return null;
+    const cell = rv.pick >= 0 ? rv.data.glofas.cells[rv.pick] : null, b = rv.data.basin;
+    let mean: number, mMean: number[], mLow: number[], src: string;
+    if (cell) { mean = cell.mean; mMean = cell.month_mean; mLow = cell.month_q80; src = "glofas"; }
+    else if (b?.area_km2 && b.rain_month_mm?.length === 12) {
+      mMean = b.rain_month_mm.map((r, i) => (b.area_km2! * 1e6 * (r / 1000) * rv.c) / (MDAYS[i] * 86400));
+      mean = mMean.reduce((a, x, i) => a + x * MDAYS[i], 0) / 365; mLow = mMean.map((x) => x * 0.5); src = "basin";
+    } else return null;
+    const dmv = (mean * Math.max(0, rv.dmv)) / 100;                    // m³/s lasciati al fiume
+    const avail = mLow.map((q) => Math.max(0, (q - dmv) * 1000));     // l/s prelevabili
+    const P = pumpStation(), eff = Math.max(0.3, effPct / 100);
+    const needM3 = P.netMm ? P.netMm.map((mm, i) => Math.min(mm / eff, mmDes * MDAYS[i]) * 10 * P.irrHa) : MDAYS.map((d) => mmDes * d * 10 * P.irrHa);
+    const bal = riverBalance(avail, needM3, srcHours);
+    const irr = needM3.map((v, i) => (v > 0 ? i : -1)).filter((i) => i >= 0);
+    const qMin = irr.length ? Math.min(...irr.map((i) => avail[i])) : Math.min(...avail);
+    return { src, cell, mean, mMean, mLow, dmv, avail, needM3, bal, qMin: Math.floor(qMin), irr };
+  }
+  async function estimateRiver() {
+    if (!srcPt) return;
+    setBusy("river");
+    try {
+      const d = await api.riverFlow(srcPt[1], srcPt[0]);
+      let pick = d.glofas.pick;
+      // con un bacino misurato (non troncato) si propone la cella GloFAS più coerente con le piogge del bacino
+      const b = d.basin;
+      if (b?.area_km2 && !b.truncated && b.rain_month_mm?.length === 12 && d.glofas.cells.length) {
+        const qb = b.rain_month_mm.reduce((a, r) => a + r, 0) / 1000 * b.area_km2 * 1e6 * 0.2 / (365 * 86400);
+        if (qb > 0) pick = d.glofas.cells.map((c, i) => ({ i, e: Math.abs(Math.log(c.mean / qb)) })).sort((x, y) => x.e - y.e)[0].i;
+      }
+      if (!d.glofas.cells.length) pick = -1;
+      setRiver({ data: d, pick, dmv: river?.dmv ?? 10, c: river?.c ?? 0.2 });
+      setMsg(d.glofas.cells.length || d.basin?.area_km2 ? t("Portata del fiume stimata ✓") : t("Nessun dato di portata per questo punto."));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  function renderRiver() {
+    const R = riverCalc(), d = river?.data, b = d?.basin;
+    const mon = (i: number) => new Date(2000, i, 1).toLocaleString(lang, { month: "short" });
+    const f1 = (x: number) => fmt(x, { maximumFractionDigits: x < 10 ? 2 : x < 100 ? 1 : 0 });
+    return (
+      <div className="border-t border-black/5 pt-2 space-y-1.5" data-river>
+        <button className="btn-ghost w-full text-[12px]" disabled={busy === "river"} onClick={estimateRiver}
+          title={t("Bacino che drena fino alla presa (dal DEM) e serie storica giornaliera delle portate GloFAS (Copernicus) delle celle vicine: media, magra mese per mese e quota da lasciare al fiume.")}>
+          {busy === "river" ? t("Calcolo il bacino e leggo le portate…") : river ? t("🌊 Ricalcola la portata del fiume") : t("🌊 Stima la portata del fiume alla presa")}</button>
+        {river && d && (<>
+          <div className="text-[11px] text-sage-dark leading-snug">
+            {b?.area_km2 ? <>{t("Bacino a monte della presa")}: <b>{b.truncated ? "≥ " : ""}{fmt(b.area_km2, { maximumFractionDigits: b.area_km2 < 100 ? 1 : 0 })} km²</b>{b.z_max != null && <> · {t("quota massima")} {fmt(Math.round(b.z_max))} m</>}{b.truncated && <> · <span className="text-rust">{t("bacino più grande della finestra del DEM: vale la serie GloFAS")}</span></>}</> : <span className="text-rust">{t("Bacino non calcolato")}{b?.error ? `: ${b.error}` : ""}</span>}
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <label className="text-[11px] text-sage-dark col-span-3">{t("Serie di portata")}
+              <select className="field-input mt-0.5 py-1 text-[12px]" value={river.pick} onChange={(e) => setRiver({ ...river, pick: Number(e.target.value) })}>
+                {d.glofas.cells.map((c, i) => <option key={i} value={i}>GloFAS · {t("cella a {d} km", { d: fmt(c.dist_km, { maximumFractionDigits: 1 }) })} · {t("media")} {f1(c.mean)} m³/s</option>)}
+                {b?.area_km2 && b.rain_month_mm && <option value={-1}>{t("Metodo del bacino (piogge × coefficiente di deflusso)")}</option>}
+              </select></label>
+            <label className="text-[11px] text-sage-dark" title={t("Deflusso minimo da lasciare in alveo, in percentuale della portata media (es. 10%): va verificato con l'ente che rilascia la concessione.")}>{t("Da lasciare al fiume (%)")}
+              <input type="number" min={0} max={100} step={1} value={river.dmv} onChange={(e) => setRiver({ ...river, dmv: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
+            {river.pick < 0 && <label className="text-[11px] text-sage-dark" title={t("Quota della pioggia che arriva al fiume: 0,1 terreni permeabili e clima arido, 0,3–0,5 bacini montani e argillosi.")}>{t("Coeff. di deflusso")}
+              <input type="number" min={0.02} max={0.9} step={0.05} value={river.c} onChange={(e) => setRiver({ ...river, c: Math.max(0.02, Math.min(0.9, Number(e.target.value) || 0.2)) })} className="field-input mt-0.5 py-1 text-sm" /></label>}
+          </div>
+          {R && (<>
+            <div className="text-[11px] text-sage-dark leading-snug">
+              {t("Portata media")} <b>{f1(R.mean)} m³/s</b>{R.cell && <> · Q347 {f1(R.cell.q347)} m³/s · {t("minima")} {f1(R.cell.min)} m³/s · {R.cell.years.join("–")}</>} · {t("lasciati al fiume")} {f1(R.dmv)} m³/s
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-[10px] tabular-nums" data-river-table>
+                <thead><tr className="text-sage-dark"><th className="text-left font-normal"></th>{R.avail.map((_, i) => <th key={i} className="font-normal">{mon(i)}</th>)}</tr></thead>
+                <tbody>
+                  <tr><td className="text-sage-dark pr-1">{t("magra")} m³/s</td>{R.mLow.map((q, i) => <td key={i} className="text-center">{f1(q)}</td>)}</tr>
+                  <tr><td className="text-sage-dark pr-1">{t("prelevabile")} l/s</td>{R.avail.map((q, i) => <td key={i} className="text-center font-semibold text-brand-darker">{fmt(Math.round(q))}</td>)}</tr>
+                  <tr><td className="text-sage-dark pr-1">{t("serve")} l/s</td>{R.bal.rows.map((r, i) => <td key={i} className="text-center">{r.qNeed24 > 0 ? fmt(Math.round(r.qNeed24)) : "—"}</td>)}</tr>
+                  <tr><td className="text-sage-dark pr-1">{t("ore di prelievo")}</td>{R.bal.rows.map((r, i) => <td key={i} className={"text-center " + (r.hours > srcHours ? "text-danger font-semibold" : "")}>{r.needM3 > 0 ? (Number.isFinite(r.hours) ? fmt(Math.ceil(r.hours)) : "∞") : "—"}</td>)}</tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="text-[11px] leading-snug">
+              {R.bal.deficitM3 <= 1
+                ? <span className="text-brand-darker">{t("Il fiume basta in tutti i mesi irrigui con {h} h di prelievo al giorno.", { h: fmt(srcHours) })}</span>
+                : R.bal.feasible
+                  ? <span className="text-rust">{t("Nei mesi segnati il fiume non basta: servono {v} m³ di vasca di compenso, riempita con l'acqua dei mesi in avanzo (deficit {d} m³).", { v: fmt(Math.ceil(R.bal.storeM3 / 100) * 100), d: fmt(Math.round(R.bal.deficitM3)) })}</span>
+                  : <span className="text-danger">{t("Il fiume non basta nemmeno sull'anno: mancano {d} m³. Serve un'altra fonte o meno superficie irrigata.", { d: fmt(Math.round(R.bal.deficitM3 - R.bal.rows.reduce((a, r) => a + r.surplus, 0))) })}</span>}
+            </div>
+            <button className="btn-ghost w-full text-[12px]" disabled={R.qMin <= 0 || srcQmax === R.qMin} onClick={() => setSrcQmax(R.qMin)}
+              title={t("Imposta come portata disponibile il prelevabile del mese irriguo più scarso.")}>{t("Usa {q} l/s come portata disponibile", { q: fmt(R.qMin) })}</button>
+            <p className="text-[10px] text-sage-dark leading-snug text-justify">{R.src === "glofas"
+              ? t("Rianalisi GloFAS a ~5 km: sui fiumi grandi è affidabile, sui torrenti e vicino a dighe o derivazioni va confrontata con le misure dell'ente gestore. «Magra» = portata superata l'80% dei giorni del mese.")
+              : t("Stima di larga massima dalle piogge medie del bacino: la magra è posta a metà della media mensile. Da confrontare con misure di portata.")}</p>
+          </>)}
+        </>)}
+      </div>
+    );
+  }
+  // Uniformità di distribuzione del pivot (sprinkler chart generato come Nereus pag. 18)
+  const PIPE_DE = [273, 219.1, 168.3];
+  function pivotCU(pv: PivotItem): CuResult | null {
+    const c = spanComposition({ r: pv.r, gun: pv.gun, q: pv.q, deg: pv.deg }, pivotBrand);
+    const q = pivotFlow(pv) * 3.6, gun = Math.max(0, pv.gun ?? 0), pP = pivotPressure(pv);
+    const qSpk = q * (gun > 0 ? (pv.r * pv.r) / ((pv.r + gun) * (pv.r + gun)) : 1);
+    const spans = c ? c.spans.map((sp) => ({ len: sp.len, deMm: PIPE_DE[sp.pipe] ?? 168.3 })) : Array.from({ length: Math.max(1, Math.round(pv.r / 50)) }, () => ({ len: pv.r / Math.max(1, Math.round(pv.r / 50)), deMm: 168.3 }));
+    const key = `${cuModel}|${spans.map((s) => s.len.toFixed(1) + ":" + s.deMm).join(",")}|${(c?.oh ?? 0).toFixed(1)}|${qSpk.toFixed(1)}|${pP.toFixed(2)}`;
+    if (cuMemo.current.has(key)) return cuMemo.current.get(key)!;
+    const r = pivotUniformity({ spans, overhang: c?.oh ?? 0, qSpkM3h: qSpk, pPivotBar: Math.max(1.5, pP), model: cuModel });
+    if (cuMemo.current.size > 300) cuMemo.current.clear();
+    cuMemo.current.set(key, r);
+    return r;
+  }
+  // Pivot solare mese per mese: produzione FV con l'irraggiamento del sito, ore di marcia che servono
+  // per dare il fabbisogno del mese, ore in cui il sole regge da solo il motore, batteria necessaria.
+  function pivotSolarMonths(pv: PivotItem) {
+    const cl = projSettings().site_climate?.data; if (!cl?.rs || cl.rs.length !== 12) return null;
+    const z = solarSize(pv), P = pumpStation(), eff = Math.max(0.3, effPct / 100);
+    const hoursNeed = MDAYS.map((d, i) => (P.netMm ? Math.min(hoursDay, ((P.netMm[i] / eff / d) / Math.max(0.1, mmDes)) * hoursDay) : hoursDay));
+    const rows = solarMonths({ lat: pv.lat, rsMJ: cl.rs, kWp: z.kWp, kW: z.kW, hoursNeed, battKwh: z.batt });
+    const need = rows.filter((r) => r.hNeed > 0.05);
+    return { rows, z, okAll: need.every((r) => r.ok), battMax: Math.ceil(Math.max(0, ...need.map((r) => r.battNeed))), dayOnly: need.filter((r) => r.hNeed <= r.hSun + 1e-6).map((r) => r.m) };
+  }
+  // Sezione e movimenti di terra di ogni canale visibile (pendenza di progetto = target del tracciato)
+  function canalCalcs() {
+    const vis = canals.filter((c) => !c.hidden && c.geojson?.coordinates?.length >= 2);
+    if (!vis.length) return [];
+    const q = canalQ > 0 ? canalQ : Math.max(1, Math.round(pumpStation().qDes));
+    return vis.map((c) => {
+      const S = Math.max(0.05, c.target_permille || c.mean_permille || 0.3);
+      const sec = designCanal(q, S, canalLin, { fb: canalFb });
+      return { c, idx: canals.indexOf(c), q, S, sec, ew: sec ? canalEarthworks(c.profile, sec) : null };
+    });
+  }
   type CRow = { cat: string; item: string; qty: number | null; unit: string; note?: string; key?: string };   // key: sigle delle tavole
   // phase: solo le voci di quella fase di realizzazione; le opere comuni (rete,
   // fonte d'acqua, stazioni, fotovoltaico) stanno nella fase 1.
@@ -3824,8 +3965,17 @@ export default function Page() {
       const m = pivotLines.filter((l) => l.kind === "pipe").reduce((a, l) => a + lenOf(l.coords), 0);
       if (m > 0) R.push({ cat: cNet, item: tx("Tubazioni (diametri da calcolare nella pagina Tubazioni)"), qty: Math.round(m), unit: "m" });
     }
-    const mCan = canals.filter((c) => !c.hidden && c.geojson?.coordinates?.length >= 2).reduce((a, c) => a + lenOf(c.geojson.coordinates), 0);
-    if (mCan > 0) R.push({ cat: cNet, item: tx("Canale"), qty: Math.round(mCan), unit: "m" });
+    if (common) for (const k of canalCalcs().filter((x) => !x.c.exist)) {
+      const cC = tx("Canali"), nm = `${tx("Canale")} ${k.idx + 1}`, L = k.ew?.len ?? lenOf(k.c.geojson.coordinates);
+      R.push({ cat: cC, key: "canal", item: k.sec ? tx("{n}: sezione trapezia, base {b} m, tirante {y} m, franco {f} m, scarpe 1:{m} · {lin}", { n: nm, b: fx(k.sec.b, { maximumFractionDigits: 2 }), y: fx(k.sec.y, { maximumFractionDigits: 2 }), f: fx(k.sec.fb, { maximumFractionDigits: 2 }), m: fx(k.sec.m), lin: tx(lining(k.sec.lin).label) }) : nm,
+        qty: Math.round(L), unit: "m", note: k.sec ? `${fx(k.q)} l/s · ${fx(k.S, { maximumFractionDigits: 2 })}‰ · v ${fx(k.sec.v, { maximumFractionDigits: 2 })} m/s` : undefined });
+      if (k.ew) {
+        R.push({ cat: cC, key: "canal", item: tx("{n}: scavo", { n: nm }), qty: Math.round(k.ew.cut), unit: "m³" });
+        if (k.ew.fill > 1) R.push({ cat: cC, key: "canal", item: tx("{n}: rilevato degli argini", { n: nm }), qty: Math.round(k.ew.fill), unit: "m³" });
+        if (k.sec && (k.sec.lin === "concr" || k.sec.lin === "liner" || k.sec.lin === "stone"))
+          R.push({ cat: cC, key: "canal", item: tx("{n}: rivestimento in {lin}", { n: nm, lin: tx(lining(k.sec.lin).label).toLowerCase() }), qty: Math.round(k.ew.linedM2), unit: "m²" });
+      }
+    }
     const mRoad = roads.filter((r) => r.kind === "service" && !r.hidden).reduce((a, r) => a + lenOf(r.coords), 0);
     if (mRoad > 0) R.push({ cat: tx("Strade"), item: tx("Strade di servizio"), qty: Math.round(mRoad), unit: "m" });
     // Fonte d'acqua (schema scelto) oppure stazione di pompaggio
@@ -4171,7 +4321,7 @@ export default function Page() {
   const [tvCompact, setTvCompact] = useState(true);   // tabelle e disegni accorpati sulle stesse pagine
   // out: per il PDF di progetto (relazione + tavole) il PDF non si scarica ma torna al chiamante
   // Elaborati del progetto: codice ARGUS-<id>-TAV-01 … come il riferimento Mercurius
-  type TvKind = "plan" | "pipe" | "elec" | "phase" | "det" | "wk" | "sch" | "cmp";
+  type TvKind = "plan" | "pipe" | "elec" | "can" | "phase" | "det" | "wk" | "sch" | "cmp";
   type TavOut = { blob?: Blob; kinds?: TvKind[]; codes?: string[]; titles?: string[]; lang?: Lang; full?: boolean; defer?: boolean; build?: () => Promise<Blob> };
   const elabCode = (pid: number, kind: TvKind, n: number) => `ARGUS-${pid}-${kind === "sch" ? "SCH" : kind === "cmp" ? "CMP" : "TAV"}-${String(n).padStart(2, "0")}`;
   async function downloadTavole(out?: TavOut) {
@@ -4371,6 +4521,27 @@ export default function Page() {
             { kind: "unif", title: tx("Schema unifilare"), note: tx("Schema indicativo: ogni utenza ha il suo interruttore nel quadro della fonte; sezioni, lunghezze e cadute dalle linee disegnate."),
               srcs: [{ cap: tx("Allacciamento elettrico").toUpperCase(), name: `${G.supply.toUpperCase()} · ${G.kva} kVA`, info: `${n0(G.kW)} kW`,
                 loads: cabRows.map((x) => ({ name: x.c.name.split(" · ").pop() ?? x.c.name, info: `${n1(x.c.kW)} kW · ${n1(x.c.I)} A`, cab: `C${x.n} · ${x.form}`, cab2: `${n0(x.c.L)} m · ${n1(x.c.dv)} %` })) }] }] : [] };
+        // 3b — canali da realizzare: tracciato, sezione tipo e profilo con fondo e pelo libero
+        const CCt = canalCalcs().filter((k) => !k.c.exist && k.sec);
+        const shCan: TvSheet | null = CCt.length ? { title: tx("Tavola dei canali"), fields: fieldsTv, pivots: pivTv, vertices: false,
+          lines: CCt.map((k) => ({ id: "k" + (k.idx + 1), pts: k.c.geojson.coordinates.map(LLf), color: "#2E86AB", width: 1.1, lab: `K${k.idx + 1} · ${n0(k.ew?.len ?? k.c.length_m)} m` })),
+          points: basePts,
+          column: [{ title: tx("Canali"), items: CCt.map((k) => ({ head: `K${k.idx + 1} · ${n0(k.ew?.len ?? k.c.length_m)} m`, lines: [`${n0(k.q)} l/s · ${n2(k.S)}‰ · ${tx(lining(k.sec!.lin).label)}`, `b ${n2(k.sec!.b)} · y ${n2(k.sec!.y)} · f ${n2(k.sec!.fb)} m · v ${n2(k.sec!.v)} m/s`] })) }],
+          cells: cellsBase(tx("Tavola dei canali")),
+          tech: [{ title: tx("Canali"), blocks: [{ table: { w: [7, 10, 9, 10, 9, 9, 9, 10, 9, 10, 9],
+            cols: [{ t: tx("Sigla") }, { t: tx("Lunghezza") + " (m)", a: "r" }, { t: "l/s", a: "r" }, { t: tx("Pendenza") + " (‰)", a: "r" }, { t: "b (m)", a: "r" }, { t: "y (m)", a: "r" }, { t: tx("franco") + " (m)", a: "r" }, { t: tx("ciglio") + " (m)", a: "r" }, { t: "v (m/s)", a: "r" }, { t: tx("Scavo") + " (m³)", a: "r" }, { t: tx("Rilevato") + " (m³)", a: "r" }],
+            rows: CCt.map((k) => [`K${k.idx + 1}`, n0(k.ew?.len ?? k.c.length_m), n0(k.q), n2(k.S), n2(k.sec!.b), n2(k.sec!.y), n2(k.sec!.fb), n2(k.sec!.topW), n2(k.sec!.v), k.ew ? n0(k.ew.cut) : "—", k.ew ? n0(k.ew.fill) : "—"]) } },
+            { kv: [[tx("Metodo"), tx("Manning, moto uniforme")], [tx("Rivestimento"), `${tx(lining(canalLin).label)} · n ${lining(canalLin).n} · v max ${n1(lining(canalLin).vmax)} m/s`],
+              [tx("Movimenti di terra"), tx("argini con coronamento di 1 m")], [tx("Franco minimo"), `${n2(canalFb)} m`]] }] }],
+          draw: [
+            { kind: "chan", title: tx("Sezioni tipo dei canali"), items: CCt.slice(0, 4).map((k) => ({ title: `K${k.idx + 1} · ${n0(k.q)} l/s · ${n2(k.S)}‰`, b: k.sec!.b, y: k.sec!.y, fb: k.sec!.fb, m: k.sec!.m, lined: ["concr", "liner", "stone"].includes(k.sec!.lin),
+              notes: [tx(lining(k.sec!.lin).label) + ` · n ${lining(k.sec!.lin).n}`, `v = ${n2(k.sec!.v)} m/s`, `${tx("ciglio")} ${n2(k.sec!.topW)} m`] })) },
+            ...CCt.filter((k) => (k.c.profile?.length ?? 0) >= 3).slice(0, 4).map((k) => {
+              const z0 = k.c.profile[0][1], bed0 = z0 - k.sec!.H;
+              return { kind: "profile" as const, title: `${tx("Profilo longitudinale")} · K${k.idx + 1}`, sub: `K${k.idx + 1} · ${n0(k.ew?.len ?? k.c.length_m)} m · ${n2(k.S)}‰`, L: k.c.profile[k.c.profile.length - 1][0],
+                pts: k.c.profile.map(([d, z]) => ({ d, z, hgl: bed0 - (k.S / 1000) * d + k.sec!.y })), highs: [], lows: [],
+                labT: tx("terreno"), labH: tx("pelo libero"), labA: "", labD: "" };
+            })] } : null;
         // 4 — fasi di realizzazione (pivot colorati per fase)
         const PH_RGB: RGB[] = [[46, 224, 160], [0, 159, 227], [245, 158, 11], [225, 29, 72], [139, 92, 246], [16, 185, 129], [236, 72, 153], [99, 102, 241], [234, 179, 8], [20, 184, 166]];
         const shPh: TvSheet | null = nPhases > 1 ? { title: tx("Fasi di realizzazione"), fields: fieldsTv, vertices: false,
@@ -4408,10 +4579,27 @@ export default function Page() {
           labQ: tx("Portata Q (m³/h)"), labH: tx("Prevalenza H (m)"), labEta: tx("Rendimento (%)"), labSys: tx("Curva dell'impianto"), labDuty: tx("Punto di lavoro") });
         for (let k = 0; k < spanItems.length; k += 12) schDraw.push({ kind: "spans", title: tx("Composizione delle campate dei pivot"), items: spanItems.slice(k, k + 12),
           labTower: tx("Torre"), labOh: tx("Sbalzo"), labGun: tx("Irrigatore finale") });
-        const shSch: TvSheet | null = out?.full && (schDraw.length || stations.length) ? { title: tx("Schede tecniche"), noMap: true, fields: [], pivots: [], lines: [], points: [], column: [], cells: [],
-          tech: stations.length ? [{ title: tx("Pompe"), blocks: [{ table: { w: [24, 22, 6, 9, 10, 9, 10, 10],
+        // uniformità dei pivot (una riga per macchina diversa) e pivot solari mese per mese
+        const cuRows = new Map<string, string[]>();
+        pivots.forEach((pv, k) => { const u = pivotCU(pv); if (!u) return; const key = `${n0(pv.r)}|${n1(u.CU)}|${n0(u.peak)}`;
+          const row = cuRows.get(key); if (row) { row[0] += `, P${k + 1}`; return; }
+          cuRows.set(key, [`P${k + 1}`, n0(pv.r), u.model, String(u.n), n1(u.CU), n1(u.DU), n0(u.peak), tx(cuGrade(u.CU))]); });
+        const cuTech: TvTech[] = cuRows.size ? [{ title: tx("Uniformità di distribuzione dei pivot"), blocks: [{ table: { w: [20, 9, 20, 8, 9, 9, 12, 13],
+          cols: [{ t: tx("Pivot") }, { t: "R (m)", a: "r" }, { t: tx("Irrigatori") }, { t: tx("uscite"), a: "r" }, { t: "CU (%)", a: "r" }, { t: "DU (%)", a: "r" }, { t: tx("picco") + " (mm/h)", a: "r" }, { t: tx("Giudizio") }],
+          rows: [...cuRows.values()].map((r) => [r[0].length > 40 ? r[0].slice(0, 38) + "…" : r[0], ...r.slice(1)]) } },
+          { kv: [[tx("Metodo"), tx("Sprinkler chart generato: uscite a passo costante, portata proporzionale a raggio × larghezza di competenza, ugello commerciale arrotondato; profilo ellittico, CU Heermann-Hein e DU sul quarto più basso (ASABE S436)")]] }] }] : [];
+        const solP0 = pivots.map((pv, k) => ({ pv, k })).filter((x) => x.pv.solar);
+        const solTech: TvTech[] = solP0.length ? (() => { const sm = pivotSolarMonths(solP0[0].pv); if (!sm) return [];
+          const ml = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(pdfLang, { month: "short" }); } catch { return String(i + 1); } };
+          return [{ title: tx("Pivot solari: produzione e ore di marcia mese per mese"), blocks: [{ table: { w: [16, ...Array(12).fill(7)],
+            cols: [{ t: `P${solP0[0].k + 1}` }, ...sm.rows.map((r) => ({ t: ml(r.m), a: "r" as const }))],
+            rows: [[tx("FV") + " kWh/g", ...sm.rows.map((r) => n0(r.E))], [tx("sole sufficiente") + " h", ...sm.rows.map((r) => n1(r.hSun))], [tx("marcia") + " h", ...sm.rows.map((r) => (r.hNeed > 0.05 ? n1(r.hNeed) : "—"))],
+              [tx("batteria") + " kWh", ...sm.rows.map((r) => (r.battNeed > 0.5 ? n0(r.battNeed) : "—"))]] } },
+            { kv: [[tx("Campo FV"), `${n1(sm.z.kWp)} kWp · ${sm.z.n} × ${solarCfg.wp} Wp · ${n1(sm.z.kW)} kW`], [tx("Metodo"), tx("Irraggiamento medio mensile del sito (NASA POWER) sul piano dei moduli (+10%), rendimento d'impianto 0,80, potenza a mezza sinusoide sulla durata del giorno")]] }] }]; })() : [];
+        const shSch: TvSheet | null = out?.full && (schDraw.length || stations.length || cuTech.length || solTech.length) ? { title: tx("Schede tecniche"), noMap: true, fields: [], pivots: [], lines: [], points: [], column: [], cells: [],
+          tech: [...cuTech, ...solTech, ...(stations.length ? [{ title: tx("Pompe"), blocks: [{ table: { w: [24, 22, 6, 9, 10, 9, 10, 10],
             cols: [{ t: tx("Stazione") }, { t: tx("Pompa") }, { t: "n.", a: "r" }, { t: tx("giri/min"), a: "r" }, { t: "Q (l/s)", a: "r" }, { t: "H (m)", a: "r" }, { t: tx("Motore") + " (kW)", a: "r" }, { t: tx("Rendimento") + " (%)", a: "r" }],
-            rows: stations.map((st) => [st.name, st.pick ? `Caprari ${st.pick.model}` : "—", fx(st.nTot), st.pick ? fx(st.pick.rpm) : "—", n1(st.qLs), n0(st.head), st.pick ? n1(st.pick.motor) : n1(st.kW), st.pick ? n0(st.pick.eta) : "—"]) } }] }] : [],
+            rows: stations.map((st) => [st.name, st.pick ? `Caprari ${st.pick.model}` : "—", fx(st.nTot), st.pick ? fx(st.pick.rpm) : "—", n1(st.qLs), n0(st.head), st.pick ? n1(st.pick.motor) : n1(st.kW), st.pick ? n0(st.pick.eta) : "—"]) } }] } as TvTech] : [])],
           draw: schDraw } : null;
         // 7 — computo metrico con i rimandi alle sigle delle tavole (solo nel progetto completo)
         const nPipe = 2, nElec = runs.length ? 3 : 2;
@@ -4469,7 +4657,7 @@ export default function Page() {
           if (G.supply === "gen") wkJobs.push({ type: "gen", ctx: { kva: G.kva }, name: `${G.kva} kVA` });
         }
         type Ent = [TvKind, TvSheet | null, number?];
-        const all: Ent[] = [["plan", sh1], ["pipe", runs.length ? sh2 : null], ["elec", cabRows.length ? sh3 : null], ["phase", shPh], ["det", shDet],
+        const all: Ent[] = [["plan", sh1], ["pipe", runs.length ? sh2 : null], ["elec", cabRows.length ? sh3 : null], ["can", shCan], ["phase", shPh], ["det", shDet],
           ...wkJobs.map((_, i) => ["wk", null, i] as Ent), ["sch", shSch], ["cmp", shCmp]];
         const kept = all.filter((x) => x[1] || x[0] === "wk");
         let nT = 0; const codes: string[] = [], titles: string[] = [];
@@ -4771,6 +4959,25 @@ export default function Page() {
         } else {
           fb.push({ p: tx("Il punto di presa non è ancora stato indicato nel modulo Fonte d'acqua: la portata disponibile alla presa deve essere almeno pari alla portata di progetto di {q} l/s ({m3} m³/h) per {h} ore al giorno.", { q: n0(P.qDes), m3: n0(P.qDes * 3.6), h: n1(hoursDay) }) });
         }
+        // portata del fiume alla presa e bilancio con il fabbisogno, mese per mese
+        { const RV = srcType !== "pozzo" ? riverCalc() : null;
+          if (RV) {
+            const b = river?.data.basin, ff = (x: number) => fx(x, { maximumFractionDigits: x < 10 ? 2 : x < 100 ? 1 : 0 });
+            fb.push({ h: tx("Portata del fiume alla presa") });
+            fb.push({ p: (b?.area_km2 ? tx("Il bacino che drena fino alla presa, ricavato dal modello digitale del terreno, misura {a} km².", { a: (b.truncated ? "≥ " : "") + ff(b.area_km2) }) + " " : "")
+              + (RV.src === "glofas"
+                ? tx("La portata è stimata dalla rianalisi idrologica GloFAS (Copernicus Emergency Management Service) sulla cella del fiume più vicina alla presa, serie giornaliera {y}: portata media {q} m³/s, Q347 {q3} m³/s. La portata di magra di ogni mese è quella superata l'80% dei giorni del mese.", { y: RV.cell!.years.join("–"), q: ff(RV.mean), q3: ff(RV.cell!.q347) })
+                : tx("La portata è stimata dalle piogge medie mensili del bacino con un coefficiente di deflusso di {c}: portata media {q} m³/s. La portata di magra è posta a metà della media del mese.", { c: fx(river!.c), q: ff(RV.mean) }))
+              + " " + tx("In alveo restano {p}% della portata media ({d} m³/s); il resto della magra è il prelevabile del mese, da confrontare con il fabbisogno lordo dell'impianto per {h} ore di prelievo al giorno.", { p: fx(river!.dmv), d: ff(RV.dmv), h: n0(srcHours) }) });
+            fb.push({ table: { header: [tx("Mese"), tx("Media") + " (m³/s)", tx("Magra") + " (m³/s)", tx("Prelevabile") + " (l/s)", tx("Fabbisogno lordo") + " (m³)", tx("Ore di prelievo")],
+              rows: RV.bal.rows.map((r, i) => [monthLong(i), ff(RV.mMean[i]), ff(RV.mLow[i]), n0(RV.avail[i]), r.needM3 > 0 ? n0(r.needM3) : "—", r.needM3 > 0 ? (Number.isFinite(r.hours) ? n1(r.hours) : "∞") : "—"]) } });
+            fb.push({ p: RV.bal.deficitM3 <= 1
+              ? tx("Il fiume basta in tutti i mesi irrigui con {h} h di prelievo al giorno.", { h: n0(srcHours) })
+              : RV.bal.feasible
+                ? tx("Nei mesi in cui le ore di prelievo superano quelle consentite il fiume non basta: servono {v} m³ di vasca di compenso, riempita con l'acqua dei mesi in avanzo (deficit {d} m³).", { v: n0(Math.ceil(RV.bal.storeM3 / 100) * 100), d: n0(RV.bal.deficitM3) })
+                : tx("Il fiume non basta nemmeno sull'anno: mancano {d} m³. Serve un'altra fonte o meno superficie irrigata.", { d: n0(RV.bal.deficitM3 - RV.bal.rows.reduce((a, r) => a + r.surplus, 0)) }) });
+          }
+        }
         ch.push({ title: tx("Fonte d'acqua: portata e disponibilità"), blocks: fb });
         // Infrastrutture idriche esistenti e opere di presa
         const ib: Record<string, unknown>[] = [];
@@ -4800,6 +5007,17 @@ export default function Page() {
           }
         }
         if (!ib.length) ib.push({ p: tx("Il progetto non prevede opere sulle infrastrutture idriche esistenti oltre alla presa dell'impianto.") });
+        { const CK = canalCalcs().filter((k) => k.sec);
+          if (CK.length) {
+            const L0 = lining(canalLin);
+            ib.push({ h: tx("Canali") });
+            ib.push({ p: tx("I canali sono dimensionati a moto uniforme con la formula di Manning, Q = (1/n)·A·R^(2/3)·i^(1/2), per {q} l/s alla pendenza di fondo del tracciato. Rivestimento: {lin} (n = {n}, velocità massima {v} m/s). La sezione trapezia parte da quella idraulicamente più efficiente e si allarga se la velocità supera il limite del rivestimento; il franco è il maggiore tra {f} m e il 20% del tirante.", { q: n0(CK[0].q), lin: tx(L0.label).toLowerCase(), n: String(L0.n), v: n1(L0.vmax), f: n2(canalFb) }) });
+            ib.push({ table: { header: [tx("Canale"), tx("Stato"), tx("Lunghezza") + " (m)", tx("Pendenza") + " (‰)", "b (m)", "y (m)", tx("Franco") + " (m)", "v (m/s)", tx("Scavo") + " (m³)", tx("Rilevato") + " (m³)"],
+              rows: CK.map((k) => [`K${k.idx + 1}`, k.c.exist ? tx("esistente") : tx("da realizzare"), n0(k.ew?.len ?? k.c.length_m), n2(k.S), n2(k.sec!.b), n2(k.sec!.y), n2(k.sec!.fb), n2(k.sec!.v), k.ew && !k.c.exist ? n0(k.ew.cut) : "—", k.ew && !k.c.exist ? n0(k.ew.fill) : "—"]) } });
+            const slow = CK.filter((k) => k.sec!.slow).map((k) => `K${k.idx + 1}`);
+            if (slow.length) ib.push({ p: tx("Nei canali {l} la velocità resta sotto 0,3 m/s: rischio di deposito e di crescita di erbe, da gestire con la manutenzione o con una pendenza maggiore.", { l: slow.join(", ") }) });
+          }
+        }
         ch.push({ title: tx("Infrastrutture idriche esistenti e opere di presa"), blocks: ib });
         // Nota tecnica sulle stime – metodologia
         const cnum = ch.length + 1;
@@ -4865,6 +5083,13 @@ export default function Page() {
           lb.push({ table: { header: [tx("Stazione"), "l/s", "m", tx("Pompa"), tx("Motore") + " (kW)", "η (%)"], widths: [28, 9, 9, 32, 12, 10],
             rows: stations.map((st) => [st.name, n0(st.qLs), n0(st.head), st.pick ? `${st.nTot > 1 ? `${st.nTot} × ` : ""}Caprari ${st.pick.model}` : "—", st.pick ? n1(st.pick.motor) : n1(st.kW), st.pick ? n0(st.pick.eta) : "—"]) } });
         }
+        { const us = pivots.map((pv) => pivotCU(pv)).filter((u): u is CuResult => !!u);
+          if (us.length) {
+            const lo = Math.min(...us.map((u) => u.CU)), hi = Math.max(...us.map((u) => u.CU)), pk = Math.max(...us.map((u) => u.peak));
+            lb.push({ h: tx("Uniformità di distribuzione dei pivot") });
+            lb.push({ p: tx("Per ogni pivot è stato generato lo sprinkler chart con irrigatori {m}: uscite a passo costante di 3 m dalla prima uscita a 7 m, portata di ogni uscita proporzionale al raggio e alla larghezza di competenza, ugello commerciale arrotondato e raggio bagnato dalle tabelle del costruttore. Il coefficiente di uniformità di Heermann-Hein risulta tra {a}% e {b}% ({g}); l'intensità istantanea di picco arriva a {p} mm/h e va confrontata con la velocità di infiltrazione del terreno.", { m: us[0].model, a: n1(lo), b: n1(hi), g: tx(cuGrade(lo)), p: n0(pk) }) });
+          }
+        }
         ch.push({ title: tx("Linee guida di progettazione dell'impianto irriguo"), blocks: lb });
         // Alimentazione elettrica
         const kp = stations.reduce((a, st) => a + (st.pick && !st.pick.diesel ? st.pick.motor * st.nTot : st.pick ? 0 : st.kW), 0);
@@ -4883,6 +5108,15 @@ export default function Page() {
           const tk2 = solP.reduce((a, p) => a + solarSize(p).kWp, 0);
           eb.push({ p: tx("{n} pivot sono alimentati da pannelli fotovoltaici posati accanto al perno centrale, per {k} kWp in tutto: le torri e l'irrigatore finale lavorano a energia solare e questi pivot non hanno la linea elettrica dalla stazione. Il campo è dimensionato con {f} kWp per ogni kW assorbito dal pivot.", { n: fx(solP.length), k: n1(tk2), f: n1(solarCfg.k) })
             + (solarCfg.batt > 0 ? " " + tx("Le batterie danno {h} ore di autonomia senza sole.", { h: fx(solarCfg.batt) }) : " " + tx("Senza batterie i pivot solari irrigano di giorno.")) });
+          { const sm0 = pivotSolarMonths(solP[0]);
+            if (sm0) {
+              const ml = (i: number) => { try { return new Date(2026, i, 15).toLocaleString(pdfLang, { month: "long" }); } catch { return String(i + 1); } };
+              const bad = sm0.rows.filter((r) => r.hNeed > 0.05 && r.hNeed > r.hSun + 1e-6).map((r) => ml(r.m));
+              eb.push({ p: tx("Con l'irraggiamento medio del sito mese per mese, il campo FV regge da solo il motore del pivot per {h1}–{h2} ore al giorno.", { h1: n1(Math.min(...sm0.rows.map((r) => r.hSun))), h2: n1(Math.max(...sm0.rows.map((r) => r.hSun))) })
+                + " " + (bad.length ? tx("Nei mesi di {m} le ore di marcia necessarie superano quelle di sole: servono circa {b} kWh di batterie per pivot, oppure si accetta di irrigare solo di giorno con una dose minore.", { m: bad.join(", "), b: n0(sm0.battMax) })
+                  : tx("In tutti i mesi irrigui le ore di sole bastano per le ore di marcia necessarie: il pivot fa il suo giro di giorno senza batterie.")) });
+            }
+          }
           const taraHa = solP.reduce((a, p) => a + solarSize(p).taraM2, 0) / 1e4;
           eb.push({ p: tx("Il campo FV occupa un cerchio attorno al perno che il pivot attraversa senza irrigare: questa area è contata come tara ({ha} ha in tutto) e tolta dalla superficie irrigata, dalla portata e dai fabbisogni.", { ha: n1(taraHa) }) });
           eb.push({ table: { header: [tx("Pivot"), "kW", "kWp", tx("Moduli"), tx("Batterie") + " (kWh)", tx("Tara") + " Ø (m)", tx("Tara") + " (ha)"], widths: [12, 11, 13, 22, 14, 14, 14],
@@ -4907,6 +5141,7 @@ export default function Page() {
         const what: Record<TvKind, [string, string]> = { plan: [tx("Planimetria generale"), tx("Campi, pivot, rete di distribuzione, adduttrice, vasca e stazioni di pompaggio su ortofoto in scala")],
           pipe: [tx("Tavola delle tubazioni"), tx("Tratti, nodi e raccordi, valvole e apparecchiature, sezioni tipo di scavo e profilo longitudinale")],
           elec: [tx("Tavola delle linee elettriche"), tx("Linee elettriche, sezioni tipo di scavo dei cavi e schema unifilare")],
+          can: [tx("Tavola dei canali"), tx("Tracciato dei canali, sezione tipo con tirante e franco, profilo con fondo e pelo libero, scavi e rilevati")],
           phase: [tx("Fasi di realizzazione"), tx("Pivot e campi divisi per fase, con superficie e portata di ogni fase")],
           det: [tx("Pozzetti della rete"), tx("Pozzetti di sfiato e di scarico: schema tipo con le parti numerate")],
           wk: [tx("Disegno costruttivo"), tx("Viste quotate in scala, note di esecuzione e computo dei materiali della tavola (motore delle opere di Ceres)")],
@@ -5535,8 +5770,17 @@ export default function Page() {
         R.push({ codice: "ARGUS-TUBAZIONE", quantita: Math.round(tot), unita: "m", descrizione: "Tubazione interrata (diametri da calcolare nella pagina Tubazioni di Argus Total)" });
       }
       if (tot > 0) R.push({ codice: "SCAVO-TRINCEA", quantita: Math.round(tot), unita: "m" });
-      const mCan = canals.filter((c) => !c.hidden && c.geojson?.coordinates?.length >= 2).reduce((a, c) => a + lenOf(c.geojson.coordinates), 0);
-      R.push({ codice: "ARGUS-CANALE", quantita: Math.round(mCan), unita: "m", descrizione: "Canale in terra" });
+      for (const k of canalCalcs().filter((x) => !x.c.exist)) {
+        const L = k.ew?.len ?? lenOf(k.c.geojson.coordinates), lab = lining(canalLin).label.toLowerCase();
+        R.push({ codice: "ARGUS-CANALE", quantita: Math.round(L), unita: "m", descrizione: k.sec
+          ? `Canale ${k.idx + 1}: sezione trapezia b ${it(k.sec.b, 2)} m, tirante ${it(k.sec.y, 2)} m, franco ${it(k.sec.fb, 2)} m, scarpe 1:${it(k.sec.m, 1)}, ${lab}, ${it(k.q)} l/s a ${it(k.S, 2)}‰`
+          : `Canale ${k.idx + 1}` });
+        if (k.ew) {
+          R.push({ codice: "ARGUS-CANALE-SCAVO", quantita: Math.round(k.ew.cut), unita: "m³", descrizione: `Scavo del canale ${k.idx + 1}` });
+          if (k.ew.fill > 1) R.push({ codice: "ARGUS-CANALE-RILEVATO", quantita: Math.round(k.ew.fill), unita: "m³", descrizione: `Rilevato degli argini del canale ${k.idx + 1}, compattato` });
+          if (["concr", "liner", "stone"].includes(canalLin)) R.push({ codice: `ARGUS-CANALE-RIVEST-${canalLin.toUpperCase()}`, quantita: Math.round(k.ew.linedM2), unita: "m²", descrizione: `Rivestimento del canale ${k.idx + 1} in ${lab}` });
+        }
+      }
       const mRoad = roads.filter((r) => r.kind === "service" && !r.hidden).reduce((a, r) => a + lenOf(r.coords), 0);
       R.push({ codice: "ARGUS-STRADA-SERVIZIO", quantita: Math.round(mRoad), unita: "m", descrizione: "Strada di servizio" });
       add("Rete di adduzione", R);
@@ -5564,7 +5808,7 @@ export default function Page() {
       stations.forEach((st, i) => { R.push({ codice: "PT-PUMP", quantita: 1, unita: "pz", descrizione: stationDesc(st) }, ...dieselRows(st));
         const dn = i === 0 && sc.key !== "C" && sc.main?.kind === "pipe" && sc.main.dn ? sc.main.dn : netMaxDn; if (dn) R.push(checkRow(dn)); });
       if (sc.main?.kind === "pipe" && sc.main.dn) R.push(...pipeRows(sc.main.dn, sc.main.L * (sc.main.n ?? 1), "adduttrice"));
-      if (sc.main?.kind === "canal") R.push({ codice: "ARGUS-CANALE-GRAVITA", quantita: Math.round(sc.main.L), unita: "m", descrizione: `Canale a gravità, scavo massimo ${it(sc.main.cutMax ?? 0, 1)} m` });
+      if (sc.main?.kind === "canal") R.push({ codice: "ARGUS-CANALE-GRAVITA", quantita: Math.round(sc.main.L), unita: "m", descrizione: `Canale a gravità, scavo massimo ${it(sc.main.cutMax ?? 0, 1)} m${sc.main.sec ? `, sezione trapezia b ${it(sc.main.sec.b, 2)} m, tirante ${it(sc.main.sec.y, 2)} m, franco ${it(sc.main.sec.fb, 2)} m, ${lining(canalLin).label.toLowerCase()}` : ""}` });
       if (sc.res) {
         R.push({ codice: "PT-TANK", quantita: 1, unita: "pz", descrizione: `Vasca di accumulo ${it(sc.res.vol)} m³, profondità utile ${it(resDepth, 1)} m` });
         R.push({ codice: "ARGUS-SCAVO-VASCA", quantita: Math.round(sc.res.vol * (1 + 0.5 / Math.max(1, resDepth))), unita: "m³", descrizione: "Scavo della vasca (volume utile + franco 0,5 m)" });
@@ -5622,6 +5866,9 @@ export default function Page() {
       ...(sc ? [["Schema della fonte", `${sc.key} · ${sc.name}`]] : []),
       ...(sc?.res ? [["Vasca di accumulo", `${it(sc.res.vol)} m³`]] : []),
       ...(hydraNow() ? [["Rete di adduzione", `${it(hydraNow()!.byDn.reduce((a, x) => a + x[1], 0) / 1000, 2)} km`]] : []),
+      ...((() => { const us = pivots.map((pv) => pivotCU(pv)).filter((u): u is CuResult => !!u); if (!us.length) return [];
+        const lo = Math.min(...us.map((u) => u.CU)), hi = Math.max(...us.map((u) => u.CU));
+        return [["Uniformità dei pivot (CU)", `${it(lo, 1)}${hi - lo > 0.05 ? `–${it(hi, 1)}` : ""}% · ${us[0].model} · picco ${it(Math.max(...us.map((u) => u.peak)))} mm/h`]]; })()),
       ...(pivots.some((p) => p.solar) ? [["Tara FV non irrigua", `${it(pivots.reduce((a, p) => a + (p.solar ? solarSize(p).taraM2 : 0), 0) / 1e4, 2)} ha · ${pivots.filter((p) => p.solar).length} pivot solari, cerchio attorno al perno`]] : []),
       ["Macchine", `${pivots.length} pivot${Object.keys(sysDesigns).length ? `, ${Object.keys(sysDesigns).length} campi con altri sistemi` : ""}`],
     ].map(([etichetta, valore]) => ({ etichetta: etichetta.slice(0, 80), valore: valore.slice(0, 120) })).slice(0, 40);
@@ -6470,6 +6717,7 @@ export default function Page() {
     setSrcMonthly(Array.isArray(fo.monthly) && (fo.monthly as unknown[]).length === 12 ? (fo.monthly as number[]) : null);
     setSrcSectors(num(fo.sectors, 0)); setResDepth(num(fo.resDepth, 4)); setResDays(num(fo.resDays, 3)); setResEvapK(num(fo.resEvapK, 1.1));
     setWtwEta(num(fo.eta, 75)); setCanalSlope(num(fo.canalSlope, 0.3)); setBankSlope(num(fo.bankSlope, 2));
+    { const rv = fo.river as RiverSt | null | undefined; setRiver(rv && rv.data && Array.isArray(rv.data.glofas?.cells) ? { data: rv.data, pick: num(rv.pick, -1), dmv: num(rv.dmv, 10), c: num(rv.c, 0.2) } : null); }
     setSettleMm(num(fo.settleMm, 0.1)); setFilterCap(num(fo.filterCap, 400)); setWellQ(num(fo.wellQ, 30));
     setSrcShown(typeof fo.shown === "string" ? fo.shown : null); setSrcElev(null); setCableM(num(fo.cableM, 50));
     const co = (fo.costs ?? {}) as Record<string, unknown>;
@@ -6483,7 +6731,7 @@ export default function Page() {
   const projSaved = useRef<string>("");
   const fonteState = () => ({ pt: srcPt, route: srcRoute, type: srcType, qmax: srcQmax, hours: srcHours, range: srcRange,
     sed: srcSediment, energy: srcEnergy, drive: pumpDrive, monthly: srcMonthly, sectors: srcSectors, resDepth, resDays, resEvapK, eta: wtwEta,
-    canalSlope, bankSlope, settleMm, filterCap, wellQ, shown: srcShown, cableM, costs: { kwh: costKwh, diesel: costDiesel, lkwh: dieselLkWh, gen: genShare, mkw: costMaintKw, pvom: costPvOm, batt: costBattKwh, blife: battLife } });
+    canalSlope, bankSlope, settleMm, filterCap, wellQ, shown: srcShown, cableM, river: river ? { ...river, data: { ...river.data, basin: river.data.basin ? { ...river.data.basin, ring: (river.data.basin.ring ?? []).filter((_, i) => i % 2 === 0) } : undefined } } : null, costs: { kwh: costKwh, diesel: costDiesel, lkwh: dieselLkWh, gen: genShare, mkw: costMaintKw, pvom: costPvOm, batt: costBattKwh, blife: battLife } });
   // ---- Cronologia Annulla/Ripristina UNIFICATA ----
   // Uno snapshot copre tutte le mosse del progetto: campi, pivot e tubazioni, strade,
   // canali, corsi d'acqua, altri sistemi, fonte d'acqua e colture. Le modifiche che
@@ -6588,6 +6836,9 @@ export default function Page() {
     applyCrops((st as { crops?: { base?: unknown; fields?: Record<string, unknown> } }).crops);
     { const sp = (st as { solar_pv?: Partial<typeof solarCfg> }).solar_pv ?? {};
       setSolarCfg({ wp: num(sp.wp, 550), k: num(sp.k, 1.6), batt: num(sp.batt, 0), off: num(sp.off, 6) }); }
+    { const cd = (st as { canal_design?: { lin?: string; q?: number; fb?: number } }).canal_design ?? {};
+      setCanalLin(LININGS.some((l) => l.id === cd.lin) ? (cd.lin as LiningId) : "earth"); setCanalQ(num(cd.q, 0)); setCanalFb(num(cd.fb, 0.3)); }
+    { const cm = (st as { cu_model?: string }).cu_model; setCuModel(SPRINKLERS.some((x) => x.id === cm) ? cm! : "kpt_black"); }
     const sy = (st as { systems?: Record<string, SysDesign> }).systems;
     setSysDesigns(sy && typeof sy === "object" ? sy : {});
     projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
@@ -6598,7 +6849,7 @@ export default function Page() {
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId) return;
     const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, fonte: fonteState(), terrain: { dem: demModel, smooth: demSmooth },
-      crops: { base: farmCrops, fields: fieldCrops }, solar_pv: solarCfg,
+      crops: { base: farmCrops, fields: fieldCrops }, solar_pv: solarCfg, canal_design: { lin: canalLin, q: canalQ, fb: canalFb }, cu_model: cuModel,
       systems: Object.fromEntries(Object.entries(sysDesigns).filter(([k]) => k.startsWith("a"))) };
     const js = JSON.stringify(payload);
     if (js === projSaved.current) return;
@@ -6611,7 +6862,7 @@ export default function Page() {
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
-    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
+    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId || (!pivots.length && !fields.length)) return;
     const h = window.setTimeout(() => { void siteClimateCached(); }, 2500);
@@ -6769,7 +7020,7 @@ export default function Page() {
   type Stage = { name: string; qLs: number; head: number; kW: number; hours: number; hAvg?: number; share?: number };
   type Sector = { i: number; n: number; qLs: number; head: number; kW: number; zTop: number | null; center: number[] };
   type Scheme = { key: "A" | "B" | "C"; name: string; ok: boolean; why?: string; stages: Stage[];
-    main?: { kind: "pipe" | "canal"; L: number; dn?: number; n?: number; hf?: number; hiPt?: number; cutMax?: number; fillMax?: number };
+    main?: { kind: "pipe" | "canal"; L: number; dn?: number; n?: number; hf?: number; hiPt?: number; cutMax?: number; fillMax?: number; sec?: CanalSection | null };
     res?: { vol: number; ha: number; r: number; evap: number; days: number }; sectors?: Sector[];
     mwh: number; kWabs: number; pvKwp: number; battKwh: number; solarPct: number; nStations: number };
   function sourceSchemes() {
@@ -6951,7 +7202,7 @@ export default function Page() {
       if (ok && !qMaxOk(qc)) { ok = false; why = tx("Servono {q} l/s, la fonte ne dà {m}.", { q: fx(Math.round(qc)), m: fx(srcQmax) }); }
       const bst = boosterStages();
       out.push(finish({ key: "C", name: tx("Canale a gravità, vasca e rilancio"), ok, why, nStations: bst.length,
-        stages: bst, main: { kind: "canal", L, cutMax, fillMax }, res: rC, sectors: secs.length > 1 ? secs : undefined }));
+        stages: bst, main: { kind: "canal", L, cutMax, fillMax, sec: designCanal(qc, Math.max(0.05, canalSlope), canalLin, { fb: canalFb }) }, res: rC, sectors: secs.length > 1 ? secs : undefined }));
     }
     // Consigliato — rete: minor energia; FV + generatore: minor energia da
     // generatore; in entrambi entro il 3% vince lo schema con meno stazioni.
@@ -7186,6 +7437,7 @@ export default function Page() {
               ))}
             </div>
           )}
+          {srcPt && srcType !== "pozzo" && renderRiver()}
         </div>
 
         {S && (<>
@@ -7238,7 +7490,8 @@ export default function Page() {
                       <div key={i}>• {st.name}: <b>{fmt(Math.round(st.qLs))} l/s</b> · {fmt(Math.round(st.head))} m · <b>{fmt(Math.round(st.kW))} kW</b> · {fmt(Math.round(st.hours))} h/{t("giorno")}</div>
                     ))}
                     {sc.main && (sc.main.kind === "canal"
-                      ? <div>• {t("Canale a gravità")}: {uKm(sc.main.L / 1000, 1)} · {t("pendenza")} {fmt(canalSlope, { maximumFractionDigits: 2 })}‰{S.prof && <> · {t("scavo massimo")} {fmt(sc.main.cutMax ?? 0, { maximumFractionDigits: 1 })} m · {t("rilevato massimo")} {fmt(sc.main.fillMax ?? 0, { maximumFractionDigits: 1 })} m</>}</div>
+                      ? <div>• {t("Canale a gravità")}: {uKm(sc.main.L / 1000, 1)} · {t("pendenza")} {fmt(canalSlope, { maximumFractionDigits: 2 })}‰{S.prof && <> · {t("scavo massimo")} {fmt(sc.main.cutMax ?? 0, { maximumFractionDigits: 1 })} m · {t("rilevato massimo")} {fmt(sc.main.fillMax ?? 0, { maximumFractionDigits: 1 })} m</>}
+                        {sc.main.sec && <> · {t("sezione")} b {fmt(sc.main.sec.b, { maximumFractionDigits: 2 })} m, y {fmt(sc.main.sec.y, { maximumFractionDigits: 2 })} m, {t("ciglio")} {fmt(sc.main.sec.topW, { maximumFractionDigits: 2 })} m, v {fmt(sc.main.sec.v, { maximumFractionDigits: 2 })} m/s ({t(lining(canalLin).label).toLowerCase()})</>}</div>
                       : <div>• {t("Adduttrice")}: {sc.main.n && sc.main.n > 1 ? `${sc.main.n} × ` : ""}DN {sc.main.dn} · {uKm(sc.main.L / 1000, 1)} · {t("perdite")} {fmt(Math.round(sc.main.hf ?? 0))} m{!!sc.main.hiPt && <> · {t("prevalenza decisa dal colmo a {z} m", { z: fmt(Math.round(sc.main.hiPt)) })}</>}</div>)}
                     {sc.res && <div>• {t("Vasca di accumulo")}: <b>{fmt(Math.round(sc.res.vol))} m³</b> · {uHa(sc.res.ha, 1)} · {t("profondità")} {fmt(resDepth)} m · {t("scorta")} {fmt(sc.res.days)} {t("giorni")} · {t("evaporazione")} {fmt(Math.round(sc.res.evap))} m³/{t("giorno")}</div>}
                     <div className="mt-0.5 text-brand-darker">{t("Potenza assorbita")} <b>{fmt(Math.round(sc.kWabs))} kW</b> · {t("Energia")} <b>{mwh(sc.mwh)} MWh/{t("anno")}</b>
@@ -7611,6 +7864,23 @@ export default function Page() {
                     title={t("Scheda in scala del campo FV di questo pivot: vista prospettica, pianta quotata, sezione delle file e dati (PDF A3)")}>
                     {busy === `sol${k}` ? t("Preparo…") : t("Scheda in scala")} ↓</button>
                 </div>
+                {p.solar && (() => {
+                  const sm = pivotSolarMonths(p); if (!sm) return <div className="pl-6 mt-1 text-sage-dark">{t("Irraggiamento del sito non ancora caricato.")}</div>;
+                  return (
+                    <div className="pl-6 mt-1" data-solar-months>
+                      <div className="flex gap-0.5">
+                        {sm.rows.map((r) => (
+                          <div key={r.m} className={"flex-1 rounded-sm text-center text-[9px] leading-tight py-0.5 " + (r.hNeed <= 0.05 ? "bg-black/5 text-sage-dark" : r.hNeed <= r.hSun + 1e-6 ? "bg-brand/20 text-brand-darker" : r.ok ? "bg-amber-200 text-amber-900" : "bg-rose-200 text-rose-900")}
+                            title={`${new Date(2000, r.m, 1).toLocaleString(lang, { month: "long" })}: ${fmt(r.E, { maximumFractionDigits: 0 })} kWh/${t("giorno")} · ${t("sole sufficiente")} ${fmt(r.hSun, { maximumFractionDigits: 1 })} h · ${t("marcia")} ${fmt(r.hNeed, { maximumFractionDigits: 1 })} h${r.battNeed > 0 ? ` · ${t("batteria")} ${fmt(Math.ceil(r.battNeed))} kWh` : ""}`}>
+                            {new Date(2000, r.m, 1).toLocaleString(lang, { month: "narrow" })}<br />{r.hNeed > 0.05 ? fmt(Math.round(r.hNeed)) : "·"}</div>
+                        ))}
+                      </div>
+                      <div className="mt-0.5 text-sage-dark">{sm.okAll && sm.battMax <= 0 ? t("Il sole basta per le ore di marcia di tutti i mesi irrigui.")
+                        : sm.okAll ? t("Con le batterie impostate il pivot fa le sue ore in tutti i mesi.")
+                          : t("Nei mesi in rosa il sole da solo non basta: servono circa {b} kWh di batterie (autonomia da impostare sopra).", { b: fmt(sm.battMax) })}</div>
+                    </div>
+                  );
+                })()}
               </li>
             );
           })}
@@ -8106,6 +8376,7 @@ export default function Page() {
     );
   }
 
+  const CC = tab === "rilievo" ? canalCalcs() : [];
   return (
     <main>
       <MapCanvas apiRef={mapApi} onCreate={addDrawnField} onEditActive={updateActiveGeom} onSelect={(id) => { selectField(id); setFieldPicked(true); setSrcPicked(false); setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); }}
@@ -8568,6 +8839,19 @@ export default function Page() {
                       </div>
                     );
                   })()}
+                  {(() => {
+                    const u = pivotCU(selPivot);
+                    return (
+                      <div className="mt-2 bg-panel rounded-lg p-2 text-[11px] text-sage-dark leading-snug" data-cu>
+                        <label className="flex items-center gap-2">{t("Uniformità con")}
+                          <select className="field-input py-0.5 text-[11px] flex-1" value={cuModel} onChange={(e) => setCuModel(e.target.value)}>
+                            {SPRINKLERS.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select></label>
+                        {u ? <div className="mt-1">CU <b className="text-brand-darker">{fmt(u.CU, { maximumFractionDigits: 1 })}%</b> ({t(cuGrade(u.CU))}) · DU {fmt(u.DU, { maximumFractionDigits: 1 })}% · {t("picco")} {fmt(u.peak, { maximumFractionDigits: 0 })} mm/h · {u.n} {t("uscite")}
+                          {u.minMargin < 0.35 && <><br /><span className="text-rust">{t("Pressione in punta vicina a quella dei regolatori: margine {m} bar.", { m: fmt(u.minMargin, { maximumFractionDigits: 2 }) })}</span></>}</div>
+                          : <div className="mt-1">{t("Uniformità non calcolabile per questa macchina.")}</div>}
+                      </div>
+                    );
+                  })()}
                   <button className="btn-ghost w-full text-danger mt-2" onClick={deleteSelPivot}>{t("Elimina pivot")}</button>
                 </div>
               ) : pivots.length && pivotSel.mode === "group" ? (
@@ -9010,6 +9294,15 @@ export default function Page() {
                   onChange={(e) => setCanalWidth(Number(e.target.value))} className="field-input mt-1" />
               </label>
             </div>
+            <div className="grid grid-cols-3 gap-2 mt-2" data-canal-design>
+              <label className="text-xs text-sage-dark" title={t("Portata che il canale deve portare in moto uniforme. 0 = portata di progetto dell'impianto")}>{t("Portata (l/s, 0 = progetto)")}
+                <input type="number" min={0} step={10} value={canalQ} onChange={(e) => setCanalQ(Math.max(0, Number(e.target.value) || 0))} className="field-input mt-1" /></label>
+              <label className="text-xs text-sage-dark">{t("Rivestimento")}
+                <select className="field-input mt-1" value={canalLin} onChange={(e) => setCanalLin(e.target.value as LiningId)}>
+                  {LININGS.map((l) => <option key={l.id} value={l.id}>{t(l.label)} · n {l.n}</option>)}</select></label>
+              <label className="text-xs text-sage-dark">{t("Franco minimo (m)")}
+                <input type="number" min={0.1} max={2} step={0.05} value={canalFb} onChange={(e) => setCanalFb(Math.max(0.1, Number(e.target.value) || 0.3))} className="field-input mt-1" /></label>
+            </div>
 
             <div className="bg-panel rounded-lg p-2 mt-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Presa e finale (opzionali)")}</div>
@@ -9049,7 +9342,7 @@ export default function Page() {
 
             {canals.length > 0 && (
               <ul className="mt-3 space-y-2">
-                {canals.map((c, i) => (
+                {canals.map((c, i) => { const k = CC.find((x) => x.idx === i); return (
                   <li key={i} className={"text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed " + (editingCanal === i ? "ring-1 ring-brand/50" : "")}>
                     <div className="flex items-center justify-between mb-1">
                       <b className="text-brand-darker">{t("Canale")} {i + 1}{!!(c.waypoints?.length) && <span className="font-normal text-sage-dark"> · {c.waypoints.length} {t("punti")}</span>}</b>
@@ -9068,8 +9361,17 @@ export default function Page() {
                     {c.mean_permille > c.target_permille * 1.5 && (
                       <><br /><span className="text-danger">{t("Pendenza reale oltre il target: terreno acclive.")}</span></>
                     )}
+                    {k?.sec && (
+                      <div className="mt-1 pt-1 border-t border-black/5" data-canal-sec>
+                        {t("Sezione")} ({fmt(k.q)} l/s, {t(lining(k.sec.lin).label).toLowerCase()}): {t("base")} <b>{fmt(k.sec.b, { maximumFractionDigits: 2 })} m</b> · {t("tirante")} <b>{fmt(k.sec.y, { maximumFractionDigits: 2 })} m</b> · {t("franco")} {fmt(k.sec.fb, { maximumFractionDigits: 2 })} m · {t("scarpe")} 1:{fmt(k.sec.m)} · {t("larghezza al ciglio")} <b>{fmt(k.sec.topW, { maximumFractionDigits: 2 })} m</b> · v <b className={k.sec.fast || k.sec.slow ? "text-danger" : ""}>{fmt(k.sec.v, { maximumFractionDigits: 2 })} m/s</b>
+                        {k.ew && <><br />{t("Scavo")} <b>{fmt(Math.round(k.ew.cut))} m³</b>{k.ew.fill > 1 && <> · {t("rilevato degli argini")} <b>{fmt(Math.round(k.ew.fill))} m³</b></>} · {t("scavo massimo")} {fmt(k.ew.cutMax, { maximumFractionDigits: 1 })} m{["concr", "liner", "stone"].includes(k.sec.lin) && <> · {t("rivestimento")} {fmt(Math.round(k.ew.linedM2))} m²</>}</>}
+                        {k.sec.slow && <><br /><span className="text-rust">{t("Velocità sotto 0,3 m/s: rischio di deposito e di erbe. Aumenta la pendenza o restringi la sezione.")}</span></>}
+                        {k.sec.widened && <><br /><span className="text-sage-dark">{t("Base allargata per stare sotto la velocità massima del rivestimento ({v} m/s).", { v: fmt(lining(k.sec.lin).vmax) })}</span></>}
+                        <label className="flex items-center gap-1.5 mt-1 cursor-pointer"><input type="checkbox" checked={!!c.exist} onChange={(e) => setCanals((cs) => cs.map((x, j) => (j === i ? { ...x, exist: e.target.checked || undefined } : x)))} />{t("Canale esistente (non entra nel computo)")}</label>
+                      </div>
+                    )}
                   </li>
-                ))}
+                ); })}
               </ul>
             )}
           </section>

@@ -73,7 +73,7 @@ export type MapHandle = {
   clearRoads: () => void;
   showMacroareas: (items: { geom: Polygon; label: string }[]) => void;
   clearMacroareas: () => void;
-  showCanals: (canals: { coords: number[][]; start: number[]; end: number[]; width_m?: number }[], startLabel: string, endLabel: string) => void;
+  showCanals: (canals: { coords: number[][]; start: number[]; end: number[]; width_m?: number }[], startLabel: string, endLabel: string, fit?: boolean) => void;
   showPending: (start: number[] | null, end: number[] | null, startLabel: string, endLabel: string) => void;
   clearCanal: () => void;
   showContours: (fc: GeoJSONFC) => void;
@@ -1088,7 +1088,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         drawModeRef.current = null; waterRemoveRef.current = false;
         try { if (map) { (map as any).pm.disableDraw(); map.getContainer().style.cursor = ""; } } catch { /* */ }
       },
-      showCanals(canals, startLabel, endLabel) {
+      showCanals(canals, startLabel, endLabel, fit = false) {
         const map = mapRef.current, g = canalRef.current;
         if (!map || !g) return;
         g.clearLayers();
@@ -1120,7 +1120,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           g.addLayer(mk(cc.end, "#b23b1e", `${endLabel} ${i + 1}`));      // sbocco (basso)
           try { const lb = line.getBounds(); if (lb.isValid()) b = b ? b.extend(lb) : L.latLngBounds(lb.getSouthWest(), lb.getNorthEast()); } catch { /* */ }
         }
-        if (b && b.isValid()) map.fitBounds(b, { padding: [50, 50] });
+        if (fit && b && b.isValid()) map.fitBounds(b, { padding: [50, 50] });
       },
       showPending(start, end, startLabel, endLabel) {
         const g = pendingRef.current;

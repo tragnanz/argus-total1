@@ -33,7 +33,9 @@ export type TvDraw =
   | { kind: "spans"; title: string; labTower: string; labOh: string; labGun: string;
       items: { name: string; info: string; spans: { len: number; d: string; w: number }[]; oh: number; gun: number }[] }
   // particolari costruttivi tipo (schemi a richiami numerati)
-  | { kind: "details"; title: string; items: { key: "pivot" | "air" | "drain" | "station" | "pond"; title: string; notes: string[]; n?: number }[] };
+  | { kind: "details"; title: string; items: { key: "pivot" | "air" | "drain" | "station" | "pond"; title: string; notes: string[]; n?: number }[] }
+  // sezione tipo dei canali (trapezia: base, tirante, franco, scarpe, rivestimento)
+  | { kind: "chan"; title: string; items: { title: string; b: number; y: number; fb: number; m: number; lined: boolean; notes: string[] }[] };
 export type TvSheet = {
   title: string;                                       // nel cartiglio: «Planimetria generale», «Tavola delle tubazioni», …
   fields: { pts: LL[] }[]; pivots: TvPivot[]; lines: TvLine[]; points: TvPoint[];
@@ -401,7 +403,7 @@ export async function buildTavole(sheets: TvSheet[], C: TvCommon): Promise<Blob>
         pg.lows.forEach((q) => { setFill(0, 123, 182); doc.triangle(X(q.d) - 1.4, Y(q.z) + 1.2, X(q.d) + 1.4, Y(q.z) + 1.2, X(q.d), Y(q.z) + 3.6, "F"); });
         setText(0, 26, 51); doc.setFontSize(7); let lx = X0;
         const leg = (r: number, g: number, b: number, l: string) => { setFill(r, g, b); doc.rect(lx, Y1 - 3.6, 5, 2, "F"); setText(0, 26, 51); txt(l, lx + 6.5, Y1 - 2); lx += 8 + doc.getTextWidth(T(l)) + 6; };
-        leg(138, 109, 59, pg.labT); leg(0, 159, 227, pg.labH); leg(0, 26, 51, pg.labA); leg(0, 123, 182, pg.labD);
+        leg(138, 109, 59, pg.labT); leg(0, 159, 227, pg.labH); if (pg.labA) leg(0, 26, 51, pg.labA); if (pg.labD) leg(0, 123, 182, pg.labD);
         doc.setFontSize(7.5); txt(pg.sub || "", X0, Y0 + 2.5);
       } else if (pg.kind === "unif") {
         let yy = Y0 + 2; const bw = 58, bh = 16, yEnd = Y1 - 7;
@@ -421,6 +423,34 @@ export async function buildTavole(sheets: TvSheet[], C: TvCommon): Promise<Blob>
           yy = Math.max(yy + bh, busY1 + lb / 2) + 8;
         });
         setText(92, 99, 106); doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); txt(pg.note || "", X0, Y1 - 1, { maxWidth: X1 - X0 });
+      } else if (pg.kind === "chan") {
+        const n = Math.max(1, pg.items.length), slot = (X1 - X0) / n, top = Y0 + 10, bot = Y1 - 10;
+        pg.items.forEach((it, i) => {
+          const x0 = X0 + i * slot, H = it.y + it.fb, topW = it.b + 2 * it.m * H, ext = topW + 3;
+          const avW = slot * 0.55, avH = bot - top - 12, sc = Math.min(avW / ext, avH / (H + 0.6)), cx = x0 + slot * 0.32, gy = top + 6;
+          const X = (m: number) => cx + m * sc, Y = (m: number) => gy + (H - m) * sc;     // m = quota sopra il fondo
+          setText(0, 123, 182); doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); txt(it.title, x0 + 2, Y0 + 3, { maxWidth: slot - 4 });
+          // terreno e scavo
+          setFill(240, 232, 214); doc.rect(X(-ext / 2), Y(H), ext * sc, (H + 0.5) * sc, "F");
+          setFill(255, 255, 255); doc.triangle(X(-topW / 2), Y(H), X(-it.b / 2), Y(0), X(it.b / 2), Y(0), "F"); doc.triangle(X(-topW / 2), Y(H), X(it.b / 2), Y(0), X(topW / 2), Y(H), "F");
+          // acqua
+          const wW = it.b + 2 * it.m * it.y; setFill(127, 197, 232);
+          doc.triangle(X(-wW / 2), Y(it.y), X(-it.b / 2), Y(0), X(it.b / 2), Y(0), "F"); doc.triangle(X(-wW / 2), Y(it.y), X(it.b / 2), Y(0), X(wW / 2), Y(it.y), "F");
+          setDraw(46, 134, 171); doc.setLineWidth(0.5); doc.line(X(-wW / 2), Y(it.y), X(wW / 2), Y(it.y));
+          // contorno della sezione (rivestimento più spesso)
+          setDraw(0, 26, 51); doc.setLineWidth(it.lined ? 1.1 : 0.5);
+          doc.lines([[(-it.b / 2 - -topW / 2) * sc, H * sc], [it.b * sc, 0], [(topW / 2 - it.b / 2) * sc, -H * sc]], X(-topW / 2), Y(H), [1, 1], "S", false);
+          setDraw(92, 99, 106); doc.setLineWidth(0.4); doc.line(X(-ext / 2), Y(H), X(-topW / 2), Y(H)); doc.line(X(topW / 2), Y(H), X(ext / 2), Y(H));
+          // quote
+          setDraw(92, 99, 106); doc.setLineWidth(0.15); setText(0, 26, 51); doc.setFont("helvetica", "normal"); doc.setFontSize(6.5);
+          const yb = Y(0) + 4; doc.line(X(-it.b / 2), yb, X(it.b / 2), yb); doc.line(X(-it.b / 2), yb - 1, X(-it.b / 2), yb + 1); doc.line(X(it.b / 2), yb - 1, X(it.b / 2), yb + 1); txt("b = " + f2(it.b) + " m", cx, yb + 3.5, { align: "center" });
+          const yt = Y(H) - 3; doc.line(X(-topW / 2), yt, X(topW / 2), yt); doc.line(X(-topW / 2), yt - 1, X(-topW / 2), yt + 1); doc.line(X(topW / 2), yt - 1, X(topW / 2), yt + 1); txt(f2(topW) + " m", cx, yt - 1.2, { align: "center" });
+          const xr = X(ext / 2) + 2; doc.line(xr, Y(0), xr, Y(H)); doc.line(xr - 1, Y(0), xr + 1, Y(0)); doc.line(xr - 1, Y(it.y), xr + 1, Y(it.y)); doc.line(xr - 1, Y(H), xr + 1, Y(H));
+          txt("y = " + f2(it.y) + " m", xr + 1.5, Y(it.y / 2) + 1); txt("f = " + f2(it.fb) + " m", xr + 1.5, Y(it.y + it.fb / 2) + 1);
+          txt("1 : " + f2(it.m), X(-(it.b / 2 + topW / 2) / 2) - 9, Y(H / 2) + 1, { align: "right" });
+          const lx = x0 + 2; let ly = bot + 1; doc.setFontSize(6.4);
+          it.notes.forEach((nt) => { const ls: string[] = doc.splitTextToSize(T(nt), slot - 6); ls.forEach((l2) => { if (ly < Y1 + 6) txt(l2, lx, ly); ly += 2.8; }); });
+        });
       } else if (pg.kind === "curve") {
         const n = pg.items.length, cols = Math.min(2, n), rows = Math.ceil(n / cols), cw = (X1 - X0) / cols, ch = (Y1 - Y0) / rows;
         pg.items.forEach((it, k) => {
@@ -579,7 +609,7 @@ export async function buildTavole(sheets: TvSheet[], C: TvCommon): Promise<Blob>
     };
     // altezza che serve a un disegno nella vista accorpata
     const avail = bottom - 28;
-    const panelH = (pg: TvDraw) => pg.kind === "trench" ? Math.min(avail - 8, fmtId === "a3" ? 80 : 70)
+    const panelH = (pg: TvDraw) => pg.kind === "trench" || pg.kind === "chan" ? Math.min(avail - 8, fmtId === "a3" ? 80 : 70)
       : pg.kind === "profile" ? Math.min(avail - 8, fmtId === "a3" ? 118 : 92)
       : pg.kind === "unif" ? Math.min(avail - 8, 30 + pg.srcs.reduce((a, s) => a + Math.max(1, s.loads.length) * 13 + 8, 0))
       : pg.kind === "curve" ? Math.min(avail - 8, Math.ceil(pg.items.length / 2) * (fmtId === "a3" ? 92 : 72))

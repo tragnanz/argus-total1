@@ -573,3 +573,27 @@ def relazione(body: RelazioneIn, user: User = Depends(get_current_user)):
     finally:
         _EXPORT_LOCK.release(); _trim_memory()
     return Response(pdf, media_type="application/pdf")
+
+
+@router.get("/river")
+def river_flow(lat: float, lon: float, basin: int = 1, client=Depends(get_client), user: User = Depends(get_current_user)):
+    """Portata del fiume alla presa: celle GloFAS vicine (serie giornaliera 1994-2023) e bacino
+    che drena fino alla presa ricavato dal DEM, con le piogge mensili del bacino (NASA POWER)."""
+    from analysis.river import glofas, basin as dem_basin
+    from analysis.suitability import _get_climate_cached
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise HTTPException(422, "Coordinate non valide.")
+    out: dict[str, Any] = {"lat": lat, "lon": lon}
+    try:
+        out["glofas"] = glofas(lat, lon)
+    except Exception as e:  # noqa: BLE001
+        out["glofas"] = {"cells": [], "pick": -1, "error": str(e)[:200]}
+    if basin:
+        try:
+            b = dem_basin(client, lon, lat)
+            out["basin"] = b
+            clim, _el = _get_climate_cached(b["outlet"][1], b["outlet"][0], True)
+            out["basin"]["rain_month_mm"] = [round(float(x), 1) for x in clim["rain"]]
+        except Exception as e:  # noqa: BLE001
+            out["basin"] = {"error": str(e)[:200]}
+    return out

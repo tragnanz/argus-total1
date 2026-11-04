@@ -49,6 +49,11 @@ async function seed() {
   // tubazione che passa dai centri dei pivot (ogni centro è un vertice: la rete li alimenta)
   feats.push({ type: "Feature", properties: { kind: "pipe", field: a.id }, geometry: { type: "LineString", coordinates: [[lon0 - 0.002, lat0 + dy * 0.5], ...centers, c2] } });
   await post("/layers", { project_id: p.id, kind: "pivots", name: "Pivot", data: { geojson: { type: "FeatureCollection", features: feats }, meta: { radius_m: 280 } } }, tok);
+  // canale da realizzare a nord dei campi (tracciato, profilo del terreno e pendenza di fondo)
+  { const cy = lat0 + dy * 0.06, x0 = lon0 + dx * 0.05, x1 = lon0 + dx * 0.95, L = 1350;   // lungo il bordo sud del campo 1, dentro la vista
+    await post("/layers", { project_id: p.id, kind: "canal", name: "Canale 1", data: { geojson: { type: "LineString", coordinates: [[x0, cy], [x1, cy]] },
+      length_m: L, drop_m: 0.6, mean_permille: 0.45, target_permille: 0.3, start: [x0, cy], end: [x1, cy], elev_start_m: 100, elev_end_m: 99.4,
+      profile: [[0, 100], [450, 99.9], [900, 99.6], [1350, 99.4]], waypoints: [] } }, tok); }
   // fonte d'acqua: presa su un fiume a ovest dei campi, portata limitata e livelli mese per mese
   await post(`/projects/${p.id}`, { settings: { fonte: { pt: [lon0 - 0.004, lat0 + dy * 0.5], type: "fiume", qmax: 400, hours: 22, range: 3,
     monthly: [1.0, 1.0, 0.8, 0.6, 0.8, 1.4, 2.2, 2.6, 2.0, 1.4, 1.0, 1.0], sed: true },
@@ -97,6 +102,7 @@ try {
   ok(codes.some((c) => /^MVALVE-\d+$/.test(c)), ".ceres: idrovalvola all'attacco dei pivot");
   ok(codes.some((c) => /^E-(CU|AL)-/.test(c)), ".ceres: linee elettriche a codice");
   ok(codes.includes("ARGUS-QUADRO-POMPE"), ".ceres: quadro delle pompe");
+  ok(rows.some((r) => r.codice === "ARGUS-CANALE" && /sezione trapezia/.test(r.descrizione ?? "")) && codes.includes("ARGUS-CANALE-SCAVO"), ".ceres: canale con sezione trapezia e scavo");
   ok(rows.some((r) => /SPAN-STARPIVOT/.test(r.codice) && r.peso_kg > 0), ".ceres: campate con peso");
   const feats = ceres.planimetria?.elementi?.features ?? [];
   ok(feats.some((f) => f.properties?.tipo === "attrezzatura" && f.properties?.pompa_modello), ".ceres: planimetria con la pompa consigliata");
@@ -108,6 +114,7 @@ try {
   const tavPages = Number(/Pages:\s+(\d+)/.exec(cp.execFileSync("pdfinfo", [await tav.path()]).toString())?.[1] ?? 0);
   const tavTxt = cp.execFileSync("pdftotext", ["-layout", await tav.path(), "-"]).toString();
   ok(tavPdf.subarray(0, 4).toString() === "%PDF" && tavPages >= 4, `Tavole (vista accorpata): PDF di ${tavPages} pagine`);
+  ok(/Tavola dei canali/.test(tavTxt) && /Sezioni tipo dei canali/.test(tavTxt) && /K1/.test(tavTxt), "Tavole: tavola dei canali con sezione tipo e profilo");
   ok(/Planimetria generale/.test(tavTxt) && /Tavola delle tubazioni/.test(tavTxt) && /Tavola delle linee elettriche/.test(tavTxt), "Tavole: planimetria, tubazioni e linee elettriche");
   ok(/Tratti delle tubazioni/.test(tavTxt) && /T1\b/.test(tavTxt) && /Valvole e apparecchiature/.test(tavTxt) && /Sezioni tipo di scavo/.test(tavTxt) && /Schema unifilare/.test(tavTxt), "Tavole: tratti, valvole, sezioni di scavo e schema unifilare");
   const prj = await download(() => page.locator('button:has-text("Progetto esecutivo completo")').click(), "progetto esecutivo");
@@ -138,7 +145,7 @@ try {
   await page.waitForTimeout(400);
   const tav2 = await download(() => page.locator('button:has-text("Tavole di progetto")').click(), "tavole con le fasi");
   const tav2Txt = cp.execFileSync("pdftotext", ["-layout", await tav2.path(), "-"]).toString();
-  ok(/Tav\. 04 · Fasi di realizzazione/.test(tav2Txt) && /Fase 2/.test(tav2Txt), "Tavole: tavola delle fasi di realizzazione");
+  ok(/Tav\. 0\d · Fasi di realizzazione/.test(tav2Txt) && /Fase 2/.test(tav2Txt), "Tavole: tavola delle fasi di realizzazione");
   const rel = await download(() => page.locator('button:has-text("Relazione tecnica per il cliente")').click(), "relazione");
   const relPdf = await readBytes(rel);
   ok(relPdf.subarray(0, 4).toString() === "%PDF" && relPdf.length > 200000, "Relazione tecnica per il cliente: PDF con copertina e planimetria");
@@ -146,6 +153,8 @@ try {
   const relTxt = (await import("node:child_process")).execFileSync("pdftotext", ["-layout", await rel.path(), "-"]).toString();
   ok(/zona\s+climatica/.test(relTxt) && /Dati meteorologici mensili del sito/.test(relTxt) && /T max/.test(relTxt) && /0,408/.test(relTxt) && /NIR = ETc − Pe/.test(relTxt) && /Pioggia totale ed efficace mese per mese/.test(relTxt),
     "Relazione: dati meteorologici del sito, piogge e metodo di calcolo FAO-56");
+  ok(/Uniformità di distribuzione dei pivot/.test(relTxt) && /Heermann-Hein/.test(relTxt), "Relazione: uniformità di distribuzione dei pivot (CU)");
+  ok(/Manning/.test(relTxt) && /K1/.test(relTxt), "Relazione: canale dimensionato con Manning (sezione, scavi)");
   ok(/Dati della fonte d'acqua/.test(relTxt) && /Livelli della fonte mese per mese/.test(relTxt) && /400 l\/s/.test(relTxt), "Relazione: fonte d'acqua con portata disponibile e livelli mese per mese");
   ok(/Campo 1\s+[\d,]+\s+Canna da zucchero/.test(relTxt) && /Campo 2\s+[\d,]+\s+Mais, Cereali/.test(relTxt) && /Mais: ETc/.test(relTxt) && /Cereali: ETc/.test(relTxt),
     "Relazione: più colture per campo nella stessa azienda");
@@ -280,6 +289,14 @@ try {
   const solTxt2 = cp.execFileSync("pdftotext", [await sol.path(), "-"]).toString();
   ok(/CAMPO FOTOVOLTAICO DEL PIVOT SOLARE/.test(solTxt2) && /kWp/.test(solTxt2) && /PIANTA/.test(solTxt2) && /Tara/.test(solTxt2), "Pivot solari: scheda in scala del campo FV con la tara (PDF)");
   if (process.env.ARGUS_SHOT_SOLAR) await page.screenshot({ path: process.env.ARGUS_SHOT_SOLAR });
+  ok((await page.locator("[data-solar-months] > div > div").count()) === 12, "Pivot solari: produzione FV e ore di marcia mese per mese");
+  // Fonte d'acqua: portata del fiume alla presa (GloFAS + bacino) e bilancio mese per mese
+  await page.locator('button[title="Fonte d\'acqua"]').first().click(); await page.waitForTimeout(1200);
+  await page.locator("[data-river] button").first().click();
+  await page.locator("[data-river-table]").first().waitFor({ timeout: 90000 }).catch(() => {});
+  const rvTxt = await page.locator("[data-river]").first().innerText().catch(() => "");
+  ok(/prelevabile/i.test(rvTxt) && /km²/.test(rvTxt), `Fonte: portata del fiume alla presa e bilancio mese per mese (${(rvTxt.match(/Portata media[^·]*/) || [""])[0].trim()})`);
+  if (process.env.ARGUS_SHOT_RIVER) await page.screenshot({ path: process.env.ARGUS_SHOT_RIVER });
   await page.locator('[title="Esporta"], button:has-text("Esporta")').first().click(); await page.waitForTimeout(800);
   const cer2 = await readJson(await download(() => page.locator('button:has-text("Esporta per Ceres")').click()));
   const rows2 = (cer2.sezioni ?? []).flatMap((x) => x.righe ?? []);

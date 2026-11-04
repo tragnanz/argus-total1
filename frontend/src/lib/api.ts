@@ -499,6 +499,18 @@ export async function siteClimate(lat: number, lon: number): Promise<SiteClimate
   if (!res.ok) throw new ApiError(res.status, res.statusText);
   return res.json();
 }
+// Portata del fiume alla presa: celle GloFAS vicine e bacino dal DEM
+export type RiverCell = { lat: number; lon: number; dist_km: number; mean: number; q347: number; min: number; max: number;
+  month_mean: number[]; month_q80: number[]; month_min: number[]; years: string[]; n_days: number };
+export type RiverOut = { lat: number; lon: number;
+  glofas: { source?: string; period?: string[]; cells: RiverCell[]; pick: number; error?: string };
+  basin?: { area_km2?: number; truncated?: boolean; outlet?: number[]; res_m?: number; z_outlet?: number; z_max?: number; z_mean?: number; ring?: number[][]; rain_month_mm?: number[]; error?: string } };
+export async function riverFlow(lat: number, lon: number): Promise<RiverOut> {
+  const tok = getToken();
+  const res = await fetch(`${API_BASE}/api/project/river?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}`, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} });
+  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  return res.json();
+}
 // Scheda in scala del campo FV di un pivot solare (PDF A3)
 export async function solarSheet(doc: Record<string, unknown>): Promise<Blob> {
   const tok = getToken();
