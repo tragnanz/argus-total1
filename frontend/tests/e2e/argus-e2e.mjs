@@ -55,7 +55,7 @@ async function seed() {
       length_m: L, drop_m: 0.6, mean_permille: 0.45, target_permille: 0.3, start: [x0, cy], end: [x1, cy], elev_start_m: 100, elev_end_m: 99.4,
       profile: [[0, 100], [450, 99.9], [900, 99.6], [1350, 99.4]], waypoints: [] } }, tok); }
   // fonte d'acqua: presa su un fiume a ovest dei campi, portata limitata e livelli mese per mese
-  await post(`/projects/${p.id}`, { settings: { fonte: { pt: [lon0 - 0.004, lat0 + dy * 0.5], type: "fiume", qmax: 400, hours: 22, range: 3,
+  await post(`/projects/${p.id}`, { settings: { fonte: { pt: [lon0 - 0.004, lat0 + dy * 0.5], route: [[lon0 - 0.004, lat0 + dy * 0.5], [lon0 - 0.002, lat0 + dy * 0.5]], type: "fiume", qmax: 400, hours: 22, range: 3,
     monthly: [1.0, 1.0, 0.8, 0.6, 0.8, 1.4, 2.2, 2.6, 2.0, 1.4, 1.0, 1.0], sed: true },
     crops: { base: "canna", fields: { [a2.id]: ["mais", "cereali"] } } } }, tok, "PATCH");
   return { tok };

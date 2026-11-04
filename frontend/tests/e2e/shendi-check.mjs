@@ -83,6 +83,10 @@ try {
   ok(/GEOGLOWS v2/.test(sec) && /Dongola/.test(sec) && /Fonti dei dati/.test(sec), "Relazione: fiume con GEOGLOWS, Dongola e fonti");
   ok(/rete idrografica GEOGLOWS/.test(sec), "Relazione: bacino dalla rete");
   ok(/altimetria satellitare/.test(sec), "Relazione: livelli");
+  // niente rete né adduzione disegnate: la relazione non ne parla
+  const absent = ["Alimentazione elettrica", "Stazioni di pompaggio", "Rete di distribuzione", "Dimensionamento idraulico della rete", "adduttrice", "Infrastrutture idriche esistenti", "Colpo d'ariete", "Distanza presa – impianto"].filter((w) => relTxt.includes(w));
+  ok(absent.length === 0, `Relazione: niente rete, pompe, linee elettriche e adduzione non disegnate${absent.length ? " (presenti: " + absent.join(", ") + ")" : ""}`);
+  ok(/Planimetria dell'impianto: campi e pivot/.test(relTxt), "Relazione: planimetria con solo campi e pivot");
   // .ceres e ZIP
   const ce = await download(() => page.locator('button:has-text("Esporta per Ceres")').click());
   const ceres = JSON.parse(fs.readFileSync(await ce.path(), "utf8"));

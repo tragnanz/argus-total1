@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.238";
+const REV = "v0.6.239";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 
@@ -3732,7 +3732,7 @@ export default function Page() {
         return { plan_fc: fc, plan_canals: canalLines, plan_rings: kidRings, plan_format: pdfFormat };
       };
       // Fonte d'acqua e computo: di progetto, uguali per ogni campo, nella lingua della stampa.
-      const extra = { plan_source: inLang(pdfLang, sourceDrawing), extra_sections: pdfSheet ? inLang(pdfLang, pdfSections) : null };
+      const extra = { plan_source: inLang(pdfLang, () => sourceDrawing({ onlyDrawn: true })), extra_sections: pdfSheet ? inLang(pdfLang, pdfSections) : null };
       if (sel.length === 1) {
         const f = sel[0];
         const blob = await api.downloadReport(f.geom, paramsFrom(effSettings(f)),
@@ -4857,7 +4857,7 @@ export default function Page() {
         const srcLines: TvLine[] = srcRoute && srcRoute.length >= 2 ? [{ id: "src", pts: srcRoute.map(LLf), color: ADD_C, width: 0.9 }] : [];
         const basePts: TvPoint[] = [];
         if (srcPt) basePts.push({ pt: LLf(srcPt), color: "#1d6fb8", lab: tx("Fonte d'acqua") });
-        if (resPt && sc?.res) basePts.push({ pt: LLf(resPt), color: "#1d6fb8", resR: sc.res.r, resLab: `${tx("Vasca di accumulo")} · ${n0(sc.res.vol)} m³` });
+        if (resPt && sc?.res && srcRoute && srcRoute.length >= 2) basePts.push({ pt: LLf(resPt), color: "#1d6fb8", resR: sc.res.r, resLab: `${tx("Vasca di accumulo")} · ${n0(sc.res.vol)} m³` });
         {   // stazioni nello stesso punto (presa e rilanci alla vasca): un solo simbolo con un'etichetta
           const grp = new Map<string, { pt: number[]; names: string[] }>();
           stations.forEach((st) => { if (!st.pt) return; const k2 = key(st.pt); (grp.get(k2) ?? grp.set(k2, { pt: st.pt, names: [] }).get(k2)!).names.push(st.name); });
@@ -5088,7 +5088,9 @@ export default function Page() {
           });
           for (const g of grp.values()) wkJobs.push({ type: "pad", ctx: g.ctx, name: g.names.join(", ") });
           const sg = new Map<string, { ctx: Record<string, unknown>; names: string[]; vert: boolean }>();
-          stations.forEach((st) => {
+          // stazioni e vasca solo se progettate: rete disegnata o tracciato presa → impianto
+          const drawnSrc = !!(srcRoute && srcRoute.length >= 2), drawnNet = !!hydraNow()?.byDn.length;
+          (drawnSrc || drawnNet ? stations : []).forEach((st) => {
             const pk = st.pick; if (!pk) return;
             const kind = pk.diesel ? "moto" : pk.fam === "vert" ? "vert" : pk.fam === "subm" ? "subm" : "horiz";
             const atRes = !!(resPt && st.pt && distM(st.pt, resPt) < 30), inst = st.well ? "well" : kind === "vert" ? "sump" : atRes ? "flooded" : "bank";
@@ -5097,7 +5099,7 @@ export default function Page() {
             const key = JSON.stringify(ctx); const g = sg.get(key) ?? sg.set(key, { ctx, names: [], vert: kind === "vert" }).get(key)!; g.names.push(st.name);
           });
           for (const g of sg.values()) { wkJobs.push({ type: "station", ctx: g.ctx, name: g.names.join(" · ") }); if (g.vert) wkJobs.push({ type: "vpump", ctx: g.ctx, name: String(g.ctx.model) }); }
-          if (sc?.res && S) {
+          if (sc?.res && S && drawnSrc) {
             const fillQ = Math.round((sc.key === "B" ? sc.stages[0].qLs : S.Qd) * 3.6 * 10) / 10;
             wkJobs.push({ type: "reservoir", ctx: { rv: { ok: true, type: "earth", V: sc.res.vol, H: resDepth, Q: Math.round((stations.filter((st) => st.pt && resPt && distM(st.pt, resPt) < 30).reduce((x, st) => x + st.qLs, 0) || S.Qd) * 3.6), Vday: Math.round(sc.res.vol / Math.max(1, sc.res.days || resDays)), days: Math.max(1, sc.res.days || resDays), fillQ, soil: "loam", mode: "eff" },
               dnIn: sc.main?.dn ?? 0, dnOut: runs.length ? Math.max(...runs.map((r) => r.dn)) : 0 }, name: `${n0(sc.res.vol)} m³` });
@@ -5186,6 +5188,9 @@ export default function Page() {
         const S = srcPt && pivots.length ? sourceSchemes() : null;
         const sc = S ? (S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? null) : null;
         const stations = pumpStationsList(), cabs = cableRuns(stations), G = powerGear(stations);
+        // nella relazione va solo ciò che è stato disegnato e progettato: senza rete niente rete, pompe e linee;
+        // senza tracciato presa → impianto niente adduzione né opere di presa
+        const hasNet = !!HY?.byDn.length, hasAdd = !!(sc && S && srcRoute && srcRoute.length >= 2);
         const plan = mercuriusComputo(`ARGUS-${pid}`, rev).planimetria as { riquadro?: { ovest: number; sud: number; est: number; nord: number }; elementi?: { features?: { properties?: { tipo?: string } }[] } } | undefined;
         const feats = plan?.elementi?.features ?? [];
         if (plan?.riquadro) bbox = [plan.riquadro.ovest, plan.riquadro.sud, plan.riquadro.est, plan.riquadro.nord];
@@ -5205,12 +5210,14 @@ export default function Page() {
         // 1 — Introduzione
         ch.push({ title: tx("Introduzione"), blocks: [
           { p: tx("La presente relazione tecnica generale descrive il progetto dell'impianto di irrigazione «{p}» per {c} e costituisce parte integrante della documentazione di progetto.", { p: pname, c: cname || tx("il committente") }) },
-          { p: tx("Il documento riassume le condizioni di partenza, le ipotesi di progetto e le soluzioni tecniche adottate: inquadramento del sito, clima e fabbisogno irriguo, portata di progetto, fonte d'acqua, disposizione delle macchine, rete di distribuzione, stazioni di pompaggio e alimentazione elettrica.") },
+          { p: hasNet ? tx("Il documento riassume le condizioni di partenza, le ipotesi di progetto e le soluzioni tecniche adottate: inquadramento del sito, clima e fabbisogno irriguo, portata di progetto, fonte d'acqua, disposizione delle macchine, rete di distribuzione, stazioni di pompaggio e alimentazione elettrica.")
+            : tx("Il documento riassume le condizioni di partenza, le ipotesi di progetto e le soluzioni tecniche adottate finora: inquadramento del sito, clima e fabbisogno irriguo, portata di progetto, fonte d'acqua e disposizione delle macchine.") },
           { p: tx("L'impianto irriga {ha} ha con {n} pivot e richiede una portata di progetto di {q} l/s.", { ha: n1(VM.ha), n: fx(pivots.length), q: n0(P.qDes) })
             + (nSys ? " " + tx("Sono previsti inoltre {k} campi con sistemi lineari, a rotolone o a goccia.", { k: fx(nSys) }) : "") },
           { p: tx("Il progetto si propone di:") },
-          { bullets: [tx("distribuire l'acqua in modo uniforme ed efficiente su tutta la superficie irrigata;"), tx("dimensionare rete, pompe e linee elettriche sulla domanda di punta della coltura più esigente;"),
-            tx("contenere i consumi di energia con pompe scelte per rendimento al punto di lavoro;"), tx("rendere l'impianto realizzabile per fasi e semplice da gestire e mantenere.")] },
+          { bullets: [tx("distribuire l'acqua in modo uniforme ed efficiente su tutta la superficie irrigata;"),
+            ...(hasNet ? [tx("dimensionare rete, pompe e linee elettriche sulla domanda di punta della coltura più esigente;"), tx("contenere i consumi di energia con pompe scelte per rendimento al punto di lavoro;")] : []),
+            tx("rendere l'impianto realizzabile per fasi e semplice da gestire e mantenere.")] },
           { p: tx("Il documento è rivolto al committente, ai progettisti e ai soggetti coinvolti nella valutazione e nella realizzazione dell'impianto. Le condizioni economiche sono riportate nell'offerta.") },
         ] });
         // 2 — Inquadramento geografico
@@ -5370,7 +5377,7 @@ export default function Page() {
         if (sc && S) {
           fb.push({ p: tx("Il fabbisogno di punta dell'impianto è di {v} m³ al giorno, pari a {q} l/s ai pivot; la presa preleva {qi} l/s nelle ore consentite ({h} h al giorno).", { v: n0(S.Vday), q: n0(S.Qd), qi: n0(qIn), h: n1(srcHours) })
             + " " + (srcQmax > 0 ? tx("La portata disponibile della fonte è di {q} l/s: il prelievo ne impegna il {p}%.", { q: n0(srcQmax), p: n0((qIn / srcQmax) * 100) }) : tx("Nel progetto la portata della fonte non è limitata: va verificata con l'ente gestore e con le misure di portata nei mesi di magra.")) });
-          if (!sc.ok && sc.why) fb.push({ p: tx("Attenzione: {w}", { w: sc.why }) });
+          if (hasAdd && !sc.ok && sc.why) fb.push({ p: tx("Attenzione: {w}", { w: sc.why }) });
           const rows: string[][] = [[tx("Tipo di fonte"), srcName]];
           if (srcPt) rows.push([tx("Coordinate della presa"), `${dms(srcPt[1], "N", "S")}, ${dms(srcPt[0], "E", "W")}`]);
           if (S.zS != null) rows.push([tx("Quota della presa"), `${n1(S.zS)} ${asl}`]);
@@ -5387,9 +5394,9 @@ export default function Page() {
             if (S.months) rows.push([tx("Abbassamento medio pesato sui volumi"), `${n1(S.dropAvg)} m`]);
             if (S.zLow != null) rows.push([tx("Livello minimo di progetto alla presa"), `${n1(S.zLow)} ${asl}`]);
           }
-          if (S.zR != null) rows.push([tx("Quota della vasca o del punto di consegna"), `${n1(S.zR)} ${asl}`]);
+          if (hasAdd && S.zR != null) rows.push([tx("Quota della vasca o del punto di consegna"), `${n1(S.zR)} ${asl}`]);
           if (S.zP != null) rows.push([tx("Quota del pivot più alto"), `${n1(S.zP)} ${asl}`]);
-          rows.push([tx("Distanza presa – impianto"), `${n0(S.L)} m`]);
+          if (hasAdd) rows.push([tx("Distanza presa – impianto"), `${n0(S.L)} m`]);
           if (srcType !== "pozzo") rows.push([tx("Acqua con sedimenti"), srcSediment ? tx("sì") : tx("no")]);
           fb.push({ h: tx("Dati della fonte d'acqua") });
           fb.push({ table: { header: [tx("Parametro"), tx("Valore")], rows, widths: [0.55, 0.45] } });
@@ -5459,7 +5466,7 @@ export default function Page() {
         const ib: Record<string, unknown>[] = [];
         const nCan = canals.filter((c) => !c.hidden).length, nWat = watercourses.filter((w) => !w.hidden).length;
         if (nCan || nWat) ib.push({ p: tx("Nell'area sono presenti {c} canali e {w} corsi d'acqua rilevati sulla mappa, considerati nel tracciato delle tubazioni e nelle prese.", { c: fx(nCan), w: fx(nWat) }) });
-        if (sc && S) {
+        if (hasAdd && sc && S) {
           let txt = tx("L'acqua raggiunge l'impianto secondo lo schema {k} – {name}.", { k: sc.key, name: sc.name });
           if (sc.main?.kind === "pipe" && sc.main.dn) txt += " " + tx("L'adduttrice in PE100 DN {dn} è lunga {l} m.", { dn: sc.main.dn, l: n0(sc.main.L * (sc.main.n ?? 1)) });
           if (sc.main?.kind === "canal") txt += " " + tx("Un canale a gravità di {l} m porta l'acqua alla vasca.", { l: n0(sc.main.L) });
@@ -5482,7 +5489,6 @@ export default function Page() {
             if (blk.rows.length) ib.push({ table: { header: [tx("Elemento"), tx("Caratteristiche")], rows: blk.rows.map(([k, v]) => [k, v]), widths: [0.3, 0.7] } });
           }
         }
-        if (!ib.length) ib.push({ p: tx("Il progetto non prevede opere sulle infrastrutture idriche esistenti oltre alla presa dell'impianto.") });
         { const CK = canalCalcs().filter((k) => k.sec);
           if (CK.length) {
             const L0 = lining(canalLin);
@@ -5502,26 +5508,29 @@ export default function Page() {
               rows: DR.map((d) => [`F${d.n}`, d.f.name, n1(d.ha), n0(d.q), n0(d.L), n2(d.sec!.b), n2(d.sec!.y), n2(d.sec!.v), d.zOut != null ? n1(d.zOut) : "—", n0(d.cut)]) } });
           }
         }
-        ch.push({ title: tx("Infrastrutture idriche esistenti e opere di presa"), blocks: ib });
+        if (ib.length) ch.push({ title: tx("Infrastrutture idriche esistenti e opere di presa"), blocks: ib });
         // Nota tecnica sulle stime – metodologia
         const cnum = ch.length + 1;
         ch.push({ title: tx("Nota tecnica sulle stime – metodologia"), blocks: [
           { p: tx("Le stime della relazione sono ottenute con criteri prudenti, adatti a una progettazione di massima, e vanno confermate con i rilievi in campo.") },
           { h: `${cnum}.1 ${tx("Stima del fabbisogno idrico")}`, toc: true },
           { p: tx("Il fabbisogno è calcolato con FAO-56 sui dati climatici del sito, con Kc per fase colturale e pioggia efficace prudenziale; la dose di progetto copre la punta della coltura più esigente.") },
-          { h: `${cnum}.2 ${tx("Dimensionamento idraulico della rete")}`, toc: true },
-          { p: tx("La rete è risolta come albero a partire dalla presa: la portata di ogni tratto è la somma delle portate a valle; il diametro è il più piccolo che rispetta la velocità massima di {v} m/s e le perdite di carico sono calcolate con Hazen-Williams (C = {c}).", { v: n1(vMax), c: fx(hwC) }) },
-          { h: `${cnum}.3 ${tx("Metodologia di progettazione dell'impianto irriguo")}`, toc: true },
-          { p: tx("I pivot sono disposti sul campo massimizzando la superficie irrigata nel rispetto delle pendenze ammesse; le campate sono composte dal listino del produttore con diametri scelti per la portata. Le pompe sono scelte sulle curve Caprari per il miglior rendimento e le linee elettriche per corrente e caduta di tensione.") },
+          ...(hasNet ? [{ h: `${cnum}.2 ${tx("Dimensionamento idraulico della rete")}`, toc: true },
+          { p: tx("La rete è risolta come albero a partire dalla presa: la portata di ogni tratto è la somma delle portate a valle; il diametro è il più piccolo che rispetta la velocità massima di {v} m/s e le perdite di carico sono calcolate con Hazen-Williams (C = {c}).", { v: n1(vMax), c: fx(hwC) }) },] : []),
+          { h: `${cnum}.${hasNet ? 3 : 2} ${tx("Metodologia di progettazione dell'impianto irriguo")}`, toc: true },
+          { p: hasNet ? tx("I pivot sono disposti sul campo massimizzando la superficie irrigata nel rispetto delle pendenze ammesse; le campate sono composte dal listino del produttore con diametri scelti per la portata. Le pompe sono scelte sulle curve Caprari per il miglior rendimento e le linee elettriche per corrente e caduta di tensione.")
+            : tx("I pivot sono disposti sul campo massimizzando la superficie irrigata nel rispetto delle pendenze ammesse; le campate sono composte dal listino del produttore con diametri scelti per la portata.") },
         ] });
         // Struttura generale dell'impianto
         const sb: Record<string, unknown>[] = [
-          { p: tx("L'impianto è organizzato in {nf} appezzamenti serviti da una rete di distribuzione unica; ogni pivot ha il proprio attacco con idrovalvola e la propria linea di alimentazione elettrica dalla stazione di pompaggio.", { nf: fx(fieldsShown.length) }) },
+          { p: hasNet ? tx("L'impianto è organizzato in {nf} appezzamenti serviti da una rete di distribuzione unica; ogni pivot ha il proprio attacco con idrovalvola e la propria linea di alimentazione elettrica dalla stazione di pompaggio.", { nf: fx(fieldsShown.length) })
+            : tx("L'impianto è organizzato in {nf} appezzamenti.", { nf: fx(fieldsShown.length) }) },
         ];
         const mRoad = roads.filter((r) => r.kind === "service" && !r.hidden).reduce((a, r) => a + r.coords.reduce((b, q, j, cc) => b + (j ? distM(cc[j - 1], q) : 0), 0), 0);
         if (mRoad > 0) sb.push({ p: tx("Le strade di servizio previste misurano {l} m e danno accesso ai punti pivot, alle stazioni e alle opere di presa.", { l: n0(mRoad) }) });
         if (nPhases > 1) {
-          sb.push({ p: tx("La realizzazione è suddivisa in {n} fasi di superficie simile; la rete principale, la fonte d'acqua, le stazioni di pompaggio e l'eventuale impianto fotovoltaico sono realizzati nella prima fase.", { n: fx(nPhases) }) });
+          sb.push({ p: hasNet ? tx("La realizzazione è suddivisa in {n} fasi di superficie simile; la rete principale, la fonte d'acqua, le stazioni di pompaggio e l'eventuale impianto fotovoltaico sono realizzati nella prima fase.", { n: fx(nPhases) })
+            : tx("La realizzazione è suddivisa in {n} fasi di superficie simile.", { n: fx(nPhases) }) });
           sb.push({ table: { header: [tx("Fase"), tx("Pivot"), tx("Altri campi"), tx("Superficie") + " (ha)", "l/s"], widths: [16, 16, 20, 24, 24], rows: phaseSummary().map((r) => [fx(r.ph), fx(r.nPiv), fx(r.sys), n1(r.ha), n0(r.qLs)]) } });
         }
         ch.push({ title: tx("Struttura generale dell'impianto"), blocks: sb });
@@ -5531,7 +5540,7 @@ export default function Page() {
           const comp = pivots.map((pv) => spanComposition(pv, pivotBrand));
           lb.push({ p: tx("L'impianto è composto da {n} pivot {b}, per una superficie irrigata di {ha} ha. Ogni macchina è formata da campate in acciaio zincato, con diametro e lunghezza scelti in funzione della portata, e dallo sbraccio terminale; dove il campo lo richiede i pivot lavorano a settore e montano l'irrigatore finale.",
             { n: fx(pivots.length), b: PIVOT_BRANDS[pivotBrand], ha: n1(pivots.reduce((a, p) => a + pvAreaM2(p) / 10000, 0)) }) });
-          lb.push({ figure: "plan", caption: tx("Planimetria dell'impianto: pivot, tubazioni, linee elettriche e stazioni di pompaggio") });
+          lb.push({ figure: "plan", caption: hasNet ? tx("Planimetria dell'impianto: pivot, tubazioni, linee elettriche e stazioni di pompaggio") : tx("Planimetria dell'impianto: campi e pivot") });
           lb.push({ table: { header: [tx("Pivot"), tx("Settore"), tx("Lunghezza") + " (m)", tx("Superficie") + " (ha)", tx("Campate"), tx("Sbraccio") + " (m)", tx("Irrigatore finale"), "l/s", "bar"], widths: [8, 9, 11, 11, 22, 9, 11, 9, 10],
             rows: pivots.map((pv, k) => { const c = comp[k], deg = pv.deg ?? 360; const sp = new Map<string, number>(); for (const x of c?.spans ?? []) { const kk = `${PIPE_TXT[x.pipe]} ${n1(x.len)} m`; sp.set(kk, (sp.get(kk) ?? 0) + 1); }
               return [`P${k + 1}`, deg >= 360 ? "360°" : `${Math.round(deg)}°`, n0(c ? c.total : pv.r), n2(pvAreaM2(pv) / 10000), [...sp.entries()].map(([kk, n]) => `${n} × ${kk}`).join(", ") || "—", c?.oh ? n1(c.oh) : "—", pv.gun && pv.gun > 0 ? `${n0(pv.gun)} m` : "—", n1(pivotFlow(pv)), n2(pivotPressure(pv))]; }) } });
@@ -5561,13 +5570,13 @@ export default function Page() {
               : tx("In assenza del profilo del terreno gli sfiati sono previsti ogni 500 m e all'inizio di ogni linea; all'attacco di ogni pivot sono previsti idrovalvola master e diffusore.") }, { bullets: fl });
           }
         }
-        if (stations.length) {
+        if (hasNet && stations.length) {
           lb.push({ h: tx("Stazioni di pompaggio") });
           lb.push({ p: tx("Le pompe sono scelte sulle curve caratteristiche Caprari per il miglior rendimento al punto di lavoro, cioè alla portata e alla prevalenza richieste dall'impianto. Ogni stazione ha il proprio quadro di comando e protezione.") });
           lb.push({ table: { header: [tx("Stazione"), "l/s", "m", tx("Pompa"), tx("Motore") + " (kW)", "η (%)"], widths: [28, 9, 9, 32, 12, 10],
             rows: stations.map((st) => [st.name, n0(st.qLs), n0(st.head), st.pick ? `${st.nTot > 1 ? `${st.nTot} × ` : ""}Caprari ${st.pick.model}` : "—", st.pick ? n1(st.pick.motor) : n1(st.kW), st.pick ? n0(st.pick.eta) : "—"]) } });
         }
-        { const WH = waterHammer();
+        { const WH = hasNet ? waterHammer() : null;
           if (WH) {
             lb.push({ h: tx("Colpo d'ariete") });
             lb.push({ p: tx("All'arresto improvviso delle pompe la colonna d'acqua si ferma e genera un'onda di pressione (Joukowsky, ΔH = a·Δv/g). Con tubi in PE100 SDR17 la celerità dell'onda è di circa {a} m/s; sulla prevalenza di esercizio di {h} m la sovrappressione massima è di {d} m. Le valvole vanno chiuse in almeno {t} s (due volte il tempo di percorrenza della linea più lunga).", { a: n0(WH.a), h: n0(WH.Hop), d: n0(WH.dHmax), t: n0(Math.ceil(WH.tCrit)) })
@@ -5585,15 +5594,15 @@ export default function Page() {
         ch.push({ title: tx("Linee guida di progettazione dell'impianto irriguo"), blocks: lb });
         // Alimentazione elettrica
         const kp = stations.reduce((a, st) => a + (st.pick && !st.pick.diesel ? st.pick.motor * st.nTot : st.pick ? 0 : st.kW), 0);
-        const eb: Record<string, unknown>[] = [{ p: tx("L'alimentazione prevista è: {a}. La potenza installata complessiva è di {kw} kW, di cui {kp} kW per le pompe; il consumo annuo stimato è di {mwh} MWh, pari a {kwhha} kWh per ettaro.",
-          { a: VM.energy, kw: n0(G.kW), kp: n0(kp), mwh: n0(VM.mwh), kwhha: n0(VM.ha > 0 ? (VM.mwh * 1000) / VM.ha : 0) }) }];
+        const eb: Record<string, unknown>[] = hasNet ? [{ p: tx("L'alimentazione prevista è: {a}. La potenza installata complessiva è di {kw} kW, di cui {kp} kW per le pompe; il consumo annuo stimato è di {mwh} MWh, pari a {kwhha} kWh per ettaro.",
+          { a: VM.energy, kw: n0(G.kW), kp: n0(kp), mwh: n0(VM.mwh), kwhha: n0(VM.ha > 0 ? (VM.mwh * 1000) / VM.ha : 0) }) }] : [];
         const dst = stations.filter((st) => st.pick?.diesel);
-        if (dst.length) eb.push({ p: tx("Le pompe di superficie sono motopompe con motore diesel accoppiato tramite flangia SAE e giunto elastico: {l}. Il consumo stimato di gasolio è di {g} litri all'anno.", {
+        if (hasNet && dst.length) eb.push({ p: tx("Le pompe di superficie sono motopompe con motore diesel accoppiato tramite flangia SAE e giunto elastico: {l}. Il consumo stimato di gasolio è di {g} litri all'anno.", {
           l: dst.map((st) => `${st.name} (${st.nTot > 1 ? `${st.nTot} × ` : ""}${n0(st.pick!.motor)} kW, ${n0(st.pick!.rpm)} ${tx("giri/min")})`).join("; "),
           g: n0((VM.dieselMwh ?? 0) * 1000 * dieselLkWh) }) });
-        if (G.supply === "mt") eb.push({ p: tx("Con la potenza installata è prevista una cabina di trasformazione MT/BT da {kva} kVA.", { kva: fx(G.kva) }) });
-        if (G.supply === "bt") eb.push({ p: tx("La fornitura è in bassa tensione, con un punto di consegna dotato di quadro generale.") });
-        if (G.supply === "gen") eb.push({ p: tx("Nelle ore senza sole l'energia è fornita da un gruppo elettrogeno da {kva} kVA.", { kva: fx(G.kva) }) });
+        if (hasNet && G.supply === "mt") eb.push({ p: tx("Con la potenza installata è prevista una cabina di trasformazione MT/BT da {kva} kVA.", { kva: fx(G.kva) }) });
+        if (hasNet && G.supply === "bt") eb.push({ p: tx("La fornitura è in bassa tensione, con un punto di consegna dotato di quadro generale.") });
+        if (hasNet && G.supply === "gen") eb.push({ p: tx("Nelle ore senza sole l'energia è fornita da un gruppo elettrogeno da {kva} kVA.", { kva: fx(G.kva) }) });
         if (VM.pvKwp) eb.push({ p: tx("Il campo fotovoltaico ha una potenza di {kwp} kWp", { kwp: n0(VM.pvKwp) }) + (VM.battKwh ? " " + tx("con un accumulo a batterie di {kwh} kWh.", { kwh: n0(VM.battKwh) }) : ".") });
         const solP = pivots.filter((p) => p.solar);
         if (solP.length) {
@@ -5614,14 +5623,14 @@ export default function Page() {
           eb.push({ table: { header: [tx("Pivot"), "kW", "kWp", tx("Moduli"), tx("Batterie") + " (kWh)", tx("Tara") + " Ø (m)", tx("Tara") + " (ha)"], widths: [12, 11, 13, 22, 14, 14, 14],
             rows: pivots.map((p, k) => (p.solar ? [`P${k + 1}`, n1(pivotKw(p)), n1(solarSize(p).kWp), `${solarSize(p).n} × ${solarCfg.wp} Wp`, solarSize(p).batt ? n0(solarSize(p).batt) : "—", n0(2 * solarSize(p).taraR), (solarSize(p).taraM2 / 1e4).toFixed(2)] : null)).filter(Boolean) as string[][] } });
         }
-        eb.push({ p: tx("Le linee elettriche sono interrate, a 400 V; la sezione è scelta per la corrente di esercizio e una caduta di tensione non superiore al 4 %. I pivot sono alimentati dalla stazione che li serve, con le linee posate nella stessa trincea delle tubazioni.") });
-        if (cabs.length) eb.push({ table: { header: [tx("Linea"), "kW", tx("Cavo"), tx("Lunghezza") + " (m)", "ΔV (%)"], widths: [38, 12, 22, 16, 12], rows: cabs.map((c) => [c.name, n1(c.kW), `${c.mat} 3 × ${n1(c.S)} mm²`, n0(c.L), n1(c.dv)]) } });
-        if (G.panels.length) eb.push({ bullets: G.panels.map((pn) => `${tx("Quadro di comando delle pompe")} · ${pn.name}: ${pn.n} × ${n1(pn.kWp)} kW${pn.inverter ? ` · ${tx("Inverter")}` : ""}`) });
-        ch.push({ title: tx("Alimentazione elettrica"), blocks: eb });
+        if (hasNet) eb.push({ p: tx("Le linee elettriche sono interrate, a 400 V; la sezione è scelta per la corrente di esercizio e una caduta di tensione non superiore al 4 %. I pivot sono alimentati dalla stazione che li serve, con le linee posate nella stessa trincea delle tubazioni.") });
+        if (hasNet && cabs.length) eb.push({ table: { header: [tx("Linea"), "kW", tx("Cavo"), tx("Lunghezza") + " (m)", "ΔV (%)"], widths: [38, 12, 22, 16, 12], rows: cabs.map((c) => [c.name, n1(c.kW), `${c.mat} 3 × ${n1(c.S)} mm²`, n0(c.L), n1(c.dv)]) } });
+        if (hasNet && G.panels.length) eb.push({ bullets: G.panels.map((pn) => `${tx("Quadro di comando delle pompe")} · ${pn.name}: ${pn.n} × ${n1(pn.kWp)} kW${pn.inverter ? ` · ${tx("Inverter")}` : ""}`) });
+        if (eb.length) ch.push({ title: tx("Alimentazione elettrica"), blocks: eb });
         // Gestione e funzionamento
         ch.push({ title: tx("Gestione e funzionamento"), blocks: [
           { p: tx("Nei mesi di punta l'impianto lavora {h} ore al giorno alla dose di progetto di {mm} mm. Il programma irriguo segue il fabbisogno della coltura, con turni assegnati ai pivot in modo da contenere la potenza impegnata e bilanciare le portate sulla rete.", { h: n1(hoursDay), mm: n1(mmDes) }) },
-          { p: tx("Le stazioni di pompaggio sono dotate di quadri di comando e protezione e, dove previsto, di inverter per regolare la portata. La manutenzione ordinaria riguarda pompe, valvole, sfiati e scarichi della rete e le macchine di irrigazione.") },
+          ...(hasNet ? [{ p: tx("Le stazioni di pompaggio sono dotate di quadri di comando e protezione e, dove previsto, di inverter per regolare la portata. La manutenzione ordinaria riguarda pompe, valvole, sfiati e scarichi della rete e le macchine di irrigazione.") }] : []),
           ...((() => { const FC = fertCalc(); if (!FC) return [];
             const pr = FERTS.find((x) => x.k === fert.k);
             return [{ h: tx("Fertirrigazione") },
@@ -6850,7 +6859,7 @@ export default function Page() {
       for (const fid of hiddenPivotFields) { const aid = map.get(fid); if (aid != null) hiddenPivots[aid] = true; }
       for (const fid of hiddenPipeFields) { const aid = map.get(fid); if (aid != null) hiddenPipes[aid] = true; }
       const name = (shareName.trim() || t("Vista {n}", { n: shares.length + 1 }));
-      const sv = await api.createShareView(pid, name, { hiddenFields, hiddenPivots, hiddenPipes, source: sourceDrawing() });
+      const sv = await api.createShareView(pid, name, { hiddenFields, hiddenPivots, hiddenPipes, source: sourceDrawing({ onlyDrawn: true }) });
       setShareName("");
       if (shareWithReport && (pivots.length || Object.keys(sysDesigns).length)) await attachReport(sv.token, sv.name);
       const url = `${window.location.origin}/view/${sv.token}`;
@@ -7876,9 +7885,12 @@ export default function Page() {
     return out;
   }
   // Disegno dello schema scelto (mappa, tavola PDF, link condiviso).
-  function sourceDrawing() {
+  // onlyDrawn: per i clienti (link, PDF) solo ciò che è disegnato: senza il tracciato presa → impianto
+  // niente adduttrice, vasca e settori proposti, che restano visibili solo a chi progetta
+  function sourceDrawing(opt?: { onlyDrawn?: boolean }) {
     if (!srcPt) return null;
-    const S = sourceSchemes();
+    const S0 = sourceSchemes();
+    const S = opt?.onlyDrawn && !(srcRoute && srcRoute.length >= 2) ? null : S0;
     const sc = S?.schemes.find((x) => x.key === (srcShown ?? S?.best?.key));
     const R = S?.R ?? null;
     const km = (m: number) => `${fx(m / 1000, { maximumFractionDigits: 1 })} km`;
