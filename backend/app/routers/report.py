@@ -593,7 +593,7 @@ def river_flow(lat: float, lon: float, basin: int = 1, client=Depends(get_client
         from analysis.river_obs import correction
         gl = out["glofas"]
         if gl.get("cells") and gl.get("pick", -1) >= 0:
-            out["corr"] = correction(lat, lon, gl["cells"][gl["pick"]], lambda a, b, n: glofas(a, b, n=n))
+            out["corr"] = correction(lat, lon, gl["cells"][gl["pick"]], lambda a, b, n: glofas(a, b, n=n, start="2014-01-01"))
     except Exception as e:  # noqa: BLE001
         out["corr"] = None
         out["corr_error"] = str(e)[:200]

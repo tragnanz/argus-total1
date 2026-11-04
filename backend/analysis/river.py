@@ -87,8 +87,8 @@ def glofas(lat: float, lon: float, n: int = 3, step: float = 0.05,
             "latitude": ",".join(map(str, la)), "longitude": ",".join(map(str, lo)),
             "daily": "river_discharge", "start_date": start, "end_date": end,
         }, timeout=timeout)
-        if r.status_code != 429 or k == 3:
-            break
+        if r.status_code != 429 or k == 3 or "Hourly" in r.text or "Daily" in r.text:
+            break                                       # limite orario/giornaliero: inutile riprovare subito
         time.sleep(5 * (k + 1))
     r.raise_for_status()
     data = r.json()

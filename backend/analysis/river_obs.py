@@ -67,14 +67,15 @@ def correction(lat: float, lon: float, pick: dict, glofas_fn) -> dict | None:
     q = float(pick.get("mean") or 0)
     if q <= 0:
         return None
-    best = None
+    best, failed = None, False
     for s in candidates(lat, lon, q):
         if "sc" in s:                                    # GloFAS della stazione già calcolato (data/)
             cells = [{"lat": c[0], "lon": c[1], "mean": c[2], "month_mean": c[3]} for c in s["sc"]]
         else:
             try:
-                cells = glofas_fn(s["lat"], s["lon"], 1).get("cells") or []
+                cells = glofas_fn(s["lat"], s["lon"], 1 if s["src"] == "unh" else 0).get("cells") or []
             except Exception:  # noqa: BLE001
+                failed = True                           # una stazione non letta: meglio nessuna correzione che una sbagliata
                 continue
         if not cells:
             continue
@@ -89,7 +90,7 @@ def correction(lat: float, lon: float, pick: dict, glofas_fn) -> dict | None:
         score = same + s["dist_km"] / 2000.0
         if best is None or score < best[0]:
             best = (score, s, sim)
-    if best is None:
+    if best is None or failed:
         return None
     _, s, sim = best
     clamp = lambda x: max(0.05, min(20.0, x))  # noqa: E731
