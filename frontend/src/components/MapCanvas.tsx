@@ -116,6 +116,7 @@ export type MapHandle = {
   getCenter: () => [number, number] | null;                  // centro vista [lng, lat]
   setBasemap: (kind: "sat" | "street" | "topo") => void;   // mappa di base
   setMapLabels: (on: boolean) => void;                      // etichette (confini e nomi)
+  getMap: () => L.Map | null;                               // mappa Leaflet (per il pannello Drenaggio)
 };
 
 const ESRI =
@@ -1540,6 +1541,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         pickCbRef.current = null;
         try { if (mapRef.current) mapRef.current.getContainer().style.cursor = ""; } catch { /* */ }
       },
+      getMap() { return mapRef.current; },
       getCenter() {
         const map = mapRef.current; if (!map) return null;
         const c = map.getCenter(); return [c.lng, c.lat];

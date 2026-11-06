@@ -18,9 +18,10 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.240";
+const REV = "v0.6.241";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
+const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
 
 const INDICES: { id: string; label: string }[] = [
   { id: "ndvi", label: "vegetazione" },
@@ -66,6 +67,7 @@ const PIVOT_WET_W = 40;   // larghezza bagnata del pacchetto irriguo (m), assunz
 const TABS: { key: string; label: string }[] = [
   { key: "analisi", label: "Analisi" },
   { key: "rilievo", label: "Rilievo" },
+  { key: "drenaggio", label: "Drenaggio" },
   { key: "impianti", label: "Impianti" },
   { key: "fonte", label: "Fonte d'acqua" },
   { key: "accessori", label: "Tubazioni" },
@@ -1077,6 +1079,7 @@ const navProps = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none",
   stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
 const IcoNavAnalisi = () => (<svg {...navProps}><path d="M3 12h4l3-8 4 16 3-8h4" /></svg>);
 const IcoNavRilievo = () => (<svg {...navProps}><path d="m3 20 6-9 4 5 3-4 5 8z" /></svg>);
+const IcoNavDrenaggio = () => (<svg {...navProps}><path d="M12 3c-3 4-5 6.5-5 9a5 5 0 0 0 10 0c0-2.5-2-5-5-9Z" /><path d="M3 21c2 0 2-1.2 4.5-1.2S10 21 12 21s2-1.2 4.5-1.2S19 21 21 21" /></svg>);
 const IcoNavImpianti = () => (<svg {...navProps}><circle cx="12" cy="12" r="8" /><path d="M12 12h8" /><circle cx="12" cy="12" r="1.6" /></svg>);
 const IcoNavAccessori = () => (<svg {...navProps}><path d="M2 9h8" /><path d="M2 15h8" /><path d="M10 7v10" /><path d="M14 7v10" /><path d="M14 9h2a5 5 0 0 1 5 5v8" /><path d="M14 15h1a1 1 0 0 1 1 1v6" /></svg>);
 const IcoNavStrade = () => (<svg {...navProps}><path d="M8 3 4 21" /><path d="m16 3 4 18" /><path d="M12 4v3M12 10.5v3M12 17v3" /></svg>);
@@ -1087,7 +1090,7 @@ const IcoNavExport = () => (<svg {...navProps}><path d="M12 3v11" /><path d="m7 
 const IcoNavIrrigazione = () => (<svg {...navProps}><path d="M12 3s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z" /><path d="M10 13a2 2 0 0 0 4 0" /></svg>);
 const IcoNavInfo = () => (<svg {...navProps}><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 7.6v.6" /></svg>);
 const TAB_ICONS = {
-  analisi: IcoNavAnalisi, rilievo: IcoNavRilievo, impianti: IcoNavImpianti,
+  analisi: IcoNavAnalisi, rilievo: IcoNavRilievo, drenaggio: IcoNavDrenaggio, impianti: IcoNavImpianti,
   fonte: IcoNavFonte, accessori: IcoNavAccessori, pompaggio: IcoNavPompaggio, solare: IcoNavSolare, strade: IcoNavStrade, irrigazione: IcoNavIrrigazione, export: IcoNavExport,
   informazioni: IcoNavInfo,
 };
@@ -9654,6 +9657,15 @@ export default function Page() {
               {t("Stai modificando: {name}", { name: active.name })}
             </div>
           )}
+
+          {/* Drenaggio: terreno, ristagni, reticolo di scolo e bacino dal DEM pubblico
+              (modulo portabile condiviso con Daedalus, Argus Smart e Helios) */}
+          <section hidden={tab !== "drenaggio"}>
+            <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Drenaggio")}</h3>
+            <DrenaggioPanel map={mapApi.current?.getMap() ?? null} attivo={tab === "drenaggio" && !rightMin}
+              campo={activeGeom ? activeGeom.coordinates[0].map((c) => [c[1], c[0]] as [number, number]) : null}
+              t={t} accento="#038037" />
+          </section>
 
           <section hidden={tab !== "analisi"}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Anteprima satellitare")}</h3>
