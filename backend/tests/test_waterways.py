@@ -135,3 +135,48 @@ def test_grafo_rami():
     edges = W._prune_merge(edges, 10.0, 30.0, np.ones_like(m, float))
     lens = sorted(round(W._plen(e["px"], 10.0)) for e in edges)
     assert len(edges) == 3, lens
+
+
+# ---- fiumara: acqua solo in gennaio e febbraio, 12 date mensili ----
+DATES12 = [f"2025-{m:02d}-15" for m in range(1, 13)]
+
+
+class FiumaraClient(FakeClient):
+    def __init__(self):
+        super().__init__()
+        # alveo E-O a y = 1800 m, largo 30 m, sinuoso
+        def d_f(X, Y):
+            yc = 1800 + 120 * np.sin(2 * np.pi * X / 2500.0)
+            sl = 120 * 2 * np.pi / 2500.0 * np.cos(2 * np.pi * X / 2500.0)
+            return np.abs(Y - yc) / np.sqrt(1 + sl ** 2)
+        f = _coverage(d_f, 15.0)
+        R_veg = np.array([0.03, 0.07, 0.04, 0.12, 0.33, 0.20])
+        R_wat = np.array([0.05, 0.06, 0.04, 0.03, 0.02, 0.01])
+        R_grav = np.array([0.12, 0.14, 0.16, 0.18, 0.22, 0.28])     # greto asciutto
+        self.wet = self.b * (1 - f)[None] + (f[None] * R_wat[:, None, None]).astype("float32")
+        self.dry = self.b * (1 - f)[None] + (f[None] * R_grav[:, None, None]).astype("float32")
+
+    def search_scenes(self, bbox, d0, d1, max_cloud=80, limit=100):
+        return [{"date": d, "cloud": 5.0} for d in DATES12 if d0 <= d <= d1]
+
+    def fetch_bands(self, bbox_utm, epsg, width, height, day):
+        self.b = self.wet if day[5:7] in ("01", "02") else self.dry
+        return super().fetch_bands(bbox_utm, epsg, width, height, day)
+
+
+def test_fiumara_effimera():
+    g = {"epsg": EPSG, "minx": ORIGIN[0], "top": ORIGIN[1] + H * RES, "res": RES, "wp": Wd, "hp": H,
+         "to_wgs": pyproj.Transformer.from_crs(EPSG, 4326, always_xy=True)}
+    assert W._pick_scenes(FiumaraClient(), [0, 0, 1, 1], "2025-12-31", 12, 60, 12) == DATES12
+    C = W._composite(FiumaraClient(), g, DATES12, workers=1)
+    out = W.detect_waterways(None, _geom(), sens=3, composite=(C, g, DATES12))
+    f = [s for s in out["segments"] if _near(s, y_m=1800.0) or (s["length_m"] > 1500 and s["regime"] != "perennial")]
+    assert f, [(s["length_m"], s["regime"]) for s in out["segments"]]
+    s = max(f, key=lambda s: s["length_m"])
+    assert s["regime"] == "ephemeral", s["regime"]
+    assert s["months_wet"] == [1, 2], s["months_wet"]
+    assert abs(s["width_m"] - 30.0) / 30.0 < 0.25, s["width_m"]
+    assert s["length_m"] > 3000
+    # i corsi perenni restano perenni
+    c = max((x for x in out["segments"] if _near(x, y_m=800.0)), key=lambda x: x["length_m"])
+    assert c["regime"] == "perennial" and len(c["months_wet"]) == 12

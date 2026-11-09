@@ -333,9 +333,12 @@ export type Watercourse = {
   source?: "s2" | "dem" | "manual"; width_min_m?: number; width_max_m?: number; width_wet_m?: number | null;
   below_pixel?: boolean; sinuosity?: number; profile?: [number, number][]; name?: string;
   edited?: boolean;          // geometria o larghezza modificata a mano
+  // regime dai 12 mesi: perenne / stagionale / effimero (fiumara, wadi); mesi 1-12
+  regime?: "perennial" | "seasonal" | "ephemeral" | null; months_wet?: number[]; months_seen?: number[];
+  bed?: boolean;             // alveo asciutto (greto): la larghezza è quella dell'alveo
 };
 export type WaterResult = {
-  features: Watercourse[]; water_ha: number; n_river: number; n_canal?: number; n_basin: number; n_wetland: number; n_drainage: number;
+  features: Watercourse[]; water_ha: number; n_river: number; n_canal?: number; n_seasonal?: number; n_basin: number; n_wetland: number; n_drainage: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   surface?: { type: "Polygon"; coordinates: any }[]; dates?: string[]; res_m?: number; length_m?: number;
 };

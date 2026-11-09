@@ -65,7 +65,8 @@ def _grid(geom: dict, max_px: int = MAX_PX) -> dict:
     return dict(epsg=epsg, minx=minx, top=top, res=res, wp=wp, hp=hp, to_wgs=to_wgs, bbox_wgs=bbox_wgs)
 
 
-def _pick_scenes(client, bbox_wgs, date_to: str, months: int, max_cloud: float, max_scenes: int) -> list[str]:
+def _pick_scenes(client, bbox_wgs, date_to: str, months: int, max_cloud: float, max_scenes: int,
+                 max_extra: int = 4) -> list[str]:
     d1 = dt.date.fromisoformat(date_to)
     d0 = d1 - dt.timedelta(days=int(round(months * 30.44)))
     # a finestre di ~3 mesi: il catalogo restituisce al massimo 100 scene per richiesta
@@ -82,14 +83,26 @@ def _pick_scenes(client, bbox_wgs, date_to: str, months: int, max_cloud: float, 
         a = b + dt.timedelta(days=1)
     if not sc:
         return []
-    # la meno nuvolosa di ogni mese, poi le altre per nuvolosità: date sparse nell'anno
+    # UNA SCENA PER MESE (la meno nuvolosa) su tutto il periodo: i corsi d'acqua
+    # stagionali e le fiumare scorrono pochi mesi, spesso i più nuvolosi; le nuvole si
+    # tolgono pixel per pixel con la SCL. Se avanza posto, seconde scene dei mesi.
     by_month: dict[str, list] = {}
     for s in sc:
         by_month.setdefault(s["date"][:7], []).append(s)
     key = lambda s: (s["cloud"] if s["cloud"] is not None else 50.0)  # noqa: E731
-    first = sorted((min(v, key=key) for v in by_month.values()), key=key)
-    rest = sorted((s for v in by_month.values() for s in v if s is not min(v, key=key)), key=key)
-    picked = [s["date"] for s in (first + rest)[:max_scenes]]
+    first = [min(v, key=key) for _, v in sorted(by_month.items())]
+    if len(first) > max_scenes:                       # periodo più lungo delle scene: le più pulite
+        first = sorted(first, key=key)[:max_scenes]
+    # mesi nuvolosi (> 30%): una seconda scena dello stesso mese, fino a `extra`
+    extra = []
+    for f in sorted(first, key=key, reverse=True):
+        if key(f) <= 30 or len(extra) >= max(0, max_extra):
+            continue
+        alt = sorted((x for x in by_month[f["date"][:7]] if x is not f), key=key)
+        if alt:
+            extra.append(alt[0])
+    rest = sorted((s for v in by_month.values() for s in v if s not in first and s not in extra), key=key)
+    picked = [s["date"] for s in first + extra + rest[:max(0, max_scenes - len(first))]]
     return sorted(set(picked))
 
 
@@ -108,6 +121,24 @@ def _nanpct(stack: np.ndarray, q: float) -> np.ndarray:
     return np.where(n > 0, out, np.nan).astype("float32")
 
 
+def _second(stack: np.ndarray, highest: bool) -> np.ndarray:
+    """Secondo valore più alto (o più basso) fra le date valide: lo stato di piena con
+    l'acqua presente in almeno 2 date; un valore isolato (bordo di nuvola) non basta.
+    Con una sola data valida vale quella."""
+    fill = -np.inf if highest else np.inf
+    a = np.where(np.isnan(stack), fill, stack.astype("float32"))
+    a.sort(axis=0)
+    n = np.isfinite(a).sum(axis=0)
+    if highest:
+        i2 = np.full(n.shape, a.shape[0] - 2, np.int64)
+        i1 = np.full(n.shape, a.shape[0] - 1, np.int64)
+    else:
+        i2 = np.ones(n.shape, np.int64)
+        i1 = np.zeros(n.shape, np.int64)
+    v = np.where(n >= 2, np.take_along_axis(a, i2[None], 0)[0], np.take_along_axis(a, i1[None], 0)[0])
+    return np.where(n > 0, v, np.nan).astype("float32")
+
+
 def _composite(client, g: dict, dates: list[str], pct: float = 50.0, workers: int = 4) -> dict:
     """Composito sulla griglia g: NDWI, NIR e SWIR mediani (maschera dell'acqua) e
     NIR «bagnato» (25° percentile: lo stato con più acqua, per la larghezza; i canali
@@ -118,9 +149,14 @@ def _composite(client, g: dict, dates: list[str], pct: float = 50.0, workers: in
     xs = [round(k * wp / nx) for k in range(nx + 1)]
     ys = [round(k * hp / ny) for k in range(ny + 1)]
     tiles = [(xs[i], xs[i + 1], ys[j], ys[j + 1]) for j in range(ny) for i in range(nx)]
-    out = {k: np.full((hp, wp), np.nan, "float32") for k in ("ndwi", "nir", "swir", "nir_wet")}
+    out = {k: np.full((hp, wp), np.nan, "float32")
+           for k in ("ndwi", "nir", "swir", "nir_wet", "ndwi_wet", "swir_wet", "nir_flow", "ndvi", "red")}
     n_valid = np.zeros((hp, wp), "int16")
-    iG, iN, iS = BANDS.index("B03"), BANDS.index("B08"), BANDS.index("B11")
+    # per ogni pixel, 12 bit: mesi con acqua e mesi con un dato valido (senza nuvole)
+    m_wet = np.zeros((hp, wp), "uint16")
+    m_seen = np.zeros((hp, wp), "uint16")
+    mon = [int(d[5:7]) - 1 for d in dates]
+    iG, iN, iS, iR = BANDS.index("B03"), BANDS.index("B08"), BANDS.index("B11"), BANDS.index("B04")
     n_ok = 0
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
         for c0, c1, r0, r1 in tiles:
@@ -136,6 +172,8 @@ def _composite(client, g: dict, dates: list[str], pct: float = 50.0, workers: in
             nd = np.full((len(dates), h, w), np.nan, "float16")
             nir = np.full((len(dates), h, w), np.nan, "float16")
             sw = np.full((len(dates), h, w), np.nan, "float16")
+            vi = np.full((len(dates), h, w), np.nan, "float16")
+            rd = np.full((len(dates), h, w), np.nan, "float16")
             for k, a in enumerate(ex.map(job, dates)):
                 if a is None:
                     continue
@@ -147,14 +185,37 @@ def _composite(client, g: dict, dates: list[str], pct: float = 50.0, workers: in
                 nd[k] = np.where(ok, v, np.nan)
                 nir[k] = np.where(ok, N, np.nan)
                 sw[k] = np.where(ok, Sw, np.nan)
+                Rr = a[iR]
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    vi[k] = np.where(ok & ((N + Rr) > 1e-4), (N - Rr) / (N + Rr), np.nan)
+                rd[k] = np.where(ok, Rr, np.nan)
                 del a
             n_valid[r0:r1, c0:c1] = np.isfinite(nd).sum(axis=0)
             out["ndwi"][r0:r1, c0:c1] = _nanpct(nd, pct)
             out["nir"][r0:r1, c0:c1] = _nanpct(nir, 100.0 - pct)
             out["swir"][r0:r1, c0:c1] = _nanpct(sw, 100.0 - pct)
             out["nir_wet"][r0:r1, c0:c1] = _nanpct(nir, 25.0)
-            del nd, nir, sw
-    out.update(n_valid=n_valid, ok=n_ok, jobs=len(dates) * len(tiles))
+            # stato di piena: l'acqua presente almeno in ~2 date su 12 (corsi stagionali)
+            out["ndwi_wet"][r0:r1, c0:c1] = _second(nd, True)
+            out["swir_wet"][r0:r1, c0:c1] = _second(sw, False)
+            out["nir_flow"][r0:r1, c0:c1] = _second(nir, False)
+            out["ndvi"][r0:r1, c0:c1] = _nanpct(vi, 50.0)
+            out["red"][r0:r1, c0:c1] = _nanpct(rd, 50.0)
+            # acqua in quella data: NDWI ben sopra il terreno circostante (anche pixel misti)
+            win = max(7, int(round(150 / res)) | 1)
+            for k in range(len(dates)):
+                v = nd[k].astype("float32")
+                okk = np.isfinite(v)
+                if not okk.any():
+                    continue
+                bgk = _local_mean(np.where(okk, v, 0.0), okk & (v < -0.1), win)
+                bgk = np.where(np.isfinite(bgk), bgk, -0.5)
+                wk = okk & (v > -0.45) & ((v - bgk) > 0.2) & (np.nan_to_num(sw[k].astype("float32"), nan=1.0) < 0.15)
+                bit = np.uint16(1 << mon[k])
+                m_seen[r0:r1, c0:c1] |= np.where(okk, bit, np.uint16(0))
+                m_wet[r0:r1, c0:c1] |= np.where(wk, bit, np.uint16(0))
+            del nd, nir, sw, vi, rd
+    out.update(n_valid=n_valid, m_wet=m_wet, m_seen=m_seen, ok=n_ok, jobs=len(dates) * len(tiles))
     return out
 
 
@@ -458,6 +519,35 @@ def _to_ll(pts_rc: np.ndarray, g: dict) -> list[list[float]]:
     return [[round(v, 7) for v in to_wgs.transform(x, y)] for x, y in xy]
 
 
+REGIME = ("perennial", "seasonal", "ephemeral")
+
+
+def _months_axis(px: list, m_wet: np.ndarray, m_seen: np.ndarray) -> tuple[list[int], list[int]]:
+    """Mesi (1-12) in cui il tratto ha acqua e mesi osservati: un mese conta se l'acqua
+    c'è in almeno metà dei pixel dell'asse visti senza nuvole quel mese."""
+    wet, seen = [], []
+    for b in range(12):
+        bit = 1 << b
+        sv = [p for p in px if m_seen[p] & bit]
+        if len(sv) < max(3, 0.3 * len(px)):
+            continue
+        seen.append(b + 1)
+        if sum(1 for p in sv if m_wet[p] & bit) >= 0.5 * len(sv):
+            wet.append(b + 1)
+    return wet, seen
+
+
+def _regime(wet: list[int], seen: list[int]) -> str | None:
+    """Perenne: acqua in quasi tutti i mesi osservati; stagionale: almeno 3; effimero
+    (fiumara, wadi): 1-2 mesi o solo nello stato di piena."""
+    if len(seen) < 4:
+        return None
+    f = len(wet) / len(seen)
+    if f >= 0.8:
+        return "perennial"
+    return "seasonal" if len(wet) >= 3 else "ephemeral"
+
+
 def _classify(length_m: float, width_m: float, sinuosity: float, net_max_w: float) -> str:
     """Fiume o canale. In un sistema fluviale largo (≥ 60 m) un tratto resta canale
     solo se lungo, diritto e molto più stretto del fiume (es. un canale che prende dal
@@ -470,7 +560,7 @@ def _classify(length_m: float, width_m: float, sinuosity: float, net_max_w: floa
 # ------------------------------------------------------------------ principale
 
 def detect_waterways(client, geom: dict, date_to: str | None = None, months: int = 12,
-                     max_scenes: int = 8, max_cloud: float = 30.0, sens: int = 3,
+                     max_scenes: int = 12, max_cloud: float = 60.0, sens: int = 3,
                      min_len_m: float = 150.0, pct: float = 50.0, *, composite=None) -> dict:
     """Fiumi e canali esistenti nel poligono `geom` con lunghezza e larghezza.
     `composite` (dict del composito, g, dates) permette ai test di saltare il download."""
@@ -492,7 +582,49 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
     poly_mask = _poly_mask(geom, g)
     ndwi = np.where(poly_mask, ndwi, np.nan)
 
-    mask, core, sratio = _water_mask(ndwi, swir, sens, res)
+    m_perm, core, sratio = _water_mask(ndwi, swir, sens, res)
+    # stato di piena (2° NDWI più alto, 2° SWIR più basso fra le date): fiumare e stagionali.
+    # Dalla piena si tengono solo le forme lineari: le risaie allagate e i campi
+    # bagnati per qualche settimana non diventano «bacini».
+    ndwi_wet = C.get("ndwi_wet")
+    if ndwi_wet is not None:
+        ndwi_wet = np.where(poly_mask, ndwi_wet, np.nan)
+        m_flood, _c2, sr_wet = _water_mask(ndwi_wet, C["swir_wet"], sens, res)
+        extra = m_flood & ~ndi.binary_dilation(m_perm, iterations=2)
+        lab_e, ne = ndi.label(extra, structure=np.ones((3, 3), bool))
+        if ne:
+            from skimage.morphology import skeletonize as _sk
+            ske = _sk(extra)
+            area = ndi.sum(extra, lab_e, index=np.arange(1, ne + 1))
+            skl = ndi.sum(ske, lab_e, index=np.arange(1, ne + 1))
+            lin = np.zeros(ne + 1, bool)
+            lin[1:] = (skl >= 30) & (area / np.maximum(skl, 1) <= 12)     # lunghe ≥300 m, larghe ≤120 m
+            extra = lin[lab_e]
+        mask = m_perm | (m_flood & (extra | m_perm | ndi.binary_dilation(extra, iterations=1)))
+        sratio = np.minimum(sratio, sr_wet)
+    else:
+        mask = m_perm
+    # mare e lagune: specchi enormi a quota ~0 sul DEM → fuori (non sono fiumi né canali)
+    dem = C.get("dem")
+    if dem is None and client is not None:
+        try:
+            k = max(1, math.ceil(max(g["wp"], g["hp"]) / 600))
+            wd, hd = math.ceil(g["wp"] / k), math.ceil(g["hp"] / k)
+            d = client.fetch_dem([g["minx"], g["top"] - hd * k * res, g["minx"] + wd * k * res, g["top"]], g["epsg"], wd, hd)
+            dem = np.repeat(np.repeat(d, k, axis=0), k, axis=1)[:g["hp"], :g["wp"]]
+        except Exception:  # noqa: BLE001 — senza DEM il mare resta (raro nei progetti)
+            dem = None
+    if dem is not None:
+        # il Copernicus DEM mette il mare esattamente a 0,0 m (le coste e i polder no)
+        sea = mask & np.isfinite(dem) & (np.abs(dem) < 0.05)
+        lab0, n0 = ndi.label(sea, structure=np.ones((3, 3), bool))
+        if n0:
+            big = np.zeros(n0 + 1, bool)
+            big[1:] = ndi.sum(sea, lab0, index=np.arange(1, n0 + 1)) * res * res >= 5e5
+            mask &= ~ndi.binary_dilation(big[lab0], iterations=6)   # anche la battigia
+    m_wet_b = C.get("m_wet", np.zeros(mask.shape, "uint16"))
+    m_seen_b = C.get("m_seen", np.zeros(mask.shape, "uint16"))
+    nir_flow = C.get("nir_flow", nir_wet)
     fin = np.isfinite(nir)
     land = fin & ~ndi.binary_dilation(mask, iterations=2)
     land_nir = float(np.nanmedian(nir[land])) if land.any() else 0.25
@@ -516,6 +648,8 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
         sk_len = float(sk.sum()) * res
         mean_w = area_m2 / sk_len if sk_len > 0 else 1e9
         eq_d = 2 * math.sqrt(area_m2 / math.pi)
+        if (sk_len < 2 * res or (mean_w > 60 and sk_len < 3 * eq_d)) and not (comp & m_perm).sum() >= 0.3 * comp.sum():
+            continue                                           # bacino solo di piena (campo allagato): fuori
         if sk_len < 2 * res or (mean_w > 60 and sk_len < 3 * eq_d):
             # bacino (lago, invaso, cava allagata): contorno
             if area_m2 >= 2000:
@@ -540,8 +674,12 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
             iso = not closed and _is_iso(e, edges)
             if L < (min_len_m if iso else max(2 * res, 20.0)):
                 continue
-            prof = _widths(pts, mask, nir_f, dt_px, res, land_nir, water_nir)
-            prof_w = _widths(pts, mask, nir_w, dt_px, res, land_nir, water_nir)
+            perm_frac = sum(1 for p in px if m_perm[p]) / len(px)
+            seasonal_axis = perm_frac < 0.5
+            # corso stagionale: larghezza nei mesi in cui scorre (2° NIR più basso fra le date)
+            nir_meas = np.where(np.isfinite(nir_flow), nir_flow, nir_f).astype("float32") if seasonal_axis else nir_f
+            prof = _widths(pts, mask, nir_meas, dt_px, res, land_nir, water_nir)
+            prof_w = _widths(pts, mask, nir_w if not seasonal_axis else nir_meas, dt_px, res, land_nir, water_nir)
             ws = np.array([w for _, w in prof]) if prof else np.array([])
             w_wet = float(np.median([w for _, w in prof_w])) if prof_w else None
             if ws.size == 0:
@@ -550,10 +688,19 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
             else:
                 w_med, w_lo, w_hi = (float(np.median(ws)), float(np.percentile(ws, 10)), float(np.percentile(ws, 90)))
             # verifica: lungo l'asse ci deve essere acqua vera, non una strada o un'ombra
-            nd_axis = np.array([ndwi[p] for p in px if np.isfinite(ndwi[p])])
+            nd_src = ndwi_wet if (seasonal_axis and ndwi_wet is not None) else ndwi
+            nd_axis = np.array([nd_src[p] for p in px if np.isfinite(nd_src[p])])
             sr_axis = float(np.median([sratio[p] for p in px]))
             if nd_axis.size == 0 or float(np.median(nd_axis)) < -0.5 or sr_axis > 0.7:
                 continue
+            wet_m, seen_m = _months_axis(px, m_wet_b, m_seen_b)
+            reg = _regime(wet_m, seen_m)
+            if reg is None:
+                reg = "ephemeral" if seasonal_axis else "perennial"
+            elif reg == "perennial" and seasonal_axis:
+                reg = "seasonal"
+            if reg != "perennial" and L < 200:
+                continue                                    # spezzoni di piena (barre, golene allagate)
             chord = math.hypot(*(np.asarray(px[-1]) - np.asarray(px[0]))) * res
             sinu = L / chord if chord > 1 else 9.9
             coords = _to_ll(pts, g)
@@ -569,14 +716,19 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
                 "below_pixel": bool(w_med < res),
                 "profile": [[round(a, 0), round(b, 1)] for a, b in prof],
                 "ndwi": round(float(np.median(nd_axis)), 2), "swir_ratio": round(sr_axis, 2),
+                "regime": reg, "months_wet": wet_m, "months_seen": seen_m,
             })
+    # alvei asciutti: si escludono solo accanto all'acqua PERMANENTE (lì sono barre del
+    # fiume); le pozze di piena dentro un greto non lo spezzano
+    segments += _dry_beds(C, m_perm & mask, poly_mask, res, g, m_wet_b, m_seen_b, dem)
     nets: dict[int, list] = {}
     for sg in segments:
         nets.setdefault(sg["net"], []).append(sg)
     for lst in nets.values():
         wmax = max(x["width_m"] for x in lst)
         for x in lst:
-            x["kind"] = _classify(x["length_m"], x["width_m"], x["sinuosity"], wmax)
+            if not x.get("bed"):
+                x["kind"] = _classify(x["length_m"], x["width_m"], x["sinuosity"], wmax)
     segments.sort(key=lambda s: s["length_m"], reverse=True)
     for k, s in enumerate(segments):
         s["id"] = k + 1
@@ -585,10 +737,106 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
         "segments": segments, "basins": basins, "surface": surface,
         "n_river": sum(1 for s in segments if s["kind"] == "river"),
         "n_canal": sum(1 for s in segments if s["kind"] == "canal"),
+        "n_seasonal": sum(1 for s in segments if s["regime"] != "perennial"),
         "length_m": round(sum(s["length_m"] for s in segments), 0),
         "water_ha": round(float(mask.sum()) * res * res / 1e4, 1),
         "res_m": round(res, 1), "dates": dates, "scenes_ok": n_ok, "requests": n_jobs,
     }
+
+
+def _dry_beds(C: dict, water: np.ndarray, poly_mask: np.ndarray, res: float, g: dict,
+              m_wet_b: np.ndarray, m_seen_b: np.ndarray, dem: np.ndarray | None,
+              min_len_m: float = 600.0) -> list[dict]:
+    """Alvei asciutti (greti di fiumare e torrenti): strisce lunghe di ghiaia nuda e chiara
+    (NDVI mediano < 0,15, rosso > 0,15: l'asfalto è più scuro) in mezzo a terreno diverso.
+    Si tengono solo le forme allungate (lunghe ≥ `min_len_m`, larghe 30-1500 m, ≥ 4 volte
+    più lunghe che larghe) e non attaccate a un fiume con acqua (lì sono barre del fiume).
+    Larghezza = larghezza dell'alveo (non dell'acqua)."""
+    ndvi, red = C.get("ndvi"), C.get("red")
+    if ndvi is None or red is None or dem is None:
+        return []                       # senza quote non si distingue un alveo da un piazzale
+    fin = np.isfinite(ndvi) & np.isfinite(red) & poly_mask
+    bare = fin & (ndvi < 0.15) & (red > 0.15) & ~ndi.binary_erosion(water, iterations=1)
+    bare = ndi.binary_opening(bare, iterations=1)                       # fuori strade e sentieri
+    bare = ndi.binary_closing(bare, structure=np.ones((3, 3), bool), iterations=2) & fin
+    if not bare.any():
+        return []
+    from skimage.morphology import skeletonize
+    near_w = ndi.binary_dilation(water, iterations=2)
+    demf = np.where(np.isfinite(dem), dem, np.nan).astype("float32")
+    lab, n = ndi.label(bare, structure=np.ones((3, 3), bool))
+    sk_all = skeletonize(bare)
+    dt_px = ndi.distance_transform_edt(bare)
+    out = []
+    for v, sl in enumerate(ndi.find_objects(lab), start=1):
+        if sl is None:
+            continue
+        comp = lab[sl] == v
+        area = float(comp.sum()) * res * res
+        sk = sk_all[sl] & comp
+        L = float(sk.sum()) * res
+        if L < min_len_m:
+            continue
+        mean_w = area / L
+        eq_d = 2 * math.sqrt(area / math.pi)
+        if not (30.0 <= mean_w <= 1500.0) or L < 4 * eq_d * 0.5 or L / max(mean_w, 1) < 4:
+            continue
+        if float((near_w[sl] & comp).sum()) > 0.2 * comp.sum():
+            continue
+        # contrasto: nella fascia di 300 m attorno all'alveo, poco terreno nudo
+        pad = max(3, int(round(300 / res)))
+        H_, W_ = bare.shape
+        r0e, r1e = max(0, sl[0].start - pad), min(H_, sl[0].stop + pad)
+        c0e, c1e = max(0, sl[1].start - pad), min(W_, sl[1].stop + pad)
+        compe = lab[r0e:r1e, c0e:c1e] == v
+        ring = ndi.binary_dilation(compe, iterations=pad) & ~compe & fin[r0e:r1e, c0e:c1e]
+        if ring.sum() < 10 or float(bare[r0e:r1e, c0e:c1e][ring].mean()) > 0.33:
+            continue
+        edges = _prune_merge(_graph(sk), res, max(3 * mean_w, 60.0), dt_px[sl])
+        r0, c0 = sl[0].start, sl[1].start
+        for e in edges:
+            px = [(r + r0, c + c0) for r, c in e["px"]]
+            pts = _smooth(px)
+            Le = float(np.hypot(*np.diff(pts, axis=0).T).sum()) * res if len(pts) > 1 else 0.0
+            if Le < max(200.0, 2 * mean_w):
+                continue
+            ws = np.array([max(1.0, 2 * dt_px[p] - 1) * res for p in px[len(px) // 10: len(px) - len(px) // 10 or None]])
+            if ws.size == 0:
+                continue
+            # l'alveo sta più in basso delle sponde (DEM): strade, piazzali e cave a fossa no
+            off = float(np.median(ws)) / 2 / res + max(5.0, 150.0 / res)
+            lows = []
+            for i in range(3, len(pts) - 3, max(1, int(100 / res))):
+                d = pts[i + 3] - pts[i - 3]
+                Ld = math.hypot(*d)
+                if Ld < 1e-6:
+                    continue
+                nr, nc = -d[1] / Ld, d[0] / Ld
+                zc = ndi.map_coordinates(demf, [[pts[i][0]], [pts[i][1]]], order=1, mode="nearest")[0]
+                za = ndi.map_coordinates(demf, [[pts[i][0] + off * nr], [pts[i][1] + off * nc]], order=1, mode="nearest")[0]
+                zb = ndi.map_coordinates(demf, [[pts[i][0] - off * nr], [pts[i][1] - off * nc]], order=1, mode="nearest")[0]
+                if np.isfinite([zc, za, zb]).all():
+                    lows.append(min(za, zb) - zc)
+            if len(lows) < 3 or float(np.median(lows)) < 0.5:
+                continue
+            if Le < max(500.0, 3 * float(np.median(ws))):
+                continue                                    # un alveo è molto più lungo che largo
+            chord = math.hypot(*(np.asarray(px[-1]) - np.asarray(px[0]))) * res
+            wet_m, seen_m = _months_axis(px, m_wet_b, m_seen_b)
+            reg = _regime(wet_m, seen_m)
+            if reg in (None, "perennial"):
+                reg = "ephemeral"
+            coords = _to_ll(pts, g)
+            if len(coords) < 2:
+                continue
+            out.append({"kind": "river", "bed": True, "net": -v,
+                        "geojson": {"type": "LineString", "coordinates": coords},
+                        "length_m": round(Le, 1), "width_m": round(float(np.median(ws)), 1),
+                        "width_min_m": round(float(np.percentile(ws, 10)), 1), "width_max_m": round(float(np.percentile(ws, 90)), 1),
+                        "width_wet_m": None, "sinuosity": round(Le / chord if chord > 1 else 9.9, 3),
+                        "below_pixel": False, "profile": [], "ndwi": None, "swir_ratio": None,
+                        "regime": reg, "months_wet": wet_m, "months_seen": seen_m})
+    return out
 
 
 def _is_iso(e, edges) -> bool:

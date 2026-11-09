@@ -50,9 +50,9 @@ try {
   const rows = await tbl.locator("tbody tr").count();
   ok(rows >= 10, `Tabella: ${rows} tratti`);
   // il tratto di canale più lungo è il Cavour: 5 km circa, 25-45 m
-  const canals = await tbl.locator("tbody tr").evaluateAll((trs) => trs.map((tr) => ({ kind: tr.querySelector("select")?.value, len: tr.children[2].textContent, w: tr.querySelector("input")?.value })));
+  const canals = await tbl.locator("tbody tr").evaluateAll((trs) => trs.map((tr) => ({ kind: tr.querySelector("select")?.value, reg: tr.children[2].textContent, len: tr.children[3].textContent, w: tr.querySelector("input")?.value })));
   const cav = canals.filter((r) => r.kind === "canal").map((r) => ({ ...r, L: Number(String(r.len).replace(/[^\d,]/g, "").replace(",", ".")) })).sort((a, b) => b.L - a.L)[0];
-  ok(cav && cav.L > 4500 && Number(cav.w) > 25 && Number(cav.w) < 45, `Canale Cavour: ${cav?.L} m, larghezza ${cav?.w} m`);
+  ok(cav && cav.L > 4500 && Number(cav.w) > 25 && Number(cav.w) < 45 && /perenne/.test(cav.reg), `Canale Cavour: ${cav?.L} m, larghezza ${cav?.w} m, ${cav?.reg}`);
   await tbl.screenshot({ path: path.join(SH, "w2_tabella.png") });
   await page.screenshot({ path: path.join(SH, "w3_mappa.png") });
   // modifica a mano della larghezza → resta nel KMZ
@@ -82,6 +82,29 @@ try {
   await page.waitForTimeout(1000);
   const txt2 = await page.locator("[data-water-table]").first().innerText().catch(() => "");
   ok(/Sentinel-2, \d+ date/.test(txt2) && (await page.locator("[data-water-table] tbody tr").count()) === rows, "Dopo il salvataggio: tratti, misure e periodo ricaricati");
+  // fiumara Amendolea (Calabria): greto asciutto quasi tutto l'anno → alveo effimero
+  const AM = [[15.82, 37.92], [15.90, 37.92], [15.90, 37.99], [15.82, 37.99], [15.82, 37.92]];
+  const p2 = await post("/projects", { name: "Amendolea", client_id: c.id }, tok);
+  await post("/areas", { project_id: p2.id, name: "Fiumara", geojson: { type: "Polygon", coordinates: [AM] }, area_ha: 5500 }, tok);
+  await page.reload(); await page.waitForTimeout(3500);
+  await page.locator('select:has(option:text-is("Chivasso"))').selectOption({ label: "Chivasso" }); await page.waitForTimeout(1200);
+  await page.locator('select:has(option:text-is("Amendolea"))').selectOption({ label: "Amendolea" }); await page.waitForTimeout(5000);
+  if (!(await page.locator('button:has-text("Rileva corsi d\'acqua")').first().isVisible().catch(() => false))) await page.locator('button[title="Analisi"]').first().click();
+  await page.locator('button:has-text("Rileva corsi d\'acqua")').first().click();
+  await page.locator('button:has-text("Conferma")').first().waitFor({ timeout: 400000 });
+  await page.locator('button:has-text("Conferma")').first().click(); await page.waitForTimeout(1500);
+  const t3 = page.locator("[data-water-table]").first();
+  const am = await t3.locator("tbody tr").evaluateAll((trs) => trs.map((tr) => ({ reg: tr.children[2].textContent, len: tr.children[3].textContent, w: tr.querySelector("input")?.value })));
+  const beds = am.filter((r) => /alveo/.test(r.reg || "")).map((r) => ({ ...r, L: Number(String(r.len).replace(/[^\d,]/g, "").replace(",", ".")) })).sort((a, b) => b.L - a.L);
+  console.log("Amendolea:", JSON.stringify(am.slice(0, 6)));
+  const totBed = beds.reduce((a, r) => a + r.L, 0);
+  ok(totBed > 4500 && beds.every((r) => /effimero/.test(r.reg) && Number(r.w) >= 120 && Number(r.w) <= 400),
+    `Fiumara Amendolea: ${beds.length} tratti di alveo effimero, ${totBed} m in tutto, larghi ${beds.map((r) => r.w).join(" / ")} m`);
+  ok(!am.some((r) => Number(r.w) > 500), "Amendolea: niente mare preso per un fiume");
+  await page.screenshot({ path: path.join(SH, "w4_amendolea.png") });
+  const kmz2 = await download(() => t3.locator('button:has-text("KMZ")').click());
+  const kml2 = await (await JSZip.loadAsync(fs.readFileSync(await kmz2.path()))).file("doc.kml").async("string");
+  ok(/<Data name="regime"><value>ephemeral<\/value>/.test(kml2) && /Larghezza dell'alveo/.test(kml2), "KMZ Amendolea: regime effimero e larghezza dell'alveo");
   ok(!errors.length, `Nessun errore JS (${errors.slice(0, 3).join(" | ")})`);
 } catch (e) { console.log("ERRORE", e); fail++; await page.screenshot({ path: path.join(SH, "w_err.png") }).catch(() => {}); }
 await browser.close();

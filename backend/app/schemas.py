@@ -258,6 +258,7 @@ class WaterOut(BaseModel):
     n_wetland: int
     n_drainage: int = 0
     n_canal: int = 0
+    n_seasonal: int = 0
     surface: list[dict[str, Any]] = []
     dates: list[str] = []
     res_m: float = 10.0

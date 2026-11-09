@@ -54,7 +54,7 @@ export type MapHandle = {
   setFields: (fields: FieldGeom[], activeId: number | null, hidden?: number[]) => void;
   setLayerVisible: (key: "fields" | "macro" | "canal" | "layout" | "water" | "strade", on: boolean) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  showWater: (items: { geom: { type: string; coordinates: any }; kind: string; label?: string; width_m?: number }[]) => void;
+  showWater: (items: { geom: { type: string; coordinates: any }; kind: string; label?: string; width_m?: number; dash?: boolean }[]) => void;
   clearWater: () => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   previewWater: (items: { geom: { type: string; coordinates: any }; kind: string; props?: any; label?: string }[]) => void;
@@ -1057,7 +1057,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             const col = WATER_COL[it.kind] ?? "#0369a1";
             // spessore proporzionale alla larghezza misurata (3..9 px)
             const wpx = it.width_m ? Math.max(3, Math.min(9, 2 + Math.log2(1 + it.width_m / 4))) : 3;
-            const ly = L.polyline(latlngs, { color: col, weight: wpx, opacity: 0.95, dashArray: it.kind === "drainage" ? "6,4" : undefined });
+            // tratteggio: impluvi dal DEM e corsi non perenni (stagionali, fiumare)
+            const ly = L.polyline(latlngs, { color: col, weight: wpx, opacity: 0.95, dashArray: it.kind === "drainage" ? "6,4" : it.dash ? "10,6" : undefined });
             ly.bindTooltip(it.label || tRef.current("Fiume/canale"), { direction: "center" });
             g.addLayer(ly);
             continue;

@@ -280,7 +280,9 @@ def detect_watercourses(client, geom: dict, date: str | None = None, min_area_ha
                     "length_m": sg["length_m"], "mean_width_m": sg["width_m"],
                     "width_min_m": sg["width_min_m"], "width_max_m": sg["width_max_m"],
                     "width_wet_m": sg["width_wet_m"], "sinuosity": sg["sinuosity"],
-                    "below_pixel": sg["below_pixel"], "profile": sg["profile"]})
+                    "below_pixel": sg["below_pixel"], "profile": sg["profile"],
+                    "regime": sg.get("regime"), "months_wet": sg.get("months_wet", []),
+                    "months_seen": sg.get("months_seen", []), "bed": bool(sg.get("bed"))})
     for b in ww["basins"]:
         if b["area_ha"] >= min_area_ha:
             out.append({**b, "source": "s2"})
@@ -333,7 +335,7 @@ def detect_watercourses(client, geom: dict, date: str | None = None, min_area_ha
             pass
 
     return {"features": out, "water_ha": ww["water_ha"],
-            "n_river": ww["n_river"], "n_canal": ww["n_canal"],
+            "n_river": ww["n_river"], "n_canal": ww["n_canal"], "n_seasonal": ww.get("n_seasonal", 0),
             "n_basin": sum(1 for a in out if a["kind"] == "basin"),
             "n_wetland": 0, "n_drainage": n_dem, "surface": ww["surface"],
             "dates": ww["dates"], "res_m": ww["res_m"],
