@@ -262,138 +262,82 @@ def _dem_lows(dem, valid, res, depth_thr):
     return binary_opening(low, iterations=1) & valid
 
 
-def detect_watercourses(client, geom: dict, date: str, min_area_ha: float = 0.2,
+def detect_watercourses(client, geom: dict, date: str | None = None, min_area_ha: float = 0.2,
                         ndwi_thr: float = 0.20, use_dem: bool = True,
-                        dem_channel_ha: float = 25.0, dem_depth_m: float = 1.2) -> dict:
-    """Rileva e 'ricalca' i corsi d'acqua esistenti dall'NDWI. Distingue:
-    - fiumi/canali stretti (allungati) → ASSE (LineString);
-    - bacini (invasi, laghi) → poligono del contorno (kind 'basin');
-    - paludi → poligono (kind 'wetland').
-    `ndwi_thr` e `min_area_ha` regolano la SENSIBILITÀ (soglie più basse = più
-    corsi d'acqua stretti/deboli rilevati). Serve a vederli PRIMA di progettare."""
-    from scipy.ndimage import label, binary_closing
-    from processing.satellite_export import _stitch
-    dem, mask, ctx = _dem_and_grid(client, geom, max_dim=420)
-    res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
-    to_wgs = ctx["to_wgs"]
-    minx, top = ctx["minx"], ctx["top"]
-    miny = top - hp * res
-    mos, _nc, n_ok = _stitch(client, ctx["epsg"], minx, miny, top,
-                             res, wp, hp, 1, 1, date, ["ndvi", "ndmi", "ndwi"])
-    if n_ok == 0:
-        raise RuntimeError("Nessuna scena disponibile per la data scelta.")
-    ndvi, ndmi, ndwi = mos["ndvi"], mos["ndmi"], mos["ndwi"]
-    fin = np.isfinite(ndwi)
-    water = fin & (ndwi > ndwi_thr)                             # acqua libera
-    # chiude piccole interruzioni: collega i tratti stretti dei fiumi
-    water = binary_closing(water, iterations=1) & fin
-    # marsh: soglia legata a ndwi_thr per scalare con la sensibilità
-    marsh_ndwi = ndwi_thr - 0.25
-    wetland = fin & (~water) & (ndvi > 0.30) & ((ndwi > marsh_ndwi) | (ndmi > 0.55))
-
-    transform = from_origin(minx, top, res, res)
-    pixel_ha = (res * res) / 10000.0
-
-    def cell_xy(rc):
-        r, c = rc
-        return (minx + (c + 0.5) * res, top - (r + 0.5) * res)
-
-    def poly_from(comp):
-        for g, _v in features.shapes(comp.astype("uint8"), mask=comp, transform=transform):
-            ring_utm = [(float(x), float(y)) for x, y in g["coordinates"][0]]
-            ring_utm = _simplify_ring(ring_utm, res * 1.0)
-            ring_ll = [list(to_wgs.transform(x, y)) for x, y in ring_utm]
-            if len(ring_ll) >= 4:
-                if ring_ll[0] != ring_ll[-1]:
-                    ring_ll.append(ring_ll[0])
-                return ring_ll
-        return None
-
+                        dem_channel_ha: float = 25.0, dem_depth_m: float = 1.2,
+                        sens: int = 3, months: int = 12) -> dict:
+    """Corsi d'acqua esistenti. Fiumi, canali e bacini dal composito Sentinel-2 di
+    più date (analysis/waterways.py: asse, lunghezza e larghezza misurata per tratto);
+    impluvi e alvei asciutti dalla morfologia (DEM), esclusi dove c'è già acqua.
+    `ndwi_thr` resta per compatibilità: la sensibilità la decide `sens` (1..5)."""
+    from scipy.ndimage import label
+    from .waterways import detect_waterways
+    ww = detect_waterways(client, geom, date_to=date, months=months, sens=sens)
     out: list[dict] = []
-    # --- ACQUA: separa fiumi/canali (lineari) dai bacini (invasi/laghi) ---
-    lbl, n = label(water)
-    for v in range(1, n + 1):
-        comp = lbl == v
-        area_m2 = float(comp.sum()) * res * res
-        area_ha = area_m2 / 10000.0
-        if area_ha < min_area_ha:
-            continue
-        path = _centerline_cells(comp)
-        length_m = 0.0
-        if path:
-            xy = [cell_xy(p) for p in path]
-            for i in range(1, len(xy)):
-                length_m += math.hypot(xy[i][0] - xy[i - 1][0], xy[i][1] - xy[i - 1][1])
-        equiv_diam = 2.0 * math.sqrt(area_m2 / math.pi) if area_m2 > 0 else 1.0
-        elong = (length_m / equiv_diam) if equiv_diam > 0 else 0.0
-        mean_width = (area_m2 / length_m) if length_m > 0 else equiv_diam
-        # lineare (fiume/canale) se allungato e non troppo largo
-        if path and elong >= 2.5 and mean_width <= 250.0 and length_m >= 2 * res:
-            xy_s = _rdp([(float(x), float(y)) for x, y in xy], res * 0.8)
-            line_ll = [list(to_wgs.transform(x, y)) for x, y in xy_s]
-            out.append({"geojson": {"type": "LineString", "coordinates": line_ll},
-                        "kind": "river", "area_ha": round(area_ha, 1),
-                        "length_m": round(length_m, 1), "mean_width_m": round(mean_width, 1)})
-        else:
-            ring = poly_from(comp)
-            if ring:
-                out.append({"geojson": {"type": "Polygon", "coordinates": [ring]},
-                            "kind": "basin", "area_ha": round(area_ha, 1)})
-
-    # --- PALUDI: sempre poligoni ---
-    lblw, nw = label(wetland)
-    for v in range(1, nw + 1):
-        comp = lblw == v
-        area_ha = float(comp.sum()) * pixel_ha
-        if area_ha < min_area_ha:
-            continue
-        ring = poly_from(comp)
-        if ring:
-            out.append({"geojson": {"type": "Polygon", "coordinates": [ring]},
-                        "kind": "wetland", "area_ha": round(area_ha, 1)})
+    for sg in ww["segments"]:
+        out.append({"geojson": sg["geojson"], "kind": sg["kind"], "source": "s2",
+                    "area_ha": round(sg["length_m"] * sg["width_m"] / 1e4, 2),
+                    "length_m": sg["length_m"], "mean_width_m": sg["width_m"],
+                    "width_min_m": sg["width_min_m"], "width_max_m": sg["width_max_m"],
+                    "width_wet_m": sg["width_wet_m"], "sinuosity": sg["sinuosity"],
+                    "below_pixel": sg["below_pixel"], "profile": sg["profile"]})
+    for b in ww["basins"]:
+        if b["area_ha"] >= min_area_ha:
+            out.append({**b, "source": "s2"})
 
     # --- DRENAGGIO DAL DEM: impluvi/alvei (anche asciutti) come assi ---
     n_dem = 0
-    if use_dem and np.isfinite(dem).any():
+    if use_dem:
         try:
+            dem, _mask, ctx = _dem_and_grid(client, geom, max_dim=420)
+            res, wp, hp = ctx["res"], ctx["wp"], ctx["hp"]
+            to_wgs, minx, top = ctx["to_wgs"], ctx["minx"], ctx["top"]
+
+            def cell_xy(rc):
+                return (minx + (rc[1] + 0.5) * res, top - (rc[0] + 0.5) * res)
+
+            water = np.zeros((hp, wp), bool)
+            if ww["surface"]:
+                import pyproj
+                to_utm = pyproj.Transformer.from_crs(4326, ctx["epsg"], always_xy=True)
+                shp = [({"type": "Polygon", "coordinates": [[to_utm.transform(x, y) for x, y in r] for r in poly["coordinates"]]}, 1)
+                       for poly in ww["surface"]]
+                water = features.rasterize(shp, out_shape=(hp, wp), transform=from_origin(minx, top, res, res),
+                                           fill=0, dtype="uint8", all_touched=True).astype(bool)
             demv = np.isfinite(dem)
-            min_cells = max(20, int(float(dem_channel_ha) * 10000.0 / (res * res)))
-            demx = np.where(demv, dem, np.nan)
-            # accumulo di flusso (impluvi) + alvei incisi (depressione relativa)
-            ch = _dem_channels(demx, demv, res, min_cells) | _dem_lows(demx, demv, res, dem_depth_m)
-            ch = ch & ~water                              # non duplicare l'acqua NDWI
-            lblc, nc = label(ch)
-            for v in range(1, nc + 1):
-                comp = lblc == v
-                path = _centerline_cells(comp)
-                if not path or len(path) < 3:
-                    continue
-                xy = [cell_xy(p) for p in path]
-                length_m = sum(math.hypot(xy[i][0] - xy[i - 1][0], xy[i][1] - xy[i - 1][1])
-                               for i in range(1, len(xy)))
-                if length_m < 4 * res:
-                    continue
-                # Larghezza REALE del letto: area del footprint / lunghezza dell'asse.
-                # Così l'alveo ricavato dai dislivelli si evita con la sua ampiezza,
-                # non come una linea sottile.
-                area_m2 = float(comp.sum()) * res * res
-                mean_width = max(float(res), area_m2 / length_m) if length_m > 0 else float(res)
-                xy_s = _rdp([(float(x), float(y)) for x, y in xy], res * 0.8)
-                line_ll = [list(to_wgs.transform(x, y)) for x, y in xy_s]
-                out.append({"geojson": {"type": "LineString", "coordinates": line_ll},
-                            "kind": "drainage", "area_ha": round(area_m2 / 10000.0, 1),
-                            "length_m": round(length_m, 1), "mean_width_m": round(mean_width, 1)})
-                n_dem += 1
+            if demv.any():
+                min_cells = max(20, int(float(dem_channel_ha) * 10000.0 / (res * res)))
+                demx = np.where(demv, dem, np.nan)
+                ch = _dem_channels(demx, demv, res, min_cells) | _dem_lows(demx, demv, res, dem_depth_m)
+                ch = ch & ~water                              # non duplicare l'acqua del satellite
+                lblc, nc = label(ch)
+                for v in range(1, nc + 1):
+                    comp = lblc == v
+                    path = _centerline_cells(comp)
+                    if not path or len(path) < 3:
+                        continue
+                    xy = [cell_xy(p) for p in path]
+                    length_m = sum(math.hypot(xy[i][0] - xy[i - 1][0], xy[i][1] - xy[i - 1][1])
+                                   for i in range(1, len(xy)))
+                    if length_m < 4 * res:
+                        continue
+                    area_m2 = float(comp.sum()) * res * res
+                    mean_width = max(float(res), area_m2 / length_m) if length_m > 0 else float(res)
+                    xy_s = _rdp([(float(x), float(y)) for x, y in xy], res * 0.8)
+                    line_ll = [list(to_wgs.transform(x, y)) for x, y in xy_s]
+                    out.append({"geojson": {"type": "LineString", "coordinates": line_ll},
+                                "kind": "drainage", "source": "dem", "area_ha": round(area_m2 / 10000.0, 1),
+                                "length_m": round(length_m, 1), "mean_width_m": round(mean_width, 1)})
+                    n_dem += 1
         except Exception:  # noqa: BLE001 — se il calcolo idrologico fallisce, salto
             pass
 
-    out.sort(key=lambda a: a["area_ha"], reverse=True)
-    tot = round(sum(a["area_ha"] for a in out), 1)
-    return {"features": out, "water_ha": tot,
-            "n_river": sum(1 for a in out if a["kind"] == "river"),
+    return {"features": out, "water_ha": ww["water_ha"],
+            "n_river": ww["n_river"], "n_canal": ww["n_canal"],
             "n_basin": sum(1 for a in out if a["kind"] == "basin"),
-            "n_wetland": sum(1 for a in out if a["kind"] == "wetland"),
-            "n_drainage": n_dem}
+            "n_wetland": 0, "n_drainage": n_dem, "surface": ww["surface"],
+            "dates": ww["dates"], "res_m": ww["res_m"],
+            "length_m": ww["length_m"]}
 
 
 def _ring_area_ha(ring_utm: list) -> float:

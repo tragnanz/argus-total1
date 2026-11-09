@@ -327,11 +327,20 @@ export const fetchReachable = (geom: Polygon, start: number[]) =>
 export type Watercourse = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   geojson: { type: "Polygon" | "LineString"; coordinates: any };
+  // kind: river | canal | drainage (impluvio dal DEM) | basin | wetland
   kind: string; area_ha: number; length_m?: number; mean_width_m?: number;
+  // misure del satellite (Sentinel-2, composito di più date): larghezza tipica = mean_width_m
+  source?: "s2" | "dem" | "manual"; width_min_m?: number; width_max_m?: number; width_wet_m?: number | null;
+  below_pixel?: boolean; sinuosity?: number; profile?: [number, number][]; name?: string;
+  edited?: boolean;          // geometria o larghezza modificata a mano
 };
-export type WaterResult = { features: Watercourse[]; water_ha: number; n_river: number; n_basin: number; n_wetland: number; n_drainage: number };
-export const fetchWatercourses = (geom: Polygon, date: string, min_area_ha = 0.2, ndwi_thr = 0.20, use_dem = true, dem_channel_ha = 25, dem_depth_m = 1.2) =>
-  req<WaterResult>("/api/watercourses", { method: "POST", body: JSON.stringify({ geom, date, min_area_ha, ndwi_thr, use_dem, dem_channel_ha, dem_depth_m }) });
+export type WaterResult = {
+  features: Watercourse[]; water_ha: number; n_river: number; n_canal?: number; n_basin: number; n_wetland: number; n_drainage: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  surface?: { type: "Polygon"; coordinates: any }[]; dates?: string[]; res_m?: number; length_m?: number;
+};
+export const fetchWatercourses = (geom: Polygon, date: string | null, sens = 3, months = 12, use_dem = true, dem_channel_ha = 25, dem_depth_m = 1.2, min_area_ha = 0.2) =>
+  req<WaterResult>("/api/watercourses", { method: "POST", body: JSON.stringify({ geom, date, sens, months, min_area_ha, use_dem, dem_channel_ha, dem_depth_m }) });
 
 export type GuidedResult = { geojson: GeoJSONFC; meta: Record<string, number> };
 export const fetchGuided = (geom: Polygon, p: {

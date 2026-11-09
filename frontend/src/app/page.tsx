@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.241";
+const REV = "v0.6.242";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1222,6 +1222,11 @@ export default function Page() {
   const [watercourses, setWatercourses] = useState<WaterL[]>([]);
   const [waterSens, setWaterSens] = useState(3);       // sensibilità rilevamento (1..5)
   const [waterPreview, setWaterPreview] = useState(false);
+  // superficie d'acqua letta dal satellite (poligoni, per il KMZ) e periodo del composito
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [waterSurface, setWaterSurface] = useState<{ type: "Polygon"; coordinates: any }[]>([]);
+  const [waterMeta, setWaterMeta] = useState<{ dates: string[]; res_m: number } | null>(null);
+  const waterPending = useRef<{ surface: { type: "Polygon"; coordinates: unknown }[]; dates: string[]; res_m: number } | null>(null);
   const [waterRemoveOn, setWaterRemoveOn] = useState(false);
   // barra strumenti in alto: annulla/ripristina, misura, menu livelli
   const [layersOpen, setLayersOpen] = useState(false);
@@ -1670,7 +1675,7 @@ export default function Page() {
     histPaused.current = true;            // il caricamento non entra nella cronologia
     suppressAutosaveRef.current = true;   // non salvare durante il caricamento (evita di sovrascrivere il progetto)
     clearAllFields();
-    setCanals([]); setRoads([]); setWatercourses([]); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set()); setHiddenPipeFields(new Set());
+    setCanals([]); setRoads([]); setWatercourses([]); setWaterSurface([]); setWaterMeta(null); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set()); setHiddenPipeFields(new Set());
     setVariants([]);
     try {
       const [areasList, layersList] = await Promise.all([api.listAreas(pid), api.listLayers(pid)]);
@@ -1738,6 +1743,9 @@ export default function Page() {
       const waterItems: WaterL[] = [];
       for (const l of layersList.filter((x) => x.kind === "waters")) for (const it of (l.data?.items ?? [])) waterItems.push({ ...it, owner: mapOwner(it.ownerArea) } as WaterL);
       if (waterItems.length) { setWatercourses(waterItems); renderWater(waterItems); }
+      const wl = layersList.find((x) => x.kind === "waters");
+      setWaterSurface(((wl?.data as { surface?: unknown[] } | undefined)?.surface ?? []) as typeof waterSurface);
+      setWaterMeta(((wl?.data as { meta?: { dates: string[]; res_m: number } } | undefined)?.meta) ?? null);
 
       const pv = layersList.filter((l) => l.kind === "pivots").map((l) => l.data as unknown as GuidedResult).pop();
       if (pv) {
@@ -1779,7 +1787,7 @@ export default function Page() {
   function resetProjectView() {
     suppressAutosaveRef.current = true;
     clearAllFields();
-    setCanals([]); setRoads([]); setWatercourses([]); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set()); setHiddenPipeFields(new Set());
+    setCanals([]); setRoads([]); setWatercourses([]); setWaterSurface([]); setWaterMeta(null); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set()); setHiddenPipeFields(new Set());
     setVariants([]);
   }
   async function deleteCurrentClient() {
@@ -1840,7 +1848,9 @@ export default function Page() {
     mapApi.current?.showCanals(list.filter((c) => !c.hidden).map((c) => ({ coords: c.geojson.coordinates, start: c.start, end: c.end, width_m: canalWidth })), t("Presa"), t("Sbocco"), fit);
   }
   function renderWater(list: WaterL[] = watercourses) {
-    mapApi.current?.showWater(list.filter((w) => !w.hidden).map((w) => ({ geom: w.geojson, kind: w.kind })));
+    const codes = waterCodes(list);
+    mapApi.current?.showWater(list.map((w, i) => ({ w, i })).filter(({ w }) => !w.hidden)
+      .map(({ w, i }) => ({ geom: w.geojson, kind: w.kind, label: waterLabel(w, codes[i]), width_m: w.kind === "drainage" ? undefined : w.mean_width_m })));
   }
   // Zoom su un oggetto a partire dai suoi vertici (lon,lat).
   function zoomToCoords(coords: number[][]) {
@@ -2139,8 +2149,24 @@ export default function Page() {
   }
   function clearMacro() { setMacroAreas([]); renderMacrosOnMap(fields, []); }
 
-  // ---- corsi d'acqua esistenti (NDWI): rilevati e 'ricalcati' prima di
-  // progettare canali e pivot; i pivot li evitano automaticamente. ----
+  // ---- corsi d'acqua esistenti: fiumi, canali e bacini dal composito Sentinel-2 di
+  // 12 mesi (asse, lunghezza e larghezza per tratto) e impluvi dal DEM; ricalcati
+  // prima di progettare canali e pivot, che li evitano automaticamente. ----
+  const WATER_CODE: Record<string, string> = { river: "F", canal: "C", drainage: "I", basin: "B", wetland: "P" };
+  function waterCodes(list: Watercourse[]): string[] {
+    const n: Record<string, number> = {};
+    return list.map((w) => { const k = WATER_CODE[w.kind] ?? "W"; n[k] = (n[k] ?? 0) + 1; return `${k}${n[k]}`; });
+  }
+  function waterKindName(k: string): string {
+    return ({ river: t("Fiume"), canal: t("Canale"), drainage: t("Impluvio (DEM)"), basin: t("Bacino/lago"), wetland: t("Palude") } as Record<string, string>)[k] ?? k;
+  }
+  function waterLabel(w: Watercourse, code?: string): string {
+    const bits = [(code ? code + " · " : "") + waterKindName(w.kind)];
+    if (w.geojson.type === "LineString" && w.length_m) bits.push(uM(w.length_m));
+    if (w.geojson.type === "LineString" && w.mean_width_m && w.kind !== "drainage") bits.push(t("larghezza {w}", { w: uM(w.mean_width_m, w.mean_width_m < 20 ? 1 : 0) }));
+    if (w.geojson.type === "Polygon" && w.area_ha) bits.push(uHa(w.area_ha, 1));
+    return bits.join(" · ");
+  }
   // sensibilità → soglie NDWI/area e area di bacino DEM (più alta = più corsi rilevati)
   function waterParams() {
     const s = waterSens;                          // 1..5
@@ -2153,31 +2179,126 @@ export default function Page() {
   }
   async function detectWater() {
     if (!activeGeom) return needField();
-    if (!date) { setMsg(t("Cerca e scegli prima una data.")); return; }
-    setBusy("water"); setMsg("");
+    setBusy("water"); setMsg(t("Leggo 12 mesi di immagini Sentinel-2: può richiedere 1–3 minuti…"));
     try {
       const p = waterParams();
-      const w = await api.fetchWatercourses(activeGeom, date, p.min_area_ha, p.ndwi_thr, true, p.dem_channel_ha, p.dem_depth_m);
+      // la data scelta (se c'è) chiude il periodo di 12 mesi; altrimenti oggi
+      const w = await api.fetchWatercourses(activeGeom, date || null, waterSens, 12, true, p.dem_channel_ha, p.dem_depth_m, p.min_area_ha);
       if (!w.features.length) { setMsg(t("Nessun corso d'acqua rilevato: prova ad alzare la sensibilità.")); return; }
-      // ANTEPRIMA modificabile a mano: conferma o annulla
-      mapApi.current?.previewWater(w.features.map((f) => ({ geom: f.geojson, kind: f.kind })));
+      waterPending.current = { surface: w.surface ?? [], dates: w.dates ?? [], res_m: w.res_m ?? 10 };
+      // ANTEPRIMA modificabile a mano: conferma o annulla (le misure viaggiano con ogni elemento)
+      const codes = waterCodes(w.features);
+      mapApi.current?.previewWater(w.features.map((f, i) => ({ geom: f.geojson, kind: f.kind, props: f, label: waterLabel(f, codes[i]) })));
       setWaterPreview(true); setWaterRemoveOn(false);
-      setMsg(t("Anteprima: {r} fiumi/canali, {d} impluvi (DEM), {b} bacini, {p} paludi. Modifica a mano, poi Conferma.",
-        { r: w.n_river, d: w.n_drainage, b: w.n_basin, p: w.n_wetland }));
+      const km = w.features.filter((f) => f.kind === "river" || f.kind === "canal").reduce((a, f) => a + (f.length_m ?? 0), 0) / 1000;
+      setMsg(t("Anteprima: {r} tratti di fiume e {c} di canale ({km}), {d} impluvi (DEM), {b} bacini. Modifica a mano, poi Conferma.",
+        { r: w.n_river, c: w.n_canal ?? 0, km: uKm(km, 1), d: w.n_drainage, b: w.n_basin }));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   function confirmWaterUI() {
     const raw = mapApi.current?.confirmWater() || [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const feats: Watercourse[] = raw.map((c) => ({ geojson: c.geom as any, kind: c.kind, area_ha: 0 }));
+    const feats: WaterL[] = raw.map((c) => {
+      const p = (c.props ?? {}) as Partial<Watercourse>;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const w: WaterL = { ...p, geojson: c.geom as any, kind: c.kind, area_ha: p.area_ha ?? 0, source: p.source ?? "manual" };
+      if (c.geom.type === "LineString") {
+        w.length_m = Math.round(lineLenKm(c.geom.coordinates as number[][]) * 10000) / 10;   // ricalcolata sulla geometria
+        if (c.edited) { w.edited = true; w.profile = undefined; }
+      } else if (!w.area_ha) {
+        w.area_ha = Math.round(ringAreaHa(c.geom.coordinates as number[][][]) * 100) / 100;
+      }
+      return w;
+    });
     setWatercourses(feats);
     renderWater(feats);
+    if (waterPending.current) {
+      setWaterSurface(waterPending.current.surface as typeof waterSurface);
+      setWaterMeta({ dates: waterPending.current.dates, res_m: waterPending.current.res_m });
+      waterPending.current = null;
+    }
     setWaterPreview(false); setWaterRemoveOn(false);
     setMsg(t("Corsi d'acqua confermati: {n}. I pivot li eviteranno.", { n: feats.length }));
   }
+  // modifica a mano di tipo e larghezza di un tratto (tabella del pannello)
+  function setWaterAt(i: number, patch: Partial<WaterL>) {
+    setWatercourses((ws) => { const arr = ws.map((w, k) => (k === i ? { ...w, ...patch, edited: true } : w)); renderWater(arr); return arr; });
+  }
+  // KMZ dei corsi d'acqua: cartelle per tipo, nome con misure, scheda con lunghezza,
+  // larghezze (tipica, min–max, stato bagnato), fonte e date; superficie d'acqua.
+  async function exportWaterKmz() {
+    const esc = (x: string) => x.replace(/[<&>"]/g, (c) => ({ "<": "&lt;", "&": "&amp;", ">": "&gt;", '"': "&quot;" }[c] || c));
+    const ll = (c: number[][]) => c.map(([lo, la]) => `${lo.toFixed(7)},${la.toFixed(7)},0`).join(" ");
+    const codes = waterCodes(watercourses);
+    const per = waterMeta?.dates?.length ? `${waterMeta.dates[0]} – ${waterMeta.dates[waterMeta.dates.length - 1]} (${waterMeta.dates.length} ${t("date")})` : "";
+    const srcTxt = (w: WaterL) => w.source === "s2" ? `Sentinel-2 · ${t("composito di più date")}${per ? " · " + per : ""}` : w.source === "dem" ? t("Modello del terreno (Copernicus DEM)") : t("Tracciato a mano");
+    const lineCol: Record<string, string> = { river: "ffa16903", canal: "ff88940d", drainage: "ff0763a1" };   // aabbggrr
+    const kmlW = (w: number | undefined) => (w ? Math.max(2, Math.min(8, 1.5 + Math.log2(1 + w / 4))) : 2).toFixed(1);
+    const folders: Record<string, string[]> = {};
+    watercourses.forEach((w, i) => {
+      if (w.hidden) return;
+      const name = waterLabel(w, codes[i]);
+      const rows: [string, string][] = [[t("Tipo"), waterKindName(w.kind)]];
+      const data: [string, string | number][] = [["codice", codes[i]], ["tipo", w.kind]];
+      if (w.geojson.type === "LineString") {
+        if (w.length_m != null) { rows.push([t("Lunghezza"), uM(w.length_m)]); data.push(["lunghezza_m", Math.round(w.length_m)]); }
+        if (w.mean_width_m && w.kind !== "drainage") {
+          rows.push([t("Larghezza tipica"), uM(w.mean_width_m, 1)]); data.push(["larghezza_m", w.mean_width_m]);
+          if (w.width_min_m != null && w.width_max_m != null) { rows.push([t("Larghezza min – max"), `${uM(w.width_min_m, 1)} – ${uM(w.width_max_m, 1)}`]); data.push(["larghezza_min_m", w.width_min_m], ["larghezza_max_m", w.width_max_m]); }
+          if (w.width_wet_m) { rows.push([t("Larghezza in stato bagnato"), uM(w.width_wet_m, 1)]); data.push(["larghezza_bagnato_m", w.width_wet_m]); }
+          if (w.below_pixel) rows.push([t("Nota"), t("larghezza sotto i 10 m del pixel: stima, da verificare")]);
+        } else if (w.kind === "drainage" && w.mean_width_m) {
+          rows.push([t("Larghezza dell'impluvio (DEM)"), uM(w.mean_width_m)]); data.push(["larghezza_m", w.mean_width_m]);
+        }
+        if (w.sinuosity) { rows.push([t("Sinuosità"), fmt(w.sinuosity, { maximumFractionDigits: 2 })]); }
+      } else {
+        rows.push([t("Superficie"), uHa(w.area_ha || 0, 2)]); data.push(["superficie_ha", w.area_ha || 0]);
+      }
+      if (w.edited) rows.push([t("Nota"), t("modificato a mano")]);
+      rows.push([t("Fonte"), srcTxt(w)]);
+      const desc = `<table>${rows.map(([a, b]) => `<tr><td><b>${esc(a)}</b></td><td>${esc(b)}</td></tr>`).join("")}</table>`;
+      const ext = `<ExtendedData>${data.map(([k, v]) => `<Data name="${k}"><value>${esc(String(v))}</value></Data>`).join("")}</ExtendedData>`;
+      let geo: string, style: string;
+      if (w.geojson.type === "LineString") {
+        style = `<Style><LineStyle><color>${lineCol[w.kind] ?? "ffa16903"}</color><width>${kmlW(w.kind === "drainage" ? undefined : w.mean_width_m)}</width></LineStyle></Style>`;
+        geo = `<LineString><tessellate>1</tessellate><coordinates>${ll(w.geojson.coordinates)}</coordinates></LineString>`;
+      } else {
+        style = `<Style><LineStyle><color>ffa16903</color><width>2</width></LineStyle><PolyStyle><color>66e9a50e</color></PolyStyle></Style>`;
+        geo = `<Polygon><outerBoundaryIs><LinearRing><coordinates>${ll(w.geojson.coordinates[0])}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
+      }
+      const pm = `<Placemark><name>${esc(name)}</name><description><![CDATA[${desc}]]></description>${style}${ext}${geo}</Placemark>`;
+      (folders[w.kind] ??= []).push(pm);
+    });
+    const order = ["river", "canal", "drainage", "basin", "wetland"];
+    const fname: Record<string, string> = { river: t("Fiumi"), canal: t("Canali"), drainage: t("Impluvi (DEM)"), basin: t("Bacini/laghi"), wetland: t("Paludi") };
+    let body = order.filter((k) => folders[k]?.length).map((k) => `<Folder><name>${esc(fname[k])} (${folders[k].length})</name>${folders[k].join("")}</Folder>`).join("");
+    if (waterSurface.length) {
+      const polys = waterSurface.map((g, k) => {
+        const rings = (g.coordinates as number[][][]);
+        const inner = rings.slice(1).map((r) => `<innerBoundaryIs><LinearRing><coordinates>${ll(r)}</coordinates></LinearRing></innerBoundaryIs>`).join("");
+        return `<Placemark><name>${esc(t("Superficie d'acqua"))} ${k + 1}</name><styleUrl>#surf</styleUrl><Polygon><outerBoundaryIs><LinearRing><coordinates>${ll(rings[0])}</coordinates></LinearRing></outerBoundaryIs>${inner}</Polygon></Placemark>`;
+      }).join("");
+      body += `<Folder><name>${esc(t("Superficie d'acqua (satellite)"))}</name><visibility>0</visibility>${polys}</Folder>`;
+    }
+    if (!body) return;
+    const docName = `${t("Corsi d'acqua esistenti")}${active ? " – " + active.name : ""}`;
+    const kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(docName)}</name>`
+      + `<Style id="surf"><LineStyle><color>99a16903</color><width>1</width></LineStyle><PolyStyle><color>55e9a50e</color></PolyStyle></Style>${body}</Document></kml>`;
+    const zip = new JSZip();
+    zip.file("doc.kml", kml);
+    const blob = await zip.generateAsync({ type: "blob", mimeType: "application/vnd.google-earth.kmz" });
+    saveBlob(blob, "corsi_dacqua.kmz");
+  }
+  function exportWaterCsv() {
+    const codes = waterCodes(watercourses);
+    const head = ["codice", "tipo", "lunghezza_m", "larghezza_m", "larghezza_min_m", "larghezza_max_m", "larghezza_bagnato_m", "superficie_ha", "fonte", "sotto_pixel", "modificato"];
+    const rows = watercourses.map((w, i) => [codes[i], w.kind, w.geojson.type === "LineString" ? Math.round(w.length_m ?? 0) : "", w.mean_width_m ?? "", w.width_min_m ?? "", w.width_max_m ?? "",
+      w.width_wet_m ?? "", w.geojson.type === "Polygon" ? w.area_ha : "", w.source ?? "", w.below_pixel ? 1 : 0, w.edited ? 1 : 0]);
+    const csv = [head, ...rows].map((r) => r.join(";")).join("\n");
+    saveBlob(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }), "corsi_dacqua.csv");
+  }
   function cancelWaterPreview() { mapApi.current?.cancelWater(); setWaterPreview(false); setWaterRemoveOn(false); setMsg(""); }
   function toggleWaterRemove() { const v = !waterRemoveOn; setWaterRemoveOn(v); mapApi.current?.waterRemoveMode(v); }
-  function clearWater() { setWatercourses([]); setWaterPreview(false); mapApi.current?.clearWater(); mapApi.current?.cancelWater(); }
+  function clearWater() { setWatercourses([]); setWaterSurface([]); setWaterMeta(null); setWaterPreview(false); mapApi.current?.clearWater(); mapApi.current?.cancelWater(); }
 
   // Aggiunge una macro-area come SOTTO-LIVELLO del campo attivo (il poligono in
   // cui è inscritta), non come nuovo campo di primo livello.
@@ -2305,7 +2426,7 @@ export default function Page() {
       //    il più pesante: se fallisse, il vecchio è ancora tutto al suo posto.
       if (canals.length) newLayerIds.push((await api.createLayer({ project_id: pid, kind: "canals", name: t("Canali"), data: { items: canals.map((c) => ({ ...c, ownerArea: ownerArea(c.owner) })) } })).id);
       if (roads.length) newLayerIds.push((await api.createLayer({ project_id: pid, kind: "roads", name: t("Strade"), data: { items: roads.map((r) => ({ ...r, ownerArea: ownerArea(r.owner) })) } })).id);
-      if (watercourses.length) newLayerIds.push((await api.createLayer({ project_id: pid, kind: "waters", name: t("Invasi/corsi d'acqua"), data: { items: watercourses.map((w) => ({ ...w, ownerArea: ownerArea(w.owner) })) } })).id);
+      if (watercourses.length) newLayerIds.push((await api.createLayer({ project_id: pid, kind: "waters", name: t("Invasi/corsi d'acqua"), data: { items: watercourses.map((w) => ({ ...w, ownerArea: ownerArea(w.owner) })), surface: waterSurface, meta: waterMeta } })).id);
 
       const styles: Record<number, { color?: string; fillColor?: string; fillOpacity?: number }> = {};
       const levels: Record<number, string> = {};
@@ -5379,7 +5500,7 @@ export default function Page() {
             const w = near.w;
             const bits = [w.mean_width_m ? tx("larghezza media {w} m", { w: n0(w.mean_width_m) }) : "", w.length_m ? tx("sviluppo di {l} km nell'area rilevata", { l: n1(w.length_m / 1000) }) : "",
               w.area_ha ? tx("superficie d'acqua di {a} ha", { a: n1(w.area_ha) }) : ""].filter(Boolean);
-            if (bits.length) fb.push({ p: tx("Il corso d'acqua alla presa è stato rilevato dalle immagini Sentinel-2 (indice NDWI) e dal modello del terreno: {d}.", { d: bits.join(", ") }) });
+            if (bits.length) fb.push({ p: tx("Il corso d'acqua alla presa è stato rilevato dalle immagini Sentinel-2 e dal modello del terreno: {d}.", { d: bits.join(", ") }) });
           }
         }
         if (sc && S) {
@@ -5474,6 +5595,21 @@ export default function Page() {
         const ib: Record<string, unknown>[] = [];
         const nCan = canals.filter((c) => !c.hidden).length, nWat = watercourses.filter((w) => !w.hidden).length;
         if (nCan || nWat) ib.push({ p: tx("Nell'area sono presenti {c} canali e {w} corsi d'acqua rilevati sulla mappa, considerati nel tracciato delle tubazioni e nelle prese.", { c: fx(nCan), w: fx(nWat) }) });
+        {
+          // corsi d'acqua misurati dal satellite: lunghezza e larghezza per tratto
+          const codesW = waterCodes(watercourses);
+          const wl = watercourses.map((w, i) => ({ w, i })).filter(({ w }) => !w.hidden && w.geojson.type === "LineString" && (w.kind === "river" || w.kind === "canal") && (w.length_m ?? 0) > 0)
+            .sort((a, b) => (b.w.length_m ?? 0) - (a.w.length_m ?? 0));
+          if (wl.length) {
+            const kmR = wl.filter(({ w }) => w.kind === "river").reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000;
+            const kmC = wl.filter(({ w }) => w.kind === "canal").reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000;
+            ib.push({ p: tx("I corsi d'acqua esistenti sono stati letti da un composito di immagini Sentinel-2 di 12 mesi (pixel di 10 m): {r} km di fiume e {c} km di canali. La larghezza è misurata a sezioni trasversali ogni 20 m, con la frazione d'acqua dei pixel di bordo; sotto i 10 m è una stima.", { r: n1(kmR), c: n1(kmC) }) });
+            ib.push({ table: { header: [tx("Tratto"), tx("Tipo"), tx("Lunghezza") + " (m)", tx("Larghezza tipica") + " (m)", tx("Larghezza min – max") + " (m)"], widths: [12, 20, 20, 22, 26],
+              rows: wl.slice(0, 15).map(({ w, i }) => [codesW[i], w.kind === "river" ? tx("Fiume") : tx("Canale"), n0(w.length_m ?? 0), w.mean_width_m != null ? n1(w.mean_width_m) : "–",
+                w.width_min_m != null && w.width_max_m != null ? `${n0(w.width_min_m)} – ${n0(w.width_max_m)}` : "–"]) },
+              caption: wl.length > 15 ? tx("I 15 tratti più lunghi su {n}; l'elenco completo è nel KMZ dei corsi d'acqua", { n: fx(wl.length) }) : tx("Corsi d'acqua esistenti misurati sulle immagini satellitari") });
+          }
+        }
         if (hasAdd && sc && S) {
           let txt = tx("L'acqua raggiunge l'impianto secondo lo schema {k} – {name}.", { k: sc.key, name: sc.name });
           if (sc.main?.kind === "pipe" && sc.main.dn) txt += " " + tx("L'adduttrice in PE100 DN {dn} è lunga {l} m.", { dn: sc.main.dn, l: n0(sc.main.L * (sc.main.n ?? 1)) });
@@ -6950,7 +7086,8 @@ export default function Page() {
         fields.map((f) => [f.name, f.parentId ?? 0, f.level ?? "", f.score ?? 0, f.style ?? 0, f.hidden ? 1 : 0, f.geom.coordinates[0]]),
         canals.map((c) => [c.owner ?? 0, c.hidden ? 1 : 0, c.geojson.coordinates]),
         roads.map((r) => [r.id, r.owner ?? 0, r.hidden ? 1 : 0, r.width_m, r.coords]),
-        watercourses.map((w) => [w.owner ?? 0, w.hidden ? 1 : 0]),
+        watercourses.map((w) => [w.owner ?? 0, w.hidden ? 1 : 0, w.kind, w.mean_width_m ?? 0, w.length_m ?? 0]),
+        [waterSurface.length, waterMeta?.dates?.length ?? 0],
         pivots.map((p) => [Math.round(p.lat * 1e6), Math.round(p.lng * 1e6), p.r, p.field ?? 0, p.conn ?? "", p.q ?? 0]),
         [mmDes, hoursDay],                                  // cambiano la portata salvata dei pivot
         pivotLines.map((l) => [l.kind, l.field ?? 0, l.coords.length]),
@@ -6958,7 +7095,7 @@ export default function Page() {
         [...hiddenPipeFields].sort((a, b) => a - b),
       ]);
     } catch { return ""; }
-  }, [fields, canals, roads, watercourses, pivots, pivotLines, hiddenPivotFields, hiddenPipeFields, mmDes, hoursDay]);
+  }, [fields, canals, roads, watercourses, waterSurface, waterMeta, pivots, pivotLines, hiddenPivotFields, hiddenPipeFields, mmDes, hoursDay]);
   latestSigRef.current = saveSig;
 
   // Esegue un salvataggio serializzato: se ne arriva un altro mentre salva, lo
@@ -9005,7 +9142,7 @@ export default function Page() {
             ))}
             {ownedCanals.map(({ c, i }) => objRow("canal", i, `c${i}`, !!c.hidden, () => toggleCanalHidden(i), <>{t("Canale")} {i + 1} · {uM(c.length_m)}</>, () => zoomToCoords(c.geojson.coordinates), () => removeCanal(i)))}
             {roadGroupRow(`f${f.id}`, ownedRoads)}
-            {ownedWater.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{w.kind} {i + 1}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
+            {ownedWater.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{waterKindName(w.kind)} {waterCodes(watercourses)[i]}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
             {ownedPivN > 0 && objRow("pivot", f.id, `pv${f.id}`, hiddenPivotFields.has(f.id), () => togglePivotFieldHidden(f.id),
               <>{t("Pivot")} · {ownedPivN} · {uHa(st.irrHa)}<span className="text-sage-dark"> · {t("mediana")} {uHa(st.medHa, 1)} / {uM(st.medR)}</span></>,
               () => zoomToCoords(f.geom.coordinates[0]), () => removePivotsOfField(f.id))}
@@ -9347,7 +9484,7 @@ export default function Page() {
                   <ul className="space-y-0.5">
                     {cItems.map(({ c, i }) => objRow("canal", i, `c${i}`, !!c.hidden, () => toggleCanalHidden(i), <>{t("Canale")} {i + 1} · {uM(c.length_m)}</>, () => zoomToCoords(c.geojson.coordinates), () => removeCanal(i)))}
                     {roadGroupRow("unassigned", rItems)}
-                    {wItems.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{w.kind} {i + 1}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
+                    {wItems.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{waterKindName(w.kind)} {waterCodes(watercourses)[i]}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
                     {pGroups.map((g) => objRow("pivot", g.fid, `pg${g.fid}`, hiddenPivotFields.has(g.fid), () => togglePivotFieldHidden(g.fid), <>{g.name} · {g.n} pivot</>, () => {}, () => removePivotsOfField(g.fid)))}
                     {tGroups.map((g) => objRow("pipe", g.fid, `tg${g.fid}`, hiddenPipeFields.has(g.fid), () => togglePipeFieldHidden(g.fid), <>{g.name} · {g.n} {t("tubazioni")}</>, () => zoomToPipesOfField(g.fid), () => removePipesOfField(g.fid)))}
                   </ul>
@@ -9724,15 +9861,15 @@ export default function Page() {
           </section>
 
           <section hidden={tab !== "analisi"} className="border-t border-black/5 pt-3">
-            <SectionHead title={t("Corsi d'acqua esistenti")} help={t("Rileva e ricalca fiumi, canali e paludi (NDWI) e gli impluvi/alvei dalla morfologia del terreno (DEM), anche asciutti. Falla prima di progettare: i pivot li evitano automaticamente.")} />
+            <SectionHead title={t("Corsi d'acqua esistenti")} help={t("Legge fiumi, canali e bacini da 12 mesi di immagini Sentinel-2 (10 m) e ne misura lunghezza e larghezza tratto per tratto; aggiunge gli impluvi e gli alvei asciutti dal modello del terreno (DEM). Si leggono bene i corsi d'acqua larghi almeno 10 m; quelli più stretti solo se ben contrastati, con larghezza stimata. Falla prima di progettare: i pivot li evitano automaticamente.")} />
             <label className="text-xs text-sage-dark block">{t("Sensibilità")}: {waterSens}/5 {waterSens >= 4 ? t("(rileva anche corsi stretti/deboli)") : ""}
               <input type="range" min={1} max={5} step={1} value={waterSens}
                 onChange={(e) => setWaterSens(Number(e.target.value))} className="w-full accent-brand" disabled={waterPreview} />
             </label>
             {!waterPreview ? (
               <div className="flex gap-2 mt-1">
-                <button className="btn-primary flex-1 basis-0" disabled={busy === "water" || !activeGeom || !date} onClick={detectWater}>
-                  {busy === "water" ? t("Calcolo…") : t("Rileva corsi d'acqua")}
+                <button className="btn-primary flex-1 basis-0" disabled={busy === "water" || !activeGeom} onClick={detectWater}>
+                  {busy === "water" ? t("Lettura immagini…") : t("Rileva corsi d'acqua")}
                 </button>
                 <button className="btn-ghost flex-1 basis-0" onClick={clearWater}>{t("Rimuovi")}</button>
               </div>
@@ -9740,7 +9877,8 @@ export default function Page() {
               <div className="mt-1 bg-brand/5 rounded-lg p-2">
                 <p className="hint mb-1">{t("Anteprima modificabile: trascina i vertici, aggiungi o elimina elementi, poi Conferma.")}</p>
                 <div className="flex gap-2 flex-wrap">
-                  <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("river")}>+ {t("Fiume/canale")}</button>
+                  <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("river")}>+ {t("Fiume")}</button>
+                  <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("canal")}>+ {t("Canale")}</button>
                   <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("basin")}>+ {t("Bacino")}</button>
                   <button className={"text-xs px-2 py-1 rounded-lg " + (waterRemoveOn ? "bg-danger text-white" : "btn-ghost")} onClick={toggleWaterRemove}>{t("Elimina elemento")}</button>
                 </div>
@@ -9750,13 +9888,55 @@ export default function Page() {
                 </div>
               </div>
             )}
-            {!waterPreview && !!watercourses.length && (
-              <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed">
-                {watercourses.filter((w) => w.geojson.type === "LineString").length} {t("fiumi/canali (asse)")} · {watercourses.filter((w) => w.kind === "basin").length} {t("bacini")} · {watercourses.filter((w) => w.kind === "wetland").length} {t("paludi")}<br />
-                {uHa(watercourses.reduce((s, w) => s + w.area_ha, 0))} {t("totali")}
-                <button className="text-brand-mid ml-2" onClick={() => exportKmz("corsi_dacqua", watercourses.map((w, i) => ({ name: `${w.kind} ${i + 1}`, geom: w.geojson })))}>⤓ KMZ</button>
-              </div>
-            )}
+            {!waterPreview && !!watercourses.length && (() => {
+              const codes = waterCodes(watercourses);
+              const lines = watercourses.map((w, i) => ({ w, i })).filter(({ w }) => w.geojson.type === "LineString");
+              const kmOf = (k: string) => lines.filter(({ w }) => w.kind === k && !w.hidden).reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000;
+              const nBas = watercourses.filter((w) => w.kind === "basin").length;
+              const anyBelow = lines.some(({ w }) => w.below_pixel);
+              return (
+                <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed" data-water-table>
+                  <div>
+                    <b>{t("Fiumi")}</b> {uKm(kmOf("river"), 2)} · <b>{t("Canali")}</b> {uKm(kmOf("canal"), 2)}
+                    {kmOf("drainage") > 0 && <> · {t("Impluvi (DEM)")} {uKm(kmOf("drainage"), 2)}</>}
+                    {nBas > 0 && <> · {nBas} {t("bacini")}</>}
+                  </div>
+                  {waterMeta?.dates?.length ? <div className="text-[11px] opacity-80">{t("Sentinel-2, {n} date dal {a} al {b}, pixel {r} m", { n: waterMeta.dates.length, a: waterMeta.dates[0], b: waterMeta.dates[waterMeta.dates.length - 1], r: fmt(waterMeta.res_m) })}</div> : null}
+                  {!!lines.length && (
+                    <div className="mt-1 max-h-64 overflow-auto">
+                      <table className="w-full text-[11px]">
+                        <thead><tr className="text-left opacity-70"><th className="font-normal">#</th><th className="font-normal">{t("Tipo")}</th><th className="font-normal text-right">{t("Lunghezza")}</th><th className="font-normal text-right">{t("Larghezza")} ({imperial ? "ft" : "m"})</th><th /></tr></thead>
+                        <tbody>
+                          {lines.map(({ w, i }) => (
+                            <tr key={i} className={w.hidden ? "opacity-40" : ""}>
+                              <td className="pr-1 whitespace-nowrap">{codes[i]}</td>
+                              <td>
+                                <select className="bg-transparent text-[11px] p-0" value={w.kind} onChange={(e) => setWaterAt(i, { kind: e.target.value })}>
+                                  <option value="river">{t("Fiume")}</option><option value="canal">{t("Canale")}</option><option value="drainage">{t("Impluvio (DEM)")}</option>
+                                </select>
+                              </td>
+                              <td className="text-right whitespace-nowrap">{w.length_m != null ? uM(w.length_m) : "–"}</td>
+                              <td className="text-right whitespace-nowrap" title={w.width_min_m != null ? `${t("min – max")}: ${uM(w.width_min_m, 1)} – ${uM(w.width_max_m ?? 0, 1)}${w.width_wet_m ? ` · ${t("stato bagnato")}: ${uM(w.width_wet_m, 1)}` : ""}` : undefined}>
+                                <input type="number" min={0} step={0.5} className="w-14 text-right bg-transparent border-b border-black/10"
+                                  value={w.mean_width_m != null ? Math.round((imperial ? w.mean_width_m * 3.28084 : w.mean_width_m) * 10) / 10 : ""}
+                                  onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0) setWaterAt(i, { mean_width_m: imperial ? v / 3.28084 : v }); }} />
+                                {w.below_pixel ? <span title={t("larghezza sotto i 10 m del pixel: stima, da verificare")}> *</span> : null}
+                              </td>
+                              <td className="text-right"><button className="text-brand-mid" title={t("Zoom")} onClick={() => zoomToCoords(w.geojson.coordinates)}>⌖</button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {anyBelow && <div className="text-[11px] mt-1">* {t("larghezza sotto i 10 m del pixel: stima, da verificare")}</div>}
+                  <div className="mt-1 flex gap-3">
+                    <button className="text-brand-mid" onClick={exportWaterKmz}>⤓ KMZ</button>
+                    <button className="text-brand-mid" onClick={exportWaterCsv}>⤓ CSV</button>
+                  </div>
+                </div>
+              );
+            })()}
           </section>
 
           <section hidden={tab !== "analisi"} className="border-t border-black/5 pt-3">

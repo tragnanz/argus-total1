@@ -240,7 +240,9 @@ class ReachOut(BaseModel):
 # ---------- Corsi d'acqua esistenti (NDWI) ----------
 class WaterIn(BaseModel):
     geom: GeoPolygon
-    date: str
+    date: str | None = None                                 # fine del periodo (default: oggi)
+    sens: int = Field(default=3, ge=1, le=5)                # sensibilità (5 = canali deboli)
+    months: int = Field(default=12, ge=1, le=36)            # periodo del composito
     min_area_ha: float = Field(default=0.2, ge=0.0, le=10000)
     ndwi_thr: float = Field(default=0.20, ge=-0.5, le=0.8)  # soglia acqua (sensibilità)
     use_dem: bool = True                                    # drenaggio dal DEM (alvei asciutti)
@@ -255,6 +257,11 @@ class WaterOut(BaseModel):
     n_basin: int
     n_wetland: int
     n_drainage: int = 0
+    n_canal: int = 0
+    surface: list[dict[str, Any]] = []
+    dates: list[str] = []
+    res_m: float = 10.0
+    length_m: float = 0.0
 
 
 # ---------- Pivot lungo il canale (M6, Fase 3) ----------

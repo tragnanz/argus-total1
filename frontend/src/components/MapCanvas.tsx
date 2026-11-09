@@ -41,19 +41,27 @@ export type PivotCbs = {
   onBackground: () => void;
   onLineClick?: (idx: number) => void;   // clic su una tubazione (per modificarla)
 };
+// colori dei corsi d'acqua per tipo
+const WATER_COL: Record<string, string> = { river: "#0369a1", canal: "#0d9488", drainage: "#a16207", basin: "#0369a1", wetland: "#0891b2" };
+// stessa geometria (a meno di arrotondamenti): serve a sapere se l'utente ha spostato i vertici
+function sameCoords(a: number[][], b: number[][]): boolean {
+  if (!Array.isArray(a) || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i][0] - b[i][0]) > 1e-7 || Math.abs(a[i][1] - b[i][1]) > 1e-7) return false;
+  return true;
+}
 export type MapHandle = {
   draw: () => void;
   setFields: (fields: FieldGeom[], activeId: number | null, hidden?: number[]) => void;
   setLayerVisible: (key: "fields" | "macro" | "canal" | "layout" | "water" | "strade", on: boolean) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  showWater: (items: { geom: { type: string; coordinates: any }; kind: string }[]) => void;
+  showWater: (items: { geom: { type: string; coordinates: any }; kind: string; label?: string; width_m?: number }[]) => void;
   clearWater: () => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  previewWater: (items: { geom: { type: string; coordinates: any }; kind: string }[]) => void;
-  waterDraw: (kind: "river" | "basin") => void;
+  previewWater: (items: { geom: { type: string; coordinates: any }; kind: string; props?: any; label?: string }[]) => void;
+  waterDraw: (kind: "river" | "canal" | "basin") => void;
   waterRemoveMode: (on: boolean) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  confirmWater: () => { kind: string; geom: { type: string; coordinates: any } }[];
+  confirmWater: () => { kind: string; geom: { type: string; coordinates: any }; props?: any; edited?: boolean }[];
   cancelWater: () => void;
   clearAll: () => void;
   fitAll: () => void;
@@ -233,7 +241,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const canalEditRef = useRef<L.LayerGroup | null>(null);
   const waterRef = useRef<L.LayerGroup | null>(null);
   const waterPreviewRef = useRef<L.FeatureGroup | null>(null);
-  const drawModeRef = useRef<"river" | "basin" | "canal-manual" | "road-manual" | "pipe-manual" | null>(null);
+  const drawModeRef = useRef<"river" | "canal" | "basin" | "canal-manual" | "road-manual" | "pipe-manual" | null>(null);
   const roadsRef = useRef<L.LayerGroup | null>(null);
   const hydroRef = useRef<L.LayerGroup | null>(null);
   const roadManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
@@ -429,7 +437,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         if (coords.length >= 2) cb?.(coords);
         return;
       }
-      if (dm === "river" || dm === "basin") {         // nuovo corso d'acqua (anteprima)
+      if (dm === "river" || dm === "canal" || dm === "basin") {   // nuovo corso d'acqua (anteprima)
         (layer as any)._wcKind = dm;
         try { layer.setStyle?.({ color: "#0369a1", weight: 3, dashArray: "4,3", fillOpacity: 0.2 }); } catch { /* */ }
         layer.on("click", () => { if (waterRemoveRef.current) waterPreviewRef.current?.removeLayer(layer); });
@@ -1044,10 +1052,13 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         if (!map || !g) return;
         g.clearLayers();
         for (const it of items) {
-          if (it.geom.type === "LineString") {           // asse fiume/canale
+          if (it.geom.type === "LineString") {           // asse fiume/canale/impluvio
             const latlngs = (it.geom.coordinates as number[][]).map((p) => [p[1], p[0]] as [number, number]);
-            const ly = L.polyline(latlngs, { color: "#0369a1", weight: 3, opacity: 0.95 });
-            ly.bindTooltip(tRef.current("Fiume/canale"), { direction: "center" });
+            const col = WATER_COL[it.kind] ?? "#0369a1";
+            // spessore proporzionale alla larghezza misurata (3..9 px)
+            const wpx = it.width_m ? Math.max(3, Math.min(9, 2 + Math.log2(1 + it.width_m / 4))) : 3;
+            const ly = L.polyline(latlngs, { color: col, weight: wpx, opacity: 0.95, dashArray: it.kind === "drainage" ? "6,4" : undefined });
+            ly.bindTooltip(it.label || tRef.current("Fiume/canale"), { direction: "center" });
             g.addLayer(ly);
             continue;
           }
@@ -1073,13 +1084,16 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           let layer: any;
           if (it.geom.type === "LineString") {
             layer = L.polyline((it.geom.coordinates as number[][]).map((p) => [p[1], p[0]] as [number, number]),
-              { color: "#0369a1", weight: 3, dashArray: "4,3", opacity: 0.95 });
+              { color: WATER_COL[it.kind] ?? "#0369a1", weight: 3, dashArray: "4,3", opacity: 0.95 });
+            if (it.label) layer.bindTooltip(it.label, { direction: "center" });
           } else {
             const isBasin = it.kind === "basin";
             layer = L.polygon((it.geom.coordinates as number[][][])[0].map((p) => [p[1], p[0]] as [number, number]),
               { color: isBasin ? "#0369a1" : "#0891b2", weight: 2, fillColor: isBasin ? "#0ea5e9" : "#22d3ee", fillOpacity: 0.25, dashArray: "4,3" });
           }
           (layer as any)._wcKind = it.kind;
+          (layer as any)._wcProps = it.props;
+          (layer as any)._wcSig = JSON.stringify(it.geom.coordinates);
           layer.on("click", () => { if (waterRemoveRef.current) g.removeLayer(layer); });
           g.addLayer(layer);
           try { (layer as any).pm?.enable({ allowSelfIntersection: false }); } catch { /* */ }
@@ -1089,7 +1103,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
       waterDraw(kind) {
         const map = mapRef.current; if (!map) return;
         drawModeRef.current = kind;
-        try { (map as any).pm.enableDraw(kind === "river" ? "Line" : "Polygon", { allowSelfIntersection: false }); } catch { /* */ }
+        try { (map as any).pm.enableDraw(kind === "basin" ? "Polygon" : "Line", { allowSelfIntersection: false }); } catch { /* */ }
       },
       waterRemoveMode(on) {
         waterRemoveRef.current = on;
@@ -1098,7 +1112,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
       },
       confirmWater() {
         const map = mapRef.current, g = waterPreviewRef.current;
-        const out: { kind: string; geom: { type: string; coordinates: any } }[] = [];  // eslint-disable-line @typescript-eslint/no-explicit-any
+        const out: { kind: string; geom: { type: string; coordinates: any }; props?: any; edited?: boolean }[] = [];  // eslint-disable-line @typescript-eslint/no-explicit-any
         if (g) {
           g.eachLayer((layer: any) => {
             const kind = layer._wcKind || "basin";
@@ -1106,12 +1120,13 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             if (!isPolygon) {
               const lls = layer.getLatLngs() as any[];
               const coords = lls.map((p: any) => [p.lng, p.lat]);
-              if (coords.length >= 2) out.push({ kind, geom: { type: "LineString", coordinates: coords } });
+              if (coords.length >= 2) out.push({ kind, geom: { type: "LineString", coordinates: coords }, props: layer._wcProps,
+                edited: !!layer._wcSig && !sameCoords(JSON.parse(layer._wcSig), coords) });
             } else {
               let ring = layer.getLatLngs() as any;
               if (Array.isArray(ring[0])) ring = ring[0];
               const coords = ring.map((p: any) => [p.lng, p.lat]);
-              if (coords.length >= 3) { coords.push(coords[0]); out.push({ kind, geom: { type: "Polygon", coordinates: [coords] } }); }
+              if (coords.length >= 3) { coords.push(coords[0]); out.push({ kind, geom: { type: "Polygon", coordinates: [coords] }, props: (layer as any)._wcProps }); }
             }
           });
         }
