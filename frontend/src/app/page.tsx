@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.254";
+const REV = "v0.6.255";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -2265,6 +2265,25 @@ export default function Page() {
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pivots, watercourses]);
+  // Sezione di un canale o fosso da spianare: trapezia, larghezza dell'acqua W (misurata dal satellite o,
+  // se manca, 3 m per i canali e 1,5 m per i fossi), tirante d (inserito o stimato dalla larghezza),
+  // franco fb (0,3 m canali, 0,2 m fossi), scarpa 1:m. Volume di riempimento = area × metri sotto i pivot.
+  function waterLevelSec(w: WaterL) {
+    const est = !(w.mean_width_m && w.mean_width_m > 0);
+    const W = est ? (w.kind === "drain" ? 1.5 : 3) : w.mean_width_m!;
+    const m = w.bank_m ?? (w.kind === "river" ? 2 : 1.5);
+    const d = w.depth_m ?? Math.max(0.2, Math.min(12, Math.round(0.35 * Math.pow(W, 0.55) * 10) / 10));
+    const fb = w.kind === "drain" ? 0.2 : 0.3;
+    const b = Math.max(0.2, W - 2 * m * d), D = d + fb, T = b + 2 * m * D;
+    return { W, d, fb, m, b, T, D, A: ((b + T) / 2) * D, est };
+  }
+  // metri cubi di terra per spianare i tratti sotto i pivot (solo corsi spostabili)
+  const waterFillM3 = useMemo(() => {
+    const out = new Map<number, number>();
+    waterUnderPivots.forEach((L, i) => { const w = watercourses[i]; if (w) out.set(i, L * waterLevelSec(w).A); });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waterUnderPivots, watercourses]);
   function waterRange(w: Watercourse): number | null {
     if (w.bed || w.width_low_m == null || w.width_high_m == null || !w.bank_m || w.regime !== "perennial") return null;
     return Math.max(0, w.width_high_m - w.width_low_m) / (2 * w.bank_m);
@@ -2756,7 +2775,11 @@ export default function Page() {
         rows.push([t("Spostabile"), waterMovable(w) ? t("sì: i pivot lo possono coprire, il tratto si devia") : t("no: i pivot lo evitano")]);
         data.push(["spostabile", waterMovable(w) ? 1 : 0]);
         const dv = waterUnderPivots.get(i);
-        if (dv) { rows.push([t("Da deviare sotto i pivot"), uM(dv)]); data.push(["da_deviare_m", Math.round(dv)]); }
+        if (dv) {
+          rows.push([t("Da deviare sotto i pivot"), uM(dv)]); data.push(["da_deviare_m", Math.round(dv)]);
+          const fv = Math.round(waterFillM3.get(i) ?? 0), sc = waterLevelSec(w);
+          rows.push([t("Terra per spianarlo"), `${fmt(fv)} m³ (${t("sezione {a} m²", { a: fmt(sc.A, { maximumFractionDigits: 1 }) })}${sc.est ? ", " + t("larghezza stimata") : ""})`]); data.push(["spianamento_m3", fv]);
+        }
       }
       if (w.edited) rows.push([t("Nota"), t("modificato a mano")]);
       rows.push([t("Fonte"), srcTxt(w)]);
@@ -2796,8 +2819,8 @@ export default function Page() {
   }
   function exportWaterCsv() {
     const codes = waterCodes(watercourses);
-    const head = ["codice", "nome", "tipo", "spostabile", "da_deviare_m", "regime", "alveo", "lunghezza_m", "larghezza_m", "larghezza_min_m", "larghezza_max_m", "larghezza_bagnato_m", "mesi_acqua", "mesi_osservati", "larghezza_min_oss_m", "data_min", "larghezza_max_oss_m", "data_max", "scarpa", "escursione_stimata_m", "quota_min_msl", "quota_max_msl", "superficie_ha", "fonte", "sotto_pixel", "modificato", "nome_registrato", "tipo_registrato", "profondita_m", "pendenza_permille", "portata_ls", "portata_magra_ls", "portata_piena_ls", "portata_nota_ls"];
-    const rows = watercourses.map((w, i) => [codes[i], (w.name ?? "").replace(/;/g, ","), w.kind, waterMovable(w) ? 1 : 0, Math.round(waterUnderPivots.get(i) ?? 0), w.regime ?? "", w.bed ? 1 : 0, w.geojson.type === "LineString" ? Math.round(w.length_m ?? 0) : "", w.mean_width_m ?? "", w.width_min_m ?? "", w.width_max_m ?? "",
+    const head = ["codice", "nome", "tipo", "spostabile", "da_deviare_m", "spianamento_m3", "regime", "alveo", "lunghezza_m", "larghezza_m", "larghezza_min_m", "larghezza_max_m", "larghezza_bagnato_m", "mesi_acqua", "mesi_osservati", "larghezza_min_oss_m", "data_min", "larghezza_max_oss_m", "data_max", "scarpa", "escursione_stimata_m", "quota_min_msl", "quota_max_msl", "superficie_ha", "fonte", "sotto_pixel", "modificato", "nome_registrato", "tipo_registrato", "profondita_m", "pendenza_permille", "portata_ls", "portata_magra_ls", "portata_piena_ls", "portata_nota_ls"];
+    const rows = watercourses.map((w, i) => [codes[i], (w.name ?? "").replace(/;/g, ","), w.kind, waterMovable(w) ? 1 : 0, Math.round(waterUnderPivots.get(i) ?? 0), Math.round(waterFillM3.get(i) ?? 0), w.regime ?? "", w.bed ? 1 : 0, w.geojson.type === "LineString" ? Math.round(w.length_m ?? 0) : "", w.mean_width_m ?? "", w.width_min_m ?? "", w.width_max_m ?? "",
       w.width_wet_m ?? "", (w.months_wet ?? []).join(","), (w.months_seen ?? []).join(","), w.width_low_m ?? "", w.date_low ?? "", w.width_high_m ?? "", w.date_high ?? "",
       w.bank_m ?? "", waterRange(w) != null ? Math.round(waterRange(w)! * 100) / 100 : "", w.level_abs?.min ?? "", w.level_abs?.max ?? "", w.geojson.type === "Polygon" ? w.area_ha : "", w.source ?? "", w.below_pixel ? 1 : 0, w.edited ? 1 : 0,
       ...(() => { const fl = waterFlow(w), q = fl && "typ" in fl && fl.typ ? fl : null;
@@ -3679,10 +3702,21 @@ export default function Page() {
   // serve, tubazioni fino ai pivot, diametri e pompe) → computo. Ogni passo usa le
   // funzioni delle pagine e resta ritoccabile lì.
   // 2 · pivot su tutte le aree che non li hanno ancora (parametri della pagina Impianti)
+  // canali e fossi esistenti: «spiana» = i pivot ci passano sopra (terra da spostare), «lascia» = i pivot li evitano
+  const [canalPolicy, setCanalPolicyS] = useState<"spiana" | "lascia">("spiana");
+  function setCanalPolicy(v: "spiana" | "lascia") {
+    setCanalPolicyS(v);
+    setWaterKindMovable("canal", v === "spiana"); setWaterKindMovable("drain", v === "spiana");
+    const what = v === "spiana" ? t("si spianano dove passano i pivot") : t("si lasciano, i pivot li evitano");
+    setMsg(t("Canali e fossi esistenti: {s}.", { s: what }) + (pivots.length ? " " + t("Clicca «Pivot» per ridisporre i pivot con questa scelta.") : ""));
+  }
   async function quickPivots() {
-    const todo = fields.filter((f) => !f.hidden && !pivots.some((p) => p.field === f.id));
+    let todo = fields.filter((f) => !f.hidden && !pivots.some((p) => p.field === f.id));
     if (!fields.length) return needField();
-    if (!todo.length) { goTab("impianti"); setMsg(t("Tutte le aree hanno già i pivot: raggio e disposizione si ritoccano nella pagina Impianti.")); return; }
+    if (!todo.length) {
+      if (!window.confirm(t("Ridisporre i pivot su tutte le aree? I pivot ritoccati a mano verranno sostituiti."))) { goTab("impianti"); return; }
+      todo = fields.filter((f) => !f.hidden);
+    }
     setBusy("layout");
     try {
       // corsi d'acqua: se non ci sono ancora, importazione topografica delle aree (pochi secondi),
@@ -3692,7 +3726,8 @@ export default function Page() {
         setMsg(t("Importazione topografica dei corsi d'acqua…"));
         const res = await Promise.all(todo.map((f) => api.fetchOsmCourses(f.geom).catch(() => null)));
         const seen = new Set<string>();
-        wc = res.flatMap((r) => r?.features ?? []).filter((f) => { const k = JSON.stringify(f.geojson.coordinates.slice(0, 2)); if (seen.has(k)) return false; seen.add(k); return true; }) as WaterL[];
+        wc = res.flatMap((r) => r?.features ?? []).filter((f) => { const k = JSON.stringify(f.geojson.coordinates.slice(0, 2)); if (seen.has(k)) return false; seen.add(k); return true; })
+          .map((f) => (f.kind === "canal" || f.kind === "drain" ? { ...f, movable: canalPolicy === "spiana" } : f)) as WaterL[];
         if (wc.length) { setWatercourses(wc); renderWater(wc); }
       }
       const obst = obstacleLines(wc);
@@ -5157,6 +5192,12 @@ export default function Page() {
           R.push({ cat: cC, key: "canal", item: tx("{n}: rivestimento in {lin}", { n: nm, lin: tx(lining(k.sec.lin).label).toLowerCase() }), qty: Math.round(k.ew.linedM2), unit: "m²" });
       }
     }
+    // canali e fossi esistenti spostabili che cadono sotto i pivot: riempimento e spianamento
+    if (common && waterFillM3.size) {
+      const vTot = [...waterFillM3.values()].reduce((x, y) => x + y, 0), mTot = [...waterUnderPivots.values()].reduce((x, y) => x + y, 0);
+      R.push({ cat: tx("Canali"), item: tx("Spianamento di canali e fossi esistenti sotto i pivot ({n} tratti, {m} m)", { n: fx(waterFillM3.size), m: fx(Math.round(mTot)) }),
+        qty: Math.round(vTot), unit: "m³", note: tx("riempimento della sezione trapezia di ogni tratto") });
+    }
     { const FC = common ? fertCalc() : null;
       if (FC) {
         const cFe = tx("Fertirrigazione");
@@ -6253,9 +6294,11 @@ export default function Page() {
             const dvs = wl.filter(({ i }) => waterUnderPivots.has(i)).sort((a, b) => (waterUnderPivots.get(b.i) ?? 0) - (waterUnderPivots.get(a.i) ?? 0));
             if (dvs.length) {
               const tot = dvs.reduce((a, { i }) => a + (waterUnderPivots.get(i) ?? 0), 0);
-              ib.push({ p: tx("I fiumi non si spostano e i pivot li evitano; canali e dreni esistenti sono considerati spostabili. {n} tratti cadono sotto i pivot e vanno deviati, per {m} m in tutto.", { n: fx(dvs.length), m: n0(tot) }) });
-              ib.push({ table: { header: [tx("Tratto"), tx("Tipo"), tx("Lunghezza") + " (m)", tx("Da deviare") + " (m)"], widths: [34, 22, 22, 22],
-                rows: dvs.slice(0, 15).map(({ w, i }) => [codesW[i] + (w.name ? ` ${w.name}` : ""), w.kind === "drain" ? tx("Dreno / fosso") : tx("Canale"), n0(w.length_m ?? 0), n0(waterUnderPivots.get(i) ?? 0)]) },
+              const totV = dvs.reduce((a, { i }) => a + (waterFillM3.get(i) ?? 0), 0);
+              ib.push({ p: tx("I fiumi non si spostano e i pivot li evitano; canali e dreni esistenti sono considerati spostabili. {n} tratti cadono sotto i pivot e vanno deviati, per {m} m in tutto.", { n: fx(dvs.length), m: n0(tot) })
+                + " " + tx("Spianarli richiede circa {v} m³ di terra (sezione trapezia di ogni tratto: larghezza dell'acqua, tirante, franco e scarpa).", { v: n0(totV) }) });
+              ib.push({ table: { header: [tx("Tratto"), tx("Tipo"), tx("Lunghezza") + " (m)", tx("Da deviare") + " (m)", tx("Terra") + " (m³)"], widths: [30, 18, 17, 17, 18],
+                rows: dvs.slice(0, 15).map(({ w, i }) => [codesW[i] + (w.name ? ` ${w.name}` : ""), w.kind === "drain" ? tx("Dreno / fosso") : tx("Canale"), n0(w.length_m ?? 0), n0(waterUnderPivots.get(i) ?? 0), n0(waterFillM3.get(i) ?? 0)]) },
                 caption: tx("Canali e dreni esistenti da deviare sotto i pivot") });
             }
             const wv = wl.filter(({ w }) => w.width_low_m != null && w.width_high_m != null).slice(0, 10);
@@ -8880,6 +8923,15 @@ export default function Page() {
               {t("⇄ spostabile: i pivot lo possono coprire e il tratto si devia")}
               {waterUnderPivots.get(i) ? <span className="text-amber-700">· ↯ {uM(waterUnderPivots.get(i)!)}</span> : null}</label>
           )}
+          {isLine && waterUnderPivots.get(i) ? (() => {
+            const sc = waterLevelSec(w);
+            return (
+              <div className="text-amber-800 leading-snug" data-water-fillcard>
+                {t("Spianamento sotto i pivot: {m} × sezione {a} m² ≈ {v} m³ di terra", { m: uM(waterUnderPivots.get(i)!), a: fmt(sc.A, { maximumFractionDigits: 1 }), v: fmt(Math.round(waterFillM3.get(i) ?? 0)) })}
+                <span className="opacity-70"> ({t("larghezza {w}, tirante {d} m + franco {f} m, scarpa 1:{s}", { w: uM(sc.W, 1), d: fmt(sc.d, { maximumFractionDigits: 1 }), f: fmt(sc.fb, { maximumFractionDigits: 1 }), s: fmt(sc.m, { maximumFractionDigits: 1 }) })}{sc.est ? "; " + t("larghezza stimata: lancia l'analisi satellitare per misurarla") : ""})</span>
+              </div>
+            );
+          })() : null}
         </div>
 
         {/* geometria e collegamenti */}
@@ -10281,10 +10333,25 @@ export default function Page() {
               busy: !!quickNet || busy === "route" || busy === "hydra", run: quickNetwork, tip: t("Adduttrice dalla presa, vasca o canale se servono, tubazioni fino a ogni pivot, diametri e pompe.") },
           ];
           return (
-            <div className="absolute top-[4.5rem] left-1/2 -translate-x-1/2 z-[1400] flex items-stretch gap-1 widget p-1 text-[11px] font-brand w-[38rem] max-w-[calc(100vw/var(--ui-scale)_-_2rem)]" data-quick-bar>
+            <div className="absolute top-[4.5rem] left-1/2 -translate-x-1/2 z-[1400] flex items-stretch gap-1 widget p-1 text-[11px] font-brand w-[44rem] max-w-[calc(100vw/var(--ui-scale)_-_2rem)]" data-quick-bar>
               {steps.map((st, i) => (
                 <Fragment key={st.k}>
                   {i > 0 && <span className="self-center text-sage-dark opacity-50">›</span>}
+                  {st.k === "fonte" && (() => {
+                    const cs = watercourses.filter((w) => w.kind === "canal" || w.kind === "drain");
+                    const pol = cs.length ? (cs.every((w) => !waterMovable(w)) ? "lascia" : "spiana") : canalPolicy;
+                    const vTot = [...waterFillM3.values()].reduce((x, y) => x + y, 0);
+                    return (
+                      <div className="flex flex-col justify-center gap-0.5 text-[10px] text-sage-dark shrink-0" data-quick-canals
+                        title={t("Canali e fossi esistenti sotto i pivot: «spiana» = i pivot ci passano sopra e il tratto si riempie (m³ di terra nel computo); «lascia» = i pivot li evitano. I fiumi si evitano sempre.")}>
+                        <span className="leading-none">{t("canali")}{pol === "spiana" && vTot > 0 ? ` · ${fmt(Math.round(vTot))} m³` : ""}</span>
+                        <div className="seg text-[10px]">
+                          <div className="seg-item px-1.5 py-0.5" data-active={pol === "spiana"} onClick={() => setCanalPolicy("spiana")} data-quick-canal="spiana">{t("spiana")}</div>
+                          <div className="seg-item px-1.5 py-0.5" data-active={pol === "lascia"} onClick={() => setCanalPolicy("lascia")} data-quick-canal="lascia">{t("lascia")}</div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <button className={"flex-1 min-w-0 rounded-lg px-2 py-1 text-left leading-tight transition " + (st.ok ? "bg-brand/10 hover:bg-brand/20" : "bg-panel hover:bg-black/5")}
                     title={st.tip} disabled={st.busy} onClick={() => st.run()} data-quick-step={st.k}>
                     <div className="flex items-center gap-1 font-semibold text-brand-darker whitespace-nowrap">
@@ -11555,7 +11622,7 @@ export default function Page() {
                                 <select className="bg-transparent text-[11px] p-0" value={w.kind} onChange={(e) => retypeWater(i, e.target.value)}>
                                   <option value="river">{t("Fiume")}</option><option value="canal">{t("Canale")}</option><option value="drain">{t("Dreno / fosso")}</option><option value="drainage">{t("Impluvio (DEM)")}</option>
                                 </select>
-                                {waterUnderPivots.get(i) ? <div className="text-[10px] text-amber-700" title={t("Tratto sotto i pivot: da deviare")}>↯ {uM(waterUnderPivots.get(i)!)}</div> : null}
+                                {waterUnderPivots.get(i) ? <div className="text-[10px] text-amber-700" title={t("Tratto sotto i pivot: da deviare")}>↯ {uM(waterUnderPivots.get(i)!)} · {fmt(Math.round(waterFillM3.get(i) ?? 0))} m³</div> : null}
                               </td>
                               <td className="whitespace-nowrap" title={waterMonthsTxt(w) || undefined}>
                                 {!w.regime && (w.source === "osm") ? <span className="opacity-60" title={t("Corso della cartografia topografica non visibile dal satellite: regime e larghezza da verificare")}>{t("non visibile")}</span> : null}
@@ -11581,7 +11648,8 @@ export default function Page() {
                   )}
                   <div className="text-[11px] mt-0.5 opacity-80">{t("⇄ spostabile: i pivot lo possono coprire e il tratto si devia; i corsi non spostabili (fiumi) i pivot li evitano.")}</div>
                   {waterUnderPivots.size > 0 && (
-                    <div className="text-[11px] mt-0.5 text-amber-800">↯ {t("Da deviare sotto i pivot: {n} tratti, {m}", { n: waterUnderPivots.size, m: uM([...waterUnderPivots.values()].reduce((a, b) => a + b, 0)) })}</div>
+                    <div className="text-[11px] mt-0.5 text-amber-800" data-water-fill>↯ {t("Da deviare sotto i pivot: {n} tratti, {m}", { n: waterUnderPivots.size, m: uM([...waterUnderPivots.values()].reduce((a, b) => a + b, 0)) })}
+                      {" · "}{t("terra per spianarli ≈ {v} m³", { v: fmt(Math.round([...waterFillM3.values()].reduce((a, b) => a + b, 0))) })}</div>
                   )}
                   {anyBelow && <div className="text-[11px] mt-1">* {t("larghezza sotto i 10 m del pixel: stima, da verificare")}</div>}
                   <div className="mt-1 flex gap-3">

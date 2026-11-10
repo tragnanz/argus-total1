@@ -46,6 +46,22 @@ try {
   const tPiv = (Date.now() - t0) / 1000;
   ok(/✓/.test(await stepInfo("pivot")), `Passo 2 pivot in ${tPiv.toFixed(0)} s: ${m2.slice(0, 160)}`);
   await page.screenshot({ path: path.join(SH, "q2_pivot.png") });
+  // canali esistenti: «spiana» (default) → m³ di terra; «lascia» → i pivot li evitano
+  const cTxt = async () => (await page.locator("[data-quick-canals]").innerText()).replace(/\n/g, " ");
+  const nPiv = async () => Number(((await stepInfo("pivot")).match(/(\d+) ·/) || [])[1] || 0);
+  const vol1 = Number(((await cTxt()).match(/([\d.]+) m³/) || [])[1]?.replace(/\./g, "") || 0), np1 = await nPiv();
+  const fillLine = await page.locator("[data-water-fill]").first().innerText().catch(() => "");
+  ok(vol1 > 0, `Canali spianati: ${await cTxt()} · ${np1} pivot · ${fillLine.trim()}`);
+  await page.locator('[data-quick-canal="lascia"]').click(); await page.waitForTimeout(500);
+  await click(page.locator('[data-quick-step="pivot"]'));
+  await page.locator("text=/pivot su \\d+ aree/").first().waitFor({ timeout: 180000 }); await page.waitForTimeout(800);
+  const np2 = await nPiv(), c2 = await cTxt();
+  ok(np2 < np1 && !/m³/.test(c2), `Canali lasciati: ${np2} pivot (contro ${np1}), niente terra da spostare (${c2})`);
+  await page.screenshot({ path: path.join(SH, "q2b_lascia.png") });
+  await page.locator('[data-quick-canal="spiana"]').click(); await page.waitForTimeout(500);
+  await click(page.locator('[data-quick-step="pivot"]'));
+  await page.locator("text=/pivot su \\d+ aree/").first().waitFor({ timeout: 180000 }); await page.waitForTimeout(800);
+  ok((await nPiv()) === np1, `Di nuovo «spiana»: ${await nPiv()} pivot`);
   // 3 · fonte: clic su un fiume
   await click(page.locator('[data-quick-step="fonte"]'));
   await page.waitForTimeout(2500);
