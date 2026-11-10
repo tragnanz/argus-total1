@@ -345,7 +345,7 @@ export type Watercourse = {
   level_abs?: { min: number; max: number; low: number; high: number; median: number[]; dist_km: number; source: string };
 };
 export type WaterResult = {
-  features: Watercourse[]; water_ha: number; n_river: number; n_canal?: number; n_seasonal?: number; n_osm?: number; n_basin: number; n_wetland: number; n_drainage: number;
+  features: Watercourse[]; water_ha: number; n_river: number; n_canal?: number; n_seasonal?: number; n_osm?: number; osm_error?: boolean; n_basin: number; n_wetland: number; n_drainage: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   surface?: { type: "Polygon"; coordinates: any }[]; dates?: string[]; res_m?: number; length_m?: number;
 };

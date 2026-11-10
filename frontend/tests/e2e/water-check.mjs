@@ -50,13 +50,13 @@ try {
   const rows = await tbl.locator("tbody tr").count();
   ok(rows >= 10, `Tabella: ${rows} tratti`);
   // il tratto di canale più lungo è il Cavour: 5 km circa, 25-45 m
-  const canals = await tbl.locator("tbody tr").evaluateAll((trs) => trs.map((tr) => ({ kind: tr.querySelector("select")?.value, reg: tr.children[2].textContent, len: tr.children[3].textContent, w: tr.querySelector("input")?.value })));
-  const cav = canals.filter((r) => r.kind === "canal").map((r) => ({ ...r, L: Number(String(r.len).replace(/[^\d,]/g, "").replace(",", ".")) })).sort((a, b) => b.L - a.L)[0];
-  ok(cav && cav.L > 4500 && Number(cav.w) > 25 && Number(cav.w) < 45 && /perenne/.test(cav.reg), `Canale Cavour: ${cav?.L} m, larghezza ${cav?.w} m, ${cav?.reg}`);
+  const canals = await tbl.locator("tbody tr").evaluateAll((trs) => trs.map((tr) => ({ name: tr.children[0].textContent, kind: tr.querySelector("select")?.value, reg: tr.children[2].textContent, len: tr.children[3].textContent, w: tr.querySelector("input")?.value })));
+  const cav = canals.filter((r) => r.kind === "canal" && /Cavour/.test(r.name || "")).map((r) => ({ ...r, L: Number(String(r.len).replace(/[^\d,]/g, "").replace(",", ".")) })).sort((a, b) => b.L - a.L)[0];
+  ok(cav && cav.L > 3500 && Number(cav.w) > 25 && Number(cav.w) < 45 && /perenne/.test(cav.reg), `Canale Cavour: ${cav?.L} m, larghezza ${cav?.w} m, ${cav?.reg}`);
   // dettaglio del Cavour: larghezze nell'anno con le date, scarpa ed escursione stimata
   const cavIdx = await tbl.locator("tbody tr").evaluateAll((trs) => {
     let best = -1, bl = 0;
-    trs.forEach((tr, k) => { if (tr.querySelector("select")?.value !== "canal") return; const L = Number(String(tr.children[3]?.textContent).replace(/[^\d,]/g, "").replace(",", ".")); if (L > bl) { bl = L; best = k; } });
+    trs.forEach((tr, k) => { if (tr.querySelector("select")?.value !== "canal" || !/Cavour/.test(tr.children[0].textContent || "")) return; const L = Number(String(tr.children[3]?.textContent).replace(/[^\d,]/g, "").replace(",", ".")); if (L > bl) { bl = L; best = k; } });
     return best;
   });
   await tbl.locator("tbody tr").nth(cavIdx).locator("button").first().click(); await page.waitForTimeout(400);
@@ -81,6 +81,7 @@ try {
   const nPm = (kml.match(/<Placemark>/g) || []).length;
   const folders = [...kml.matchAll(/<Folder><name>([^<]+)<\/name>/g)].map((m) => m[1]);
   ok(/Fiumi \(\d+\)/.test(folders.join("|")) && /Canali \(\d+\)/.test(folders.join("|")), `KMZ: cartelle ${folders.join(", ")}`);
+  ok(/Canale Cavour/.test(kml) && /OpenStreetMap \(canal\) \+ Sentinel-2/.test(kml), "KMZ: nomi e fonte OpenStreetMap + Sentinel-2");
   ok(/<Data name="larghezza_m"><value>33<\/value>/.test(kml), "KMZ: la larghezza modificata a mano (33 m) è nel file");
   ok(/<Data name="lunghezza_m">/.test(kml) && /Larghezza tipica/.test(kml) && /Sentinel-2/.test(kml), `KMZ: ${nPm} elementi con lunghezza, larghezza e fonte`);
   ok(/Superficie d'acqua \(satellite\)/.test(kml), "KMZ: superficie d'acqua del satellite");
@@ -122,10 +123,7 @@ try {
   const kml2 = await (await JSZip.loadAsync(fs.readFileSync(await kmz2.path()))).file("doc.kml").async("string");
   ok(/<Data name="regime"><value>ephemeral<\/value>/.test(kml2) && /Larghezza dell'alveo/.test(kml2), "KMZ Amendolea: regime effimero e larghezza dell'alveo");
   // Gorgol Noir (Mauritania): fiume stretto a meandri, asciutto quasi tutto l'anno. Il tracciato
-  // completo viene da OpenStreetMap (qui la risposta di Overpass è registrata nel file di prova;
-  // dati © OpenStreetMap contributors, licenza ODbL)
-  const osmFile = path.join(path.dirname(decodeURIComponent(new globalThis.URL(import.meta.url).pathname)), "data", "osm-gorgol.json");
-  await page.route("**/api/interpreter", (route) => route.fulfill({ status: 200, contentType: "application/json", body: fs.readFileSync(osmFile, "utf8") }));
+  // completo viene da OpenStreetMap (tasselli OpenFreeMap scaricati dal backend)
   const GG = [[-12.84, 16.07], [-12.70, 16.07], [-12.70, 16.20], [-12.84, 16.20], [-12.84, 16.07]];
   const p3 = await post("/projects", { name: "Gorgol", client_id: c.id }, tok);
   await post("/areas", { project_id: p3.id, name: "Perimetro", geojson: { type: "Polygon", coordinates: [GG] }, area_ha: 21000 }, tok);

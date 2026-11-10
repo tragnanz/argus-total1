@@ -87,10 +87,11 @@ tornare ai dati sintetici (prove) basta rimettere `synthetic` e fare Restart.
   Il NIR di ogni data resta in memoria (uint8, al massimo 120 MB) per la larghezza data
   per data; per i fiumi ≥ 80 m le quote minime e massime vengono da Hydroweb (via
   GEOGLOWS, al più 4 tratti e 40 s per rilevamento).
-  Il tracciato completo dei corsi (fiumi, torrenti, wadi, canali, dreni) viene da
-  OpenStreetMap: lo interroga il browser su Overpass (overpass-api.de, riserva
-  overpass.private.coffee) e lo manda al backend, che lo ritaglia sull'area e lo misura
-  sul satellite. Se Overpass non risponde il rilevamento procede solo col satellite.
+  Il tracciato completo dei corsi (fiumi, torrenti, canali, dreni, fossi) viene da
+  OpenStreetMap: il backend legge i tasselli vettoriali di OpenFreeMap (tiles.openfreemap.org,
+  strato «waterway», z14, ~4 s per 15×15 km; analysis/osm_tiles.py, nessuna dipendenza),
+  li ritaglia sull'area e li misura sul satellite. Overpass dal browser non si usa più:
+  spesso è sovraccarico. Se i tasselli non rispondono si procede col solo satellite.
   Misurato in locale sulle COG pubbliche AWS dello stesso Sentinel-2: 20–170 s per
   5–13 km di lato, picco del processo 402 MB.
 - **DEM**: l'account CDSE non ha i permessi sul DEM (la Process API risponde 403

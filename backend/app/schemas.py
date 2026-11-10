@@ -262,6 +262,7 @@ class WaterOut(BaseModel):
     n_canal: int = 0
     n_seasonal: int = 0
     n_osm: int = 0
+    osm_error: bool = False
     surface: list[dict[str, Any]] = []
     dates: list[str] = []
     res_m: float = 10.0

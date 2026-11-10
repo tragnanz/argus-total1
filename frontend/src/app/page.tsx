@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.245";
+const REV = "v0.6.246";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -2202,15 +2202,11 @@ export default function Page() {
     setBusy("water"); setMsg(t("Leggo 12 mesi di immagini Sentinel-2 (una o due date per mese): può richiedere 1–3 minuti…"));
     try {
       const p = waterParams();
-      // tracciati completi da OpenStreetMap (se raggiungibile): il satellite li misura e li conferma
-      let osm: api.OsmWaterway[] = []; let osmErr = false;
-      try {
-        const ring = activeGeom.coordinates[0] as number[][];
-        const lo = ring.map((q) => q[0]), la = ring.map((q) => q[1]);
-        osm = await api.fetchOsmWaterways(Math.min(...la), Math.min(...lo), Math.max(...la), Math.max(...lo));
-      } catch { osmErr = true; }
-      // la data scelta (se c'è) chiude il periodo di 12 mesi; altrimenti oggi
-      const w = await api.fetchWatercourses(activeGeom, date || null, waterSens, 12, true, p.dem_channel_ha, p.dem_depth_m, p.min_area_ha, osm);
+      // la data scelta (se c'è) chiude il periodo di 12 mesi; altrimenti oggi. I tracciati completi
+      // da OpenStreetMap li scarica il backend (tasselli vettoriali OpenFreeMap): Overpass dal
+      // browser è spesso sovraccarico
+      const w = await api.fetchWatercourses(activeGeom, date || null, waterSens, 12, true, p.dem_channel_ha, p.dem_depth_m, p.min_area_ha);
+      const osmErr = !!w.osm_error;
       if (!w.features.length) { setMsg(t("Nessun corso d'acqua rilevato: prova ad alzare la sensibilità.")); return; }
       waterPending.current = { surface: w.surface ?? [], dates: w.dates ?? [], res_m: w.res_m ?? 10 };
       // ANTEPRIMA modificabile a mano: conferma o annulla (le misure viaggiano con ogni elemento)

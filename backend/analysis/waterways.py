@@ -994,7 +994,7 @@ def _dry_beds(C: dict, water: np.ndarray, poly_mask: np.ndarray, res: float, g: 
                         "width_min_m": round(float(np.percentile(ws, 10)), 1), "width_max_m": round(float(np.percentile(ws, 90)), 1),
                         "width_wet_m": None, "sinuosity": round(Le / chord if chord > 1 else 9.9, 3),
                         "below_pixel": False, "profile": [], "ndwi": None, "swir_ratio": None,
-                        "regime": reg, "months_wet": wet_m, "months_seen": seen_m})
+                        "regime": reg, "months_wet": wet_m, "months_seen": seen_m, "_pts": pts})
     return out
 
 
@@ -1101,7 +1101,8 @@ def _osm_courses(osm: list[dict], segments: list[dict], g: dict, poly_mask: np.n
         # quota del tracciato confermata dal satellite: acqua entro 3 pixel
         cover = float(np.mean([near_own[p] for p in px])) if (px and near_own is not None) else 0.0
         subs = [segments[j] for j in absorbed.get(i, [])]
-        ws = np.array([x for _, x in prof]) if len(prof) >= 3 else np.array([])
+        ws = np.array([x for _, x in prof if x > 0.5])           # sezioni senza acqua: niente misura
+        ws = ws if ws.size >= 3 else np.array([])
         width = w_lo = w_hi = None
         if ws.size:
             width, w_lo, w_hi = float(np.median(ws)), float(np.percentile(ws, 10)), float(np.percentile(ws, 90))
@@ -1115,6 +1116,13 @@ def _osm_courses(osm: list[dict], segments: list[dict], g: dict, poly_mask: np.n
             except ValueError:
                 width = None
         best = max(subs, key=lambda x: x["length_m"]) if subs else {}
+        beds = [x for x in subs if x.get("bed")]
+        use_bed = bool(beds) and (not ws.size or cover < 0.3)    # fiumara: conta l'alveo, non le pozze
+        if use_bed:
+            # fiumara: il corso OSM prende la larghezza dell'alveo di ghiaia letto dal satellite
+            lens = np.array([x["length_m"] for x in beds]); wv = np.array([x["width_m"] for x in beds])
+            o = np.argsort(wv); cw = np.cumsum(lens[o]); width = float(wv[o][np.searchsorted(cw, cw[-1] / 2)])
+            w_lo, w_hi = float(min(x["width_min_m"] for x in beds)), float(max(x["width_max_m"] for x in beds))
         coords = _to_ll(pts, g)
         if len(coords) < 2:
             continue
@@ -1134,11 +1142,31 @@ def _osm_courses(osm: list[dict], segments: list[dict], g: dict, poly_mask: np.n
             "ndwi": None, "swir_ratio": None,
             # senza acqua vista dal satellite il regime non si sa (corso troppo stretto o asciutto):
             # resta da determinare, salvo che OSM lo segni intermittente
-            "regime": ("ephemeral" if str(w.get("intermittent", "")) == "yes" else None) if (cover < 0.05 and not wet_m) else reg,
+            "regime": ("ephemeral" if (str(w.get("intermittent", "")) == "yes" or beds) else None) if (cover < 0.05 and not wet_m) else reg,
+            "bed": use_bed,
             "months_wet": wet_m, "months_seen": seen_m, "sat_cover": round(cover, 2),
             **{k: best[k] for k in ("width_low_m", "date_low", "width_high_m", "date_high", "widths_by_date") if k in best},
             "_pts": sm,
         })
+    # pezzi dello stesso corso (stesso nome e tipo) senza misura: larghezza e regime dei pezzi
+    # misurati (un fiume diviso alle confluenze resta lo stesso fiume)
+    by_name: dict[tuple, list] = {}
+    for o in out:
+        if o.get("name"):
+            by_name.setdefault((o["name"], o["kind"]), []).append(o)
+    for grp in by_name.values():
+        meas = [o for o in grp if o.get("width_m") is not None]
+        if not meas or len(meas) == len(grp):
+            continue
+        lens = np.array([o["length_m"] for o in meas]); wv = np.array([o["width_m"] for o in meas])
+        o_ = np.argsort(wv); cw = np.cumsum(lens[o_]); wmed = float(wv[o_][np.searchsorted(cw, cw[-1] / 2)])
+        ref = max(meas, key=lambda o: o["length_m"])
+        for o in grp:
+            if o.get("width_m") is None:
+                o.update(width_m=round(wmed, 1), width_min_m=ref.get("width_min_m"), width_max_m=ref.get("width_max_m"),
+                         bed=ref.get("bed", False), width_from="same_course")
+                if o.get("regime") is None:
+                    o["regime"] = ref.get("regime")
     return out, gone
 
 

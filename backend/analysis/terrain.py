@@ -272,6 +272,17 @@ def detect_watercourses(client, geom: dict, date: str | None = None, min_area_ha
     `ndwi_thr` resta per compatibilità: la sensibilità la decide `sens` (1..5)."""
     from scipy.ndimage import label
     from .waterways import detect_waterways
+    # tracciati completi da OpenStreetMap (tasselli vettoriali OpenFreeMap) se il browser
+    # non li ha già mandati; se non si raggiungono si procede col solo satellite
+    osm_error = False
+    if not osm:
+        try:
+            from .osm_tiles import waterways as _osm_ww
+            ring = geom["coordinates"][0]
+            lo, la = [p[0] for p in ring], [p[1] for p in ring]
+            osm = _osm_ww([min(lo), min(la), max(lo), max(la)])
+        except Exception:  # noqa: BLE001
+            osm, osm_error = [], True
     ww = detect_waterways(client, geom, date_to=date, months=months, sens=sens, osm=osm)
     out: list[dict] = []
     for sg in ww["segments"]:
@@ -351,7 +362,7 @@ def detect_watercourses(client, geom: dict, date: str | None = None, min_area_ha
             pass
 
     return {"features": out, "water_ha": ww["water_ha"],
-            "n_river": ww["n_river"], "n_canal": ww["n_canal"], "n_seasonal": ww.get("n_seasonal", 0), "n_osm": ww.get("n_osm", 0),
+            "n_river": ww["n_river"], "n_canal": ww["n_canal"], "n_seasonal": ww.get("n_seasonal", 0), "n_osm": ww.get("n_osm", 0), "osm_error": osm_error,
             "n_basin": sum(1 for a in out if a["kind"] == "basin"),
             "n_wetland": 0, "n_drainage": n_dem, "surface": ww["surface"],
             "dates": ww["dates"], "res_m": ww["res_m"],
