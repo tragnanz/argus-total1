@@ -260,6 +260,7 @@ class WaterOut(BaseModel):
     n_wetland: int
     n_drainage: int = 0
     n_canal: int = 0
+    n_drain: int = 0
     n_seasonal: int = 0
     n_osm: int = 0
     osm_error: bool = False

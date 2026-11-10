@@ -895,6 +895,7 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
         "segments": segments, "basins": basins, "surface": surface,
         "n_river": sum(1 for s in segments if s["kind"] == "river"),
         "n_canal": sum(1 for s in segments if s["kind"] == "canal"),
+        "n_drain": sum(1 for s in segments if s["kind"] == "drain"),
         "n_seasonal": sum(1 for s in segments if s["regime"] not in ("perennial", None)),
         "n_osm": n_osm,
         "length_m": round(sum(s["length_m"] for s in segments), 0),
@@ -998,7 +999,8 @@ def _dry_beds(C: dict, water: np.ndarray, poly_mask: np.ndarray, res: float, g: 
     return out
 
 
-OSM_KIND = {"river": "river", "stream": "river", "wadi": "river", "canal": "canal", "drain": "canal", "ditch": "canal"}
+# fiumi e torrenti sono naturali (non si spostano); canali, dreni e fossi sono artificiali
+OSM_KIND = {"river": "river", "stream": "river", "wadi": "river", "canal": "canal", "drain": "drain", "ditch": "drain"}
 
 
 def _osm_courses(osm: list[dict], segments: list[dict], g: dict, poly_mask: np.ndarray, mask: np.ndarray,

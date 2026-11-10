@@ -364,7 +364,7 @@ def detect_watercourses(client, geom: dict, date: str | None = None, min_area_ha
             pass
 
     return {"features": out, "water_ha": ww["water_ha"],
-            "n_river": ww["n_river"], "n_canal": ww["n_canal"], "n_seasonal": ww.get("n_seasonal", 0), "n_osm": ww.get("n_osm", 0), "osm_error": osm_error,
+            "n_river": ww["n_river"], "n_canal": ww["n_canal"], "n_drain": ww.get("n_drain", 0), "n_seasonal": ww.get("n_seasonal", 0), "n_osm": ww.get("n_osm", 0), "osm_error": osm_error,
             "n_basin": sum(1 for a in out if a["kind"] == "basin"),
             "n_wetland": 0, "n_drainage": n_dem, "surface": ww["surface"],
             "dates": ww["dates"], "res_m": ww["res_m"],

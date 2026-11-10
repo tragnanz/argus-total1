@@ -151,6 +151,42 @@ try {
   const outside = pts.filter(([lo, la]) => lo < -12.8405 || lo > -12.6995 || la < 16.0695 || la > 16.2005).length;
   ok(pts.length > 100 && outside === 0, `KMZ Gorgol: ${pts.length} vertici, ${outside} fuori dall'area`);
   ok(/OpenStreetMap \(river\)/.test(kml3) && /Gorgol/.test(kml3), "KMZ Gorgol: nome e fonte OpenStreetMap");
+  // fiumi non spostabili, canali e dreni spostabili (casella ⇄), cartelle separate nel KMZ
+  const mv = await t4.locator("tbody tr").evaluateAll((trs) => trs.filter((tr) => tr.querySelector("select")).map((tr) => ({ k: tr.querySelector("select").value, m: tr.querySelector('input[type="checkbox"]')?.checked })));
+  const bad = mv.filter((r) => (r.k === "river" && r.m) || ((r.k === "canal" || r.k === "drain") && !r.m));
+  ok(mv.some((r) => r.k === "drain") && mv.some((r) => r.k === "canal") && !bad.length,
+    `Gorgol: ${mv.filter((r) => r.k === "river").length} fiumi fissi, ${mv.filter((r) => r.k === "canal").length} canali e ${mv.filter((r) => r.k === "drain").length} dreni spostabili`);
+  // selezione dalla mappa: primo clic su un fiume = tutti i fiumi; clic su un altro fiume = quel tratto
+  const clickLine = (col, skip) => page.evaluate(([col, skip]) => {
+    const ps = [...document.querySelectorAll(".leaflet-overlay-pane path")].filter((p) => p.getAttribute("stroke") === col && p.getAttribute("stroke-opacity") !== "0");
+    let n = 0;
+    for (const p of ps) {
+      const L = p.getTotalLength(); if (L < 80) continue;
+      const q = p.getPointAtLength(L / 2), m = p.getScreenCTM();
+      const x = m.a * q.x + m.c * q.y + m.e, y = m.b * q.x + m.d * q.y + m.f;
+      if (x > 380 && x < 1060 && y > 140 && y < 880 && n++ >= skip) return { x, y };
+    }
+    return null;
+  }, [col, skip]);
+  await page.locator('[data-water-kinds] button').first().click(); await page.waitForTimeout(500);
+  const c1 = await clickLine("#1d4ed8", 0);
+  if (c1) await page.mouse.click(c1.x, c1.y);
+  await page.waitForTimeout(800);
+  const chip = await page.locator("[data-water-kinds] button.font-semibold").first().innerText().catch(() => "");
+  const kindsShown = await t4.locator("tbody tr select").evaluateAll((ss) => [...new Set(ss.map((x) => x.value))]);
+  ok(!!c1 && /Fiume/.test(chip) && kindsShown.length === 1 && kindsShown[0] === "river", `Primo clic su un fiume: selezionati i fiumi (${chip}; righe: ${kindsShown.join(",")})`);
+  const c2 = await clickLine("#1d4ed8", 2);
+  if (c2) await page.mouse.click(c2.x, c2.y);
+  await page.waitForTimeout(800);
+  const selRow = await t4.locator("tbody tr.bg-amber-100").count();
+  const detail = await t4.locator("[data-water-detail]").count();
+  ok(!!c2 && selRow === 1 && detail === 1, `Secondo clic: selezionata la singola diramazione (${selRow} riga evidenziata, dettaglio aperto)`);
+  await page.screenshot({ path: path.join(SH, "w6_selezione.png") });
+  const c3 = await clickLine("#059669", 0);
+  if (c3) { await page.mouse.click(c3.x, c3.y); await page.waitForTimeout(800); }
+  const chip3 = await page.locator("[data-water-kinds] button.font-semibold").first().innerText().catch(() => "");
+  ok(!!c3 && /Canale/.test(chip3), `Clic su un canale: si passa ai canali (${chip3})`);
+  ok(/Dreni e fossi \(\d+\)/.test(kml3) && /<Data name="spostabile"><value>0<\/value>/.test(kml3) && /<Data name="spostabile"><value>1<\/value>/.test(kml3), "KMZ Gorgol: cartella dei dreni e campo «spostabile»");
   ok(!errors.length, `Nessun errore JS (${errors.slice(0, 3).join(" | ")})`);
 } catch (e) { console.log("ERRORE", e); fail++; await page.screenshot({ path: path.join(SH, "w_err.png") }).catch(() => {}); }
 await browser.close();

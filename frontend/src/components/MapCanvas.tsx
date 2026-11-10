@@ -1,4 +1,5 @@
 "use client";
+import { WATER_COL } from "@/lib/water";
 import { useEffect, useRef, type MutableRefObject } from "react";
 import L from "leaflet";
 import { useI18n } from "@/lib/i18n";
@@ -42,7 +43,7 @@ export type PivotCbs = {
   onLineClick?: (idx: number) => void;   // clic su una tubazione (per modificarla)
 };
 // colori dei corsi d'acqua per tipo
-const WATER_COL: Record<string, string> = { river: "#0369a1", canal: "#0d9488", drainage: "#a16207", basin: "#0369a1", wetland: "#0891b2" };
+// colori per tipo: fiumi blu, canali verdi, dreni viola (lib/water.ts)
 // stessa geometria (a meno di arrotondamenti): serve a sapere se l'utente ha spostato i vertici
 function sameCoords(a: number[][], b: number[][]): boolean {
   if (!Array.isArray(a) || a.length !== b.length) return false;
@@ -54,7 +55,10 @@ export type MapHandle = {
   setFields: (fields: FieldGeom[], activeId: number | null, hidden?: number[]) => void;
   setLayerVisible: (key: "fields" | "macro" | "canal" | "layout" | "water" | "strade", on: boolean) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  showWater: (items: { geom: { type: string; coordinates: any }; kind: string; label?: string; width_m?: number; dash?: boolean }[]) => void;
+  // sel: "on" evidenziato (tipo o tratto selezionato), "dim" attenuato, "single" il tratto scelto.
+  // onPick(idx): clic su un corso; onClear: clic sulla mappa fuori dai corsi
+  showWater: (items: { geom: { type: string; coordinates: any }; kind: string; label?: string; width_m?: number; dash?: boolean; idx?: number; sel?: "on" | "dim" | "single" }[],
+    cbs?: { onPick?: (idx: number) => void; onClear?: () => void }) => void;
   clearWater: () => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   previewWater: (items: { geom: { type: string; coordinates: any }; kind: string; props?: any; label?: string }[]) => void;
@@ -240,6 +244,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const reachRef = useRef<L.LayerGroup | null>(null);
   const canalEditRef = useRef<L.LayerGroup | null>(null);
   const waterRef = useRef<L.LayerGroup | null>(null);
+  const waterClearRef = useRef<(() => void) | null>(null);
   const waterPreviewRef = useRef<L.FeatureGroup | null>(null);
   const drawModeRef = useRef<"river" | "canal" | "basin" | "canal-manual" | "road-manual" | "pipe-manual" | null>(null);
   const roadsRef = useRef<L.LayerGroup | null>(null);
@@ -327,6 +332,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
 
     // Clic sulla mappa: misura (se attiva) oppure selezione punto (presa/finale).
     map.on("click", (e: L.LeafletMouseEvent) => {
+      waterClearRef.current?.();                     // clic fuori dai corsi d'acqua: selezione annullata
       if (pickRef.current) {
         const cb = pickRef.current; pickRef.current = null;
         map.getContainer().style.cursor = "";
@@ -1047,19 +1053,37 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         if (b && b.isValid()) map.fitBounds(b, { padding: [40, 40] });
       },
       clearMacroareas() { macroRef.current?.clearLayers(); },
-      showWater(items) {
+      showWater(items, cbs) {
         const map = mapRef.current, g = waterRef.current;
         if (!map || !g) return;
         g.clearLayers();
+        waterClearRef.current = cbs?.onClear ?? null;
+        const singles: L.Polyline[] = [];
         for (const it of items) {
           if (it.geom.type === "LineString") {           // asse fiume/canale/impluvio
             const latlngs = (it.geom.coordinates as number[][]).map((p) => [p[1], p[0]] as [number, number]);
             const col = WATER_COL[it.kind] ?? "#0369a1";
             // spessore proporzionale alla larghezza misurata (3..9 px)
-            const wpx = it.width_m ? Math.max(3, Math.min(9, 2 + Math.log2(1 + it.width_m / 4))) : 3;
+            let wpx = it.width_m ? Math.max(3, Math.min(9, 2 + Math.log2(1 + it.width_m / 4))) : 3;
+            if (it.sel === "on") wpx += 2;
+            if (it.sel === "single") wpx += 4;
             // tratteggio: impluvi dal DEM e corsi non perenni (stagionali, fiumare)
-            const ly = L.polyline(latlngs, { color: col, weight: wpx, opacity: 0.95, dashArray: it.kind === "drainage" ? "6,4" : it.dash ? "10,6" : undefined });
-            ly.bindTooltip(it.label || tRef.current("Fiume/canale"), { direction: "center" });
+            const ly = L.polyline(latlngs, { color: col, weight: wpx, opacity: it.sel === "dim" ? 0.25 : 0.95,
+              dashArray: it.kind === "drainage" ? "6,4" : it.dash ? "10,6" : undefined });
+            ly.bindTooltip(it.label || tRef.current("Fiume/canale"), { direction: "center", sticky: true });
+            if (cbs?.onPick && it.idx != null) {
+              // fascia invisibile più larga: il clic prende anche le linee sottili
+              const hit = L.polyline(latlngs, { color: "#000", weight: Math.max(14, wpx + 8), opacity: 0 });
+              const pick = (e: L.LeafletMouseEvent) => { L.DomEvent.stop(e); cbs.onPick?.(it.idx!); };
+              hit.on("click", pick); ly.on("click", pick);
+              hit.bindTooltip(it.label || tRef.current("Fiume/canale"), { direction: "center", sticky: true });
+              g.addLayer(hit);
+            }
+            if (it.sel === "single") {
+              // contorno bianco sotto il tratto scelto
+              g.addLayer(L.polyline(latlngs, { color: "#ffffff", weight: wpx + 5, opacity: 0.9, interactive: false }));
+              singles.push(ly);
+            }
             g.addLayer(ly);
             continue;
           }
@@ -1069,9 +1093,12 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             weight: 2, fillColor: isBasin ? "#0ea5e9" : "#22d3ee",
             fillOpacity: isBasin ? 0.45 : 0.3, dashArray: isBasin ? undefined : "5,4",
           });
-          ly.bindTooltip(isBasin ? tRef.current("Bacino/lago") : tRef.current("Palude"), { direction: "center" });
+          ly.bindTooltip(it.label || (isBasin ? tRef.current("Bacino/lago") : tRef.current("Palude")), { direction: "center" });
+          if (cbs?.onPick && it.idx != null) ly.on("click", (e: L.LeafletMouseEvent) => { L.DomEvent.stop(e); cbs.onPick?.(it.idx!); });
+          if (it.sel === "dim") ly.setStyle({ opacity: 0.25, fillOpacity: 0.1 });
           g.addLayer(ly);
         }
+        singles.forEach((l) => l.bringToFront());
       },
       clearWater() { waterRef.current?.clearLayers(); },
       previewWater(items) {
@@ -1085,7 +1112,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           let layer: any;
           if (it.geom.type === "LineString") {
             layer = L.polyline((it.geom.coordinates as number[][]).map((p) => [p[1], p[0]] as [number, number]),
-              { color: WATER_COL[it.kind] ?? "#0369a1", weight: 3, dashArray: "4,3", opacity: 0.95 });
+              { color: WATER_COL[it.kind] ?? "#0369a1", weight: 4, opacity: 0.95, dashArray: it.kind === "drainage" ? "6,4" : undefined });
             if (it.label) layer.bindTooltip(it.label, { direction: "center" });
           } else {
             const isBasin = it.kind === "basin";
@@ -1095,9 +1122,14 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           (layer as any)._wcKind = it.kind;
           (layer as any)._wcProps = it.props;
           (layer as any)._wcSig = JSON.stringify(it.geom.coordinates);
-          layer.on("click", () => { if (waterRemoveRef.current) g.removeLayer(layer); });
+          // vertici modificabili solo sull'elemento cliccato: con centinaia di corsi i
+          // pallini dei vertici coprirebbero tutta la mappa
+          layer.on("click", () => {
+            if (waterRemoveRef.current) { g.removeLayer(layer); return; }
+            g.eachLayer((o: any) => { if (o !== layer) { try { o.pm?.disable(); } catch { /* */ } } });   // eslint-disable-line @typescript-eslint/no-explicit-any
+            try { (layer as any).pm?.enable({ allowSelfIntersection: false }); } catch { /* */ }
+          });
           g.addLayer(layer);
-          try { (layer as any).pm?.enable({ allowSelfIntersection: false }); } catch { /* */ }
         }
         try { const b = g.getBounds(); if (b.isValid()) map.fitBounds(b, { padding: [50, 50] }); } catch { /* */ }
       },
