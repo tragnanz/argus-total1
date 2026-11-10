@@ -310,3 +310,96 @@ def waterways(bbox: list[float]) -> list[dict]:
             out.append({"id": k, "waterway": cls, "name": name or None, "intermittent": "yes" if inter else None,
                         "coords": [[round(a, 6), round(b, 6)] for a, b in g]})
     return out
+
+
+# ------------------------------------------------------------------ corsi nell'area (anteprima rapida)
+
+def _in_rings(x: float, y: float, rings: list[list[list[float]]]) -> bool:
+    """Punto nel poligono (primo anello esterno, gli altri buchi): regola pari-dispari."""
+    inside = False
+    for ring in rings:
+        n = len(ring)
+        for i in range(n - 1 if ring[0] == ring[-1] else n):
+            x1, y1 = ring[i]
+            x2, y2 = ring[(i + 1) % n]
+            if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+                inside = not inside
+    return inside
+
+
+def clip_to_polygon(line: list[list[float]], rings: list[list[list[float]]]) -> list[list[list[float]]]:
+    """Pezzi della polilinea dentro il poligono: intersezioni esatte di ogni segmento con i lati
+    (piano lon/lat, le aree sono di pochi km) e prova del punto medio di ogni tratto."""
+    edges = []
+    for ring in rings:
+        for i in range(len(ring) - 1):
+            edges.append((ring[i][0], ring[i][1], ring[i + 1][0], ring[i + 1][1]))
+    out: list[list[list[float]]] = []
+    cur: list[list[float]] = []
+    for (ax, ay), (bx, by) in zip(line[:-1], line[1:]):
+        dx, dy = bx - ax, by - ay
+        ts = [0.0, 1.0]
+        for cx, cy, ex, ey in edges:
+            sx, sy = ex - cx, ey - cy
+            den = dx * sy - dy * sx
+            if den == 0:
+                continue
+            t = ((cx - ax) * sy - (cy - ay) * sx) / den
+            u = ((cx - ax) * dy - (cy - ay) * dx) / den
+            if 0 < t < 1 and 0 <= u <= 1:
+                ts.append(t)
+        ts.sort()
+        for t0, t1 in zip(ts[:-1], ts[1:]):
+            if t1 - t0 < 1e-12:
+                continue
+            tm = (t0 + t1) / 2
+            p0 = [ax + dx * t0, ay + dy * t0]
+            p1 = [ax + dx * t1, ay + dy * t1]
+            if _in_rings(ax + dx * tm, ay + dy * tm, rings):
+                if not cur:
+                    cur = [p0]
+                elif abs(cur[-1][0] - p0[0]) > 1e-12 or abs(cur[-1][1] - p0[1]) > 1e-12:
+                    if len(cur) >= 2:
+                        out.append(cur)
+                    cur = [p0]
+                cur.append(p1)
+            elif cur:
+                if len(cur) >= 2:
+                    out.append(cur)
+                cur = []
+    if len(cur) >= 2:
+        out.append(cur)
+    return out
+
+
+def _len_m(co: list[list[float]]) -> float:
+    L = 0.0
+    for (x0, y0), (x1, y1) in zip(co[:-1], co[1:]):
+        k = math.cos(math.radians((y0 + y1) / 2))
+        L += math.hypot((x1 - x0) * 111320 * k, (y1 - y0) * 110540)
+    return L
+
+
+def courses_in_polygon(geom: dict, osm: list[dict] | None = None) -> dict:
+    """Anteprima rapida (pochi secondi): i corsi d'acqua OSM ritagliati sull'area, con tipo
+    (fiume / canale / dreno), nome e lunghezza, senza misure dal satellite."""
+    from .waterways import OSM_KIND
+    rings = geom["coordinates"]
+    lo = [p[0] for p in rings[0]]
+    la = [p[1] for p in rings[0]]
+    if osm is None:
+        osm = waterways([min(lo), min(la), max(lo), max(la)])
+    feats = []
+    for w in osm:
+        kind = OSM_KIND.get(str(w.get("waterway", "")))
+        if not kind or len(w.get("coords") or []) < 2:
+            continue
+        for pc in clip_to_polygon(w["coords"], rings):
+            L = _len_m(pc)
+            if L < 50:
+                continue
+            feats.append({"geojson": {"type": "LineString", "coordinates": [[round(x, 6), round(y, 6)] for x, y in pc]},
+                          "kind": kind, "source": "osm", "name": w.get("name"), "osm_type": w.get("waterway"),
+                          "area_ha": 0.0, "length_m": round(L, 1)})
+    n = {k: sum(1 for f in feats if f["kind"] == k) for k in ("river", "canal", "drain")}
+    return {"features": feats, "n_river": n["river"], "n_canal": n["canal"], "n_drain": n["drain"], "n_osm": len(feats)}

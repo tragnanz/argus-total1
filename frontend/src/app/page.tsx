@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.249";
+const REV = "v0.6.250";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1230,6 +1230,11 @@ export default function Page() {
   const [watercourses, setWatercourses] = useState<WaterL[]>([]);
   const [waterSens, setWaterSens] = useState(3);       // sensibilità rilevamento (1..5)
   const [waterPreview, setWaterPreview] = useState(false);
+  const waterPreviewOn = useRef(false); waterPreviewOn.current = waterPreview;
+  // rilevamento in due fasi: tracciati OSM subito, misure dal satellite quando arrivano
+  const [waterSatBusy, setWaterSatBusy] = useState(false);
+  const waterReq = useRef(0);
+  const waterConfirmedReq = useRef(0);
   // superficie d'acqua letta dal satellite (poligoni, per il KMZ) e periodo del composito
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [waterSurface, setWaterSurface] = useState<{ type: "Polygon"; coordinates: any }[]>([]);
@@ -1244,6 +1249,9 @@ export default function Page() {
   const [waterConnect, setWaterConnect] = useState(false);
   const waterConnectRef = useRef(waterConnect); waterConnectRef.current = waterConnect;
   const [waterSlopeBusy, setWaterSlopeBusy] = useState<number | null>(null);
+  // tipi di corso nascosti sulla mappa (anteprima e confermati): per guardare il satellite sotto
+  const [waterHide, setWaterHide] = useState<string[]>([]);
+  const waterHideRef = useRef(waterHide); waterHideRef.current = waterHide;
   const waterSlopeTried = useRef<Set<string>>(new Set());
   const wcRef = useRef<WaterL[]>([]);
   const waterPending = useRef<{ surface: { type: "Polygon"; coordinates: unknown }[]; dates: string[]; res_m: number } | null>(null);
@@ -1874,7 +1882,7 @@ export default function Page() {
       sel = { kind: null, idx: null }; waterSelRef.current = sel; setTimeout(() => setWaterSel(sel), 0);
     }
     const codes = waterCodes(list);
-    mapApi.current?.showWater(list.map((w, i) => ({ w, i })).filter(({ w }) => !w.hidden)
+    mapApi.current?.showWater(list.map((w, i) => ({ w, i })).filter(({ w }) => !w.hidden && !waterHideRef.current.includes(w.kind))
       .map(({ w, i }) => ({ geom: w.geojson, kind: w.kind, label: waterLabel(w, codes[i]), width_m: w.kind === "drainage" ? undefined : w.mean_width_m,
         dash: !!w.regime && w.regime !== "perennial", idx: i,
         sel: sel.idx === i ? "single" as const : sel.kind == null ? undefined : w.kind === sel.kind ? (sel.idx == null ? "on" as const : undefined) : "dim" as const })),
@@ -2272,14 +2280,34 @@ export default function Page() {
   async function detectWater() {
     if (!activeGeom) return needField();
     stopEditWater(); setWaterConnect(false);
-    setBusy("water"); setMsg(t("Leggo 12 mesi di immagini Sentinel-2 (una o due date per mese): può richiedere 1–3 minuti…"));
+    const id = ++waterReq.current, t0 = Date.now();
+    setWaterSatBusy(true);
+    setMsg(t("Leggo i corsi d'acqua da OpenStreetMap; le misure dal satellite (12 mesi di immagini) arrivano dopo…"));
+    const p = waterParams();
+    // la data scelta (se c'è) chiude il periodo di 12 mesi; altrimenti oggi. Il rilevamento completo
+    // (Sentinel-2 + DEM + OSM misurato) parte subito; l'anteprima OSM arriva in pochi secondi
+    const full = api.fetchWatercourses(activeGeom, date || null, waterSens, 12, true, p.dem_channel_ha, p.dem_depth_m, p.min_area_ha);
+    let fullDone = false, quick = false;
+    api.fetchOsmCourses(activeGeom).then((q) => {
+      if (id !== waterReq.current || fullDone || !q.features.length) return;
+      quick = true;
+      const codes = waterCodes(q.features);
+      mapApi.current?.previewWater(q.features.map((f, i) => ({ geom: f.geojson, kind: f.kind, props: f, label: waterLabel(f, codes[i]) })));
+      setWaterPreview(true); setWaterRemoveOn(false);
+      const km = q.features.reduce((a, f) => a + (f.length_m ?? 0), 0) / 1000;
+      setMsg(t("OpenStreetMap in {s} s: {r} fiumi, {c} canali, {d} dreni ({km}). Puoi già confermare: larghezze, regime e portate dal satellite si aggiungono da sole.",
+        { s: fmt((Date.now() - t0) / 1000, { maximumFractionDigits: 0 }), r: q.n_river, c: q.n_canal, d: q.n_drain, km: uKm(km, 1) }));
+    }).catch(() => { /* OSM non raggiungibile: resta il rilevamento completo */ });
     try {
-      const p = waterParams();
-      // la data scelta (se c'è) chiude il periodo di 12 mesi; altrimenti oggi. I tracciati completi
-      // da OpenStreetMap li scarica il backend (tasselli vettoriali OpenFreeMap): Overpass dal
-      // browser è spesso sovraccarico
-      const w = await api.fetchWatercourses(activeGeom, date || null, waterSens, 12, true, p.dem_channel_ha, p.dem_depth_m, p.min_area_ha);
-      const osmErr = !!w.osm_error;
+      const w = await full;
+      fullDone = true;
+      if (id !== waterReq.current) return;
+      const secs = fmt((Date.now() - t0) / 1000, { maximumFractionDigits: 0 });
+      if (quick && !waterPreviewOn.current) {
+        // anteprima già confermata (o annullata): le misure si aggiungono ai corsi confermati
+        if (waterConfirmedReq.current === id) mergeWaterMeasures(w, secs);
+        return;
+      }
       if (!w.features.length) { setMsg(t("Nessun corso d'acqua rilevato: prova ad alzare la sensibilità.")); return; }
       waterPending.current = { surface: w.surface ?? [], dates: w.dates ?? [], res_m: w.res_m ?? 10 };
       // ANTEPRIMA modificabile a mano: conferma o annulla (le misure viaggiano con ogni elemento)
@@ -2287,11 +2315,60 @@ export default function Page() {
       mapApi.current?.previewWater(w.features.map((f, i) => ({ geom: f.geojson, kind: f.kind, props: f, label: waterLabel(f, codes[i]) })));
       setWaterPreview(true); setWaterRemoveOn(false);
       const km = w.features.filter((f) => f.kind === "river" || f.kind === "canal").reduce((a, f) => a + (f.length_m ?? 0), 0) / 1000;
-      setMsg(t("Anteprima: {r} tratti di fiume e {c} di canale ({km}), {d} impluvi (DEM), {b} bacini. Modifica a mano, poi Conferma.",
+      setMsg((quick ? t("Misure dal satellite pronte in {s} s: anteprima aggiornata.", { s: secs }) + " " : "")
+        + t("Anteprima: {r} tratti di fiume e {c} di canale ({km}), {d} impluvi (DEM), {b} bacini. Modifica a mano, poi Conferma.",
         { r: w.n_river, c: w.n_canal ?? 0, km: uKm(km, 1), d: w.n_drainage, b: w.n_basin })
         + (w.n_seasonal ? " " + t("{n} tratti non perenni (stagionali o effimeri).", { n: w.n_seasonal }) : "")
-        + (w.n_osm ? " " + t("{n} tracciati completi da OpenStreetMap, misurati sul satellite.", { n: w.n_osm }) : osmErr ? " " + t("OpenStreetMap non raggiungibile: solo satellite.") : ""));
-    } catch (e) { showErr(e); } finally { setBusy(""); }
+        + (w.n_osm ? " " + t("{n} tracciati completi da OpenStreetMap, misurati sul satellite.", { n: w.n_osm }) : w.osm_error ? " " + t("OpenStreetMap non raggiungibile: solo satellite.") : ""));
+    } catch (e) {
+      if (id !== waterReq.current) return;
+      if (quick) setMsg(t("Misure dal satellite non disponibili: restano i tracciati di OpenStreetMap.") + " " + (e instanceof Error ? e.message : ""));
+      else showErr(e);
+    } finally { if (id === waterReq.current) setWaterSatBusy(false); }
+  }
+  // misure del rilevamento completo sui corsi OSM già confermati: stesso tracciato (entro 25 m in media,
+  // lunghezza simile) → larghezze, regime, mesi, livelli; i tratti visti solo dal satellite o dal DEM
+  // si aggiungono in coda
+  function mergeWaterMeasures(w: api.WaterResult, secs: string) {
+    const MEAS = ["source", "sat_cover", "mean_width_m", "width_min_m", "width_max_m", "width_wet_m", "below_pixel", "sinuosity", "profile", "regime",
+      "months_wet", "months_seen", "bed", "width_low_m", "date_low", "width_high_m", "date_high", "widths_by_date", "bank_m", "bank_from", "level_range_m", "level_abs"] as const;
+    const bbox = (cs: number[][]) => { let a = 180, b = 90, c = -180, d = -90; for (const p of cs) { if (p[0] < a) a = p[0]; if (p[1] < b) b = p[1]; if (p[0] > c) c = p[0]; if (p[1] > d) d = p[1]; } return [a, b, c, d]; };
+    const cur = wcRef.current;
+    const boxes = cur.map((x) => bbox(waterLineOf(x)));
+    const used = new Set<number>();
+    let nMeas = 0;
+    const merged: WaterL[] = cur.map((x) => ({ ...x }));
+    const extra: WaterL[] = [];
+    w.features.forEach((f) => {
+      if (f.geojson.type !== "LineString" || !(f.source === "osm" || f.source === "osm+s2")) {
+        if (f.source !== "osm") extra.push({ ...f });     // satellite, DEM, bacini
+        return;
+      }
+      const fc = f.geojson.coordinates as number[][], fb = bbox(fc), pad = 0.0005;
+      const step = Math.max(1, Math.floor(fc.length / 15)), samp = fc.filter((_, k) => k % step === 0);
+      let best = -1, bd = 25;
+      merged.forEach((x, k) => {
+        if (used.has(k) || x.geojson.type !== "LineString" || x.source !== "osm" || x.osm_type !== f.osm_type) return;
+        const b = boxes[k];
+        if (b[0] > fb[2] + pad || b[2] < fb[0] - pad || b[1] > fb[3] + pad || b[3] < fb[1] - pad) return;
+        const r = (x.length_m ?? 0) / (f.length_m || 1); if (r < 0.6 || r > 1.6) return;
+        const xc = x.geojson.coordinates as number[][];
+        const d = samp.reduce((a, q) => a + nearestOnLine(q, xc).d, 0) / samp.length;
+        if (d < bd) { bd = d; best = k; }
+      });
+      if (best < 0) return;
+      used.add(best); nMeas++;
+      const x = merged[best] as Record<string, unknown>, fr = f as unknown as Record<string, unknown>;
+      for (const k of MEAS) {
+        if (k === "bank_m" || k === "bank_from") { if ((x as WaterL).bank_from === "manual") continue; }
+        if (fr[k] !== undefined) x[k] = fr[k];
+      }
+    });
+    const arr = [...merged, ...extra];
+    setWatercourses(arr); renderWater(arr);
+    setWaterSurface((w.surface ?? []) as typeof waterSurface);
+    setWaterMeta({ dates: w.dates ?? [], res_m: w.res_m ?? 10 });
+    setMsg(t("Misure dal satellite pronte in {s} s: {m} corsi misurati, {a} tratti aggiunti (visti solo dal satellite o dal DEM).", { s: secs, m: nMeas, a: extra.length }));
   }
   function confirmWaterUI() {
     stopEditWater();
@@ -2317,7 +2394,9 @@ export default function Page() {
       waterPending.current = null;
     }
     setWaterPreview(false); setWaterRemoveOn(false);
-    setMsg(t("Corsi d'acqua confermati: {n}. I pivot li eviteranno.", { n: feats.length }));
+    if (waterSatBusy) waterConfirmedReq.current = waterReq.current;
+    setMsg(t("Corsi d'acqua confermati: {n}. I pivot li eviteranno.", { n: feats.length })
+      + (waterSatBusy ? " " + t("Le misure dal satellite si aggiungeranno appena pronte.") : ""));
   }
   function setWaterKindMovable(kind: string, movable: boolean) {
     setWatercourses((ws) => { const arr = ws.map((w) => (w.kind === kind ? { ...w, movable } : w)); renderWater(arr); return arr; });
@@ -2709,9 +2788,18 @@ export default function Page() {
     const csv = [head, ...rows].map((r) => r.join(";")).join("\n");
     saveBlob(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }), "corsi_dacqua.csv");
   }
+  function toggleWaterKindView(k: string | null) {
+    const all = ["river", "canal", "drain", "drainage", "basin", "wetland"];
+    const cur = waterHideRef.current;
+    const nx = k == null ? (cur.length ? [] : all) : cur.includes(k) ? cur.filter((x) => x !== k) : [...cur, k];
+    waterHideRef.current = nx; setWaterHide(nx);
+    mapApi.current?.waterPreviewHide(nx);
+    if (!layerVis.water) toggleLayer("water");
+    renderWater(wcRef.current);
+  }
   function cancelWaterPreview() { mapApi.current?.cancelWater(); setWaterPreview(false); setWaterRemoveOn(false); setMsg(""); }
   function toggleWaterRemove() { const v = !waterRemoveOn; setWaterRemoveOn(v); mapApi.current?.waterRemoveMode(v); }
-  function clearWater() { stopEditWater(); setWatercourses([]); setWaterSurface([]); setWaterMeta(null); setWaterPreview(false); mapApi.current?.clearWater(); mapApi.current?.cancelWater(); }
+  function clearWater() { stopEditWater(); waterReq.current++; setWaterSatBusy(false); setWatercourses([]); setWaterSurface([]); setWaterMeta(null); setWaterPreview(false); mapApi.current?.clearWater(); mapApi.current?.cancelWater(); }
 
   // Aggiunge una macro-area come SOTTO-LIVELLO del campo attivo (il poligono in
   // cui è inscritta), non come nuovo campo di primo livello.
@@ -11169,10 +11257,25 @@ export default function Page() {
               <input type="range" min={1} max={5} step={1} value={waterSens}
                 onChange={(e) => setWaterSens(Number(e.target.value))} className="w-full accent-brand" disabled={waterPreview} />
             </label>
+            {(waterPreview || watercourses.length > 0) && (
+              <div className="flex flex-wrap gap-1 items-center text-[11px] mb-1" data-water-vis>
+                <span className="text-sage-dark">{t("Sulla mappa")}:</span>
+                {(["river", "canal", "drain", "drainage", "basin"] as const).map((k) => {
+                  const on = layerVis.water && !waterHide.includes(k);
+                  return (
+                    <button key={k} className={"px-1.5 py-0.5 rounded border " + (on ? "bg-white border-black/15" : "border-dashed border-black/20 opacity-50 line-through")}
+                      style={{ color: k === "basin" ? "#0369a1" : WATER_COL[k] }} onClick={() => toggleWaterKindView(k)} data-water-vis-kind={k}>
+                      {on ? "👁" : "⊘"} {k === "basin" ? t("Bacini") : k === "drain" ? t("Dreni e fossi") : k === "drainage" ? t("Impluvi (DEM)") : k === "river" ? t("Fiumi") : t("Canali")}</button>
+                  );
+                })}
+                <button className="px-1.5 py-0.5 rounded border border-black/15 bg-white" onClick={() => toggleWaterKindView(null)} data-water-vis-all>
+                  {waterHide.length ? t("Mostra tutti") : t("Nascondi tutti")}</button>
+              </div>
+            )}
             {!waterPreview ? (
               <div className="flex gap-2 mt-1">
-                <button className="btn-primary flex-1 basis-0" disabled={busy === "water" || !activeGeom} onClick={detectWater}>
-                  {busy === "water" ? t("Lettura immagini…") : t("Rileva corsi d'acqua")}
+                <button className="btn-primary flex-1 basis-0" disabled={waterSatBusy || !activeGeom} onClick={detectWater}>
+                  {waterSatBusy ? t("Lettura immagini…") : t("Rileva corsi d'acqua")}
                 </button>
                 <button className="btn-ghost flex-1 basis-0" onClick={clearWater}>{t("Rimuovi")}</button>
               </div>

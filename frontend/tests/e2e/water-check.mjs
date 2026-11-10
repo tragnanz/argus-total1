@@ -39,7 +39,10 @@ try {
   await goFonte();
   const t0 = Date.now();
   await page.locator('button:has-text("Rileva corsi d\'acqua")').first().click();
-  await page.locator('button:has-text("Conferma")').first().waitFor({ timeout: 400000 });
+  await page.locator('button:has-text("Conferma")').first().waitFor({ timeout: 60000 });
+  const tOsm = (Date.now() - t0) / 1000;
+  ok(tOsm < 30, `Anteprima OpenStreetMap in ${tOsm.toFixed(0)} s`);
+  await page.locator("text=/Anteprima: .* tratti di fiume/").first().waitFor({ timeout: 400000 });
   const tDet = (Date.now() - t0) / 1000;
   const msg = await page.locator("text=/Anteprima: .* tratti di fiume/").first().innerText().catch(() => "");
   console.log("messaggio:", msg);
@@ -134,7 +137,7 @@ try {
   await page.locator('select:has(option:text-is("Amendolea"))').selectOption({ label: "Amendolea" }); await page.waitForTimeout(5000);
   await goFonte();
   await page.locator('button:has-text("Rileva corsi d\'acqua")').first().click();
-  await page.locator('button:has-text("Conferma")').first().waitFor({ timeout: 400000 });
+  await page.locator("text=/Anteprima: .* tratti di fiume/").first().waitFor({ timeout: 400000 });
   await page.locator('button:has-text("Conferma")').first().click(); await page.waitForTimeout(1500);
   const t3 = page.locator("[data-water-table]").first();
   const am = await t3.locator("tbody tr").evaluateAll((trs) => trs.map((tr) => ({ reg: tr.children[2].textContent, len: tr.children[3].textContent, w: tr.querySelector("input")?.value })));
@@ -161,14 +164,34 @@ try {
   }
   await page.locator('select:has(option:text-is("Gorgol"))').selectOption({ label: "Gorgol" }); await page.waitForTimeout(5000);
   await goFonte();
+  const tg = Date.now();
   await page.locator('button:has-text("Rileva corsi d\'acqua")').first().click();
-  await page.locator('button:has-text("Conferma")').first().waitFor({ timeout: 600000 });
-  const msgG = await page.locator("text=/tracciati completi da OpenStreetMap/").first().innerText().catch(() => "");
-  ok(/\d+ tracciati completi da OpenStreetMap/.test(msgG), `Gorgol: ${msgG.match(/\d+ tracciati completi da OpenStreetMap/)?.[0] ?? "nessun tracciato OSM"}`);
+  await page.locator("text=/OpenStreetMap in \\d+ s/").first().waitFor({ timeout: 60000 });
+  const msgG = await page.locator("text=/OpenStreetMap in \\d+ s/").first().innerText().catch(() => "");
+  ok((Date.now() - tg) < 30000 && /\d+ fiumi, \d+ canali/.test(msgG), `Gorgol, anteprima rapida in ${((Date.now() - tg) / 1000).toFixed(0)} s: ${msgG.slice(0, 80)}`);
+  // vista: fiumi nascosti senza confermare, poi di nuovo visibili
+  const blueVisible = () => page.evaluate(() => [...document.querySelectorAll(".leaflet-overlay-pane path")].filter((p) => p.getAttribute("stroke") === "#1d4ed8" && p.style.display !== "none").length);
+  const bv0 = await blueVisible();
+  await page.locator('[data-water-vis-kind="river"]').click(); await page.waitForTimeout(400);
+  const bv1 = await blueVisible();
+  await page.locator('[data-water-vis-kind="river"]').click(); await page.waitForTimeout(300);   // di nuovo visibili
+  await page.locator('[data-water-vis-all]').click(); await page.waitForTimeout(300);            // nascondi tutti
+  const allHidden = await page.evaluate(() => [...document.querySelectorAll(".leaflet-overlay-pane path")].filter((p) => ["#1d4ed8", "#059669", "#7c3aed"].includes(p.getAttribute("stroke")) && p.style.display !== "none").length);
+  await page.locator('[data-water-vis-all]').click(); await page.waitForTimeout(400);            // mostra tutti
+  const bv2 = await blueVisible();
+  ok(bv0 > 10 && bv1 === 0 && allHidden === 0 && bv2 === bv0, `Anteprima: fiumi nascosti e rimostrati senza confermare (${bv0} → ${bv1} → ${bv2}; tutto nascosto: ${allHidden})`);
+  await page.screenshot({ path: path.join(SH, "w5b_anteprima_osm.png") });
+  // confermo subito: le misure dal satellite arrivano dopo, sui corsi già confermati
   await page.locator('button:has-text("Conferma")').first().click(); await page.waitForTimeout(1500);
+  await page.locator("text=/Misure dal satellite pronte in \\d+ s: \\d+ corsi misurati/").first().waitFor({ timeout: 600000 });
+  const mm = await page.locator("text=/Misure dal satellite pronte in/").first().innerText();
+  ok(Number((mm.match(/(\d+) corsi misurati/) || [])[1]) > 100, `Gorgol: ${mm.trim().slice(0, 140)}`);
+  await page.waitForTimeout(800);
   const t4 = page.locator("[data-water-table]").first();
   const gg = await t4.locator("tbody tr").evaluateAll((trs) => trs.map((tr) => ({ name: tr.children[0].textContent, len: tr.children[3]?.textContent, w: tr.querySelector("input")?.value })));
   const gor = gg.filter((r) => /Gorgol/i.test(r.name || "")).map((r) => Number(String(r.len).replace(/[^\d,]/g, "").replace(",", ".")));
+  const regs = await t4.locator("tbody tr").evaluateAll((trs) => trs.filter((tr) => /perenne|stagionale|effimero/.test(tr.children[2]?.textContent || "")).length);
+  ok(regs > 10, `Dopo le misure: ${regs} tratti con il regime dal satellite`);
   ok(gor.reduce((a, b) => a + b, 0) > 20000, `Gorgol Noir intero: ${gor.length} tratti, ${gor.reduce((a, b) => a + b, 0)} m in tutto`);
   await page.screenshot({ path: path.join(SH, "w5_gorgol.png") });
   const kmz3 = await download(() => t4.locator('button:has-text("KMZ")').click());
@@ -210,7 +233,7 @@ try {
   await page.screenshot({ path: path.join(SH, "w6_selezione.png") });
   const gc = t4.locator("[data-water-card]").first();
   const greg = await gc.locator("[data-water-reg]").innerText().catch(() => "");
-  ok(/Registrato come: OpenStreetMap: waterway=river/.test(greg), `Scheda del fiume: ${greg.split("\n")[0]}`);
+  ok(/Registrato come: OpenStreetMap: waterway=(river|stream|wadi)/.test(greg), `Scheda del fiume: ${greg.split("\n")[0]}`);
   // modifica dei punti: inserimento sulla linea, prolungamento dall'estremo, annulla
   await gc.locator("button:has-text('⌖')").click(); await page.waitForTimeout(1500);
   await gc.locator("[data-water-edit]").click(); await page.waitForTimeout(600);
@@ -247,9 +270,12 @@ try {
   await cc.locator("[data-water-connect]").click(); await page.waitForTimeout(300);
   const c5 = await clickLine("#1d4ed8", 0);
   if (c5) { await page.mouse.click(c5.x, c5.y); await page.waitForTimeout(900); }
-  const cmsg = await page.locator("text=/collegato a F\\d+/").first().innerText().catch(() => "");
+  const cmsg = await page.locator("text=/collegato a F\\d+|sono a [\\d.,]+ k?m/").first().innerText().catch(() => "");
   const links = await cc.locator("[data-water-links]").innerText().catch(() => "");
-  ok(/collegato a F\d+/.test(cmsg) && /F\d+/.test(links), `Collegamento: ${cmsg.trim()} · scheda: ${links.replace(/\n/g, " ")}`);
+  const far = /sono a ([\d.,]+) (k?m)/.exec(cmsg);
+  const farM = far ? Number(far[1].replace(/\./g, "").replace(",", ".")) * (far[2] === "km" ? 1000 : 1) : 0;
+  ok((/collegato a F\d+/.test(cmsg) && /F\d+/.test(links)) || farM > 5000,
+    far ? `Collegamento rifiutato perché troppo lontano (oltre 5 km): ${cmsg.trim()}` : `Collegamento: ${cmsg.trim()} · scheda: ${links.replace(/\n/g, " ")}`);
   await page.screenshot({ path: path.join(SH, "w8_collegamento.png") });
   // il corso diventa la fonte: presa sul canale, portata impostata
   for (let k = 0; k < 30 && !(await cc.locator("[data-water-slope]").inputValue().catch(() => "x")); k++) await page.waitForTimeout(1000);

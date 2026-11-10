@@ -351,6 +351,9 @@ export type WaterResult = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   surface?: { type: "Polygon"; coordinates: any }[]; dates?: string[]; res_m?: number; length_m?: number;
 };
+// anteprima rapida: i corsi OSM ritagliati sull'area, senza misure dal satellite (pochi secondi)
+export const fetchOsmCourses = (geom: Polygon) =>
+  req<{ features: Watercourse[]; n_river: number; n_canal: number; n_drain: number; n_osm: number }>("/api/watercourses/osm", { method: "POST", body: JSON.stringify({ geom }) });
 export type OsmWaterway = { id: number; waterway: string; name?: string; width?: string; intermittent?: string; coords: number[][] };
 export const fetchWatercourses = (geom: Polygon, date: string | null, sens = 3, months = 12, use_dem = true, dem_channel_ha = 25, dem_depth_m = 1.2, min_area_ha = 0.2,
   osm: OsmWaterway[] = []) =>

@@ -73,6 +73,8 @@ export type MapHandle = {
   // i punti si agganciano (così si collegano). null = fine modifica
   editWater: (coords: number[][] | null, opts?: { color?: string; snapLines?: number[][][]; onChange?: (c: number[][]) => void }) => void;
   waterEditMode: (m: "move" | "add" | "del") => void;
+  // tipi di corso nascosti nell'anteprima (river, canal, drain, drainage, basin, wetland): si guarda il satellite sotto
+  waterPreviewHide: (kinds: string[]) => void;
   clearAll: () => void;
   fitAll: () => void;
   flyTo: (lat: number, lon: number, zoom?: number) => void;
@@ -258,6 +260,18 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const roadManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
   const waterRemoveRef = useRef(false);
   const waterEditRef = useRef<L.LayerGroup | null>(null);
+  const previewHideRef = useRef<Set<string>>(new Set());
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function _applyPreviewHide() {
+    const g = waterPreviewRef.current; if (!g) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    g.eachLayer((ly: any) => {
+      const hide = previewHideRef.current.has(ly._wcKind);
+      const el = ly.getElement?.() as HTMLElement | undefined;
+      if (el) { el.style.display = hide ? "none" : ""; }
+      if (hide) { try { ly.pm?.disable(); } catch { /* */ } }
+    });
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const weRef = useRef<{ pts: number[][]; mode: "move" | "add" | "del"; opts: any; render: () => void } | null>(null);
   const canalManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
@@ -725,7 +739,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           macro: [macroRef.current],
           canal: [canalRef.current, pendingRef.current, canalEditRef.current],
           layout: [layoutRef.current, pivotsRef.current],
-          water: [waterRef.current],
+          water: [waterRef.current, waterPreviewRef.current, waterEditRef.current],
           strade: [roadsRef.current],
         };
         for (const g of groups[key] || []) {
@@ -733,6 +747,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           if (on) { if (!map.hasLayer(g)) g.addTo(map); }
           else { if (map.hasLayer(g)) map.removeLayer(g); }
         }
+        if (key === "water" && on) _applyPreviewHide();   // gli elementi SVG rinascono: il nascondi per tipo va riapplicato
       },
       clearAll() { clearActive(); fieldsGroupRef.current?.clearLayers(); pivotsRef.current?.clearLayers(); pivotBgRef.current = null; },
       fitAll() {
@@ -1229,8 +1244,10 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           });
           g.addLayer(layer);
         }
+        _applyPreviewHide();
         try { const b = g.getBounds(); if (b.isValid()) map.fitBounds(b, { padding: [50, 50] }); } catch { /* */ }
       },
+      waterPreviewHide(kinds) { previewHideRef.current = new Set(kinds); _applyPreviewHide(); },
       waterDraw(kind) {
         const map = mapRef.current; if (!map) return;
         drawModeRef.current = kind;

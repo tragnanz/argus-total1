@@ -46,3 +46,14 @@ def watercourses(body: WaterIn, client=Depends(get_client), user: User = Depends
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Errore rilevamento corsi d'acqua: {e}")
     return WaterOut(**out)
+
+
+@router.post("/watercourses/osm")
+def watercourses_osm(body: WaterIn, user: User = Depends(get_current_user)):
+    """Anteprima rapida dei corsi d'acqua da OpenStreetMap (pochi secondi), mentre il
+    rilevamento completo legge le immagini Sentinel-2."""
+    from analysis.osm_tiles import courses_in_polygon
+    try:
+        return courses_in_polygon(body.geom.model_dump())
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"OpenStreetMap non raggiungibile: {e}")

@@ -59,3 +59,23 @@ def test_senza_shapely(monkeypatch):
     monkeypatch.setitem(sys.modules, "shapely.geometry", None)
     monkeypatch.setitem(sys.modules, "shapely.ops", None)
     assert O._merge(O._clip([(0.0, 1.0), (5.0, 1.0)], 0.0, 4.0)) == [[(0.0, 1.0), (4.0, 1.0)]]
+
+
+def test_clip_to_polygon_esce_e_rientra():
+    from analysis.osm_tiles import clip_to_polygon, courses_in_polygon
+    sq = [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]
+    # linea che entra, esce e rientra: due pezzi, estremi sul bordo
+    pcs = clip_to_polygon([[-0.5, 0.5], [0.5, 0.5], [0.5, 1.5], [0.8, 1.5], [0.8, 0.2]], sq)
+    assert len(pcs) == 2
+    assert pcs[0][0] == [0.0, 0.5] and abs(pcs[0][-1][1] - 1.0) < 1e-12
+    assert abs(pcs[1][0][1] - 1.0) < 1e-12 and abs(pcs[1][-1][0] - 0.8) < 1e-12 and abs(pcs[1][-1][1] - 0.2) < 1e-12
+    # tutta fuori
+    assert clip_to_polygon([[2, 2], [3, 3]], sq) == []
+    # corsi OSM già scaricati: tipo, nome e lunghezza; i tratti sotto 50 m restano fuori
+    geom = {"type": "Polygon", "coordinates": [[[10.0, 45.0], [10.01, 45.0], [10.01, 45.01], [10.0, 45.01], [10.0, 45.0]]]}
+    osm = [{"waterway": "canal", "name": "C", "coords": [[9.99, 45.005], [10.02, 45.005]]},
+           {"waterway": "ditch", "coords": [[10.005, 45.0099], [10.005, 45.0105]]},
+           {"waterway": "weir", "coords": [[10.0, 45.0], [10.01, 45.01]]}]
+    r = courses_in_polygon(geom, osm)
+    assert r["n_osm"] == 1 and r["features"][0]["kind"] == "canal" and r["features"][0]["name"] == "C"
+    assert abs(r["features"][0]["length_m"] - 788) < 5
