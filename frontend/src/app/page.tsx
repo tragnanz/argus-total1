@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.253";
+const REV = "v0.6.254";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -2291,14 +2291,14 @@ export default function Page() {
   }
   // IMPORTAZIONE TOPOGRAFICA: tracciati dei corsi d'acqua cartografati (OpenStreetMap, tasselli
   // vettoriali) ritagliati sull'area, con tipo, nome e lunghezza — pochi secondi, nessuna misura
-  async function importTopoWater() {
-    if (!activeGeom) return needField();
+  async function importTopoWater(): Promise<number> {
+    if (!activeGeom) { needField(); return 0; }
     stopEditWater(); setWaterConnect(false);
     const t0 = Date.now();
     setWaterTopoBusy(true);
     try {
       const q = await api.fetchOsmCourses(activeGeom);
-      if (!q.features.length) { setMsg(t("Importazione topografica: nessun corso d'acqua cartografato in quest'area. Prova l'analisi satellitare.")); return; }
+      if (!q.features.length) { setMsg(t("Importazione topografica: nessun corso d'acqua cartografato in quest'area. Prova l'analisi satellitare.")); return 0; }
       waterPending.current = null;
       const codes = waterCodes(q.features);
       mapApi.current?.previewWater(q.features.map((f, i) => ({ geom: f.geojson, kind: f.kind, props: f, label: waterLabel(f, codes[i]) })));
@@ -2306,7 +2306,8 @@ export default function Page() {
       const km = q.features.reduce((a, f) => a + (f.length_m ?? 0), 0) / 1000;
       setMsg(t("Importazione topografica in {s} s: {r} fiumi, {c} canali, {d} dreni ({km}). Conferma, poi l'analisi satellitare aggiunge larghezze, regime e portate.",
         { s: fmt((Date.now() - t0) / 1000, { maximumFractionDigits: 0 }), r: q.n_river, c: q.n_canal, d: q.n_drain, km: uKm(km, 1) }));
-    } catch (e) { showErr(e); } finally { setWaterTopoBusy(false); }
+      return q.features.length;
+    } catch (e) { showErr(e); return 0; } finally { setWaterTopoBusy(false); }
   }
   // ANALISI SATELLITARE: 12 mesi di Sentinel-2 + DEM (+ i tracciati topografici, misurati). Se ci sono
   // corsi topografici già confermati le misure si attaccano a quelli; altrimenti anteprima completa
@@ -3507,12 +3508,12 @@ export default function Page() {
   // Ostacoli lineari preesistenti passati ai solutori: ognuno porta il PROPRIO
   // franco (clear_m), così le strade usano «Da strade» e i canali «Da canali/invasi».
   // I pivot ne evitano il footprint reale (spessore) più il franco.
-  function obstacleLines() {
+  function obstacleLines(wcList: WaterL[] = watercourses) {
     // Corsi d'acqua rilevati (fiumi/alvei da DEM, canali esistenti, invasi/paludi):
     // l'alveo si evita con la SUA larghezza reale (mean_width_m) più il franco «Da canali/invasi».
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     // i corsi SPOSTABILI (canali, dreni) non vincolano i pivot: si deviano dopo
-    const waterItems = watercourses.filter((w) => !w.hidden && !waterMovable(w)).map((w: any) => (
+    const waterItems = wcList.filter((w) => !w.hidden && !waterMovable(w)).map((w: any) => (
       w.geojson.type === "LineString"
         ? { geojson: { type: "LineString", coordinates: w.geojson.coordinates }, width_m: (w.mean_width_m && w.mean_width_m > 0 ? w.mean_width_m : canalWidth), clear_m: pivClearWater }
         : { geojson: { type: "Polygon", coordinates: w.geojson.coordinates }, width_m: 0, clear_m: pivClearWater }
@@ -3673,6 +3674,123 @@ export default function Page() {
     setFields((fs) => fs.map((f) => ({ ...f, lay: null, layGeo: null })));
   }
 
+  // ==== PROGETTO RAPIDO (barra a passi sulla mappa) ============================
+  // 1 aree di intervento → 2 pivot → 3 fonte idrica → 4 rete (adduttrice, vasca se
+  // serve, tubazioni fino ai pivot, diametri e pompe) → computo. Ogni passo usa le
+  // funzioni delle pagine e resta ritoccabile lì.
+  // 2 · pivot su tutte le aree che non li hanno ancora (parametri della pagina Impianti)
+  async function quickPivots() {
+    const todo = fields.filter((f) => !f.hidden && !pivots.some((p) => p.field === f.id));
+    if (!fields.length) return needField();
+    if (!todo.length) { goTab("impianti"); setMsg(t("Tutte le aree hanno già i pivot: raggio e disposizione si ritoccano nella pagina Impianti.")); return; }
+    setBusy("layout");
+    try {
+      // corsi d'acqua: se non ci sono ancora, importazione topografica delle aree (pochi secondi),
+      // così i pivot evitano subito i fiumi; canali e dreni restano spostabili
+      let wc = wcRef.current;
+      if (!wc.length && !waterPreviewOn.current) {
+        setMsg(t("Importazione topografica dei corsi d'acqua…"));
+        const res = await Promise.all(todo.map((f) => api.fetchOsmCourses(f.geom).catch(() => null)));
+        const seen = new Set<string>();
+        wc = res.flatMap((r) => r?.features ?? []).filter((f) => { const k = JSON.stringify(f.geojson.coordinates.slice(0, 2)); if (seen.has(k)) return false; seen.add(k); return true; }) as WaterL[];
+        if (wc.length) { setWatercourses(wc); renderWater(wc); }
+      }
+      const obst = obstacleLines(wc);
+      let accP = [...pivots];
+      const lays = new Map<number, { meta: api.LayoutResult["meta"]; geo: GeoJSONFC }>();
+      for (let i = 0; i < todo.length; i++) {
+        const f = todo[i];
+        setMsg(t("Pivot sull'area {i}/{n}: {name}…", { i: i + 1, n: todo.length, name: f.name }));
+        const prm: LayoutParams = { ...paramsFrom(effSettings(f)), radius_m: pivotR, gap_m: safetyM, roads: obst, clear_road_m: pivClearRoad, min_pivot_pct: minPivotPct, fill_full: fillFull };
+        const r = await api.fetchLayout(f.geom, prm);
+        const { pivots: np } = pivotsFromFC(r.geojson, pivotR);
+        accP = [...accP.filter((x) => x.field !== f.id), ...np.map((x) => ({ ...x, field: f.id }))];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        lays.set(f.id, { meta: r.meta, geo: { type: "FeatureCollection" as const, features: (r.geojson.features || []).filter((ft: any) => ft.geometry?.type !== "LineString") } });
+      }
+      setFields((fs) => fs.map((f) => (lays.has(f.id) ? { ...f, lay: lays.get(f.id)!.meta, layGeo: lays.get(f.id)!.geo } : f)));
+      setPivots(accP); setPivotSel({ mode: "none", idx: -1 });
+      const netHa = accP.reduce((a, x) => a + pvAreaM2(x) / 10000, 0);
+      setGuided({ geojson: fcFromModel(accP, pivotLines), meta: { n_pivots: accP.length, radius_m: pivotR, net_ha: Math.round(netHa * 10) / 10, safety_m: safetyM } });
+      refreshUsage();
+      const nFix = wc.filter((w) => !w.hidden && !waterMovable(w) && w.kind !== "drainage").length;
+      setMsg(t("{n} pivot su {a} aree, {ha} irrigati ✓ Ritocchi nella pagina Impianti; poi scegli la fonte idrica.", { n: accP.length, a: todo.length, ha: uHa(Math.round(netHa)) })
+        + (nFix ? " " + t("Evitati {n} fiumi cartografati; canali e dreni restano spostabili.", { n: nFix }) : ""));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  // 3 · fonte: corsi d'acqua cartografati (se mancano) e clic sul fiume o sul canale
+  async function quickSource() {
+    if (!fields.length) return needField();
+    goTab("fonte");
+    if (!wcRef.current.length && !waterPreviewOn.current) await importTopoWater();
+    startPickSource();
+    setMsg(t("Clicca sulla mappa il fiume o il canale da cui prendere l'acqua (oppure il punto del pozzo o dell'invaso). Esc annulla."));
+  }
+  // 4 · rete: macchina a stati guidata dai render, così ogni fase vede lo stato aggiornato
+  const [quickNet, setQuickNet] = useState<"" | "start" | "route" | "pipes" | "hydra">("");
+  function quickNetwork() {
+    if (!pivots.length) { setMsg(t("Prima disegna i pivot (passo 2).")); return; }
+    if (!srcPt) { setMsg(t("Prima scegli la fonte idrica (passo 3).")); return; }
+    setQuickNet("start");
+  }
+  // rete ad albero: dal punto di consegna (vasca / stazione) a ogni pivot non ancora
+  // alimentato, ogni volta il collegamento più corto verso la rete già fatta (Prim)
+  function treeToPivots(root: number[]): { kind: string; coords: number[][]; field?: number }[] {
+    const fed = fedPivotKeys(pivotLines);
+    const todo = pivots.filter((p) => !fed.has(pKey(p)));
+    const nodes: { q: number[]; field?: number }[] = [{ q: root }];
+    for (const l of pivotLines) if (l.kind === "pipe") for (const q of l.coords) nodes.push({ q, field: l.field });
+    const best = todo.map((p) => { let d = Infinity, k = 0; nodes.forEach((n, j) => { const x = geoDist([p.lng, p.lat], n.q); if (x < d) { d = x; k = j; } }); return { d, k }; });
+    const used = todo.map(() => false);
+    const out: { kind: string; coords: number[][]; field?: number }[] = [];
+    for (let it = 0; it < todo.length; it++) {
+      let bi = -1; for (let i = 0; i < todo.length; i++) if (!used[i] && (bi < 0 || best[i].d < best[bi].d)) bi = i;
+      if (bi < 0) break;
+      used[bi] = true;
+      const p = todo[bi], q = [p.lng, p.lat];
+      out.push({ kind: "pipe", coords: [[...nodes[best[bi].k].q], q], field: p.field });
+      nodes.push({ q, field: p.field });
+      const nk = nodes.length - 1;
+      for (let i = 0; i < todo.length; i++) if (!used[i]) { const x = geoDist([todo[i].lng, todo[i].lat], q); if (x < best[i].d) best[i] = { d: x, k: nk }; }
+    }
+    return out;
+  }
+  useEffect(() => {
+    if (!quickNet) return;
+    if (quickNet === "start") {
+      // quote della presa pronte → schema migliore (diretto, vasca, canale); adduttrice proposta se non c'è
+      const E = srcPt && srcElev && srcElev.key === elevKey(srcPt);
+      if (!E && busy === "fonte") return;                          // le quote stanno arrivando
+      setQuickNet("route");
+      setMsg(t("Rete: tracciato dalla presa…"));
+      if (srcRoute && srcRoute.length >= 2) { setQuickNet("pipes"); return; }
+      const S = sourceSchemes();
+      const kind = S?.best?.main?.kind === "canal" ? "canal" : "pipe";
+      proposeRoute(kind).finally(() => setQuickNet("pipes"));
+      return;
+    }
+    if (quickNet === "pipes") {
+      const ln = srcPt ? srcLine(srcPt) : null;
+      const root = ln ? ln[ln.length - 1] : srcPt!;
+      const add = treeToPivots(root);
+      const next = [...pivotLines, ...add];
+      setPivotLines(next);
+      setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, next) } : gp));
+      setQuickNet("hydra");
+      return;
+    }
+    if (quickNet === "hydra") {
+      setQuickNet("");
+      runHydraulics().then(() => {
+        const km = pivotLines.filter((l) => l.kind === "pipe").reduce((a, l) => a + lineLenKm(l.coords), 0);
+        const S = sourceSchemes();
+        const sc = S ? (S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? null) : null;
+        setMsg(t("Rete pronta: schema {s}, {km} di tubazioni ai pivot, diametri calcolati ✓ Controlla nelle pagine Fonte d'acqua, Tubazioni e Pompaggio, poi il computo.",
+          { s: sc ? `${sc.key} · ${sc.name}` : "–", km: uKm(km, 1) }));
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quickNet, srcElev, busy, pivotLines]);
   // ---- Accessori: tubazioni di adduzione dal canale ---------------------------
   // Traccia le tubazioni che si diramano dal canale e passano per i centri dei
   // pivot ESISTENTI del poligono, una per fila, tutte nella stessa direzione.
@@ -10145,6 +10263,44 @@ export default function Page() {
             )}
           </div>
         </div>
+
+        {!elevOn && projectId != null && (() => {
+          // PROGETTO RAPIDO: i quattro passi fino al computo, con lo stato di ciascuno
+          const haA = fields.filter((f) => !f.hidden).reduce((x, f) => x + ringAreaHa(f.geom.coordinates as number[][][]), 0);
+          const haP = pivots.reduce((x, p) => x + pvAreaM2(p) / 10000, 0);
+          const pipesKm = pivotLines.filter((l) => l.kind === "pipe").reduce((x, l) => x + lineLenKm(l.coords), 0);
+          const unfed = (() => { const fed = fedPivotKeys(pivotLines); return pivots.filter((p) => !fed.has(pKey(p))).length; })();
+          const steps = [
+            { k: "aree", n: 1, label: t("Aree"), ok: fields.length > 0, info: fields.length ? `${fields.length} · ${uHa(Math.round(haA))}` : t("disegna"),
+              busy: false, run: () => { goTab("analisi"); draw(); }, tip: t("Aree di intervento") + ": " + t("Disegna un'area di intervento sulla mappa (per importarne una: pannello Progetto a sinistra).") },
+            { k: "pivot", n: 2, label: t("Pivot"), ok: pivots.length > 0, info: pivots.length ? `${pivots.length} · ${uHa(Math.round(haP))}` : t("disponi"),
+              busy: busy === "layout", run: quickPivots, tip: t("Dispone i pivot su tutte le aree che non li hanno, con raggio e regole della pagina Impianti.") },
+            { k: "fonte", n: 3, label: t("Fonte"), ok: !!srcPt, info: srcPt ? (srcLabel.name.trim() || t(srcType)) : srcPicking ? t("clicca il fiume") : t("scegli"),
+              busy: waterTopoBusy || srcPicking, run: quickSource, tip: t("Fonte idrica") + ": " + t("Importa i corsi d'acqua e clicca il fiume o il canale da cui prendere l'acqua.") },
+            { k: "rete", n: 4, label: t("Rete"), ok: !!srcPt && pivots.length > 0 && unfed === 0 && !!hydra, info: pivotLines.some((l) => l.kind === "pipe") ? `${uKm(pipesKm, 1)}${unfed ? ` · ${unfed} ${t("da collegare")}` : ""}` : t("progetta"),
+              busy: !!quickNet || busy === "route" || busy === "hydra", run: quickNetwork, tip: t("Adduttrice dalla presa, vasca o canale se servono, tubazioni fino a ogni pivot, diametri e pompe.") },
+          ];
+          return (
+            <div className="absolute top-[4.5rem] left-1/2 -translate-x-1/2 z-[1400] flex items-stretch gap-1 widget p-1 text-[11px] font-brand w-[38rem] max-w-[calc(100vw/var(--ui-scale)_-_2rem)]" data-quick-bar>
+              {steps.map((st, i) => (
+                <Fragment key={st.k}>
+                  {i > 0 && <span className="self-center text-sage-dark opacity-50">›</span>}
+                  <button className={"flex-1 min-w-0 rounded-lg px-2 py-1 text-left leading-tight transition " + (st.ok ? "bg-brand/10 hover:bg-brand/20" : "bg-panel hover:bg-black/5")}
+                    title={st.tip} disabled={st.busy} onClick={() => st.run()} data-quick-step={st.k}>
+                    <div className="flex items-center gap-1 font-semibold text-brand-darker whitespace-nowrap">
+                      <span className={"inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] " + (st.ok ? "bg-brand text-white" : "bg-black/10")}>{st.ok ? "✓" : st.n}</span>
+                      <span className="truncate">{st.label}</span>
+                    </div>
+                    <div className="text-sage-dark truncate">{st.busy ? "…" : st.info}</div>
+                  </button>
+                </Fragment>
+              ))}
+              <span className="self-center text-sage-dark opacity-50">›</span>
+              <button className="rounded-lg px-2 py-1 bg-brand text-white font-semibold whitespace-nowrap disabled:opacity-40" disabled={!pivots.length}
+                onClick={() => goTab("export")} data-quick-step="computo" title={t("Computo metrico, relazione e tavole nella pagina Esporta.")}>{t("Computo")} →</button>
+            </div>
+          );
+        })()}
 
         {elevOn && (
           <div className="absolute top-[4.5rem] left-1/2 -translate-x-1/2 z-[1400] px-3 py-1.5 rounded-xl text-xs text-white shadow-cluster w-[280px] bg-nabu-green">
