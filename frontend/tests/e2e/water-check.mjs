@@ -133,6 +133,15 @@ try {
   const txt2 = await page.locator("[data-water-table]").first().innerText().catch(() => "");
   ok(/Sentinel-2, \d+ date/.test(txt2) && (await page.locator("[data-water-table] tbody tr").count()) === rows, "Dopo il salvataggio: tratti, misure e periodo ricaricati");
   ok(/Cavour forzato/.test(txt2), "Dopo il salvataggio: il nome forzato resta");
+  // fonte dal Cavour: il nome della fonte si prende dal corso
+  {
+    const tb = page.locator("[data-water-table]").first();
+    const ci = await tb.locator("tbody tr").evaluateAll((trs) => trs.findIndex((tr) => /Cavour forzato/.test(tr.children[0].textContent || "")));
+    await tb.locator("tbody tr").nth(ci).locator("button").first().click(); await page.waitForTimeout(600);
+    await tb.locator("[data-water-card] [data-water-use]").click(); await page.waitForTimeout(800);
+    const nm = await page.locator("[data-src-name]").inputValue();
+    ok(nm === "Cavour forzato", `Fonte dal Cavour: nome della fonte «${nm}»`);
+  }
   // fiumara Amendolea (Calabria): greto asciutto quasi tutto l'anno → alveo effimero
   const AM = [[15.82, 37.92], [15.90, 37.92], [15.90, 37.99], [15.82, 37.99], [15.82, 37.92]];
   const p2 = await post("/projects", { name: "Amendolea", client_id: c.id }, tok);

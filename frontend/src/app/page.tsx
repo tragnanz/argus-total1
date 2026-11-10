@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.252";
+const REV = "v0.6.253";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1453,6 +1453,9 @@ export default function Page() {
   type SrcType = "fiume" | "canale" | "pozzo" | "invaso";
   const [srcPt, setSrcPt] = useState<number[] | null>(null);          // [lng, lat] del punto di presa
   const [srcType, setSrcType] = useState<SrcType>("fiume");
+  // nome della fonte (es. il fiume): auto = preso dal corso d'acqua su cui sta la presa, finché non lo si scrive a mano
+  const [srcLabel, setSrcLabel] = useState<{ name: string; auto: boolean }>({ name: "", auto: true });
+  const srcLabelRef = useRef(srcLabel); srcLabelRef.current = srcLabel;
   const [srcQmax, setSrcQmax] = useState(0);                         // portata disponibile (l/s); 0 = non limitata
   const [srcHours, setSrcHours] = useState(24);                      // ore di prelievo consentite al giorno
   const [srcRange, setSrcRange] = useState(4);                       // escursione di livello (m) o livello dinamico del pozzo
@@ -2657,6 +2660,7 @@ export default function Page() {
     const e = at ? { q: at, k: 0, d: 0 } : nearestOnLine(ref, cs);
     const ty: SrcType = w.geojson.type === "Polygon" ? "invaso" : w.kind === "river" ? "fiume" : "canale";
     setSrcType(ty); setSrcSediment(ty === "fiume");
+    if (srcLabelRef.current.auto || !srcLabelRef.current.name.trim()) setSrcLabel({ name: w.name ?? "", auto: true });
     const dh = waterRange(w);
     setSrcRange(dh != null ? Math.max(0.3, Math.round(dh * 10) / 10) : SRC_RANGE_DEF[ty]);
     const q = waterQAvailLs(w);
@@ -5499,7 +5503,7 @@ export default function Page() {
         const PIPE_C = "#c2691a", ADD_C = "#1769ff", CAB_C = "#e11d48", PUMP_C = "#0ea5e9";
         const srcLines: TvLine[] = srcRoute && srcRoute.length >= 2 ? [{ id: "src", pts: srcRoute.map(LLf), color: ADD_C, width: 0.9 }] : [];
         const basePts: TvPoint[] = [];
-        if (srcPt) basePts.push({ pt: LLf(srcPt), color: "#1d6fb8", lab: tx("Fonte d'acqua") });
+        if (srcPt) basePts.push({ pt: LLf(srcPt), color: "#1d6fb8", lab: tx("Fonte d'acqua") + (srcLabel.name.trim() ? ` · ${srcLabel.name.trim()}` : "") });
         if (resPt && sc?.res && srcRoute && srcRoute.length >= 2) basePts.push({ pt: LLf(resPt), color: "#1d6fb8", resR: sc.res.r, resLab: `${tx("Vasca di accumulo")} · ${n0(sc.res.vol)} m³` });
         {   // stazioni nello stesso punto (presa e rilanci alla vasca): un solo simbolo con un'etichetta
           const grp = new Map<string, { pt: number[]; names: string[] }>();
@@ -5997,7 +6001,8 @@ export default function Page() {
         ] });
         // Fonte d'acqua: i dati del modulo Fonte d'acqua (presa, portate, livelli, quote)
         const fb: Record<string, unknown>[] = [];
-        const srcName = tx(srcType), asl = tx("m s.l.m.");
+        const srcNm = srcLabel.name.trim();
+        const srcName = tx(srcType) + (srcNm ? ` «${srcNm}»` : ""), asl = tx("m s.l.m.");
         const qIn = sc && S ? (sc.key === "B" ? sc.stages[0].qLs : sc.key === "C" ? (S.Vday + (sc.res?.evap ?? 0)) / 3.6 / Math.max(1, Math.min(srcHours, 24)) : S.Qd) : P.qDes;
         if (srcPt) {
           const zTxt = S?.zS != null ? " " + tx("La quota della presa sul modello digitale del terreno è di {z} m s.l.m.", { z: n1(S.zS) }) : "";
@@ -6021,7 +6026,8 @@ export default function Page() {
           fb.push({ p: tx("Il fabbisogno di punta dell'impianto è di {v} m³ al giorno, pari a {q} l/s ai pivot; la presa preleva {qi} l/s nelle ore consentite ({h} h al giorno).", { v: n0(S.Vday), q: n0(S.Qd), qi: n0(qIn), h: n1(srcHours) })
             + " " + (srcQmax > 0 ? tx("La portata disponibile della fonte è di {q} l/s: il prelievo ne impegna il {p}%.", { q: n0(srcQmax), p: n0((qIn / srcQmax) * 100) }) : tx("Nel progetto la portata della fonte non è limitata: va verificata con l'ente gestore e con le misure di portata nei mesi di magra.")) });
           if (hasAdd && !sc.ok && sc.why) fb.push({ p: tx("Attenzione: {w}", { w: sc.why }) });
-          const rows: string[][] = [[tx("Tipo di fonte"), srcName]];
+          const rows: string[][] = [[tx("Tipo di fonte"), tx(srcType)]];
+          if (srcNm) rows.unshift([tx("Nome della fonte"), srcNm]);
           if (srcPt) rows.push([tx("Coordinate della presa"), `${dms(srcPt[1], "N", "S")}, ${dms(srcPt[0], "E", "W")}`]);
           if (S.zS != null) rows.push([tx("Quota della presa"), `${n1(S.zS)} ${asl}`]);
           rows.push([tx("Portata disponibile"), srcQmax > 0 ? `${n0(srcQmax)} l/s` : tx("non limitata")]);
@@ -8007,6 +8013,7 @@ export default function Page() {
     const ty = (["fiume", "canale", "pozzo", "invaso"].includes(fo.type as string) ? fo.type : "fiume") as SrcType;
     setSrcPt(Array.isArray(fo.pt) ? (fo.pt as number[]) : null);
     setSrcRoute(Array.isArray(fo.route) ? (fo.route as number[][]) : null);
+    setSrcLabel({ name: typeof fo.name === "string" ? fo.name : "", auto: fo.nameAuto !== false });
     setSrcType(ty); setSrcQmax(num(fo.qmax, 0)); setSrcHours(num(fo.hours, 24)); setSrcRange(num(fo.range, SRC_RANGE_DEF[ty]));
     setSrcSediment(typeof fo.sed === "boolean" ? fo.sed : ty === "fiume");
     setSrcEnergy((["rete", "fv-gen", "fv-batt"].includes(fo.energy as string) ? fo.energy : "rete") as "rete" | "fv-gen" | "fv-batt");
@@ -8026,7 +8033,7 @@ export default function Page() {
   // viaggiano con il progetto: si ritrovano su qualunque computer.
   const projLoaded = useRef<number | null>(null);
   const projSaved = useRef<string>("");
-  const fonteState = () => ({ pt: srcPt, route: srcRoute, type: srcType, qmax: srcQmax, hours: srcHours, range: srcRange,
+  const fonteState = () => ({ pt: srcPt, route: srcRoute, type: srcType, name: srcLabel.name, nameAuto: srcLabel.auto, qmax: srcQmax, hours: srcHours, range: srcRange,
     sed: srcSediment, energy: srcEnergy, drive: pumpDrive, monthly: srcMonthly, sectors: srcSectors, resDepth, resDays, resEvapK, eta: wtwEta,
     canalSlope, bankSlope, settleMm, filterCap, wellQ, shown: srcShown, cableM, river: river ? { ...river, data: { ...river.data, basin: river.data.basin ? { ...river.data.basin, ring: (river.data.basin.ring ?? []).filter((_, i) => i % 2 === 0) } : undefined } } : null, costs: { kwh: costKwh, diesel: costDiesel, lkwh: dieselLkWh, gen: genShare, mkw: costMaintKw, pvom: costPvOm, batt: costBattKwh, blife: battLife } });
   // ---- Cronologia Annulla/Ripristina UNIFICATA ----
@@ -8167,7 +8174,7 @@ export default function Page() {
     }, 900);
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
+  }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
     resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, fert, ndvi, drainOn, drainC, drainS, drainB, drainProf, soilSat, rootDepth, rawP, v100, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId || (!pivots.length && !fields.length)) return;
@@ -8238,6 +8245,7 @@ export default function Page() {
         if (d <= tol && (!best || d < best.d)) best = { i, q: e.q, d };
       });
       if (best) { takeWaterAsSource((best as { i: number }).i, (best as { q: number[] }).q); return; }
+      if (srcLabelRef.current.auto) setSrcLabel({ name: "", auto: true });
       setSrcRoute(null); setSrcPt([lng, lat]);
     });
   }
@@ -8619,7 +8627,7 @@ export default function Page() {
       lineKind: (sc?.main?.kind ?? "pipe") as "pipe" | "canal",
       reservoir: sc?.res && R ? { center: R, r: sc.res.r } : null,
       points: (sc?.sectors ?? []).map((x) => ({ pt: x.center, label: `S${x.i}`, tip: `${tx("Settore")} ${x.i} · ${x.n} pivot · ${fx(Math.round(x.qLs))} l/s · ${fx(Math.round(x.head))} m` })),
-      labels: { src: `${tx("Fonte d'acqua")} · ${tx(srcType)}`, res: sc?.res ? `${tx("Vasca di accumulo")} · ${fx(Math.round(sc.res.vol))} m³` : "",
+      labels: { src: `${tx("Fonte d'acqua")} · ${tx(srcType)}${srcLabel.name.trim() ? ` «${srcLabel.name.trim()}»` : ""}`, res: sc?.res ? `${tx("Vasca di accumulo")} · ${fx(Math.round(sc.res.vol))} m³` : "",
         line: sc?.main ? (sc.main.kind === "canal" ? `${tx("Canale a gravità")} · ${km(sc.main.L)}` : `${tx("Adduttrice")} · ${sc.main.n && sc.main.n > 1 ? `${sc.main.n}×` : ""}DN ${sc.main.dn} · ${km(sc.main.L)}`) : "" },
     };
   }
@@ -8630,6 +8638,7 @@ export default function Page() {
     const sc = S ? (S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? null) : null;
     if (S && sc) {
       const rows: string[][] = [];
+      if (srcLabel.name.trim()) rows.push([tx("Nome della fonte"), srcLabel.name.trim()]);
       rows.push([tx("Tipo di fonte"), `${tx(srcType)} · ${tx("Livello minimo alla presa")} ${S.zLow != null ? fx(Math.round(S.zLow)) + " m" : "—"}`]);
       rows.push([tx("Fabbisogno di punta"), `${fx(Math.round(S.Vday))} m³/${tx("giorno")} (${fx(Math.round(S.Qd))} l/s)`]);
       rows.push([tx("schema"), `${sc.key} · ${sc.name}`]);
@@ -8939,6 +8948,11 @@ export default function Page() {
                 title={t("Canale a gravità con pendenza costante, scendendo dalla presa alla vasca: il minor scavo possibile.")}>{busy === "route" ? "…" : t("🧭 Proponi canale")}</button>
             </div>
           )}
+          <label className="block text-[11px] text-sage-dark">{t("Nome della fonte")}
+            <input className="field-input mt-0.5 py-1 text-sm" value={srcLabel.name} placeholder={t("es. nome del fiume o del canale")} data-src-name
+              onChange={(e) => setSrcLabel({ name: e.target.value, auto: false })} />
+            {srcLabel.auto && srcLabel.name && <span className="text-[10px] opacity-70">{t("preso dal corso d'acqua della presa; puoi cambiarlo")}</span>}
+          </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="text-[11px] text-sage-dark">{t("Tipo di fonte")}
               <select className="field-input mt-0.5 py-1 text-sm" value={srcType}
