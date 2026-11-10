@@ -336,6 +336,12 @@ export type Watercourse = {
   // regime dai 12 mesi: perenne / stagionale / effimero (fiumara, wadi); mesi 1-12
   regime?: "perennial" | "seasonal" | "ephemeral" | null; months_wet?: number[]; months_seen?: number[];
   bed?: boolean;             // alveo asciutto (greto): la larghezza è quella dell'alveo
+  // larghezza data per data (minima e massima osservate con la data)
+  width_low_m?: number; date_low?: string; width_high_m?: number; date_high?: string; widths_by_date?: [string, number][];
+  // escursione di livello STIMATA = (B max − B min) / (2·scarpa); scarpa: 1,5 per i canali, dal DEM per i fiumi
+  bank_m?: number; bank_from?: "canal" | "dem" | "manual"; level_range_m?: number;
+  // quote MISURATE dagli altimetri (Hydroweb) per i fiumi grandi, m s.l.m.
+  level_abs?: { min: number; max: number; low: number; high: number; median: number[]; dist_km: number; source: string };
 };
 export type WaterResult = {
   features: Watercourse[]; water_ha: number; n_river: number; n_canal?: number; n_seasonal?: number; n_basin: number; n_wetland: number; n_drainage: number;

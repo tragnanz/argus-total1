@@ -84,6 +84,9 @@ tornare ai dati sintetici (prove) basta rimettere `synthetic` e fare Restart.
   scarica le sue date, fa il composito e libera la memoria. Area massima ~9 milioni di
   pixel (≈30×30 km a 10 m), oltre ricampiona. Richieste = scene × tessere (12–64) più
   un DEM grossolano (mare a quota 0 e alvei asciutti delle fiumare).
+  Il NIR di ogni data resta in memoria (uint8, al massimo 120 MB) per la larghezza data
+  per data; per i fiumi ≥ 80 m le quote minime e massime vengono da Hydroweb (via
+  GEOGLOWS, al più 4 tratti e 40 s per rilevamento).
   Misurato in locale sulle COG pubbliche AWS dello stesso Sentinel-2: 20–170 s per
   5–13 km di lato, picco del processo 402 MB.
 - **DEM**: l'account CDSE non ha i permessi sul DEM (la Process API risponde 403

@@ -180,3 +180,36 @@ def test_fiumara_effimera():
     # i corsi perenni restano perenni
     c = max((x for x in out["segments"] if _near(x, y_m=800.0)), key=lambda x: x["length_m"])
     assert c["regime"] == "perennial" and len(c["months_wet"]) == 12
+
+
+def test_larghezza_per_data_ed_escursione():
+    # canale da 40 m che d'estate (giu-ago) si allarga a 52 m: minimo e massimo con la data,
+    # escursione stimata con la scarpa 1:1,5 = (52-40)/3 = 4 m
+    class Stagioni(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.narrow = self.b
+            canal_w = _coverage(lambda X, Y: np.abs(Y - 800.0), 26.0)
+            canal_n = _coverage(lambda X, Y: np.abs(Y - 800.0), 20.0)
+            R_veg = np.array([0.03, 0.07, 0.04, 0.12, 0.33, 0.20])
+            R_wat = np.array([0.05, 0.06, 0.04, 0.03, 0.02, 0.01])
+            extra = np.clip(canal_w - canal_n, 0, 1)
+            self.wide = (self.b + extra[None] * (R_wat - R_veg)[:, None, None]).astype("float32")
+
+        def search_scenes(self, bbox, d0, d1, max_cloud=80, limit=100):
+            return [{"date": d, "cloud": 5.0} for d in DATES12 if d0 <= d <= d1]
+
+        def fetch_bands(self, bbox_utm, epsg, width, height, day):
+            self.b = self.wide if day[5:7] in ("06", "07", "08") else self.narrow
+            return super().fetch_bands(bbox_utm, epsg, width, height, day)
+
+    g = {"epsg": EPSG, "minx": ORIGIN[0], "top": ORIGIN[1] + H * RES, "res": RES, "wp": Wd, "hp": H,
+         "to_wgs": pyproj.Transformer.from_crs(EPSG, 4326, always_xy=True)}
+    C = W._composite(Stagioni(), g, DATES12, workers=1)
+    out = W.detect_waterways(None, _geom(), composite=(C, g, DATES12))
+    c = max((x for x in out["segments"] if _near(x, y_m=800.0)), key=lambda x: x["length_m"])
+    assert c["kind"] == "canal"
+    assert abs(c["width_low_m"] - 40) < 4 and abs(c["width_high_m"] - 52) < 5, (c["width_low_m"], c["width_high_m"])
+    assert c["date_high"][5:7] in ("06", "07", "08") and c["date_low"][5:7] not in ("06", "07", "08")
+    assert len(c["widths_by_date"]) == 12
+    assert c["bank_m"] == 1.5 and abs(c["level_range_m"] - 4.0) < 1.5, c["level_range_m"]

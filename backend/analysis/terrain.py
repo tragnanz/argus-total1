@@ -282,10 +282,13 @@ def detect_watercourses(client, geom: dict, date: str | None = None, min_area_ha
                     "width_wet_m": sg["width_wet_m"], "sinuosity": sg["sinuosity"],
                     "below_pixel": sg["below_pixel"], "profile": sg["profile"],
                     "regime": sg.get("regime"), "months_wet": sg.get("months_wet", []),
-                    "months_seen": sg.get("months_seen", []), "bed": bool(sg.get("bed"))})
+                    "months_seen": sg.get("months_seen", []), "bed": bool(sg.get("bed")),
+                    **{k: sg[k] for k in ("width_low_m", "date_low", "width_high_m", "date_high", "widths_by_date",
+                                          "bank_m", "bank_from", "level_range_m") if sg.get(k) is not None}})
     for b in ww["basins"]:
         if b["area_ha"] >= min_area_ha:
             out.append({**b, "source": "s2"})
+    _attach_levels(out)
 
     # --- DRENAGGIO DAL DEM: impluvi/alvei (anche asciutti) come assi ---
     n_dem = 0
@@ -340,6 +343,48 @@ def detect_watercourses(client, geom: dict, date: str | None = None, min_area_ha
             "n_wetland": 0, "n_drainage": n_dem, "surface": ww["surface"],
             "dates": ww["dates"], "res_m": ww["res_m"],
             "length_m": ww["length_m"]}
+
+
+def _attach_levels(feats: list[dict], max_reaches: int = 4) -> None:
+    """Quote dell'acqua MISURATE dagli altimetri (Hydroweb, via GEOGLOWS) per i fiumi
+    larghi (≥ 80 m): minima, massima e quantili del punto altimetrico più vicino sullo
+    stesso fiume. Vale per i fiumi grandi; sotto i 1.000 km² di bacino non ci sono punti."""
+    import time
+    try:
+        from . import geoglows as G
+    except Exception:  # noqa: BLE001
+        return
+    t0, cache, done = time.time(), {}, 0
+    rivers = sorted((f for f in feats if f.get("kind") == "river" and not f.get("bed")
+                     and f.get("geojson", {}).get("type") == "LineString" and (f.get("mean_width_m") or 0) >= 80),
+                    key=lambda f: -(f.get("length_m") or 0))
+    for f in rivers:
+        if time.time() - t0 > 40 or done >= max_reaches and not cache:
+            break
+        c = f["geojson"]["coordinates"][len(f["geojson"]["coordinates"]) // 2]
+        try:
+            near = G.reaches_near(c[1], c[0], 3.0)
+        except Exception:  # noqa: BLE001
+            return
+        if not near:
+            continue
+        best = max(near, key=lambda r: r["area_km2"])
+        i, a_i = best["i"], best["area_km2"]
+        if i not in cache:
+            if len(cache) >= max_reaches:
+                continue
+            try:
+                cache[i] = G.levels(i)
+            except Exception:  # noqa: BLE001
+                cache[i] = None
+            done += 1
+        lv = cache[i]
+        # solo un punto sullo stesso fiume e vicino: più a valle (dopo una confluenza) le quote
+        # sono di un altro fiume
+        if not lv or lv["dist_km"] > 20 or not (0.67 <= lv["area_km2"] / max(a_i, 1) <= 1.5):
+            continue
+        f["level_abs"] = {"min": min(lv["min"]), "max": max(lv["max"]), "low": min(lv["low"]), "high": max(lv["high"]),
+                          "median": lv["median"], "dist_km": lv["dist_km"], "pt": lv["pt"], "source": lv["source"]}
 
 
 def _ring_area_ha(ring_utm: list) -> float:

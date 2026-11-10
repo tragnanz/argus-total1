@@ -53,6 +53,21 @@ try {
   const canals = await tbl.locator("tbody tr").evaluateAll((trs) => trs.map((tr) => ({ kind: tr.querySelector("select")?.value, reg: tr.children[2].textContent, len: tr.children[3].textContent, w: tr.querySelector("input")?.value })));
   const cav = canals.filter((r) => r.kind === "canal").map((r) => ({ ...r, L: Number(String(r.len).replace(/[^\d,]/g, "").replace(",", ".")) })).sort((a, b) => b.L - a.L)[0];
   ok(cav && cav.L > 4500 && Number(cav.w) > 25 && Number(cav.w) < 45 && /perenne/.test(cav.reg), `Canale Cavour: ${cav?.L} m, larghezza ${cav?.w} m, ${cav?.reg}`);
+  // dettaglio del Cavour: larghezze nell'anno con le date, scarpa ed escursione stimata
+  const cavIdx = await tbl.locator("tbody tr").evaluateAll((trs) => {
+    let best = -1, bl = 0;
+    trs.forEach((tr, k) => { if (tr.querySelector("select")?.value !== "canal") return; const L = Number(String(tr.children[3]?.textContent).replace(/[^\d,]/g, "").replace(",", ".")); if (L > bl) { bl = L; best = k; } });
+    return best;
+  });
+  await tbl.locator("tbody tr").nth(cavIdx).locator("button").first().click(); await page.waitForTimeout(400);
+  const det = await tbl.locator("[data-water-detail]").first().innerText().catch(() => "");
+  console.log("dettaglio Cavour:", det.replace(/\n/g, " | "));
+  ok(/Larghezza nell'anno: .*\d.*–.*\d/.test(det) && /Escursione di livello stimata/.test(det) && /1,5|1.5/.test(await tbl.locator("[data-water-detail] input").first().inputValue()),
+    "Dettaglio del canale: larghezze minima e massima con le date, scarpa 1:1,5, escursione stimata");
+  await tbl.locator("[data-water-detail] input").first().fill("1"); await page.waitForTimeout(400);
+  const det2 = await tbl.locator("[data-water-detail]").first().innerText();
+  const dh = (x) => Number((x.match(/stimata: ([\d,]+) m/) || [])[1]?.replace(",", "."));
+  ok(dh(det2) > dh(det) * 1.3, `Scarpa 1:1 → escursione ricalcolata (${dh(det)} → ${dh(det2)} m)`);
   await tbl.screenshot({ path: path.join(SH, "w2_tabella.png") });
   await page.screenshot({ path: path.join(SH, "w3_mappa.png") });
   // modifica a mano della larghezza → resta nel KMZ
@@ -69,6 +84,7 @@ try {
   ok(/<Data name="larghezza_m"><value>33<\/value>/.test(kml), "KMZ: la larghezza modificata a mano (33 m) è nel file");
   ok(/<Data name="lunghezza_m">/.test(kml) && /Larghezza tipica/.test(kml) && /Sentinel-2/.test(kml), `KMZ: ${nPm} elementi con lunghezza, larghezza e fonte`);
   ok(/Superficie d'acqua \(satellite\)/.test(kml), "KMZ: superficie d'acqua del satellite");
+  ok(/<Data name="larghezza_min_oss_m">/.test(kml) && /<Data name="escursione_stimata_m">/.test(kml) && /Larghezza massima osservata/.test(kml), "KMZ: larghezze minima/massima osservate ed escursione stimata");
   // CSV
   const csv = await download(() => tbl.locator('button:has-text("CSV")').click());
   const csvTxt = fs.readFileSync(await csv.path(), "utf8");

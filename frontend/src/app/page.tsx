@@ -1,5 +1,5 @@
 "use client";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import JSZip from "jszip";
@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.243";
+const REV = "v0.6.244";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1226,6 +1226,7 @@ export default function Page() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [waterSurface, setWaterSurface] = useState<{ type: "Polygon"; coordinates: any }[]>([]);
   const [waterMeta, setWaterMeta] = useState<{ dates: string[]; res_m: number } | null>(null);
+  const [waterOpen, setWaterOpen] = useState<number | null>(null);
   const waterPending = useRef<{ surface: { type: "Polygon"; coordinates: unknown }[]; dates: string[]; res_m: number } | null>(null);
   const [waterRemoveOn, setWaterRemoveOn] = useState(false);
   // barra strumenti in alto: annulla/ripristina, misura, menu livelli
@@ -2171,6 +2172,12 @@ export default function Page() {
     if (!seen.length) return "";
     return t("acqua in {m} ({n} mesi su {s} osservati)", { m: wet.length ? wet.map(monShort).join(", ") : t("nessun mese"), n: wet.length, s: seen.length });
   }
+  // escursione di livello stimata dalla variazione di larghezza e dalla scarpa (ricalcolata se la scarpa cambia)
+  function waterRange(w: Watercourse): number | null {
+    if (w.bed || w.width_low_m == null || w.width_high_m == null || !w.bank_m || w.regime !== "perennial") return null;
+    return Math.max(0, w.width_high_m - w.width_low_m) / (2 * w.bank_m);
+  }
+  const wDate = (d?: string) => { if (!d) return ""; try { return new Date(d + "T12:00:00").toLocaleDateString(lang, { day: "numeric", month: "short", year: "numeric" }); } catch { return d; } };
   function waterLabel(w: Watercourse, code?: string): string {
     const bits = [(code ? code + " · " : "") + waterKindName(w.kind)];
     if (w.regime && w.regime !== "perennial") bits[0] += " " + waterRegimeName(w.regime);
@@ -2265,6 +2272,19 @@ export default function Page() {
           rows.push([t("Larghezza tipica"), uM(w.mean_width_m, 1)]); data.push(["larghezza_m", w.mean_width_m]);
           if (w.width_min_m != null && w.width_max_m != null) { rows.push([t("Larghezza min – max"), `${uM(w.width_min_m, 1)} – ${uM(w.width_max_m, 1)}`]); data.push(["larghezza_min_m", w.width_min_m], ["larghezza_max_m", w.width_max_m]); }
           if (w.width_wet_m) { rows.push([t("Larghezza in stato bagnato"), uM(w.width_wet_m, 1)]); data.push(["larghezza_bagnato_m", w.width_wet_m]); }
+          if (w.width_low_m != null && w.width_high_m != null) {
+            rows.push([t("Larghezza minima osservata"), `${uM(w.width_low_m, 1)} (${wDate(w.date_low)})`], [t("Larghezza massima osservata"), `${uM(w.width_high_m, 1)} (${wDate(w.date_high)})`]);
+            data.push(["larghezza_min_oss_m", w.width_low_m], ["data_min", w.date_low ?? ""], ["larghezza_max_oss_m", w.width_high_m], ["data_max", w.date_high ?? ""]);
+          }
+          const dh = waterRange(w);
+          if (dh != null) {
+            rows.push([t("Escursione di livello stimata"), `${fmt(dh, { maximumFractionDigits: 1 })} m (${t("scarpa 1:{m}", { m: fmt(w.bank_m!, { maximumFractionDigits: 1 }) })}; ${t("stima dalla larghezza, ±1 m circa")})`]);
+            data.push(["escursione_stimata_m", Math.round(dh * 100) / 100], ["scarpa", w.bank_m!]);
+          }
+          if (w.level_abs) {
+            rows.push([t("Quote misurate dagli altimetri"), `${fmt(w.level_abs.min, { maximumFractionDigits: 1 })} – ${fmt(w.level_abs.max, { maximumFractionDigits: 1 })} m s.l.m. (5–95%: ${fmt(w.level_abs.low, { maximumFractionDigits: 1 })} – ${fmt(w.level_abs.high, { maximumFractionDigits: 1 })}; ${w.level_abs.source}${w.level_abs.dist_km > 0.5 ? ", " + t("punto a {k} km", { k: fmt(w.level_abs.dist_km, { maximumFractionDigits: 0 }) }) : ""})`]);
+            data.push(["quota_min_msl", w.level_abs.min], ["quota_max_msl", w.level_abs.max]);
+          }
           if (w.below_pixel) rows.push([t("Nota"), t("larghezza sotto i 10 m del pixel: stima, da verificare")]);
         } else if (w.kind === "drainage" && w.mean_width_m) {
           rows.push([t("Larghezza dell'impluvio (DEM)"), uM(w.mean_width_m)]); data.push(["larghezza_m", w.mean_width_m]);
@@ -2310,9 +2330,10 @@ export default function Page() {
   }
   function exportWaterCsv() {
     const codes = waterCodes(watercourses);
-    const head = ["codice", "tipo", "regime", "alveo", "lunghezza_m", "larghezza_m", "larghezza_min_m", "larghezza_max_m", "larghezza_bagnato_m", "mesi_acqua", "mesi_osservati", "superficie_ha", "fonte", "sotto_pixel", "modificato"];
+    const head = ["codice", "tipo", "regime", "alveo", "lunghezza_m", "larghezza_m", "larghezza_min_m", "larghezza_max_m", "larghezza_bagnato_m", "mesi_acqua", "mesi_osservati", "larghezza_min_oss_m", "data_min", "larghezza_max_oss_m", "data_max", "scarpa", "escursione_stimata_m", "quota_min_msl", "quota_max_msl", "superficie_ha", "fonte", "sotto_pixel", "modificato"];
     const rows = watercourses.map((w, i) => [codes[i], w.kind, w.regime ?? "", w.bed ? 1 : 0, w.geojson.type === "LineString" ? Math.round(w.length_m ?? 0) : "", w.mean_width_m ?? "", w.width_min_m ?? "", w.width_max_m ?? "",
-      w.width_wet_m ?? "", (w.months_wet ?? []).join(","), (w.months_seen ?? []).join(","), w.geojson.type === "Polygon" ? w.area_ha : "", w.source ?? "", w.below_pixel ? 1 : 0, w.edited ? 1 : 0]);
+      w.width_wet_m ?? "", (w.months_wet ?? []).join(","), (w.months_seen ?? []).join(","), w.width_low_m ?? "", w.date_low ?? "", w.width_high_m ?? "", w.date_high ?? "",
+      w.bank_m ?? "", waterRange(w) != null ? Math.round(waterRange(w)! * 100) / 100 : "", w.level_abs?.min ?? "", w.level_abs?.max ?? "", w.geojson.type === "Polygon" ? w.area_ha : "", w.source ?? "", w.below_pixel ? 1 : 0, w.edited ? 1 : 0]);
     const csv = [head, ...rows].map((r) => r.join(";")).join("\n");
     saveBlob(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }), "corsi_dacqua.csv");
   }
@@ -5631,6 +5652,15 @@ export default function Page() {
               rows: wl.slice(0, 15).map(({ w, i }) => [codesW[i], w.kind === "river" ? tx("Fiume") : tx("Canale"), regTx(w), n0(w.length_m ?? 0), w.mean_width_m != null ? n1(w.mean_width_m) : "–",
                 w.width_min_m != null && w.width_max_m != null ? `${n0(w.width_min_m)} – ${n0(w.width_max_m)}` : "–"]) },
               caption: wl.length > 15 ? tx("I 15 tratti più lunghi su {n}; l'elenco completo è nel KMZ dei corsi d'acqua", { n: fx(wl.length) }) : tx("Corsi d'acqua esistenti misurati sulle immagini satellitari") });
+            const wv = wl.filter(({ w }) => w.width_low_m != null && w.width_high_m != null).slice(0, 10);
+            if (wv.length) {
+              const dmy = (d?: string) => { if (!d) return "–"; try { return new Date(d + "T12:00:00").toLocaleDateString(L, { month: "short", year: "numeric" }); } catch { return d; } };
+              ib.push({ p: tx("Variazioni nell'anno: la larghezza di ogni tratto è misurata data per data; l'escursione di livello è stimata dalla variazione di larghezza e dalla scarpa delle sponde (±1 m circa). Le quote in m s.l.m. vengono dagli altimetri satellitari (Hydroweb) e ci sono solo per i fiumi grandi. I massimi sono quelli osservati nelle date disponibili, non le piene di progetto.") });
+              ib.push({ table: { header: [tx("Tratto"), tx("Larghezza min") + " (m)", tx("Larghezza max") + " (m)", tx("Escursione stimata") + " (m)", tx("Quote misurate") + " (m s.l.m.)"], widths: [12, 24, 24, 18, 22],
+                rows: wv.map(({ w, i }) => { const dh = waterRange(w); return [codesW[i], `${n1(w.width_low_m!)} (${dmy(w.date_low)})`, `${n1(w.width_high_m!)} (${dmy(w.date_high)})`,
+                  dh != null ? n1(dh) : "–", w.level_abs ? `${n1(w.level_abs.min)} – ${n1(w.level_abs.max)}` : "–"]; }) },
+                caption: tx("Larghezze minima e massima osservate, escursione di livello stimata e quote misurate") });
+            }
           }
         }
         if (hasAdd && sc && S) {
@@ -9934,9 +9964,11 @@ export default function Page() {
                       <table className="w-full text-[11px]">
                         <thead><tr className="text-left opacity-70"><th className="font-normal">#</th><th className="font-normal">{t("Tipo")}</th><th className="font-normal">{t("Regime")}</th><th className="font-normal text-right">{t("Lunghezza")}</th><th className="font-normal text-right">{t("Larghezza")} ({imperial ? "ft" : "m"})</th><th /></tr></thead>
                         <tbody>
-                          {lines.map(({ w, i }) => (
-                            <tr key={i} className={w.hidden ? "opacity-40" : ""}>
-                              <td className="pr-1 whitespace-nowrap">{codes[i]}</td>
+                          {lines.map(({ w, i }) => (<Fragment key={i}>
+                            <tr className={w.hidden ? "opacity-40" : ""}>
+                              <td className="pr-1 whitespace-nowrap">
+                                <button className="text-brand-mid mr-0.5" title={t("Variazioni nell'anno e livelli")} onClick={() => setWaterOpen(waterOpen === i ? null : i)}>{waterOpen === i ? "▾" : "▸"}</button>{codes[i]}
+                              </td>
                               <td>
                                 <select className="bg-transparent text-[11px] p-0" value={w.kind} onChange={(e) => setWaterAt(i, { kind: e.target.value })}>
                                   <option value="river">{t("Fiume")}</option><option value="canal">{t("Canale")}</option><option value="drainage">{t("Impluvio (DEM)")}</option>
@@ -9956,7 +9988,39 @@ export default function Page() {
                               </td>
                               <td className="text-right"><button className="text-brand-mid" title={t("Zoom")} onClick={() => zoomToCoords(w.geojson.coordinates)}>⌖</button></td>
                             </tr>
-                          ))}
+                            {waterOpen === i && (
+                              <tr><td colSpan={6} className="pb-2">
+                                <div className="bg-white/70 rounded p-1.5 space-y-0.5" data-water-detail>
+                                  {w.width_low_m != null && w.width_high_m != null ? (
+                                    <div>{w.bed ? t("Larghezza dell'alveo") : t("Larghezza nell'anno")}: <b>{uM(w.width_low_m, 1)}</b> ({wDate(w.date_low)}) – <b>{uM(w.width_high_m, 1)}</b> ({wDate(w.date_high)})</div>
+                                  ) : <div className="opacity-70">{t("Larghezza data per data non disponibile per questo tratto")}</div>}
+                                  {!!w.widths_by_date?.length && (() => {
+                                    const v = w.widths_by_date.map(([, x]) => x); const mx = Math.max(...v, 1);
+                                    return (
+                                      <svg viewBox={`0 0 ${v.length * 10} 30`} className="w-full h-8" preserveAspectRatio="none">
+                                        {w.widths_by_date.map(([d, x], k) => <rect key={k} x={k * 10 + 1} y={30 - (x / mx) * 28} width={8} height={(x / mx) * 28} fill="#0d9488" opacity={0.75}><title>{`${wDate(d)}: ${uM(x, 1)}`}</title></rect>)}
+                                      </svg>
+                                    );
+                                  })()}
+                                  {w.width_low_m != null && !w.bed && w.regime === "perennial" && (
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      {t("Scarpa delle sponde 1:")}
+                                      <input type="number" min={0.2} max={30} step={0.1} className="w-12 text-right bg-transparent border-b border-black/10"
+                                        value={w.bank_m ?? ""} placeholder="–"
+                                        onChange={(e) => { const v = Number(e.target.value); if (v > 0) setWaterAt(i, { bank_m: v, bank_from: "manual" }); }} />
+                                      <span className="opacity-70">({w.bank_from === "canal" ? t("sezione tipo di un canale in terra") : w.bank_from === "dem" ? t("dal DEM") : w.bank_from === "manual" ? t("inserita a mano") : t("da inserire")})</span>
+                                    </div>
+                                  )}
+                                  {waterRange(w) != null && <div>{t("Escursione di livello stimata")}: <b>{fmt(waterRange(w)!, { maximumFractionDigits: 1 })} m</b> <span className="opacity-70">({t("stima dalla larghezza, ±1 m circa")})</span></div>}
+                                  {w.level_abs && (
+                                    <div>{t("Quote misurate dagli altimetri")}: <b>{fmt(w.level_abs.min, { maximumFractionDigits: 1 })} – {fmt(w.level_abs.max, { maximumFractionDigits: 1 })} m s.l.m.</b>
+                                      {" "}({t("escursione {d} m; 5–95%: {a}–{b} m", { d: fmt(w.level_abs.max - w.level_abs.min, { maximumFractionDigits: 1 }), a: fmt(w.level_abs.low, { maximumFractionDigits: 1 }), b: fmt(w.level_abs.high, { maximumFractionDigits: 1 }) })}
+                                      {w.level_abs.dist_km > 0.5 ? ", " + t("punto a {k} km", { k: fmt(w.level_abs.dist_km, { maximumFractionDigits: 0 }) }) : ""})</div>
+                                  )}
+                                </div>
+                              </td></tr>
+                            )}
+                          </Fragment>))}
                         </tbody>
                       </table>
                     </div>

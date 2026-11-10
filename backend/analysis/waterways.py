@@ -39,6 +39,8 @@ from .macroareas import _rdp, _simplify_ring
 SCL_BAD = (0, 1, 3, 8, 9, 10, 11)
 MAX_PX = 9_000_000          # ~30×30 km a 10 m; oltre si ricampiona
 TILE = 1500                 # lato massimo di una richiesta (Process API ≤ 2500)
+NIR_Q = 0.002               # passo del NIR salvato data per data
+NIR_DATES_MAX = 120_000_000 # byte massimi per il NIR di tutte le date
 N_WATER = 0.02              # NIR dell'acqua libera (riflettanza)
 
 # sensibilità 1..5 → soglie (5 = rileva anche canali deboli)
@@ -156,6 +158,10 @@ def _composite(client, g: dict, dates: list[str], pct: float = 50.0, workers: in
     m_wet = np.zeros((hp, wp), "uint16")
     m_seen = np.zeros((hp, wp), "uint16")
     mon = [int(d[5:7]) - 1 for d in dates]
+    # NIR di ogni data (uint8, passo 0,002; 255 = nuvola/nessun dato) per la larghezza
+    # data per data: minimo e massimo con la loro data. Solo se sta in ~120 MB.
+    keep_dates = len(dates) * hp * wp <= NIR_DATES_MAX
+    nir_d = np.full((len(dates), hp, wp), 255, "uint8") if keep_dates else None
     iG, iN, iS, iR = BANDS.index("B03"), BANDS.index("B08"), BANDS.index("B11"), BANDS.index("B04")
     n_ok = 0
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
@@ -184,6 +190,8 @@ def _composite(client, g: dict, dates: list[str], pct: float = 50.0, workers: in
                     v = (G - N) / (G + N)
                 nd[k] = np.where(ok, v, np.nan)
                 nir[k] = np.where(ok, N, np.nan)
+                if nir_d is not None:
+                    nir_d[k, r0:r1, c0:c1] = np.where(ok, np.clip(np.rint(N / NIR_Q), 0, 254), 255).astype("uint8")
                 sw[k] = np.where(ok, Sw, np.nan)
                 Rr = a[iR]
                 with np.errstate(invalid="ignore", divide="ignore"):
@@ -215,7 +223,7 @@ def _composite(client, g: dict, dates: list[str], pct: float = 50.0, workers: in
                 m_seen[r0:r1, c0:c1] |= np.where(okk, bit, np.uint16(0))
                 m_wet[r0:r1, c0:c1] |= np.where(wk, bit, np.uint16(0))
             del nd, nir, sw, vi, rd
-    out.update(n_valid=n_valid, m_wet=m_wet, m_seen=m_seen, ok=n_ok, jobs=len(dates) * len(tiles))
+    out.update(n_valid=n_valid, m_wet=m_wet, m_seen=m_seen, ok=n_ok, jobs=len(dates) * len(tiles), nir_dates=nir_d)
     return out
 
 
@@ -448,7 +456,8 @@ def _smooth(px: list, w: int = 5) -> np.ndarray:
 
 
 def _widths(pts: np.ndarray, mask: np.ndarray, nir: np.ndarray, dt_px: np.ndarray,
-            res: float, land_nir: float, water_nir: float, step_m: float = 20.0):
+            res: float, land_nir: float, water_nir: float, step_m: float = 20.0,
+            nan_ok: bool = False, md: np.ndarray | None = None):
     """Larghezza bagnata a sezioni trasversali. Ritorna [(progressiva_m, larghezza_m)].
     Frazione d'acqua di ogni campione = (NIR terreno − NIR) / (NIR terreno − NIR acqua):
     il terreno si legge ai lati della sezione, l'acqua nel nucleo (se largo almeno 3 px).
@@ -462,7 +471,8 @@ def _widths(pts: np.ndarray, mask: np.ndarray, nir: np.ndarray, dt_px: np.ndarra
     out = []
     half_end = 0
     t_next = 0.0
-    md = ndi.binary_dilation(mask, iterations=1)
+    if md is None:
+        md = ndi.binary_dilation(mask, iterations=1)
     for i in range(n):
         if s[i] < t_next:
             continue
@@ -488,6 +498,11 @@ def _widths(pts: np.ndarray, mask: np.ndarray, nir: np.ndarray, dt_px: np.ndarra
         rr, cc = np.clip(rr, 0, mask.shape[0] - 1), np.clip(cc, 0, mask.shape[1] - 1)
         mv = md[np.rint(rr).astype(int), np.rint(cc).astype(int)] & inside
         nv = ndi.map_coordinates(nir, [rr, cc], order=1, mode="nearest")
+        if nan_ok:
+            # data singola: una sezione con nuvole (NIR mancante) sull'acqua non si misura
+            mv0 = mv.copy()
+            if np.isnan(nv[mv0]).any():
+                continue
         z = len(t) // 2
         if not mv[z]:
             continue
@@ -517,6 +532,47 @@ def _to_ll(pts_rc: np.ndarray, g: dict) -> list[list[float]]:
     xy = [(minx + (c + 0.5) * res, top - (r + 0.5) * res) for r, c in pts_rc]
     xy = _rdp([(float(x), float(y)) for x, y in xy], res * 0.5)
     return [[round(v, 7) for v in to_wgs.transform(x, y)] for x, y in xy]
+
+
+def _width_by_date(pts, mask, nir_d, dates, dt_px, res, land_nir, water_nir, n_all: int,
+                   md: np.ndarray | None = None) -> list[tuple[str, float, float]]:
+    """Larghezza mediana del tratto in ogni data: [(data, larghezza_m, quota di sezioni valide)].
+    Le sezioni con nuvole (NIR mancante) non contano; una data vale se copre ≥ 50% del tratto."""
+    n_all = max(1, n_all)                     # sezioni misurate sul composito
+    out = []
+    if md is None:
+        md = ndi.binary_dilation(mask, iterations=1)
+    for k, d in enumerate(dates):
+        q = nir_d[k]
+        v = np.where(q == 255, np.nan, q.astype("float32") * NIR_Q)
+        prof = _widths(pts, mask, v, dt_px, res, land_nir, water_nir, nan_ok=True, md=md)
+        if len(prof) >= 0.5 * n_all and len(prof) >= 2:
+            out.append((d, float(np.median([w for _, w in prof])), len(prof) / n_all))
+    return out
+
+
+def _bank_slope(pts: np.ndarray, width_m: float, dem: np.ndarray | None, res: float) -> float | None:
+    """Pendenza delle sponde (m verticale per m orizzontale) dal DEM, fra il bordo
+    dell'acqua e 60 m più in là, su sezioni ogni ~200 m, mediana dei due lati."""
+    if dem is None or len(pts) < 7:
+        return None
+    sl = []
+    e0 = width_m / 2 / res + 2.0
+    for i in range(3, len(pts) - 3, max(1, int(200 / res))):
+        d = pts[i + 3] - pts[i - 3]
+        L = math.hypot(*d)
+        if L < 1e-6:
+            continue
+        nr, nc = -d[1] / L, d[0] / L
+        for sgn in (1, -1):
+            a = (pts[i][0] + sgn * e0 * nr, pts[i][1] + sgn * e0 * nc)
+            b = (pts[i][0] + sgn * (e0 + 60 / res) * nr, pts[i][1] + sgn * (e0 + 60 / res) * nc)
+            za, zb = ndi.map_coordinates(dem, [[a[0], b[0]], [a[1], b[1]]], order=1, mode="nearest")
+            if np.isfinite(za) and np.isfinite(zb):
+                sl.append(max(0.0, float(zb - za)) / 60.0)
+    if len(sl) < 2:
+        return None
+    return float(np.median(sl))
 
 
 REGIME = ("perennial", "seasonal", "ephemeral")
@@ -635,6 +691,7 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
     dt_px = ndi.distance_transform_edt(mask)
 
     from skimage.morphology import skeletonize
+    md_all = ndi.binary_dilation(mask, iterations=1)
     lab, ncomp = ndi.label(mask, structure=np.ones((3, 3), bool))
     transform = from_origin(g["minx"], g["top"], res, res)
     segments, basins = [], []
@@ -706,8 +763,20 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
             coords = _to_ll(pts, g)
             if len(coords) < 2:
                 continue
+            # larghezza data per data → minima e massima osservate, con la data
+            lvl = {}
+            nir_d = C.get("nir_dates")
+            if nir_d is not None and prof:
+                by_d = _width_by_date(pts, mask, nir_d, dates, dt_px, res, land_nir, water_nir, len(prof), md_all)
+                if len(by_d) >= 3:
+                    srt = sorted(by_d, key=lambda x: x[1])
+                    j = 1 if len(srt) >= 6 else 0                   # 2° estremo: una data storta non decide
+                    lo_, hi_ = srt[j], srt[-1 - j]
+                    lvl = {"width_low_m": round(lo_[1], 1), "date_low": lo_[0],
+                           "width_high_m": round(hi_[1], 1), "date_high": hi_[0],
+                           "widths_by_date": [[d_, round(w_, 1)] for d_, w_, _ in by_d]}
             segments.append({
-                "kind": "", "net": v,
+                "kind": "", "net": v, **lvl, "_pts": pts,
                 "geojson": {"type": "LineString", "coordinates": coords},
                 "length_m": round(L, 1),
                 "width_m": round(w_med, 1), "width_min_m": round(w_lo, 1), "width_max_m": round(w_hi, 1),
@@ -729,6 +798,28 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
         for x in lst:
             if not x.get("bed"):
                 x["kind"] = _classify(x["length_m"], x["width_m"], x["sinuosity"], wmax)
+    # escursione di livello stimata: Δh = ΔB / (2·m), m = scarpa delle sponde.
+    # Canali: sezione tipo in terra 1:1,5 (il DEM a 30 m non vede le sponde di un canale);
+    # fiumi: pendenza delle sponde dal DEM.
+    for sg in segments:
+        pts_ = sg.pop("_pts", None)
+        if sg.get("bed") or sg.get("width_low_m") is None:
+            continue
+        if sg.get("regime") != "perennial" or sg["width_low_m"] < 1:
+            continue                    # corso che va in secca: l'escursione dalla larghezza non ha senso
+        dB = max(0.0, sg["width_high_m"] - sg["width_low_m"])
+        if sg["kind"] == "canal":
+            m_, how = 1.5, "canal"
+        else:
+            s_ = _bank_slope(pts_, sg["width_m"], dem, res) if pts_ is not None else None
+            if s_ is None:
+                continue
+            m_, how = 1.0 / max(s_, 1e-3), "dem"
+            if m_ > 10:
+                continue                # sponda non risolta dal DEM (golena piatta): niente stima
+        sg.update({"bank_m": round(m_, 2), "bank_from": how, "level_range_m": round(dB / (2 * m_), 2)})
+    for sg in segments:
+        sg.pop("_pts", None)
     segments.sort(key=lambda s: s["length_m"], reverse=True)
     for k, s in enumerate(segments):
         s["id"] = k + 1
