@@ -75,6 +75,8 @@ export type MapHandle = {
   waterEditMode: (m: "move" | "add" | "del") => void;
   // tipi di corso nascosti nell'anteprima (river, canal, drain, drainage, basin, wetland): si guarda il satellite sotto
   waterPreviewHide: (kinds: string[]) => void;
+  // termitai (terraforming): punti marroni; mode «add» = clic sulla mappa per aggiungerne, «del» = clic su un termitaio per toglierlo
+  showMounds: (list: { lon: number; lat: number; d: number; man?: boolean; inPivot?: boolean }[] | null, opts?: { mode?: "" | "add" | "del"; onAdd?: (lon: number, lat: number) => void; onRemove?: (i: number) => void; tip?: (i: number) => string }) => void;
   // metri per pixel al centro della vista (tolleranza dei clic)
   mPerPx: () => number;
   clearAll: () => void;
@@ -263,6 +265,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const waterRemoveRef = useRef(false);
   const waterEditRef = useRef<L.LayerGroup | null>(null);
   const previewHideRef = useRef<Set<string>>(new Set());
+  const moundRef = useRef<L.LayerGroup | null>(null);
+  const moundAddRef = useRef<((lon: number, lat: number) => void) | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function _applyPreviewHide() {
     const g = waterPreviewRef.current; if (!g) return;
@@ -421,6 +425,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     canalRef.current = L.layerGroup().addTo(map);
     canalEditRef.current = L.layerGroup().addTo(map);
     waterEditRef.current = L.layerGroup().addTo(map);
+    moundRef.current = L.layerGroup().addTo(map);
     pendingRef.current = L.layerGroup().addTo(map);
     // pannello sotto gli overlay (400): il tratteggio sta sotto campi e pivot e
     // non intercetta i clic
@@ -444,7 +449,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     // Clic sulla mappa: misura (se attiva) oppure selezione punto (presa/finale).
     map.on("click", (e: L.LeafletMouseEvent) => {
       const we = weRef.current;
-      if (we && we.mode === "add") { _waterEditAdd(e.latlng); return; }   // aggiunta di punti / prolungamento
+      if (we && we.mode === "add") { _waterEditAdd(e.latlng); return; }
+      if (moundAddRef.current) { moundAddRef.current(e.latlng.lng, e.latlng.lat); return; }   // aggiunta di punti / prolungamento
       if (!we && !_mapBusy()) waterClearRef.current?.();   // clic fuori dai corsi d'acqua: selezione annullata
       if (pickRef.current) {
         const cb = pickRef.current; pickRef.current = null;
@@ -989,7 +995,12 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
               icon: L.divIcon({ className: "", iconSize: [0, 0], iconAnchor: [0, 0],
                 html: `<div class="solar-tag"><svg viewBox="0 0 16 16" width="11" height="11"><rect x="1" y="5" width="14" height="9" rx="1" fill="#1e3a8a" stroke="#e5edf7" stroke-width="1"/><path d="M1 9.5h14M5.7 5v9M10.3 5v9" stroke="#e5edf7" stroke-width=".8"/><circle cx="12.5" cy="2.6" r="1.8" fill="#f0b429"/></svg>${pv.solarTag.text}</div>` }) }));
           }
-          c.on("click", (e) => { L.DomEvent.stop(e); cbs.onClick(i); });
+          c.on("click", (e) => {
+            // aggiunta di termitai o scelta di un punto: il clic sul cerchio va alla mappa
+            if (moundAddRef.current) { L.DomEvent.stop(e); moundAddRef.current(e.latlng.lng, e.latlng.lat); return; }
+            if (_mapBusy()) return;
+            L.DomEvent.stop(e); cbs.onClick(i);
+          });
           c.bindTooltip(`#${i + 1}${pv.phase && pv.phaseColor ? ` · F${pv.phase}` : ""} · r ${Math.round(pv.r)} m${deg < 359.5 ? ` · ${Math.round(deg)}°` : ""}${pv.gun ? ` · +${Math.round(pv.gun)} m` : ""}${pv.solar ? " · ☀ FV" : ""}`, { direction: "top", sticky: true });
           g.addLayer(c);
           // Etichetta fissa sotto il centro (superficie · portata), se richiesta.
@@ -1248,6 +1259,22 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         }
         _applyPreviewHide();
         try { const b = g.getBounds(); if (b.isValid()) map.fitBounds(b, { padding: [50, 50] }); } catch { /* */ }
+      },
+      showMounds(list, opts) {
+        const map = mapRef.current, g = moundRef.current; if (!map || !g) return;
+        g.clearLayers();
+        moundAddRef.current = opts?.mode === "add" && opts.onAdd ? opts.onAdd : null;
+        try { map.getContainer().style.cursor = opts?.mode === "add" ? "crosshair" : ""; } catch { /* */ }
+        if (!list) return;
+        list.forEach((m, i) => {
+          const col = m.inPivot ? "#b91c1c" : "#92400e";
+          // cerchio vero (diametro del termitaio) + punto di dimensione fissa, visibile a ogni zoom
+          g.addLayer(L.circle([m.lat, m.lon], { radius: m.d / 2, color: col, weight: 1, fillColor: "#d97706", fillOpacity: 0.35, interactive: false }));
+          const dot = L.circleMarker([m.lat, m.lon], { radius: 3.5, color: "#fff", weight: 1, fillColor: col, fillOpacity: 1, bubblingMouseEvents: false });
+          if (opts?.tip) dot.bindTooltip(opts.tip(i), { direction: "top" });
+          dot.on("click", (e: L.LeafletMouseEvent) => { L.DomEvent.stop(e); if (opts?.mode === "del") opts.onRemove?.(i); });
+          g.addLayer(dot);
+        });
       },
       mPerPx() {
         const map = mapRef.current; if (!map) return 10;

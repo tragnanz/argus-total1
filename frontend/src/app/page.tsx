@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.255";
+const REV = "v0.6.256";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -71,6 +71,7 @@ const TABS: { key: string; label: string }[] = [
   { key: "rilievo", label: "Rilievo" },
   { key: "drenaggio", label: "Drenaggio" },
   { key: "impianti", label: "Impianti" },
+  { key: "terra", label: "Terraforming" },
   { key: "accessori", label: "Tubazioni" },
   { key: "pompaggio", label: "Pompaggio" },
   { key: "solare", label: "Pivot solari" },
@@ -421,6 +422,8 @@ function pointInPolygon(p: number[], rings: number[][][]): boolean {
   }
   return inside;
 }
+// chiave di un pivot (stesso formato di pKey nel componente, ma usabile ovunque)
+const pivKey = (p: { lat: number; lng: number }) => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`;
 // stesso calcolo con un nome che il componente non ridichiara (là dentro distM è un'altra costante)
 const geoDist = distM;
 // Proiezione del punto p sul segmento a-b (approssimazione planare locale).
@@ -1096,6 +1099,8 @@ const navProps = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none",
 const IcoNavAnalisi = () => (<svg {...navProps}><path d="M3 12h4l3-8 4 16 3-8h4" /></svg>);
 const IcoNavRilievo = () => (<svg {...navProps}><path d="m3 20 6-9 4 5 3-4 5 8z" /></svg>);
 const IcoNavDrenaggio = () => (<svg {...navProps}><path d="M12 3c-3 4-5 6.5-5 9a5 5 0 0 0 10 0c0-2.5-2-5-5-9Z" /><path d="M3 21c2 0 2-1.2 4.5-1.2S10 21 12 21s2-1.2 4.5-1.2S19 21 21 21" /></svg>);
+// ruspa stilizzata: lama e cumulo di terra
+const IcoNavTerra = () => (<svg {...navProps}><path d="M2 20h20" /><path d="M4 20c1.5-4 4-6 7-6s4.5 2 6 6" /><path d="M15 8l4-3 2 3-4 3" /><path d="M13 11l4-3" /></svg>);
 const IcoNavImpianti = () => (<svg {...navProps}><circle cx="12" cy="12" r="8" /><path d="M12 12h8" /><circle cx="12" cy="12" r="1.6" /></svg>);
 const IcoNavAccessori = () => (<svg {...navProps}><path d="M2 9h8" /><path d="M2 15h8" /><path d="M10 7v10" /><path d="M14 7v10" /><path d="M14 9h2a5 5 0 0 1 5 5v8" /><path d="M14 15h1a1 1 0 0 1 1 1v6" /></svg>);
 const IcoNavStrade = () => (<svg {...navProps}><path d="M8 3 4 21" /><path d="m16 3 4 18" /><path d="M12 4v3M12 10.5v3M12 17v3" /></svg>);
@@ -1106,7 +1111,7 @@ const IcoNavExport = () => (<svg {...navProps}><path d="M12 3v11" /><path d="m7 
 const IcoNavIrrigazione = () => (<svg {...navProps}><path d="M12 3s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z" /><path d="M10 13a2 2 0 0 0 4 0" /></svg>);
 const IcoNavInfo = () => (<svg {...navProps}><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 7.6v.6" /></svg>);
 const TAB_ICONS = {
-  analisi: IcoNavAnalisi, rilievo: IcoNavRilievo, drenaggio: IcoNavDrenaggio, impianti: IcoNavImpianti,
+  analisi: IcoNavAnalisi, rilievo: IcoNavRilievo, drenaggio: IcoNavDrenaggio, impianti: IcoNavImpianti, terra: IcoNavTerra,
   fonte: IcoNavFonte, accessori: IcoNavAccessori, pompaggio: IcoNavPompaggio, solare: IcoNavSolare, strade: IcoNavStrade, irrigazione: IcoNavIrrigazione, export: IcoNavExport,
   informazioni: IcoNavInfo,
 };
@@ -3826,6 +3831,112 @@ export default function Page() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quickNet, srcElev, busy, pivotLines]);
+  // ==== TERRAFORMING: movimenti di terra prima di montare i pivot ===============
+  // termitai (Sentinel-2 stagione secca, o a mano), carreggiate delle torri troppo ripide
+  // (DEM) e canali o fossi da spianare sotto i pivot. Volumi per pivot e totali, nel computo.
+  type Mound = { lon: number; lat: number; d: number; man?: boolean };
+  const [mounds, setMounds] = useState<Mound[]>([]);
+  const [termCfg, setTermCfg] = useState({ h: 2.5, dig: 1.0, sens: 3, trackMax: 10, trackW: 4 });
+  const [termMeta, setTermMeta] = useState<{ date: string; n: number } | null>(null);
+  const [trackRes, setTrackRes] = useState<Record<string, { max: number; over: number; vol: number }> | null>(null);
+  const [moundMode, setMoundMode] = useState<"" | "add" | "del">("");
+  // volume di un termitaio: cumulo a cono sopra il terreno + scavo del nido sotto (diametro metà)
+  const moundVol = (m: Mound) => ({ cone: (Math.PI * (m.d / 2) ** 2 * termCfg.h) / 3, nest: Math.PI * (m.d / 4) ** 2 * termCfg.dig });
+  async function detectMounds() {
+    const fs2 = fields.filter((f) => !f.hidden);
+    if (!fs2.length) return needField();
+    setBusy("termiti"); setMoundMode("");
+    try {
+      const found: Mound[] = []; let date = "";
+      for (let i = 0; i < fs2.length; i++) {
+        setMsg(t("Termitai: area {i}/{n}, cerco la scena più secca dell'anno…", { i: i + 1, n: fs2.length }));
+        const r = await api.fetchTermites(fs2[i].geom, null, termCfg.sens);
+        date = r.date;
+        for (const q of r.mounds) if (!found.some((x) => Math.abs(x.lon - q.lon) < 1e-5 && Math.abs(x.lat - q.lat) < 1e-5)) found.push({ lon: q.lon, lat: q.lat, d: q.d_m });
+      }
+      const man = mounds.filter((m) => m.man);
+      setMounds([...man, ...found]);
+      setTermMeta({ date, n: found.length });
+      setMsg(t("Termitai rilevati: {n} sulla scena del {d} (stagione secca) ✓ Controlla sulla mappa: aggiungi o togli a mano quelli sbagliati.", { n: fmt(found.length), d: wDate(date) }));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  // pendenze lungo le carreggiate delle torri: due cerchi (metà e 95% del raggio), un punto ogni 10°
+  async function checkTracks() {
+    if (!pivots.length) { setMsg(t("Prima disegna i pivot (passo 2).")); return; }
+    setBusy("tracks");
+    try {
+      const rings: { k: string; pts: number[][]; r: number }[] = [];
+      for (const p of pivots) for (const f of [0.5, 0.95]) {
+        const r = p.r * f, kx = 111320 * Math.cos((p.lat * Math.PI) / 180);
+        const pts = Array.from({ length: 36 }, (_, j) => { const a = (j * 10 * Math.PI) / 180; return [p.lng + (r * Math.sin(a)) / kx, p.lat + (r * Math.cos(a)) / 110540]; });
+        rings.push({ k: pivKey(p), pts, r });
+      }
+      const all = rings.flatMap((x) => x.pts), z: (number | null)[] = [];
+      for (let i = 0; i < all.length; i += 600) {
+        setMsg(t("Pendenze delle carreggiate: quote {i}/{n}…", { i: Math.min(all.length, i + 600), n: all.length }));
+        const r = await api.fetchElevation(all.slice(i, i + 600));
+        z.push(...r.points.map((q) => (q.elev_m == null ? null : Number(q.elev_m))));
+      }
+      const out: Record<string, { max: number; over: number; vol: number }> = {};
+      let k0 = 0;
+      for (const rg of rings) {
+        const L = (2 * Math.PI * rg.r) / 36, cur = out[rg.k] ?? { max: 0, over: 0, vol: 0 };
+        for (let j = 0; j < 36; j++) {
+          const a = z[k0 + j], b = z[k0 + ((j + 1) % 36)];
+          if (a == null || b == null) continue;
+          const sl = (Math.abs(b - a) / L) * 100;
+          cur.max = Math.max(cur.max, sl);
+          if (sl > termCfg.trackMax) {
+            const dh = ((sl - termCfg.trackMax) / 100) * L;               // dislivello da togliere sul tratto
+            cur.over += L; cur.vol += 0.5 * dh * L * termCfg.trackW;    // cuneo di terra sulla larghezza della carreggiata
+          }
+        }
+        out[rg.k] = cur; k0 += 36;
+      }
+      setTrackRes(out);
+      const bad = Object.values(out).filter((x) => x.over > 0).length;
+      setMsg(t("Carreggiate controllate: {b} pivot su {n} con tratti oltre il {s}% ✓", { b: bad, n: pivots.length, s: fmt(termCfg.trackMax) }));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
+  // riepilogo per pivot: termitai sotto il cerchio, canali da spianare, carreggiate
+  const terraPerPivot = useMemo(() => {
+    const rows = pivots.map((p, i) => ({ i, p, nM: 0, vCone: 0, vNest: 0, mCan: 0, vCan: 0, slope: 0, vTrack: 0 }));
+    const kx = (lat: number) => 111320 * Math.cos((lat * Math.PI) / 180);
+    const inPiv = (lon: number, lat: number) => rows.find(({ p }) => Math.abs(p.lat - lat) * 110540 <= p.r && Math.hypot((p.lng - lon) * kx(lat), (p.lat - lat) * 110540) <= p.r);
+    const moundIn: boolean[] = [];
+    for (const m of mounds) {
+      const r = inPiv(m.lon, m.lat); moundIn.push(!!r);
+      if (r) { const v = moundVol(m); r.nM++; r.vCone += v.cone; r.vNest += v.nest; }
+    }
+    watercourses.forEach((w) => {
+      if (w.hidden || !waterMovable(w) || w.geojson.type !== "LineString" || w.kind === "drainage") return;
+      const A = waterLevelSec(w).A, cs = w.geojson.coordinates as number[][];
+      for (let k = 1; k < cs.length; k++) {
+        const a = cs[k - 1], b = cs[k], L = geoDist(a, b), n = Math.max(1, Math.ceil(L / 10));
+        for (let j = 0; j < n; j++) {
+          const r = inPiv(a[0] + (b[0] - a[0]) * (j + 0.5) / n, a[1] + (b[1] - a[1]) * (j + 0.5) / n);
+          if (r) { r.mCan += L / n; r.vCan += (L / n) * A; }
+        }
+      }
+    });
+    if (trackRes) for (const r of rows) { const x = trackRes[pivKey(r.p)]; if (x) { r.slope = x.max; r.vTrack = x.vol; } }
+    const tot = rows.reduce((a, r) => ({ nM: a.nM + r.nM, vCone: a.vCone + r.vCone, vNest: a.vNest + r.vNest, mCan: a.mCan + r.mCan, vCan: a.vCan + r.vCan, vTrack: a.vTrack + r.vTrack }),
+      { nM: 0, vCone: 0, vNest: 0, mCan: 0, vCan: 0, vTrack: 0 });
+    return { rows, tot, moundIn };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pivots, mounds, watercourses, trackRes, termCfg]);
+  // termitai sulla mappa: nella pagina Terraforming (o se ce ne sono) — rossi quelli sotto un pivot
+  useEffect(() => {
+    if (!mounds.length && tab !== "terra") { mapApi.current?.showMounds(null); return; }
+    mapApi.current?.showMounds(mounds.map((m, i) => ({ ...m, inPivot: terraPerPivot.moundIn[i] })), {
+      mode: tab === "terra" ? moundMode : "",
+      onAdd: (lon, lat) => setMounds((ms) => [...ms, { lon: Math.round(lon * 1e6) / 1e6, lat: Math.round(lat * 1e6) / 1e6, d: 15, man: true }]),
+      onRemove: (i) => setMounds((ms) => ms.filter((_, k) => k !== i)),
+      tip: (i) => { const m = mounds[i], v = moundVol(m); return `${t("Termitaio")} ⌀ ${fmt(m.d, { maximumFractionDigits: 0 })} m · ${fmt(Math.round(v.cone + v.nest))} m³${m.man ? " · " + t("a mano") : ""}`; },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounds, moundMode, tab, terraPerPivot, termCfg]);
+  useEffect(() => { if (tab !== "terra" && moundMode) setMoundMode(""); }, [tab, moundMode]);
   // ---- Accessori: tubazioni di adduzione dal canale ---------------------------
   // Traccia le tubazioni che si diramano dal canale e passano per i centri dei
   // pivot ESISTENTI del poligono, una per fila, tutte nella stessa direzione.
@@ -5192,10 +5303,20 @@ export default function Page() {
           R.push({ cat: cC, key: "canal", item: tx("{n}: rivestimento in {lin}", { n: nm, lin: tx(lining(k.sec.lin).label).toLowerCase() }), qty: Math.round(k.ew.linedM2), unit: "m²" });
       }
     }
+    // TERRAFORMING: termitai e carreggiate sotto i pivot
+    if (common) {
+      const TT = terraPerPivot.tot, cT = tx("Movimenti di terra");
+      if (TT.nM) {
+        R.push({ cat: cT, item: tx("Spianamento dei termitai sotto i pivot"), qty: TT.nM, unit: tx("n."), note: tx("altezza media {h} m", { h: fx(termCfg.h, { maximumFractionDigits: 1 }) }) });
+        R.push({ cat: cT, item: tx("Terra dei cumuli da spianare"), qty: Math.round(TT.vCone), unit: "m³" });
+        if (TT.vNest > 0) R.push({ cat: cT, item: tx("Scavo e riempimento dei nidi"), qty: Math.round(TT.vNest), unit: "m³", note: tx("profondità {d} m", { d: fx(termCfg.dig, { maximumFractionDigits: 1 }) }) });
+      }
+      if (TT.vTrack > 0) R.push({ cat: cT, item: tx("Livellamento delle carreggiate delle torri oltre il {s}%", { s: fx(termCfg.trackMax) }), qty: Math.round(TT.vTrack), unit: "m³", note: tx("larghezza {w} m", { w: fx(termCfg.trackW) }) });
+    }
     // canali e fossi esistenti spostabili che cadono sotto i pivot: riempimento e spianamento
     if (common && waterFillM3.size) {
       const vTot = [...waterFillM3.values()].reduce((x, y) => x + y, 0), mTot = [...waterUnderPivots.values()].reduce((x, y) => x + y, 0);
-      R.push({ cat: tx("Canali"), item: tx("Spianamento di canali e fossi esistenti sotto i pivot ({n} tratti, {m} m)", { n: fx(waterFillM3.size), m: fx(Math.round(mTot)) }),
+      R.push({ cat: tx("Movimenti di terra"), item: tx("Spianamento di canali e fossi esistenti sotto i pivot ({n} tratti, {m} m)", { n: fx(waterFillM3.size), m: fx(Math.round(mTot)) }),
         qty: Math.round(vTot), unit: "m³", note: tx("riempimento della sezione trapezia di ogni tratto") });
     }
     { const FC = common ? fertCalc() : null;
@@ -6355,6 +6476,21 @@ export default function Page() {
           }
         }
         if (ib.length) ch.push({ title: tx("Infrastrutture idriche esistenti e opere di presa"), blocks: ib });
+        {   // TERRAFORMING: movimenti di terra prima di montare i pivot
+          const TT = terraPerPivot.tot, vT = TT.vCone + TT.vNest + TT.vCan + TT.vTrack;
+          if (vT > 0) {
+            const tb: Record<string, unknown>[] = [];
+            tb.push({ p: tx("Prima del montaggio dei pivot il terreno sotto le macchine va liberato e reso percorribile dalle torri. In totale si stimano {v} m³ di movimenti di terra.", { v: n0(vT) }) });
+            if (TT.nM) tb.push({ p: tx("Termitai: {n} sotto i pivot, rilevati dalle immagini Sentinel-2 della stagione secca (macchie di vegetazione isolate su terreno aperto) e verificati a mano. Con un'altezza media di {h} m i cumuli da spianare sono {c} m³, a cui si aggiungono {s} m³ di scavo e riempimento dei nidi.", { n: fx(TT.nM), h: n1(termCfg.h), c: n0(TT.vCone), s: n0(TT.vNest) }) });
+            if (TT.vCan > 0) tb.push({ p: tx("Canali e fossi esistenti sotto i pivot: {m} m da riempire, {v} m³.", { m: n0(TT.mCan), v: n0(TT.vCan) }) });
+            if (TT.vTrack > 0) tb.push({ p: tx("Carreggiate delle torri: tratti oltre il {s}% di pendenza da addolcire, {v} m³ su una larghezza di {w} m.", { s: fx(termCfg.trackMax), v: n0(TT.vTrack), w: fx(termCfg.trackW) }) });
+            const rowsT = terraPerPivot.rows.map((r) => ({ r, v: r.vCone + r.vNest + r.vCan + r.vTrack })).filter((x) => x.v > 0).sort((a, b) => b.v - a.v).slice(0, 15);
+            if (rowsT.length) tb.push({ table: { header: [tx("Pivot"), tx("Termitai"), tx("Canali") + " (m)", tx("Pendenza max") + " (%)", tx("Terra") + " (m³)"], widths: [16, 18, 22, 22, 22],
+              rows: rowsT.map(({ r, v }) => [`#${r.i + 1}`, fx(r.nM), n0(r.mCan), trackRes && trackRes[pivKey(r.p)] ? n1(r.slope) : "–", n0(v)]) },
+              caption: tx("I 15 pivot con più movimenti di terra") });
+            ch.push({ title: tx("Movimenti di terra (terraforming)"), blocks: tb });
+          }
+        }
         // Nota tecnica sulle stime – metodologia
         const cnum = ch.length + 1;
         ch.push({ title: tx("Nota tecnica sulle stime – metodologia"), blocks: [
@@ -8313,6 +8449,11 @@ export default function Page() {
     { const ss = (st as { soil_sat?: api.SoilOut & { n: number } }).soil_sat; setSoilSat(ss && typeof ss.sand === "number" ? ss : null);
       const ip = (st as { irr_prog?: { root?: number; p?: number; v100?: number } }).irr_prog ?? {};
       setRootDepth(num(ip.root, 0.8)); setRawP(num(ip.p, 0.5)); setV100(num(ip.v100, 2.3)); }
+    { const tr = (st as { terra?: { mounds?: number[][]; cfg?: Partial<typeof termCfg>; meta?: { date: string; n: number } | null; track?: Record<string, { max: number; over: number; vol: number }> | null } }).terra ?? {};
+      setMounds(Array.isArray(tr.mounds) ? tr.mounds.filter((q) => Array.isArray(q) && q.length >= 3).map((q) => ({ lon: q[0], lat: q[1], d: q[2], man: q[3] === 1 })) : []);
+      const c2 = tr.cfg ?? {};
+      setTermCfg({ h: num(c2.h, 2.5), dig: num(c2.dig, 1), sens: num(c2.sens, 3), trackMax: num(c2.trackMax, 10), trackW: num(c2.trackW, 4) });
+      setTermMeta(tr.meta ?? null); setTrackRes(tr.track ?? null); }
     const sy = (st as { systems?: Record<string, SysDesign> }).systems;
     setSysDesigns(sy && typeof sy === "object" ? sy : {});
     projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
@@ -8322,7 +8463,7 @@ export default function Page() {
   }, [projectId, projects]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId) return;
-    const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, fonte: fonteState(), terrain: { dem: demModel, smooth: demSmooth },
+    const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, fonte: fonteState(), terra: { mounds: mounds.map((m) => [m.lon, m.lat, m.d, m.man ? 1 : 0]), cfg: termCfg, meta: termMeta, track: trackRes }, terrain: { dem: demModel, smooth: demSmooth },
       crops: { base: farmCrops, fields: fieldCrops }, solar_pv: solarCfg, canal_design: { lin: canalLin, q: canalQ, fb: canalFb }, cu_model: cuModel, fert, ndvi, drain: { on: drainOn, c: drainC, s: drainS, b: drainB, prof: drainProf }, soil_sat: soilSat, irr_prog: { root: rootDepth, p: rawP, v100 },
       systems: Object.fromEntries(Object.entries(sysDesigns).filter(([k]) => k.startsWith("a"))) };
     const js = JSON.stringify(payload);
@@ -8335,7 +8476,7 @@ export default function Page() {
     }, 900);
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, pivotBrand, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
+  }, [projectId, pivotBrand, mounds, termCfg, termMeta, trackRes, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
     resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, fert, ndvi, drainOn, drainC, drainS, drainB, drainProf, soilSat, rootDepth, rawP, v100, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId || (!pivots.length && !fields.length)) return;
@@ -11153,6 +11294,104 @@ export default function Page() {
                 <p className="text-[10px] text-sage-dark mt-0.5 leading-snug">{Object.keys(drainProf).length ? t("Con le quote: sbocco nel punto più basso del perimetro, portata che cresce verso valle e pendenza dal terreno (non meno di quella impostata). La sezione indicata è quella dello sbocco.") : t("Un fosso lungo tutto il perimetro di ogni campo con pivot, con la sezione dello sbocco (portata dell'intero campo). Lo sbocco va nel punto più basso del perimetro, verso il ricettore.")}</p>
               </>)}
             </div>
+          </section>
+
+          <section hidden={tab !== "terra"} data-terra-section>
+            <SectionHead title={t("Terraforming")} help={t("Movimenti di terra prima di montare i pivot: termitai da spianare (rilevati da Sentinel-2 nella stagione secca o segnati a mano), carreggiate delle torri troppo ripide (dal modello del terreno) e canali o fossi esistenti da riempire sotto i pivot. Per ogni pivot i problemi e i metri cubi; i totali vanno nel computo.")} />
+            {(() => {
+              const T = terraPerPivot.tot, nOut = mounds.length - terraPerPivot.moundIn.filter(Boolean).length;
+              const vTot = T.vCone + T.vNest + T.vCan + T.vTrack;
+              const inp = (label: string, v: number, set: (x: number) => void, step: number, min: number, max: number) => (
+                <label className="text-[11px] text-sage-dark">{label}
+                  <input type="number" className="field-input mt-0.5 py-1 text-sm" value={v} step={step} min={min} max={max}
+                    onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && x >= min && x <= max) set(x); }} /></label>);
+              const prob = terraPerPivot.rows.filter((r) => r.nM || r.mCan || r.vTrack).sort((a, b) => (b.vCone + b.vNest + b.vCan + b.vTrack) - (a.vCone + a.vNest + a.vCan + a.vTrack));
+              return (
+                <div className="space-y-3 text-xs">
+                  {/* termitai */}
+                  <div className="bg-panel rounded-lg p-2 space-y-2" data-terra-mounds>
+                    <div className="font-semibold text-brand-darker">{t("Termitai")}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-sage-dark whitespace-nowrap">{t("Sensibilità")}: {termCfg.sens}/5</span>
+                      <input type="range" min={1} max={5} step={1} value={termCfg.sens} className="flex-1" onChange={(e) => setTermCfg((c) => ({ ...c, sens: Number(e.target.value) }))} />
+                    </div>
+                    <button className="btn-primary w-full" disabled={busy === "termiti" || !fields.length} onClick={detectMounds} data-terra-detect>
+                      {busy === "termiti" ? t("Cerco la scena più secca…") : t("Rileva termitai (Sentinel-2, stagione secca)")}</button>
+                    <div className="grid grid-cols-2 gap-2">
+                      {inp(t("Altezza media del cumulo (m)"), termCfg.h, (x) => setTermCfg((c) => ({ ...c, h: x })), 0.5, 0.2, 10)}
+                      {inp(t("Scavo del nido sotto il piano (m)"), termCfg.dig, (x) => setTermCfg((c) => ({ ...c, dig: x })), 0.5, 0, 5)}
+                    </div>
+                    <div className="flex gap-1.5">
+                      <button className={"flex-1 text-[11px] px-2 py-1 rounded-lg " + (moundMode === "add" ? "bg-brand text-white" : "btn-ghost")} onClick={() => setMoundMode(moundMode === "add" ? "" : "add")} data-terra-add>
+                        + {moundMode === "add" ? t("Clic sulla mappa… (fine)") : t("Aggiungi a mano")}</button>
+                      <button className={"flex-1 text-[11px] px-2 py-1 rounded-lg " + (moundMode === "del" ? "bg-danger text-white" : "btn-ghost")} disabled={!mounds.length} onClick={() => setMoundMode(moundMode === "del" ? "" : "del")} data-terra-del>
+                        − {moundMode === "del" ? t("Clic su un termitaio… (fine)") : t("Togli")}</button>
+                      <button className="text-[11px] px-2 py-1 rounded-lg text-danger hover:bg-danger/10" disabled={!mounds.length} onClick={() => { setMounds([]); setTermMeta(null); setMoundMode(""); }}>{t("Rimuovi tutti")}</button>
+                    </div>
+                    {mounds.length > 0 && (
+                      <div className="text-[11px] leading-snug" data-terra-mound-sum>
+                        {t("{n} termitai ({m} a mano), {p} sotto i pivot e {o} fuori.", { n: fmt(mounds.length), m: fmt(mounds.filter((x) => x.man).length), p: fmt(T.nM), o: fmt(nOut) })}
+                        {termMeta && <> {t("Scena del {d}.", { d: wDate(termMeta.date) })}</>}
+                        <div className="font-semibold">{t("Sotto i pivot: {c} m³ di cumuli da spianare + {n} m³ di scavo dei nidi", { c: fmt(Math.round(T.vCone)), n: fmt(Math.round(T.vNest)) })}</div>
+                        <div className="opacity-70">{t("Volume di un termitaio: cono di diametro rilevato × altezza media, più lo scavo del nido (diametro metà). Da Sentinel-2 si vedono i termitai con vegetazione su terreno aperto, da circa 8 m di diametro in su.")}</div>
+                      </div>
+                    )}
+                  </div>
+                  {/* carreggiate */}
+                  <div className="bg-panel rounded-lg p-2 space-y-2" data-terra-tracks>
+                    <div className="font-semibold text-brand-darker">{t("Carreggiate delle torri")}</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {inp(t("Pendenza massima (%)"), termCfg.trackMax, (x) => setTermCfg((c) => ({ ...c, trackMax: x })), 1, 1, 40)}
+                      {inp(t("Larghezza della carreggiata (m)"), termCfg.trackW, (x) => setTermCfg((c) => ({ ...c, trackW: x })), 0.5, 1, 10)}
+                    </div>
+                    <button className="btn-primary w-full" disabled={busy === "tracks" || !pivots.length} onClick={checkTracks} data-terra-check>
+                      {busy === "tracks" ? "…" : t("Controlla le pendenze (modello del terreno)")}</button>
+                    {trackRes && (() => {
+                      const vals = terraPerPivot.rows.filter((r) => trackRes[pivKey(r.p)]);
+                      const bad = vals.filter((r) => r.vTrack > 0);
+                      return <div className="text-[11px] leading-snug" data-terra-track-sum>
+                        {t("Pendenza massima trovata: {s}%. {b} pivot su {n} con tratti oltre il limite: {v} m³ di terra per addolcirli.", { s: fmt(Math.max(0, ...vals.map((r) => r.slope)), { maximumFractionDigits: 1 }), b: bad.length, n: vals.length, v: fmt(Math.round(T.vTrack)) })}
+                        <div className="opacity-70">{t("Quote ogni 10° su due cerchi (metà raggio e torre esterna) dal modello del terreno a 30 m: si vedono pendii e scarpate, non gli avvallamenti piccoli.")}</div>
+                      </div>;
+                    })()}
+                  </div>
+                  {/* canali */}
+                  <div className="bg-panel rounded-lg p-2 space-y-1" data-terra-canals>
+                    <div className="font-semibold text-brand-darker">{t("Canali e fossi da spianare")}</div>
+                    {T.mCan > 0
+                      ? <div className="text-[11px]">{t("{m} sotto i pivot: {v} m³ di terra per riempirli.", { m: uM(T.mCan), v: fmt(Math.round(T.vCan)) })}</div>
+                      : <div className="text-[11px] text-sage-dark">{watercourses.length ? t("Nessun canale spostabile sotto i pivot.") : t("Nessun corso d'acqua: importali nella pagina Fonte d'acqua.")}</div>}
+                    <button className="text-brand-mid text-[11px]" onClick={() => goTab("fonte")}>{t("Canali, scelta spiana/lascia e sezioni nella pagina Fonte d'acqua")} →</button>
+                  </div>
+                  {/* riepilogo */}
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 p-2" data-terra-total>
+                    <div className="font-semibold text-brand-darker">{t("Movimenti di terra: {v} m³", { v: fmt(Math.round(vTot)) })}</div>
+                    <div className="text-[11px] text-sage-dark">{t("termitai {a} m³ · nidi {b} m³ · canali {c} m³ · carreggiate {d} m³", { a: fmt(Math.round(T.vCone)), b: fmt(Math.round(T.vNest)), c: fmt(Math.round(T.vCan)), d: fmt(Math.round(T.vTrack)) })}</div>
+                    {!pivots.length && <div className="text-[11px] text-sage-dark">{t("I volumi si contano sotto i pivot: prima disegna i pivot.")}</div>}
+                  </div>
+                  {prob.length > 0 && (
+                    <div className="max-h-64 overflow-auto" data-terra-table>
+                      <table className="w-full text-[11px] tabular-nums">
+                        <thead className="sticky top-0 bg-white text-sage-dark text-left">
+                          <tr><th className="py-1">{t("Pivot")}</th><th>{t("Termitai")}</th><th>{t("Canali")}</th><th>{t("Pendenza")}</th><th className="text-right">m³</th></tr>
+                        </thead>
+                        <tbody>
+                          {prob.slice(0, 200).map((r) => (
+                            <tr key={r.i} className="border-t border-black/5 hover:bg-black/5 cursor-pointer" onClick={() => zoomToCoords([[r.p.lng, r.p.lat]])}>
+                              <td className="py-0.5">#{r.i + 1}</td>
+                              <td>{r.nM ? `${r.nM} · ${fmt(Math.round(r.vCone + r.vNest))} m³` : "–"}</td>
+                              <td>{r.mCan ? `${uM(r.mCan)} · ${fmt(Math.round(r.vCan))} m³` : "–"}</td>
+                              <td className={r.vTrack > 0 ? "text-rust" : ""}>{trackRes && trackRes[pivKey(r.p)] ? `${fmt(r.slope, { maximumFractionDigits: 1 })}%` : "–"}</td>
+                              <td className="text-right font-semibold">{fmt(Math.round(r.vCone + r.vNest + r.vCan + r.vTrack))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </section>
 
           <section hidden={tab !== "impianti"}>

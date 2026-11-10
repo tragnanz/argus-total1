@@ -351,6 +351,10 @@ export type WaterResult = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   surface?: { type: "Polygon"; coordinates: any }[]; dates?: string[]; res_m?: number; length_m?: number;
 };
+// TERRAFORMING: termitai su terreno aperto dalla scena Sentinel-2 più secca degli ultimi 12 mesi
+export type TermiteResult = { date: string; ndvi_median: number; res_m: number; n_total: number; mounds: { lon: number; lat: number; d_m: number; score: number }[] };
+export const fetchTermites = (geom: Polygon, date: string | null, sens: number) =>
+  req<TermiteResult>("/api/terraform/termites", { method: "POST", body: JSON.stringify({ geom, date, sens }) });
 // anteprima rapida: i corsi OSM ritagliati sull'area, senza misure dal satellite (pochi secondi)
 export const fetchOsmCourses = (geom: Polygon) =>
   req<{ features: Watercourse[]; n_river: number; n_canal: number; n_drain: number; n_osm: number }>("/api/watercourses/osm", { method: "POST", body: JSON.stringify({ geom }) });
