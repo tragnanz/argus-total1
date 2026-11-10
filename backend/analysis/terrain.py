@@ -265,18 +265,20 @@ def _dem_lows(dem, valid, res, depth_thr):
 def detect_watercourses(client, geom: dict, date: str | None = None, min_area_ha: float = 0.2,
                         ndwi_thr: float = 0.20, use_dem: bool = True,
                         dem_channel_ha: float = 25.0, dem_depth_m: float = 1.2,
-                        sens: int = 3, months: int = 12) -> dict:
+                        sens: int = 3, months: int = 12, osm: list[dict] | None = None) -> dict:
     """Corsi d'acqua esistenti. Fiumi, canali e bacini dal composito Sentinel-2 di
     più date (analysis/waterways.py: asse, lunghezza e larghezza misurata per tratto);
     impluvi e alvei asciutti dalla morfologia (DEM), esclusi dove c'è già acqua.
     `ndwi_thr` resta per compatibilità: la sensibilità la decide `sens` (1..5)."""
     from scipy.ndimage import label
     from .waterways import detect_waterways
-    ww = detect_waterways(client, geom, date_to=date, months=months, sens=sens)
+    ww = detect_waterways(client, geom, date_to=date, months=months, sens=sens, osm=osm)
     out: list[dict] = []
     for sg in ww["segments"]:
-        out.append({"geojson": sg["geojson"], "kind": sg["kind"], "source": "s2",
-                    "area_ha": round(sg["length_m"] * sg["width_m"] / 1e4, 2),
+        out.append({"geojson": sg["geojson"], "kind": sg["kind"],
+                    "source": ("osm+s2" if sg.get("sat_cover", 0) > 0 or sg.get("width_m") else "osm") if sg.get("osm") else "s2",
+                    "name": sg.get("name"), "osm_type": sg.get("osm_type"), "sat_cover": sg.get("sat_cover"),
+                    "area_ha": round(sg["length_m"] * (sg["width_m"] or 0) / 1e4, 2),
                     "length_m": sg["length_m"], "mean_width_m": sg["width_m"],
                     "width_min_m": sg["width_min_m"], "width_max_m": sg["width_max_m"],
                     "width_wet_m": sg["width_wet_m"], "sinuosity": sg["sinuosity"],
@@ -309,12 +311,23 @@ def detect_watercourses(client, geom: dict, date: str | None = None, min_area_ha
                        for poly in ww["surface"]]
                 water = features.rasterize(shp, out_shape=(hp, wp), transform=from_origin(minx, top, res, res),
                                            fill=0, dtype="uint8", all_touched=True).astype(bool)
-            demv = np.isfinite(dem)
+            demv = np.isfinite(dem) & _mask.astype(bool)          # solo dentro l'area segnata
             if demv.any():
                 min_cells = max(20, int(float(dem_channel_ha) * 10000.0 / (res * res)))
                 demx = np.where(demv, dem, np.nan)
                 ch = _dem_channels(demx, demv, res, min_cells) | _dem_lows(demx, demv, res, dem_depth_m)
                 ch = ch & ~water                              # non duplicare l'acqua del satellite
+                if osm:
+                    # né i corsi già tracciati da OpenStreetMap (fascia di 100 m)
+                    import pyproj
+                    to_utm2 = pyproj.Transformer.from_crs(4326, ctx["epsg"], always_xy=True)
+                    lines = [{"type": "LineString", "coordinates": [to_utm2.transform(float(p[0]), float(p[1])) for p in w["coords"]]}
+                             for w in osm if len(w.get("coords") or []) >= 2]
+                    if lines:
+                        ol = features.rasterize([(ln, 1) for ln in lines], out_shape=(hp, wp), transform=from_origin(minx, top, res, res),
+                                                fill=0, dtype="uint8", all_touched=True).astype(bool)
+                        from scipy.ndimage import binary_dilation as _bd
+                        ch = ch & ~_bd(ol, iterations=max(1, int(round(100 / res))))
                 lblc, nc = label(ch)
                 for v in range(1, nc + 1):
                     comp = lblc == v
@@ -338,7 +351,7 @@ def detect_watercourses(client, geom: dict, date: str | None = None, min_area_ha
             pass
 
     return {"features": out, "water_ha": ww["water_ha"],
-            "n_river": ww["n_river"], "n_canal": ww["n_canal"], "n_seasonal": ww.get("n_seasonal", 0),
+            "n_river": ww["n_river"], "n_canal": ww["n_canal"], "n_seasonal": ww.get("n_seasonal", 0), "n_osm": ww.get("n_osm", 0),
             "n_basin": sum(1 for a in out if a["kind"] == "basin"),
             "n_wetland": 0, "n_drainage": n_dem, "surface": ww["surface"],
             "dates": ww["dates"], "res_m": ww["res_m"],

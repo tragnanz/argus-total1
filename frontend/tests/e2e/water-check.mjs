@@ -121,6 +121,38 @@ try {
   const kmz2 = await download(() => t3.locator('button:has-text("KMZ")').click());
   const kml2 = await (await JSZip.loadAsync(fs.readFileSync(await kmz2.path()))).file("doc.kml").async("string");
   ok(/<Data name="regime"><value>ephemeral<\/value>/.test(kml2) && /Larghezza dell'alveo/.test(kml2), "KMZ Amendolea: regime effimero e larghezza dell'alveo");
+  // Gorgol Noir (Mauritania): fiume stretto a meandri, asciutto quasi tutto l'anno. Il tracciato
+  // completo viene da OpenStreetMap (qui la risposta di Overpass è registrata nel file di prova;
+  // dati © OpenStreetMap contributors, licenza ODbL)
+  const osmFile = path.join(path.dirname(decodeURIComponent(new globalThis.URL(import.meta.url).pathname)), "data", "osm-gorgol.json");
+  await page.route("**/api/interpreter", (route) => route.fulfill({ status: 200, contentType: "application/json", body: fs.readFileSync(osmFile, "utf8") }));
+  const GG = [[-12.84, 16.07], [-12.70, 16.07], [-12.70, 16.20], [-12.84, 16.20], [-12.84, 16.07]];
+  const p3 = await post("/projects", { name: "Gorgol", client_id: c.id }, tok);
+  await post("/areas", { project_id: p3.id, name: "Perimetro", geojson: { type: "Polygon", coordinates: [GG] }, area_ha: 21000 }, tok);
+  await page.reload(); await page.waitForTimeout(3500);
+  for (let k = 0; k < 3 && !(await page.locator('select option:text-is("Gorgol")').count()); k++) {
+    const cs = page.locator('select:has(option:text-is("Chivasso"))').first();
+    await cs.selectOption({ index: 0 }).catch(() => {}); await page.waitForTimeout(800);
+    await cs.selectOption({ label: "Chivasso" }); await page.waitForTimeout(2000);
+  }
+  await page.locator('select:has(option:text-is("Gorgol"))').selectOption({ label: "Gorgol" }); await page.waitForTimeout(5000);
+  if (!(await page.locator('button:has-text("Rileva corsi d\'acqua")').first().isVisible().catch(() => false))) await page.locator('button[title="Analisi"]').first().click();
+  await page.locator('button:has-text("Rileva corsi d\'acqua")').first().click();
+  await page.locator('button:has-text("Conferma")').first().waitFor({ timeout: 600000 });
+  const msgG = await page.locator("text=/tracciati completi da OpenStreetMap/").first().innerText().catch(() => "");
+  ok(/\d+ tracciati completi da OpenStreetMap/.test(msgG), `Gorgol: ${msgG.match(/\d+ tracciati completi da OpenStreetMap/)?.[0] ?? "nessun tracciato OSM"}`);
+  await page.locator('button:has-text("Conferma")').first().click(); await page.waitForTimeout(1500);
+  const t4 = page.locator("[data-water-table]").first();
+  const gg = await t4.locator("tbody tr").evaluateAll((trs) => trs.map((tr) => ({ name: tr.children[0].textContent, len: tr.children[3]?.textContent, w: tr.querySelector("input")?.value })));
+  const gor = gg.filter((r) => /Gorgol/i.test(r.name || "")).map((r) => Number(String(r.len).replace(/[^\d,]/g, "").replace(",", ".")));
+  ok(gor.reduce((a, b) => a + b, 0) > 20000, `Gorgol Noir intero: ${gor.length} tratti, ${gor.reduce((a, b) => a + b, 0)} m in tutto`);
+  await page.screenshot({ path: path.join(SH, "w5_gorgol.png") });
+  const kmz3 = await download(() => t4.locator('button:has-text("KMZ")').click());
+  const kml3 = await (await JSZip.loadAsync(fs.readFileSync(await kmz3.path()))).file("doc.kml").async("string");
+  const pts = [...kml3.matchAll(/<coordinates>([^<]+)<\/coordinates>/g)].flatMap((m) => m[1].trim().split(/\s+/).map((q) => q.split(",").map(Number)));
+  const outside = pts.filter(([lo, la]) => lo < -12.8405 || lo > -12.6995 || la < 16.0695 || la > 16.2005).length;
+  ok(pts.length > 100 && outside === 0, `KMZ Gorgol: ${pts.length} vertici, ${outside} fuori dall'area`);
+  ok(/OpenStreetMap \(river\)/.test(kml3) && /Gorgol/.test(kml3), "KMZ Gorgol: nome e fonte OpenStreetMap");
   ok(!errors.length, `Nessun errore JS (${errors.slice(0, 3).join(" | ")})`);
 } catch (e) { console.log("ERRORE", e); fail++; await page.screenshot({ path: path.join(SH, "w_err.png") }).catch(() => {}); }
 await browser.close();

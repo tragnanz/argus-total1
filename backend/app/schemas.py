@@ -243,6 +243,8 @@ class WaterIn(BaseModel):
     date: str | None = None                                 # fine del periodo (default: oggi)
     sens: int = Field(default=3, ge=1, le=5)                # sensibilità (5 = canali deboli)
     months: int = Field(default=12, ge=1, le=36)            # periodo del composito
+    # corsi d'acqua OpenStreetMap letti dal browser: [{id, waterway, name, coords [[lon,lat],...], width?, intermittent?}]
+    osm: list[dict[str, Any]] = Field(default_factory=list, max_length=3000)
     min_area_ha: float = Field(default=0.2, ge=0.0, le=10000)
     ndwi_thr: float = Field(default=0.20, ge=-0.5, le=0.8)  # soglia acqua (sensibilità)
     use_dem: bool = True                                    # drenaggio dal DEM (alvei asciutti)
@@ -259,6 +261,7 @@ class WaterOut(BaseModel):
     n_drainage: int = 0
     n_canal: int = 0
     n_seasonal: int = 0
+    n_osm: int = 0
     surface: list[dict[str, Any]] = []
     dates: list[str] = []
     res_m: float = 10.0

@@ -42,7 +42,7 @@ def watercourses(body: WaterIn, client=Depends(get_client), user: User = Depends
         out = detect_watercourses(client, body.geom.model_dump(), body.date,
                                   min_area_ha=body.min_area_ha, ndwi_thr=body.ndwi_thr,
                                   use_dem=body.use_dem, dem_channel_ha=body.dem_channel_ha,
-                                  dem_depth_m=body.dem_depth_m, sens=body.sens, months=body.months)
+                                  dem_depth_m=body.dem_depth_m, sens=body.sens, months=body.months, osm=body.osm)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Errore rilevamento corsi d'acqua: {e}")
     return WaterOut(**out)

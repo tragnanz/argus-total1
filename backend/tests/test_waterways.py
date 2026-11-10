@@ -213,3 +213,24 @@ def test_larghezza_per_data_ed_escursione():
     assert c["date_high"][5:7] in ("06", "07", "08") and c["date_low"][5:7] not in ("06", "07", "08")
     assert len(c["widths_by_date"]) == 12
     assert c["bank_m"] == 1.5 and abs(c["level_range_m"] - 4.0) < 1.5, c["level_range_m"]
+
+
+def test_tracciato_osm():
+    # canale visibile (y = 800 m) + torrente asciutto invisibile al satellite (x = 2500 m):
+    # entrambi escono interi, il canale con la larghezza misurata e senza doppioni
+    to_wgs = pyproj.Transformer.from_crs(EPSG, 4326, always_xy=True)
+    yc = ORIGIN[1] + H * RES - 800.0
+    canal = [list(to_wgs.transform(ORIGIN[0] + x, yc + 4.0)) for x in range(0, 5001, 250)]      # spostato di 4 m
+    dry = [list(to_wgs.transform(ORIGIN[0] + 2500.0 + 30 * math.sin(y / 300), ORIGIN[1] + y)) for y in range(200, 3801, 100)]
+    osm = [{"id": 1, "waterway": "canal", "name": "Canale di prova", "coords": canal},
+           {"id": 2, "waterway": "stream", "name": "Oued di prova", "coords": dry}]
+    g = {"epsg": EPSG, "minx": ORIGIN[0], "top": ORIGIN[1] + H * RES, "res": RES, "wp": Wd, "hp": H, "to_wgs": to_wgs}
+    C = W._composite(FakeClient(), g, ["2025-07-01", "2025-08-01"], workers=1)
+    out = W.detect_waterways(None, _geom(), composite=(C, g, ["2025-07-01", "2025-08-01"]), osm=osm)
+    named = {s.get("name"): s for s in out["segments"] if s.get("osm")}
+    c, d = named["Canale di prova"], named["Oued di prova"]
+    assert c["kind"] == "canal" and abs(c["width_m"] - 40) < 6 and c["length_m"] > 4800, (c["width_m"], c["length_m"])
+    assert c["sat_cover"] > 0.9
+    assert not [s for s in out["segments"] if not s.get("osm") and _near(s, y_m=800.0) and s["length_m"] > 500], "doppione del canale"
+    assert d["kind"] == "river" and d["width_m"] is None and d["sat_cover"] < 0.1 and d["length_m"] > 3500
+    assert out["n_osm"] == 2

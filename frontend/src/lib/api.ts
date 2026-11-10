@@ -330,9 +330,10 @@ export type Watercourse = {
   // kind: river | canal | drainage (impluvio dal DEM) | basin | wetland
   kind: string; area_ha: number; length_m?: number; mean_width_m?: number;
   // misure del satellite (Sentinel-2, composito di più date): larghezza tipica = mean_width_m
-  source?: "s2" | "dem" | "manual"; width_min_m?: number; width_max_m?: number; width_wet_m?: number | null;
+  source?: "s2" | "dem" | "manual" | "osm" | "osm+s2"; width_min_m?: number; width_max_m?: number; width_wet_m?: number | null;
   below_pixel?: boolean; sinuosity?: number; profile?: [number, number][]; name?: string;
   edited?: boolean;          // geometria o larghezza modificata a mano
+  osm_type?: string; sat_cover?: number;   // corso da OpenStreetMap (river, stream, canal, drain…) e quota confermata dal satellite
   // regime dai 12 mesi: perenne / stagionale / effimero (fiumara, wadi); mesi 1-12
   regime?: "perennial" | "seasonal" | "ephemeral" | null; months_wet?: number[]; months_seen?: number[];
   bed?: boolean;             // alveo asciutto (greto): la larghezza è quella dell'alveo
@@ -344,12 +345,34 @@ export type Watercourse = {
   level_abs?: { min: number; max: number; low: number; high: number; median: number[]; dist_km: number; source: string };
 };
 export type WaterResult = {
-  features: Watercourse[]; water_ha: number; n_river: number; n_canal?: number; n_seasonal?: number; n_basin: number; n_wetland: number; n_drainage: number;
+  features: Watercourse[]; water_ha: number; n_river: number; n_canal?: number; n_seasonal?: number; n_osm?: number; n_basin: number; n_wetland: number; n_drainage: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   surface?: { type: "Polygon"; coordinates: any }[]; dates?: string[]; res_m?: number; length_m?: number;
 };
-export const fetchWatercourses = (geom: Polygon, date: string | null, sens = 3, months = 12, use_dem = true, dem_channel_ha = 25, dem_depth_m = 1.2, min_area_ha = 0.2) =>
-  req<WaterResult>("/api/watercourses", { method: "POST", body: JSON.stringify({ geom, date, sens, months, min_area_ha, use_dem, dem_channel_ha, dem_depth_m }) });
+export type OsmWaterway = { id: number; waterway: string; name?: string; width?: string; intermittent?: string; coords: number[][] };
+export const fetchWatercourses = (geom: Polygon, date: string | null, sens = 3, months = 12, use_dem = true, dem_channel_ha = 25, dem_depth_m = 1.2, min_area_ha = 0.2,
+  osm: OsmWaterway[] = []) =>
+  req<WaterResult>("/api/watercourses", { method: "POST", body: JSON.stringify({ geom, date, sens, months, min_area_ha, use_dem, dem_channel_ha, dem_depth_m, osm }) });
+// Corsi d'acqua OpenStreetMap nel riquadro (fiumi, torrenti, wadi, canali, dreni): il tracciato
+// completo dei corsi che il satellite vede solo a tratti. Dal browser, con un server di riserva.
+export async function fetchOsmWaterways(s: number, w: number, n: number, e: number): Promise<OsmWaterway[]> {
+  const q = `[out:json][timeout:40];way["waterway"~"^(river|stream|canal|drain|ditch|wadi)$"](${s},${w},${n},${e});out tags geom;`;
+  const servers = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter"];
+  let last: unknown = null;
+  for (const url of servers) {
+    const ac = new AbortController(); const tm = setTimeout(() => ac.abort(), 45000);
+    try {
+      const r = await fetch(url, { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: ac.signal });
+      if (!r.ok) { last = new Error(`OpenStreetMap ${r.status}`); continue; }
+      const js = await r.json();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return ((js.elements || []) as any[]).filter((el) => el.type === "way" && Array.isArray(el.geometry) && el.geometry.length >= 2)
+        .map((el) => ({ id: el.id, waterway: el.tags?.waterway, name: el.tags?.name, width: el.tags?.width, intermittent: el.tags?.intermittent,
+          coords: el.geometry.map((g: { lon: number; lat: number }) => [Math.round(g.lon * 1e6) / 1e6, Math.round(g.lat * 1e6) / 1e6]) }));
+    } catch (err) { last = err; } finally { clearTimeout(tm); }
+  }
+  throw last ?? new Error("OpenStreetMap");
+}
 
 export type GuidedResult = { geojson: GeoJSONFC; meta: Record<string, number> };
 export const fetchGuided = (geom: Polygon, p: {

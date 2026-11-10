@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.244";
+const REV = "v0.6.245";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -2179,7 +2179,7 @@ export default function Page() {
   }
   const wDate = (d?: string) => { if (!d) return ""; try { return new Date(d + "T12:00:00").toLocaleDateString(lang, { day: "numeric", month: "short", year: "numeric" }); } catch { return d; } };
   function waterLabel(w: Watercourse, code?: string): string {
-    const bits = [(code ? code + " · " : "") + waterKindName(w.kind)];
+    const bits = [(code ? code + " · " : "") + (w.name ? w.name : waterKindName(w.kind))];
     if (w.regime && w.regime !== "perennial") bits[0] += " " + waterRegimeName(w.regime);
     if (w.geojson.type === "LineString" && w.length_m) bits.push(uM(w.length_m));
     if (w.geojson.type === "LineString" && w.mean_width_m && w.kind !== "drainage")
@@ -2202,8 +2202,15 @@ export default function Page() {
     setBusy("water"); setMsg(t("Leggo 12 mesi di immagini Sentinel-2 (una o due date per mese): può richiedere 1–3 minuti…"));
     try {
       const p = waterParams();
+      // tracciati completi da OpenStreetMap (se raggiungibile): il satellite li misura e li conferma
+      let osm: api.OsmWaterway[] = []; let osmErr = false;
+      try {
+        const ring = activeGeom.coordinates[0] as number[][];
+        const lo = ring.map((q) => q[0]), la = ring.map((q) => q[1]);
+        osm = await api.fetchOsmWaterways(Math.min(...la), Math.min(...lo), Math.max(...la), Math.max(...lo));
+      } catch { osmErr = true; }
       // la data scelta (se c'è) chiude il periodo di 12 mesi; altrimenti oggi
-      const w = await api.fetchWatercourses(activeGeom, date || null, waterSens, 12, true, p.dem_channel_ha, p.dem_depth_m, p.min_area_ha);
+      const w = await api.fetchWatercourses(activeGeom, date || null, waterSens, 12, true, p.dem_channel_ha, p.dem_depth_m, p.min_area_ha, osm);
       if (!w.features.length) { setMsg(t("Nessun corso d'acqua rilevato: prova ad alzare la sensibilità.")); return; }
       waterPending.current = { surface: w.surface ?? [], dates: w.dates ?? [], res_m: w.res_m ?? 10 };
       // ANTEPRIMA modificabile a mano: conferma o annulla (le misure viaggiano con ogni elemento)
@@ -2213,7 +2220,8 @@ export default function Page() {
       const km = w.features.filter((f) => f.kind === "river" || f.kind === "canal").reduce((a, f) => a + (f.length_m ?? 0), 0) / 1000;
       setMsg(t("Anteprima: {r} tratti di fiume e {c} di canale ({km}), {d} impluvi (DEM), {b} bacini. Modifica a mano, poi Conferma.",
         { r: w.n_river, c: w.n_canal ?? 0, km: uKm(km, 1), d: w.n_drainage, b: w.n_basin })
-        + (w.n_seasonal ? " " + t("{n} tratti non perenni (stagionali o effimeri).", { n: w.n_seasonal }) : ""));
+        + (w.n_seasonal ? " " + t("{n} tratti non perenni (stagionali o effimeri).", { n: w.n_seasonal }) : "")
+        + (w.n_osm ? " " + t("{n} tracciati completi da OpenStreetMap, misurati sul satellite.", { n: w.n_osm }) : osmErr ? " " + t("OpenStreetMap non raggiungibile: solo satellite.") : ""));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   function confirmWaterUI() {
@@ -2251,7 +2259,9 @@ export default function Page() {
     const ll = (c: number[][]) => c.map(([lo, la]) => `${lo.toFixed(7)},${la.toFixed(7)},0`).join(" ");
     const codes = waterCodes(watercourses);
     const per = waterMeta?.dates?.length ? `${waterMeta.dates[0]} – ${waterMeta.dates[waterMeta.dates.length - 1]} (${waterMeta.dates.length} ${t("date")})` : "";
-    const srcTxt = (w: WaterL) => w.source === "s2" ? `Sentinel-2 · ${t("composito di più date")}${per ? " · " + per : ""}` : w.source === "dem" ? t("Modello del terreno (Copernicus DEM)") : t("Tracciato a mano");
+    const srcTxt = (w: WaterL) => w.source === "s2" ? `Sentinel-2 · ${t("composito di più date")}${per ? " · " + per : ""}`
+      : w.source === "osm+s2" ? `OpenStreetMap (${w.osm_type ?? ""}) + Sentinel-2${per ? " · " + per : ""}` : w.source === "osm" ? `OpenStreetMap (${w.osm_type ?? ""})`
+      : w.source === "dem" ? t("Modello del terreno (Copernicus DEM)") : t("Tracciato a mano");
     const lineCol: Record<string, string> = { river: "ffa16903", canal: "ff88940d", drainage: "ff0763a1" };   // aabbggrr
     const kmlW = (w: number | undefined) => (w ? Math.max(2, Math.min(8, 1.5 + Math.log2(1 + w / 4))) : 2).toFixed(1);
     const folders: Record<string, string[]> = {};
@@ -2259,6 +2269,8 @@ export default function Page() {
       if (w.hidden) return;
       const name = waterLabel(w, codes[i]);
       const rows: [string, string][] = [[t("Tipo"), waterKindName(w.kind)]];
+      if (w.name) rows.unshift([t("Nome"), w.name]);
+      if (w.sat_cover != null) rows.push([t("Tracciato confermato dal satellite"), `${Math.round(w.sat_cover * 100)}%`]);
       const data: [string, string | number][] = [["codice", codes[i]], ["tipo", w.kind]];
       if (w.geojson.type === "LineString") {
         if (w.length_m != null) { rows.push([t("Lunghezza"), uM(w.length_m)]); data.push(["lunghezza_m", Math.round(w.length_m)]); }
@@ -2330,8 +2342,8 @@ export default function Page() {
   }
   function exportWaterCsv() {
     const codes = waterCodes(watercourses);
-    const head = ["codice", "tipo", "regime", "alveo", "lunghezza_m", "larghezza_m", "larghezza_min_m", "larghezza_max_m", "larghezza_bagnato_m", "mesi_acqua", "mesi_osservati", "larghezza_min_oss_m", "data_min", "larghezza_max_oss_m", "data_max", "scarpa", "escursione_stimata_m", "quota_min_msl", "quota_max_msl", "superficie_ha", "fonte", "sotto_pixel", "modificato"];
-    const rows = watercourses.map((w, i) => [codes[i], w.kind, w.regime ?? "", w.bed ? 1 : 0, w.geojson.type === "LineString" ? Math.round(w.length_m ?? 0) : "", w.mean_width_m ?? "", w.width_min_m ?? "", w.width_max_m ?? "",
+    const head = ["codice", "nome", "tipo", "regime", "alveo", "lunghezza_m", "larghezza_m", "larghezza_min_m", "larghezza_max_m", "larghezza_bagnato_m", "mesi_acqua", "mesi_osservati", "larghezza_min_oss_m", "data_min", "larghezza_max_oss_m", "data_max", "scarpa", "escursione_stimata_m", "quota_min_msl", "quota_max_msl", "superficie_ha", "fonte", "sotto_pixel", "modificato"];
+    const rows = watercourses.map((w, i) => [codes[i], (w.name ?? "").replace(/;/g, ","), w.kind, w.regime ?? "", w.bed ? 1 : 0, w.geojson.type === "LineString" ? Math.round(w.length_m ?? 0) : "", w.mean_width_m ?? "", w.width_min_m ?? "", w.width_max_m ?? "",
       w.width_wet_m ?? "", (w.months_wet ?? []).join(","), (w.months_seen ?? []).join(","), w.width_low_m ?? "", w.date_low ?? "", w.width_high_m ?? "", w.date_high ?? "",
       w.bank_m ?? "", waterRange(w) != null ? Math.round(waterRange(w)! * 100) / 100 : "", w.level_abs?.min ?? "", w.level_abs?.max ?? "", w.geojson.type === "Polygon" ? w.area_ha : "", w.source ?? "", w.below_pixel ? 1 : 0, w.edited ? 1 : 0]);
     const csv = [head, ...rows].map((r) => r.join(";")).join("\n");
@@ -5645,11 +5657,12 @@ export default function Page() {
             const kmR = wl.filter(({ w }) => w.kind === "river").reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000;
             const kmC = wl.filter(({ w }) => w.kind === "canal").reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000;
             ib.push({ p: tx("I corsi d'acqua esistenti sono stati letti da un composito di immagini Sentinel-2 di 12 mesi (pixel di 10 m): {r} km di fiume e {c} km di canali. La larghezza è misurata a sezioni trasversali ogni 20 m, con la frazione d'acqua dei pixel di bordo; sotto i 10 m è una stima.", { r: n1(kmR), c: n1(kmC) })
-              + " " + tx("Il regime viene dai mesi in cui l'acqua è presente (perenne, stagionale, effimero); per le fiumare asciutte la larghezza è quella dell'alveo di ghiaia.") });
+              + " " + tx("Il regime viene dai mesi in cui l'acqua è presente (perenne, stagionale, effimero); per le fiumare asciutte la larghezza è quella dell'alveo di ghiaia.")
+              + (wl.some(({ w }) => w.source === "osm" || w.source === "osm+s2") ? " " + tx("Il tracciato completo dei corsi d'acqua viene da OpenStreetMap; il satellite ne misura la larghezza e i mesi con acqua dove l'acqua è visibile.") : "") });
             const regTx = (w: WaterL) => (w.regime === "perennial" ? tx("perenne") : w.regime === "seasonal" ? tx("stagionale") : w.regime === "ephemeral" ? tx("effimero") : "–")
               + (w.months_seen?.length ? ` (${w.months_wet?.length ?? 0}/${w.months_seen.length})` : "") + (w.bed ? " · " + tx("alveo") : "");
             ib.push({ table: { header: [tx("Tratto"), tx("Tipo"), tx("Regime"), tx("Lunghezza") + " (m)", tx("Larghezza tipica") + " (m)", tx("Larghezza min – max") + " (m)"], widths: [10, 14, 22, 16, 18, 20],
-              rows: wl.slice(0, 15).map(({ w, i }) => [codesW[i], w.kind === "river" ? tx("Fiume") : tx("Canale"), regTx(w), n0(w.length_m ?? 0), w.mean_width_m != null ? n1(w.mean_width_m) : "–",
+              rows: wl.slice(0, 15).map(({ w, i }) => [codesW[i] + (w.name ? ` ${w.name}` : ""), w.kind === "river" ? tx("Fiume") : tx("Canale"), regTx(w), n0(w.length_m ?? 0), w.mean_width_m != null ? n1(w.mean_width_m) : "–",
                 w.width_min_m != null && w.width_max_m != null ? `${n0(w.width_min_m)} – ${n0(w.width_max_m)}` : "–"]) },
               caption: wl.length > 15 ? tx("I 15 tratti più lunghi su {n}; l'elenco completo è nel KMZ dei corsi d'acqua", { n: fx(wl.length) }) : tx("Corsi d'acqua esistenti misurati sulle immagini satellitari") });
             const wv = wl.filter(({ w }) => w.width_low_m != null && w.width_high_m != null).slice(0, 10);
@@ -9967,7 +9980,8 @@ export default function Page() {
                           {lines.map(({ w, i }) => (<Fragment key={i}>
                             <tr className={w.hidden ? "opacity-40" : ""}>
                               <td className="pr-1 whitespace-nowrap">
-                                <button className="text-brand-mid mr-0.5" title={t("Variazioni nell'anno e livelli")} onClick={() => setWaterOpen(waterOpen === i ? null : i)}>{waterOpen === i ? "▾" : "▸"}</button>{codes[i]}
+                                <button className="text-brand-mid mr-0.5" title={t("Variazioni nell'anno e livelli")} onClick={() => setWaterOpen(waterOpen === i ? null : i)}>{waterOpen === i ? "▾" : "▸"}</button><span title={w.name || undefined}>{codes[i]}</span>
+                                {w.name ? <div className="text-[10px] opacity-70 max-w-[7rem] truncate" title={w.name}>{w.name}</div> : null}
                               </td>
                               <td>
                                 <select className="bg-transparent text-[11px] p-0" value={w.kind} onChange={(e) => setWaterAt(i, { kind: e.target.value })}>
@@ -9975,6 +9989,7 @@ export default function Page() {
                                 </select>
                               </td>
                               <td className="whitespace-nowrap" title={waterMonthsTxt(w) || undefined}>
+                                {!w.regime && (w.source === "osm") ? <span className="opacity-60" title={t("Corso da OpenStreetMap non visibile dal satellite: regime e larghezza da verificare")}>{t("non visibile")}</span> : null}
                                 {w.regime ? <span className={"px-1 rounded " + (w.regime === "perennial" ? "bg-sky-100 text-sky-800" : w.regime === "seasonal" ? "bg-amber-100 text-amber-800" : "bg-orange-200 text-orange-900")}>
                                   {waterRegimeName(w.regime)}{w.months_seen?.length ? ` ${w.months_wet?.length ?? 0}/${w.months_seen.length}` : ""}</span> : "–"}
                                 {w.bed ? <span className="ml-1 opacity-80">{t("alveo")}</span> : null}

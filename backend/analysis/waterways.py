@@ -95,16 +95,12 @@ def _pick_scenes(client, bbox_wgs, date_to: str, months: int, max_cloud: float, 
     first = [min(v, key=key) for _, v in sorted(by_month.items())]
     if len(first) > max_scenes:                       # periodo più lungo delle scene: le più pulite
         first = sorted(first, key=key)[:max_scenes]
-    # mesi nuvolosi (> 30%): una seconda scena dello stesso mese, fino a `extra`
-    extra = []
-    for f in sorted(first, key=key, reverse=True):
-        if key(f) <= 30 or len(extra) >= max(0, max_extra):
-            continue
-        alt = sorted((x for x in by_month[f["date"][:7]] if x is not f), key=key)
-        if alt:
-            extra.append(alt[0])
-    rest = sorted((s for v in by_month.values() for s in v if s not in first and s not in extra), key=key)
-    picked = [s["date"] for s in first + extra + rest[:max(0, max_scenes - len(first))]]
+    # poi la SECONDA scena di ogni mese (le più pulite prima): dove l'area sta a cavallo di
+    # due orbite ogni data ne copre solo una parte, e i mesi nuvolosi restano scoperti
+    second = sorted((sorted(v, key=key)[1] for v in by_month.values() if len(v) >= 2), key=key)
+    rest = sorted((s for v in by_month.values() for s in sorted(v, key=key)[2:]), key=key)
+    room = max(0, max_scenes - len(first))
+    picked = [s["date"] for s in first + (second + rest)[:room]]
     return sorted(set(picked))
 
 
@@ -265,7 +261,7 @@ def _water_mask(ndwi: np.ndarray, swir: np.ndarray, sens: int, res: float):
         keep = np.zeros(n + 1, bool); keep[1:] = sizes >= 6
         m = keep[lab]
     m = _bridge(m, max(3, int(round(60 / res))))
-    return m, core, sr
+    return m, core, sr, ridge / _SENS["ridge"][s]
 
 
 def _bridge(mask: np.ndarray, max_gap_px: int = 6) -> np.ndarray:
@@ -309,6 +305,61 @@ def _bridge(mask: np.ndarray, max_gap_px: int = 6) -> np.ndarray:
         if best is not None:
             rr, cc = _line(r, c, best[0], best[1])
             out[rr, cc] = True
+    return out
+
+
+def _trace(mask: np.ndarray, ev: np.ndarray, res: float, max_m: float = 600.0,
+           ev_min: float = 0.35) -> np.ndarray:
+    """Ricuce i corsi d'acqua spezzati seguendo l'immagine, non in linea retta: da ogni capo
+    libero di un pezzo lungo almeno 50 m, il percorso di costo minimo (costo = 1/evidenza
+    lineare d'acqua) verso un altro pezzo entro `max_m`. Il collegamento vale solo se lungo
+    il percorso la traccia d'acqua c'è davvero (evidenza media ≥ `ev_min` della soglia, al
+    più 25% di tratti senza traccia) e il percorso non gira a vuoto (≤ 3 volte la distanza)."""
+    from skimage.graph import MCP_Geometric
+    from skimage.morphology import skeletonize
+    sk = skeletonize(mask)
+    deg, _ = _crossing(sk)
+    lab, n = ndi.label(mask, structure=np.ones((3, 3), bool))
+    if n < 2:
+        return mask
+    sklen = ndi.sum(sk, lab, index=np.arange(n + 1))
+    # solo corsi STRETTI (larghezza media ≤ 40 m): sui fiumi larghi a più rami la
+    # ricucitura farebbe grovigli fra i rami
+    area = ndi.sum(mask, lab, index=np.arange(n + 1))
+    narrow = (area / np.maximum(sklen, 1)) * res <= 40.0
+    H, W = mask.shape
+    R = max(5, int(round(max_m / res)))
+    ev = np.nan_to_num(ev, nan=0.0).astype("float32")
+    out = mask.copy()
+    for r, c in np.argwhere(sk & (deg == 1)):
+        lv = lab[r, c]
+        if sklen[lv] < 5 or not narrow[lv]:
+            continue
+        r0, r1, c0, c1 = max(0, r - R), min(H, r + R + 1), max(0, c - R), min(W, c + R + 1)
+        lw = lab[r0:r1, c0:c1]
+        tg = sk[r0:r1, c0:c1] & (lw != lv) & (lw > 0) & (sklen[lw] >= 5) & narrow[lw]
+        if not tg.any():
+            continue
+        e = ev[r0:r1, c0:c1]
+        cost = 1.0 / (0.05 + np.clip(e, 0, 3))
+        cost[lw == lv] = 1e4                                  # non tornare indietro sul proprio pezzo
+        cost[r - r0, c - c0] = 1.0
+        mcp = MCP_Geometric(cost)
+        cum, _ = mcp.find_costs([(r - r0, c - c0)])
+        tpts = np.argwhere(tg)
+        d = np.hypot(tpts[:, 0] - (r - r0), tpts[:, 1] - (c - c0))
+        ok = d <= R
+        if not ok.any():
+            continue
+        tpts, d = tpts[ok], d[ok]
+        k = int(np.argmin(cum[tpts[:, 0], tpts[:, 1]]))
+        path = np.array(mcp.traceback(tuple(tpts[k])))
+        if len(path) < 2:
+            continue
+        pe = e[path[:, 0], path[:, 1]]
+        if pe.mean() < ev_min or (pe < 0.1).mean() > 0.25 or len(path) > 3 * d[k] + 5:
+            continue
+        out[path[:, 0] + r0, path[:, 1] + c0] = True
     return out
 
 
@@ -457,7 +508,7 @@ def _smooth(px: list, w: int = 5) -> np.ndarray:
 
 def _widths(pts: np.ndarray, mask: np.ndarray, nir: np.ndarray, dt_px: np.ndarray,
             res: float, land_nir: float, water_nir: float, step_m: float = 20.0,
-            nan_ok: bool = False, md: np.ndarray | None = None):
+            nan_ok: bool = False, md: np.ndarray | None = None, snap_px: float = 0.0):
     """Larghezza bagnata a sezioni trasversali. Ritorna [(progressiva_m, larghezza_m)].
     Frazione d'acqua di ogni campione = (NIR terreno − NIR) / (NIR terreno − NIR acqua):
     il terreno si legge ai lati della sezione, l'acqua nel nucleo (se largo almeno 3 px).
@@ -504,6 +555,11 @@ def _widths(pts: np.ndarray, mask: np.ndarray, nir: np.ndarray, dt_px: np.ndarra
             if np.isnan(nv[mv0]).any():
                 continue
         z = len(t) // 2
+        if not mv[z] and snap_px > 0:
+            # asse disegnato a mano o da OSM: aggancio all'acqua più vicina lungo la sezione
+            near = np.flatnonzero(mv & (np.abs(t) <= snap_px))
+            if near.size:
+                z = int(near[np.argmin(np.abs(t[near]))])
         if not mv[z]:
             continue
         lo = z
@@ -609,15 +665,16 @@ def _classify(length_m: float, width_m: float, sinuosity: float, net_max_w: floa
     solo se lungo, diritto e molto più stretto del fiume (es. un canale che prende dal
     fiume); altrove decide la sinuosità."""
     if net_max_w >= 60:
-        return "canal" if (length_m >= 1000 and sinuosity <= 1.10 and width_m <= min(60.0, 0.5 * net_max_w)) else "river"
+        return "canal" if (length_m >= 1000 and sinuosity <= 1.15 and width_m <= min(60.0, 0.5 * net_max_w)) else "river"
     return "canal" if sinuosity <= 1.12 else "river"
 
 
 # ------------------------------------------------------------------ principale
 
 def detect_waterways(client, geom: dict, date_to: str | None = None, months: int = 12,
-                     max_scenes: int = 12, max_cloud: float = 60.0, sens: int = 3,
-                     min_len_m: float = 150.0, pct: float = 50.0, *, composite=None) -> dict:
+                     max_scenes: int = 24, max_cloud: float = 60.0, sens: int = 3,
+                     min_len_m: float = 150.0, pct: float = 50.0, *, composite=None,
+                     osm: list[dict] | None = None) -> dict:
     """Fiumi e canali esistenti nel poligono `geom` con lunghezza e larghezza.
     `composite` (dict del composito, g, dates) permette ai test di saltare il download."""
     if composite is None:
@@ -638,14 +695,15 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
     poly_mask = _poly_mask(geom, g)
     ndwi = np.where(poly_mask, ndwi, np.nan)
 
-    m_perm, core, sratio = _water_mask(ndwi, swir, sens, res)
+    m_perm, core, sratio, ev = _water_mask(ndwi, swir, sens, res)
     # stato di piena (2° NDWI più alto, 2° SWIR più basso fra le date): fiumare e stagionali.
     # Dalla piena si tengono solo le forme lineari: le risaie allagate e i campi
     # bagnati per qualche settimana non diventano «bacini».
     ndwi_wet = C.get("ndwi_wet")
     if ndwi_wet is not None:
         ndwi_wet = np.where(poly_mask, ndwi_wet, np.nan)
-        m_flood, _c2, sr_wet = _water_mask(ndwi_wet, C["swir_wet"], sens, res)
+        m_flood, _c2, sr_wet, ev_wet = _water_mask(ndwi_wet, C["swir_wet"], sens, res)
+        ev = np.maximum(ev, ev_wet)
         extra = m_flood & ~ndi.binary_dilation(m_perm, iterations=2)
         lab_e, ne = ndi.label(extra, structure=np.ones((3, 3), bool))
         if ne:
@@ -660,6 +718,9 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
         sratio = np.minimum(sratio, sr_wet)
     else:
         mask = m_perm
+    # ricucitura lungo la traccia: i fiumi stretti a meandri si leggono a pezzi; ogni capo
+    # libero si collega al pezzo successivo seguendo la linea d'acqua più evidente
+    mask = _trace(mask & poly_mask, np.where(sratio < 0.85, ev, 0.0) * poly_mask, res)
     # mare e lagune: specchi enormi a quota ~0 sul DEM → fuori (non sono fiumi né canali)
     dem = C.get("dem")
     if dem is None and client is not None:
@@ -753,7 +814,7 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
             wet_m, seen_m = _months_axis(px, m_wet_b, m_seen_b)
             reg = _regime(wet_m, seen_m)
             if reg is None:
-                reg = "ephemeral" if seasonal_axis else "perennial"
+                reg = "ephemeral" if seasonal_axis else None      # troppo pochi mesi osservati: non determinato
             elif reg == "perennial" and seasonal_axis:
                 reg = "seasonal"
             if reg != "perennial" and L < 200:
@@ -790,13 +851,19 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
     # alvei asciutti: si escludono solo accanto all'acqua PERMANENTE (lì sono barre del
     # fiume); le pozze di piena dentro un greto non lo spezzano
     segments += _dry_beds(C, m_perm & mask, poly_mask, res, g, m_wet_b, m_seen_b, dem)
+    n_osm = 0
+    if osm:
+        oc, gone = _osm_courses(osm, segments, g, poly_mask, mask, nir_f, dt_px, res, land_nir, water_nir,
+                                m_wet_b, m_seen_b, md_all)
+        segments = [sg for k, sg in enumerate(segments) if k not in gone] + oc
+        n_osm = len(oc)
     nets: dict[int, list] = {}
     for sg in segments:
         nets.setdefault(sg["net"], []).append(sg)
     for lst in nets.values():
-        wmax = max(x["width_m"] for x in lst)
+        wmax = max((x["width_m"] or 0) for x in lst)
         for x in lst:
-            if not x.get("bed"):
+            if not x.get("bed") and not x.get("osm"):
                 x["kind"] = _classify(x["length_m"], x["width_m"], x["sinuosity"], wmax)
     # escursione di livello stimata: Δh = ΔB / (2·m), m = scarpa delle sponde.
     # Canali: sezione tipo in terra 1:1,5 (il DEM a 30 m non vede le sponde di un canale);
@@ -828,7 +895,8 @@ def detect_waterways(client, geom: dict, date_to: str | None = None, months: int
         "segments": segments, "basins": basins, "surface": surface,
         "n_river": sum(1 for s in segments if s["kind"] == "river"),
         "n_canal": sum(1 for s in segments if s["kind"] == "canal"),
-        "n_seasonal": sum(1 for s in segments if s["regime"] != "perennial"),
+        "n_seasonal": sum(1 for s in segments if s["regime"] not in ("perennial", None)),
+        "n_osm": n_osm,
         "length_m": round(sum(s["length_m"] for s in segments), 0),
         "water_ha": round(float(mask.sum()) * res * res / 1e4, 1),
         "res_m": round(res, 1), "dates": dates, "scenes_ok": n_ok, "requests": n_jobs,
@@ -928,6 +996,150 @@ def _dry_beds(C: dict, water: np.ndarray, poly_mask: np.ndarray, res: float, g: 
                         "below_pixel": False, "profile": [], "ndwi": None, "swir_ratio": None,
                         "regime": reg, "months_wet": wet_m, "months_seen": seen_m})
     return out
+
+
+OSM_KIND = {"river": "river", "stream": "river", "wadi": "river", "canal": "canal", "drain": "canal", "ditch": "canal"}
+
+
+def _osm_courses(osm: list[dict], segments: list[dict], g: dict, poly_mask: np.ndarray, mask: np.ndarray,
+                 nir_f: np.ndarray, dt_px: np.ndarray, res: float, land_nir: float, water_nir: float,
+                 m_wet_b: np.ndarray, m_seen_b: np.ndarray, md: np.ndarray) -> tuple[list[dict], set[int]]:
+    """Corsi d'acqua da OpenStreetMap come tracciato COMPLETO (fiumi, torrenti, wadi, canali,
+    dreni), ritagliati sull'area. Il satellite li misura: larghezza dove c'è acqua (sezioni
+    agganciate all'acqua entro 50 m), mesi con acqua e regime, quota del tracciato confermata.
+    I pezzi letti dal satellite che stanno sopra a un corso OSM (≥ 60% entro 60 m + metà
+    larghezza) vengono assorbiti: niente doppioni. Ritorna (corsi, indici dei pezzi assorbiti)."""
+    import pyproj
+    from scipy.spatial import cKDTree
+    to_utm = pyproj.Transformer.from_crs(4326, g["epsg"], always_xy=True)
+    H, W = poly_mask.shape
+    # mesi con acqua «vicino» all'asse (l'asse OSM può essere spostato di qualche pixel)
+    wet_d = np.zeros_like(m_wet_b)
+    for b in range(12):
+        bit = (m_wet_b & np.uint16(1 << b)) > 0
+        if bit.any():
+            wet_d |= np.where(ndi.binary_dilation(bit, iterations=3), np.uint16(1 << b), np.uint16(0))
+    pieces = []
+    for w in osm:
+        kind = OSM_KIND.get(str(w.get("waterway", "")))
+        co = w.get("coords") or []
+        if not kind or len(co) < 2:
+            continue
+        xy = [to_utm.transform(float(p[0]), float(p[1])) for p in co]
+        rc = np.array([((g["top"] - y) / res - 0.5, (x - g["minx"]) / res - 0.5) for x, y in xy])
+        dense = [rc[0]]
+        for a, b in zip(rc[:-1], rc[1:]):
+            n = max(1, int(math.ceil(math.hypot(*(b - a)) / 0.5)))
+            dense += [a + (b - a) * (k / n) for k in range(1, n + 1)]
+        dense = np.array(dense)
+        ri, ci = np.rint(dense[:, 0]).astype(int), np.rint(dense[:, 1]).astype(int)
+        ins = (ri >= 0) & (ri < H) & (ci >= 0) & (ci < W)
+        ins[ins] = poly_mask[ri[ins], ci[ins]]
+        # pezzi dentro l'area (un fiume che esce e rientra dà più pezzi)
+        k = 0
+        while k < len(dense):
+            if not ins[k]:
+                k += 1
+                continue
+            j = k
+            while j < len(dense) and ins[j]:
+                j += 1
+            pc = dense[k:j]
+            if len(pc) >= 2 and float(np.hypot(*np.diff(pc, axis=0).T).sum()) * res >= 50:
+                pieces.append({"w": w, "kind": kind, "pts": pc})
+            k = j
+    if not pieces:
+        return [], set()
+    allp = np.concatenate([p["pts"] for p in pieces])
+    pid = np.concatenate([np.full(len(p["pts"]), i) for i, p in enumerate(pieces)])
+    tree = cKDTree(allp)
+    absorbed: dict[int, list[int]] = {}
+    gone: set[int] = set()
+    for si, sg in enumerate(segments):
+        P = sg.get("_pts")
+        if P is None or len(P) < 2:
+            continue
+        lim = (60.0 + (sg.get("width_m") or 0) / 2) / res
+        d, ix = tree.query(P)
+        near = d <= lim
+        if near.mean() >= 0.6:
+            vals, cnt = np.unique(pid[ix[near]], return_counts=True)
+            absorbed.setdefault(int(vals[np.argmax(cnt)]), []).append(si)
+            gone.add(si)
+    # acqua di ogni pezzo di satellite (asse ± metà larghezza): un corso OSM si misura solo
+    # sulla SUA acqua, non su quella di un canale o di un fiume che attraversa
+    seg_lab = np.zeros((H, W), "int32")
+    for si, sg in enumerate(segments):
+        P = sg.get("_pts")
+        if P is None or si not in gone:
+            continue
+        rad = int(math.ceil((sg.get("width_m") or res) / 2 / res)) + 2
+        Pi = np.rint(np.asarray(P)).astype(int)
+        r0, r1 = max(0, Pi[:, 0].min() - rad - 1), min(H, Pi[:, 0].max() + rad + 2)
+        c0, c1 = max(0, Pi[:, 1].min() - rad - 1), min(W, Pi[:, 1].max() + rad + 2)
+        win = np.zeros((r1 - r0, c1 - c0), bool)
+        ok_ = (Pi[:, 0] >= r0) & (Pi[:, 0] < r1) & (Pi[:, 1] >= c0) & (Pi[:, 1] < c1)
+        win[Pi[ok_, 0] - r0, Pi[ok_, 1] - c0] = True
+        win = ndi.binary_dilation(win, iterations=rad) & md[r0:r1, c0:c1]
+        seg_lab[r0:r1, c0:c1][win] = si + 1
+    out = []
+    for i, pc in enumerate(pieces):
+        w, kind, pts = pc["w"], pc["kind"], pc["pts"]
+        sm = _smooth([tuple(p) for p in pts[::2]] if len(pts) > 6 else [tuple(p) for p in pts])
+        L = float(np.hypot(*np.diff(pts, axis=0).T).sum()) * res
+        own = absorbed.get(i, [])
+        if own:
+            md_own = np.isin(seg_lab, np.array(own) + 1)
+            prof = _widths(sm, mask & md_own, nir_f, dt_px, res, land_nir, water_nir, md=md_own, snap_px=50.0 / res)
+            near_own = ndi.binary_dilation(md_own, iterations=3)
+        else:
+            prof, near_own = [], None
+        px = list({(int(round(r)), int(round(c))) for r, c in pts[::4]})
+        px = [p for p in px if 0 <= p[0] < H and 0 <= p[1] < W]
+        wet_m, seen_m = _months_axis(px, wet_d, m_seen_b)
+        reg = _regime(wet_m, seen_m)
+        # quota del tracciato confermata dal satellite: acqua entro 3 pixel
+        cover = float(np.mean([near_own[p] for p in px])) if (px and near_own is not None) else 0.0
+        subs = [segments[j] for j in absorbed.get(i, [])]
+        ws = np.array([x for _, x in prof]) if len(prof) >= 3 else np.array([])
+        width = w_lo = w_hi = None
+        if ws.size:
+            width, w_lo, w_hi = float(np.median(ws)), float(np.percentile(ws, 10)), float(np.percentile(ws, 90))
+        elif subs:
+            lens = np.array([x["length_m"] for x in subs]); wv = np.array([x["width_m"] for x in subs])
+            o = np.argsort(wv); cw = np.cumsum(lens[o]); width = float(wv[o][np.searchsorted(cw, cw[-1] / 2)])
+            w_lo, w_hi = float(min(x["width_min_m"] for x in subs)), float(max(x["width_max_m"] for x in subs))
+        elif w.get("width"):
+            try:
+                width = float(str(w["width"]).replace(",", ".").split()[0])
+            except ValueError:
+                width = None
+        best = max(subs, key=lambda x: x["length_m"]) if subs else {}
+        coords = _to_ll(pts, g)
+        if len(coords) < 2:
+            continue
+        chord = math.hypot(*(pts[-1] - pts[0])) * res
+        out.append({
+            "kind": kind, "osm": True, "osm_id": w.get("id"), "osm_type": w.get("waterway"),
+            "name": w.get("name") or None, "net": -100000 - i,
+            "geojson": {"type": "LineString", "coordinates": coords},
+            "length_m": round(L, 1),
+            "width_m": round(width, 1) if width is not None else None,
+            "width_min_m": round(w_lo, 1) if w_lo is not None else None,
+            "width_max_m": round(w_hi, 1) if w_hi is not None else None,
+            "width_wet_m": best.get("width_wet_m"),
+            "sinuosity": round(L / chord if chord > 1 else 9.9, 3),
+            "below_pixel": bool(width is not None and width < res),
+            "profile": [[round(a, 0), round(b, 1)] for a, b in prof],
+            "ndwi": None, "swir_ratio": None,
+            # senza acqua vista dal satellite il regime non si sa (corso troppo stretto o asciutto):
+            # resta da determinare, salvo che OSM lo segni intermittente
+            "regime": ("ephemeral" if str(w.get("intermittent", "")) == "yes" else None) if (cover < 0.05 and not wet_m) else reg,
+            "months_wet": wet_m, "months_seen": seen_m, "sat_cover": round(cover, 2),
+            **{k: best[k] for k in ("width_low_m", "date_low", "width_high_m", "date_high", "widths_by_date") if k in best},
+            "_pts": sm,
+        })
+    return out, gone
 
 
 def _is_iso(e, edges) -> bool:
