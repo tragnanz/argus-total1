@@ -27,7 +27,7 @@ const page = await ctx.newPage();
 const errors = []; page.on("pageerror", (e) => errors.push(e.message)); page.on("console", (m) => { if (m.type() === "error" && /Error|error/.test(m.text())) errors.push("console: " + m.text().slice(0, 400)); }); page.on("dialog", (d) => d.accept());
 // i corsi d'acqua stanno nella pagina Fonte d'acqua
 const goFonte = async () => {
-  if (!(await page.locator('button:has-text("Rileva corsi d\'acqua")').first().isVisible().catch(() => false))) await page.locator('button[title="Fonte d\'acqua"]').first().click();
+  if (!(await page.locator("[data-water-sat]").first().isVisible().catch(() => false))) await page.locator('button[title="Fonte d\'acqua"]').first().click();
   await page.waitForTimeout(600);
 };
 const download = async (click) => { const [d] = await Promise.all([page.waitForEvent("download", { timeout: 60000 }), click()]); return d; };
@@ -37,11 +37,16 @@ try {
   await page.locator('select:has(option:text-is("Chivasso"))').selectOption({ label: "Chivasso" }); await page.waitForTimeout(1200);
   await page.locator('select:has(option:text-is("Chivasso acque"))').selectOption({ label: "Chivasso acque" }); await page.waitForTimeout(5000);
   await goFonte();
+  // due comandi: importazione topografica (secondi) e analisi satellitare (minuti)
+  const tt = Date.now();
+  await page.locator("[data-water-topo]").click();
+  await page.locator("text=/Importazione topografica in \\d+ s/").first().waitFor({ timeout: 60000 });
+  const tOsm = (Date.now() - tt) / 1000;
+  const btns = await page.locator("[data-water-section]").innerText();
+  ok(tOsm < 30 && !/OpenStreetMap/.test(btns), `Importazione topografica in ${tOsm.toFixed(0)} s (nessun «OpenStreetMap» nel pannello)`);
+  await page.locator('button:has-text("Annulla")').first().click(); await page.waitForTimeout(500);
   const t0 = Date.now();
-  await page.locator('button:has-text("Rileva corsi d\'acqua")').first().click();
-  await page.locator('button:has-text("Conferma")').first().waitFor({ timeout: 60000 });
-  const tOsm = (Date.now() - t0) / 1000;
-  ok(tOsm < 30, `Anteprima OpenStreetMap in ${tOsm.toFixed(0)} s`);
+  await page.locator("[data-water-sat]").click();
   await page.locator("text=/Anteprima: .* tratti di fiume/").first().waitFor({ timeout: 400000 });
   const tDet = (Date.now() - t0) / 1000;
   const msg = await page.locator("text=/Anteprima: .* tratti di fiume/").first().innerText().catch(() => "");
@@ -74,7 +79,7 @@ try {
   // registrazione: OpenStreetMap canal; nome forzato a mano anche sugli altri tratti con lo stesso nome
   const card = tbl.locator("[data-water-card]").first();
   const reg = await card.locator("[data-water-reg]").innerText();
-  ok(/Registrato come: OpenStreetMap: waterway=canal/.test(reg) && /Cavour/.test(reg), `Registrazione: ${reg.split("\n")[0]}`);
+  ok(/Registrato come: Importazione topografica: canal/.test(reg) && /Cavour/.test(reg), `Registrazione: ${reg.split("\n")[0]}`);
   await card.locator("[data-water-name]").fill("Cavour forzato"); await page.waitForTimeout(300);
   const reg2 = await card.locator("[data-water-reg]").innerText();
   const nSame = Number((reg2.match(/altri (\d+) tratti/) || [])[1] || 0);
@@ -108,7 +113,7 @@ try {
   const nPm = (kml.match(/<Placemark>/g) || []).length;
   const folders = [...kml.matchAll(/<Folder><name>([^<]+)<\/name>/g)].map((m) => m[1]);
   ok(/Fiumi \(\d+\)/.test(folders.join("|")) && /Canali \(\d+\)/.test(folders.join("|")), `KMZ: cartelle ${folders.join(", ")}`);
-  ok(/Canale Cavour/.test(kml) && /OpenStreetMap \(canal\) \+ Sentinel-2/.test(kml), "KMZ: nomi e fonte OpenStreetMap + Sentinel-2");
+  ok(/Canale Cavour/.test(kml) && /Importazione topografica \(canal\) \+ Sentinel-2/.test(kml) && /© OpenStreetMap contributors/.test(kml), "KMZ: nomi, fonte «Importazione topografica + Sentinel-2» e attribuzione della licenza");
   ok(/<Data name="larghezza_m"><value>33<\/value>/.test(kml), "KMZ: la larghezza modificata a mano (33 m) è nel file");
   ok(/<Data name="lunghezza_m">/.test(kml) && /Larghezza tipica/.test(kml) && /Sentinel-2/.test(kml), `KMZ: ${nPm} elementi con lunghezza, larghezza e fonte`);
   ok(/Superficie d'acqua \(satellite\)/.test(kml), "KMZ: superficie d'acqua del satellite");
@@ -136,7 +141,7 @@ try {
   await page.locator('select:has(option:text-is("Chivasso"))').selectOption({ label: "Chivasso" }); await page.waitForTimeout(1200);
   await page.locator('select:has(option:text-is("Amendolea"))').selectOption({ label: "Amendolea" }); await page.waitForTimeout(5000);
   await goFonte();
-  await page.locator('button:has-text("Rileva corsi d\'acqua")').first().click();
+  await page.locator("[data-water-sat]").click();
   await page.locator("text=/Anteprima: .* tratti di fiume/").first().waitFor({ timeout: 400000 });
   await page.locator('button:has-text("Conferma")').first().click(); await page.waitForTimeout(1500);
   const t3 = page.locator("[data-water-table]").first();
@@ -165,9 +170,9 @@ try {
   await page.locator('select:has(option:text-is("Gorgol"))').selectOption({ label: "Gorgol" }); await page.waitForTimeout(5000);
   await goFonte();
   const tg = Date.now();
-  await page.locator('button:has-text("Rileva corsi d\'acqua")').first().click();
-  await page.locator("text=/OpenStreetMap in \\d+ s/").first().waitFor({ timeout: 60000 });
-  const msgG = await page.locator("text=/OpenStreetMap in \\d+ s/").first().innerText().catch(() => "");
+  await page.locator("[data-water-topo]").click();
+  await page.locator("text=/Importazione topografica in \\d+ s/").first().waitFor({ timeout: 60000 });
+  const msgG = await page.locator("text=/Importazione topografica in \\d+ s/").first().innerText().catch(() => "");
   ok((Date.now() - tg) < 30000 && /\d+ fiumi, \d+ canali/.test(msgG), `Gorgol, anteprima rapida in ${((Date.now() - tg) / 1000).toFixed(0)} s: ${msgG.slice(0, 80)}`);
   // vista: fiumi nascosti senza confermare, poi di nuovo visibili
   const blueVisible = () => page.evaluate(() => [...document.querySelectorAll(".leaflet-overlay-pane path")].filter((p) => p.getAttribute("stroke") === "#1d4ed8" && p.style.display !== "none").length);
@@ -183,8 +188,9 @@ try {
   await page.screenshot({ path: path.join(SH, "w5b_anteprima_osm.png") });
   // confermo subito: le misure dal satellite arrivano dopo, sui corsi già confermati
   await page.locator('button:has-text("Conferma")').first().click(); await page.waitForTimeout(1500);
-  await page.locator("text=/Misure dal satellite pronte in \\d+ s: \\d+ corsi misurati/").first().waitFor({ timeout: 600000 });
-  const mm = await page.locator("text=/Misure dal satellite pronte in/").first().innerText();
+  await page.locator("[data-water-sat]").click();
+  await page.locator("text=/Analisi satellitare pronta in \\d+ s: \\d+ corsi misurati/").first().waitFor({ timeout: 600000 });
+  const mm = await page.locator("text=/Analisi satellitare pronta in/").first().innerText();
   ok(Number((mm.match(/(\d+) corsi misurati/) || [])[1]) > 100, `Gorgol: ${mm.trim().slice(0, 140)}`);
   await page.waitForTimeout(800);
   const t4 = page.locator("[data-water-table]").first();
@@ -199,7 +205,7 @@ try {
   const pts = [...kml3.matchAll(/<coordinates>([^<]+)<\/coordinates>/g)].flatMap((m) => m[1].trim().split(/\s+/).map((q) => q.split(",").map(Number)));
   const outside = pts.filter(([lo, la]) => lo < -12.8405 || lo > -12.6995 || la < 16.0695 || la > 16.2005).length;
   ok(pts.length > 100 && outside === 0, `KMZ Gorgol: ${pts.length} vertici, ${outside} fuori dall'area`);
-  ok(/OpenStreetMap \(river\)/.test(kml3) && /Gorgol/.test(kml3), "KMZ Gorgol: nome e fonte OpenStreetMap");
+  ok(/Importazione topografica \((river|stream)\)/.test(kml3) && /Gorgol/.test(kml3), "KMZ Gorgol: nome e fonte «Importazione topografica»");
   // fiumi non spostabili, canali e dreni spostabili (casella ⇄), cartelle separate nel KMZ
   const mv = await t4.locator("tbody tr").evaluateAll((trs) => trs.filter((tr) => tr.querySelector("select")).map((tr) => ({ k: tr.querySelector("select").value, m: tr.querySelector('input[type="checkbox"]')?.checked })));
   const bad = mv.filter((r) => (r.k === "river" && r.m) || ((r.k === "canal" || r.k === "drain") && !r.m));
@@ -233,7 +239,7 @@ try {
   await page.screenshot({ path: path.join(SH, "w6_selezione.png") });
   const gc = t4.locator("[data-water-card]").first();
   const greg = await gc.locator("[data-water-reg]").innerText().catch(() => "");
-  ok(/Registrato come: OpenStreetMap: waterway=(river|stream|wadi)/.test(greg), `Scheda del fiume: ${greg.split("\n")[0]}`);
+  ok(/Registrato come: Importazione topografica: (river|stream|wadi)/.test(greg), `Scheda del fiume: ${greg.split("\n")[0]}`);
   // modifica dei punti: inserimento sulla linea, prolungamento dall'estremo, annulla
   await gc.locator("button:has-text('⌖')").click(); await page.waitForTimeout(1500);
   await gc.locator("[data-water-edit]").click(); await page.waitForTimeout(600);

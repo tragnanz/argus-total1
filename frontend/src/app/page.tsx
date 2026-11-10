@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.250";
+const REV = "v0.6.251";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1233,8 +1233,9 @@ export default function Page() {
   const waterPreviewOn = useRef(false); waterPreviewOn.current = waterPreview;
   // rilevamento in due fasi: tracciati OSM subito, misure dal satellite quando arrivano
   const [waterSatBusy, setWaterSatBusy] = useState(false);
+  const [waterTopoBusy, setWaterTopoBusy] = useState(false);
   const waterReq = useRef(0);
-  const waterConfirmedReq = useRef(0);
+
   // superficie d'acqua letta dal satellite (poligoni, per il KMZ) e periodo del composito
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [waterSurface, setWaterSurface] = useState<{ type: "Polygon"; coordinates: any }[]>([]);
@@ -2277,37 +2278,39 @@ export default function Page() {
       dem_depth_m: [3.0, 2.0, 1.2, 0.7, 0.4][s - 1],  // alvei incisi: profondità min
     };
   }
+  // IMPORTAZIONE TOPOGRAFICA: tracciati dei corsi d'acqua cartografati (OpenStreetMap, tasselli
+  // vettoriali) ritagliati sull'area, con tipo, nome e lunghezza — pochi secondi, nessuna misura
+  async function importTopoWater() {
+    if (!activeGeom) return needField();
+    stopEditWater(); setWaterConnect(false);
+    const t0 = Date.now();
+    setWaterTopoBusy(true);
+    try {
+      const q = await api.fetchOsmCourses(activeGeom);
+      if (!q.features.length) { setMsg(t("Importazione topografica: nessun corso d'acqua cartografato in quest'area. Prova l'analisi satellitare.")); return; }
+      waterPending.current = null;
+      const codes = waterCodes(q.features);
+      mapApi.current?.previewWater(q.features.map((f, i) => ({ geom: f.geojson, kind: f.kind, props: f, label: waterLabel(f, codes[i]) })));
+      setWaterPreview(true); setWaterRemoveOn(false);
+      const km = q.features.reduce((a, f) => a + (f.length_m ?? 0), 0) / 1000;
+      setMsg(t("Importazione topografica in {s} s: {r} fiumi, {c} canali, {d} dreni ({km}). Conferma, poi l'analisi satellitare aggiunge larghezze, regime e portate.",
+        { s: fmt((Date.now() - t0) / 1000, { maximumFractionDigits: 0 }), r: q.n_river, c: q.n_canal, d: q.n_drain, km: uKm(km, 1) }));
+    } catch (e) { showErr(e); } finally { setWaterTopoBusy(false); }
+  }
+  // ANALISI SATELLITARE: 12 mesi di Sentinel-2 + DEM (+ i tracciati topografici, misurati). Se ci sono
+  // corsi topografici già confermati le misure si attaccano a quelli; altrimenti anteprima completa
   async function detectWater() {
     if (!activeGeom) return needField();
     stopEditWater(); setWaterConnect(false);
     const id = ++waterReq.current, t0 = Date.now();
     setWaterSatBusy(true);
-    setMsg(t("Leggo i corsi d'acqua da OpenStreetMap; le misure dal satellite (12 mesi di immagini) arrivano dopo…"));
+    setMsg(t("Analisi satellitare in corso: 12 mesi di immagini Sentinel-2, di solito 1–3 minuti. Intanto puoi continuare a lavorare."));
     const p = waterParams();
-    // la data scelta (se c'è) chiude il periodo di 12 mesi; altrimenti oggi. Il rilevamento completo
-    // (Sentinel-2 + DEM + OSM misurato) parte subito; l'anteprima OSM arriva in pochi secondi
-    const full = api.fetchWatercourses(activeGeom, date || null, waterSens, 12, true, p.dem_channel_ha, p.dem_depth_m, p.min_area_ha);
-    let fullDone = false, quick = false;
-    api.fetchOsmCourses(activeGeom).then((q) => {
-      if (id !== waterReq.current || fullDone || !q.features.length) return;
-      quick = true;
-      const codes = waterCodes(q.features);
-      mapApi.current?.previewWater(q.features.map((f, i) => ({ geom: f.geojson, kind: f.kind, props: f, label: waterLabel(f, codes[i]) })));
-      setWaterPreview(true); setWaterRemoveOn(false);
-      const km = q.features.reduce((a, f) => a + (f.length_m ?? 0), 0) / 1000;
-      setMsg(t("OpenStreetMap in {s} s: {r} fiumi, {c} canali, {d} dreni ({km}). Puoi già confermare: larghezze, regime e portate dal satellite si aggiungono da sole.",
-        { s: fmt((Date.now() - t0) / 1000, { maximumFractionDigits: 0 }), r: q.n_river, c: q.n_canal, d: q.n_drain, km: uKm(km, 1) }));
-    }).catch(() => { /* OSM non raggiungibile: resta il rilevamento completo */ });
     try {
-      const w = await full;
-      fullDone = true;
+      const w = await api.fetchWatercourses(activeGeom, date || null, waterSens, 12, true, p.dem_channel_ha, p.dem_depth_m, p.min_area_ha);
       if (id !== waterReq.current) return;
       const secs = fmt((Date.now() - t0) / 1000, { maximumFractionDigits: 0 });
-      if (quick && !waterPreviewOn.current) {
-        // anteprima già confermata (o annullata): le misure si aggiungono ai corsi confermati
-        if (waterConfirmedReq.current === id) mergeWaterMeasures(w, secs);
-        return;
-      }
+      if (!waterPreviewOn.current && wcRef.current.some((x) => x.source === "osm" || x.source === "osm+s2")) { mergeWaterMeasures(w, secs); return; }
       if (!w.features.length) { setMsg(t("Nessun corso d'acqua rilevato: prova ad alzare la sensibilità.")); return; }
       waterPending.current = { surface: w.surface ?? [], dates: w.dates ?? [], res_m: w.res_m ?? 10 };
       // ANTEPRIMA modificabile a mano: conferma o annulla (le misure viaggiano con ogni elemento)
@@ -2315,15 +2318,13 @@ export default function Page() {
       mapApi.current?.previewWater(w.features.map((f, i) => ({ geom: f.geojson, kind: f.kind, props: f, label: waterLabel(f, codes[i]) })));
       setWaterPreview(true); setWaterRemoveOn(false);
       const km = w.features.filter((f) => f.kind === "river" || f.kind === "canal").reduce((a, f) => a + (f.length_m ?? 0), 0) / 1000;
-      setMsg((quick ? t("Misure dal satellite pronte in {s} s: anteprima aggiornata.", { s: secs }) + " " : "")
+      setMsg(t("Analisi satellitare pronta in {s} s.", { s: secs }) + " "
         + t("Anteprima: {r} tratti di fiume e {c} di canale ({km}), {d} impluvi (DEM), {b} bacini. Modifica a mano, poi Conferma.",
         { r: w.n_river, c: w.n_canal ?? 0, km: uKm(km, 1), d: w.n_drainage, b: w.n_basin })
         + (w.n_seasonal ? " " + t("{n} tratti non perenni (stagionali o effimeri).", { n: w.n_seasonal }) : "")
-        + (w.n_osm ? " " + t("{n} tracciati completi da OpenStreetMap, misurati sul satellite.", { n: w.n_osm }) : w.osm_error ? " " + t("OpenStreetMap non raggiungibile: solo satellite.") : ""));
+        + (w.n_osm ? " " + t("{n} tracciati della cartografia topografica, misurati sul satellite.", { n: w.n_osm }) : w.osm_error ? " " + t("Cartografia topografica non raggiungibile: solo satellite.") : ""));
     } catch (e) {
-      if (id !== waterReq.current) return;
-      if (quick) setMsg(t("Misure dal satellite non disponibili: restano i tracciati di OpenStreetMap.") + " " + (e instanceof Error ? e.message : ""));
-      else showErr(e);
+      if (id === waterReq.current) showErr(e);
     } finally { if (id === waterReq.current) setWaterSatBusy(false); }
   }
   // misure del rilevamento completo sui corsi OSM già confermati: stesso tracciato (entro 25 m in media,
@@ -2333,7 +2334,9 @@ export default function Page() {
     const MEAS = ["source", "sat_cover", "mean_width_m", "width_min_m", "width_max_m", "width_wet_m", "below_pixel", "sinuosity", "profile", "regime",
       "months_wet", "months_seen", "bed", "width_low_m", "date_low", "width_high_m", "date_high", "widths_by_date", "bank_m", "bank_from", "level_range_m", "level_abs"] as const;
     const bbox = (cs: number[][]) => { let a = 180, b = 90, c = -180, d = -90; for (const p of cs) { if (p[0] < a) a = p[0]; if (p[1] < b) b = p[1]; if (p[0] > c) c = p[0]; if (p[1] > d) d = p[1]; } return [a, b, c, d]; };
-    const cur = wcRef.current;
+    // i tratti di un'analisi satellitare precedente (non ritoccati a mano) vengono sostituiti
+    const cur = wcRef.current.filter((x) => !((x.source === "s2" || x.source === "dem") && !x.edited));
+    if (cur.length !== wcRef.current.length || waterSelRef.current.idx != null) { stopEditWater(); waterSelRef.current = { kind: null, idx: null }; setWaterSel(waterSelRef.current); }
     const boxes = cur.map((x) => bbox(waterLineOf(x)));
     const used = new Set<number>();
     let nMeas = 0;
@@ -2348,7 +2351,7 @@ export default function Page() {
       const step = Math.max(1, Math.floor(fc.length / 15)), samp = fc.filter((_, k) => k % step === 0);
       let best = -1, bd = 25;
       merged.forEach((x, k) => {
-        if (used.has(k) || x.geojson.type !== "LineString" || x.source !== "osm" || x.osm_type !== f.osm_type) return;
+        if (used.has(k) || x.geojson.type !== "LineString" || !(x.source === "osm" || x.source === "osm+s2") || x.osm_type !== f.osm_type) return;
         const b = boxes[k];
         if (b[0] > fb[2] + pad || b[2] < fb[0] - pad || b[1] > fb[3] + pad || b[3] < fb[1] - pad) return;
         const r = (x.length_m ?? 0) / (f.length_m || 1); if (r < 0.6 || r > 1.6) return;
@@ -2368,7 +2371,7 @@ export default function Page() {
     setWatercourses(arr); renderWater(arr);
     setWaterSurface((w.surface ?? []) as typeof waterSurface);
     setWaterMeta({ dates: w.dates ?? [], res_m: w.res_m ?? 10 });
-    setMsg(t("Misure dal satellite pronte in {s} s: {m} corsi misurati, {a} tratti aggiunti (visti solo dal satellite o dal DEM).", { s: secs, m: nMeas, a: extra.length }));
+    setMsg(t("Analisi satellitare pronta in {s} s: {m} corsi misurati, {a} tratti aggiunti (visti solo dal satellite o dal DEM).", { s: secs, m: nMeas, a: extra.length }));
   }
   function confirmWaterUI() {
     stopEditWater();
@@ -2394,9 +2397,8 @@ export default function Page() {
       waterPending.current = null;
     }
     setWaterPreview(false); setWaterRemoveOn(false);
-    if (waterSatBusy) waterConfirmedReq.current = waterReq.current;
     setMsg(t("Corsi d'acqua confermati: {n}. I pivot li eviteranno.", { n: feats.length })
-      + (waterSatBusy ? " " + t("Le misure dal satellite si aggiungeranno appena pronte.") : ""));
+      + (waterSatBusy ? " " + t("Le misure dell'analisi satellitare si aggiungeranno appena pronte.") : ""));
   }
   function setWaterKindMovable(kind: string, movable: boolean) {
     setWatercourses((ws) => { const arr = ws.map((w) => (w.kind === kind ? { ...w, movable } : w)); renderWater(arr); return arr; });
@@ -2678,7 +2680,7 @@ export default function Page() {
     const codes = waterCodes(watercourses);
     const per = waterMeta?.dates?.length ? `${waterMeta.dates[0]} – ${waterMeta.dates[waterMeta.dates.length - 1]} (${waterMeta.dates.length} ${t("date")})` : "";
     const srcTxt = (w: WaterL) => w.source === "s2" ? `Sentinel-2 · ${t("composito di più date")}${per ? " · " + per : ""}`
-      : w.source === "osm+s2" ? `OpenStreetMap (${w.osm_type ?? ""}) + Sentinel-2${per ? " · " + per : ""}` : w.source === "osm" ? `OpenStreetMap (${w.osm_type ?? ""})`
+      : w.source === "osm+s2" ? `${t("Importazione topografica")} (${w.osm_type ?? ""}) + Sentinel-2${per ? " · " + per : ""}` : w.source === "osm" ? `${t("Importazione topografica")} (${w.osm_type ?? ""})`
       : w.source === "dem" ? t("Modello del terreno (Copernicus DEM)") : t("Tracciato a mano");
     const kmlCol = (hex: string) => "ff" + hex.slice(5, 7) + hex.slice(3, 5) + hex.slice(1, 3);   // #rrggbb → aabbggrr
     const lineCol: Record<string, string> = { river: kmlCol(WATER_COL.river), canal: kmlCol(WATER_COL.canal), drain: kmlCol(WATER_COL.drain), drainage: kmlCol(WATER_COL.drainage) };
@@ -2771,6 +2773,7 @@ export default function Page() {
     if (!body) return;
     const docName = `${t("Corsi d'acqua esistenti")}${active ? " – " + active.name : ""}`;
     const kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(docName)}</name>`
+      + (watercourses.some((w) => !w.hidden && (w.source === "osm" || w.source === "osm+s2")) ? `<description>${esc(t("Tracciati da importazione topografica"))}: © OpenStreetMap contributors (ODbL)</description>` : "")
       + `<Style id="surf"><LineStyle><color>99a16903</color><width>1</width></LineStyle><PolyStyle><color>55e9a50e</color></PolyStyle></Style>${body}</Document></kml>`;
     const zip = new JSZip();
     zip.file("doc.kml", kml);
@@ -6107,7 +6110,7 @@ export default function Page() {
             const kmC = wl.filter(({ w }) => w.kind === "canal").reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000;
             ib.push({ p: tx("I corsi d'acqua esistenti sono stati letti da un composito di immagini Sentinel-2 di 12 mesi (pixel di 10 m): {r} km di fiume e {c} km di canali. La larghezza è misurata a sezioni trasversali ogni 20 m, con la frazione d'acqua dei pixel di bordo; sotto i 10 m è una stima.", { r: n1(kmR), c: n1(kmC) })
               + " " + tx("Il regime viene dai mesi in cui l'acqua è presente (perenne, stagionale, effimero); per le fiumare asciutte la larghezza è quella dell'alveo di ghiaia.")
-              + (wl.some(({ w }) => w.source === "osm" || w.source === "osm+s2") ? " " + tx("Il tracciato completo dei corsi d'acqua viene da OpenStreetMap; il satellite ne misura la larghezza e i mesi con acqua dove l'acqua è visibile.") : "") });
+              + (wl.some(({ w }) => w.source === "osm" || w.source === "osm+s2") ? " " + tx("Il tracciato completo dei corsi d'acqua viene dall'importazione topografica; il satellite ne misura la larghezza e i mesi con acqua dove l'acqua è visibile.") + " (© OpenStreetMap contributors, ODbL)" : "") });
             const regTx = (w: WaterL) => (w.regime === "perennial" ? tx("perenne") : w.regime === "seasonal" ? tx("stagionale") : w.regime === "ephemeral" ? tx("effimero") : "–")
               + (w.months_seen?.length ? ` (${w.months_wet?.length ?? 0}/${w.months_seen.length})` : "") + (w.bed ? " · " + tx("alveo") : "");
             ib.push({ table: { header: [tx("Tratto"), tx("Tipo"), tx("Regime"), tx("Lunghezza") + " (m)", tx("Larghezza tipica") + " (m)", tx("Larghezza min – max") + " (m)"], widths: [10, 14, 22, 16, 18, 20],
@@ -8681,9 +8684,9 @@ export default function Page() {
     const fq = f && "typ" in f ? f : null;
     const ls = (q: number) => (q >= 10 ? `${fmt(Math.round(q * 1000))} l/s (${fmt(q, { maximumFractionDigits: 1 })} m³/s)` : `${fmt(Math.round(q * 1000))} l/s`);
     const regTxt = w.source === "osm" || w.source === "osm+s2"
-      ? <>OpenStreetMap: <code className="text-[10px]">waterway={w.osm_type ?? "?"}</code>{reg ? <> · «{reg}»</> : <> · {t("senza nome")}</>}
+      ? <>{t("Importazione topografica")}: <code className="text-[10px]">{w.osm_type ?? "?"}</code>{reg ? <> · «{reg}»</> : <> · {t("senza nome")}</>}
           {w.sat_cover != null && <> · {t("confermato dal satellite per il {p}% del tracciato", { p: Math.round(w.sat_cover * 100) })}</>}</>
-      : w.source === "s2" ? <>{t("Solo satellite (Sentinel-2): non presente in OpenStreetMap")}{reg ? <> · «{reg}»</> : null}</>
+      : w.source === "s2" ? <>{t("Solo satellite (Sentinel-2): non presente nella cartografia topografica")}{reg ? <> · «{reg}»</> : null}</>
       : w.source === "dem" ? <>{t("Modello del terreno (Copernicus DEM): impluvio")}</>
       : <>{t("Tracciato a mano")}</>;
     const kindOpts = <>
@@ -11273,11 +11276,18 @@ export default function Page() {
               </div>
             )}
             {!waterPreview ? (
-              <div className="flex gap-2 mt-1">
-                <button className="btn-primary flex-1 basis-0" disabled={waterSatBusy || !activeGeom} onClick={detectWater}>
-                  {waterSatBusy ? t("Lettura immagini…") : t("Rileva corsi d'acqua")}
-                </button>
-                <button className="btn-ghost flex-1 basis-0" onClick={clearWater}>{t("Rimuovi")}</button>
+              <div className="mt-1 space-y-1.5">
+                <div className="flex gap-2">
+                  <button className="btn-primary flex-1 basis-0" disabled={waterTopoBusy || !activeGeom} onClick={importTopoWater} data-water-topo
+                    title={t("Tracciati dei corsi d'acqua cartografati, con tipo e nome: pochi secondi, senza misure.")}>
+                    {waterTopoBusy ? t("Importazione…") : t("Importazione topografica")}
+                  </button>
+                  <button className="btn-primary flex-1 basis-0" disabled={waterSatBusy || !activeGeom} onClick={detectWater} data-water-sat
+                    title={t("12 mesi di immagini Sentinel-2 e modello del terreno: larghezze, regime, livelli e corsi non cartografati. 1–3 minuti.")}>
+                    {waterSatBusy ? t("Analisi in corso…") : t("Analisi satellitare")}
+                  </button>
+                </div>
+                {watercourses.length > 0 && <button className="btn-ghost w-full text-xs py-1" onClick={clearWater}>{t("Rimuovi")}</button>}
               </div>
             ) : (
               <div className="mt-1 bg-brand/5 rounded-lg p-2">
@@ -11354,7 +11364,7 @@ export default function Page() {
                                 {waterUnderPivots.get(i) ? <div className="text-[10px] text-amber-700" title={t("Tratto sotto i pivot: da deviare")}>↯ {uM(waterUnderPivots.get(i)!)}</div> : null}
                               </td>
                               <td className="whitespace-nowrap" title={waterMonthsTxt(w) || undefined}>
-                                {!w.regime && (w.source === "osm") ? <span className="opacity-60" title={t("Corso da OpenStreetMap non visibile dal satellite: regime e larghezza da verificare")}>{t("non visibile")}</span> : null}
+                                {!w.regime && (w.source === "osm") ? <span className="opacity-60" title={t("Corso della cartografia topografica non visibile dal satellite: regime e larghezza da verificare")}>{t("non visibile")}</span> : null}
                                 {w.regime ? <span className={"px-1 rounded " + (w.regime === "perennial" ? "bg-sky-100 text-sky-800" : w.regime === "seasonal" ? "bg-amber-100 text-amber-800" : "bg-orange-200 text-orange-900")}>
                                   {waterRegimeName(w.regime)}{w.months_seen?.length ? ` ${w.months_wet?.length ?? 0}/${w.months_seen.length}` : ""}</span> : "–"}
                                 {w.bed ? <span className="ml-1 opacity-80">{t("alveo")}</span> : null}
