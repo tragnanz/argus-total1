@@ -7,7 +7,8 @@ ditch), nome e intermittenza. Li legge il backend: tasselli a z14 sul riquadro, 
 sul bordo di ogni tassello, ricucitura delle linee spezzate fra tasselli.
 
 Dati © OpenStreetMap contributors (ODbL); tasselli OpenFreeMap / OpenMapTiles.
-Il decodificatore del formato Mapbox Vector Tile (protobuf) è qui sotto, senza dipendenze.
+Decodificatore Mapbox Vector Tile (protobuf), ritaglio e ricucitura qui sotto: nessuna
+dipendenza oltre a requests (shapely non è installato in produzione).
 """
 from __future__ import annotations
 
@@ -187,12 +188,91 @@ def _fetch(url: str) -> bytes | None:
     return None
 
 
+def _clip(line: list[tuple[float, float]], lo: float, hi: float) -> list[list[tuple[float, float]]]:
+    """Ritaglio di una polilinea sul quadrato [lo, hi]² (Liang-Barsky segmento per segmento)."""
+    out, cur = [], []
+    for (x0, y0), (x1, y1) in zip(line[:-1], line[1:]):
+        dx, dy = x1 - x0, y1 - y0
+        t0, t1, ok = 0.0, 1.0, True
+        for p, q in ((-dx, x0 - lo), (dx, hi - x0), (-dy, y0 - lo), (dy, hi - y0)):
+            if p == 0:
+                if q < 0:
+                    ok = False
+                    break
+                continue
+            r = q / p
+            if p < 0:
+                t0 = max(t0, r)
+            else:
+                t1 = min(t1, r)
+            if t0 > t1:
+                ok = False
+                break
+        if not ok:
+            if len(cur) >= 2:
+                out.append(cur)
+            cur = []
+            continue
+        a = (x0 + t0 * dx, y0 + t0 * dy)
+        b = (x0 + t1 * dx, y0 + t1 * dy)
+        if cur and (abs(cur[-1][0] - a[0]) > 1e-9 or abs(cur[-1][1] - a[1]) > 1e-9):
+            if len(cur) >= 2:
+                out.append(cur)
+            cur = []
+        if not cur:
+            cur = [a]
+        cur.append(b)
+        if t1 < 1.0:                                   # esce dal quadrato
+            if len(cur) >= 2:
+                out.append(cur)
+            cur = []
+    if len(cur) >= 2:
+        out.append(cur)
+    return out
+
+
+def _merge(lines: list[list[tuple[float, float]]]) -> list[list[tuple[float, float]]]:
+    """Ricuce le linee che si toccano agli estremi (nodi con esattamente due linee),
+    come shapely.ops.linemerge: un fiume spezzato fra tasselli torna una linea sola."""
+    lines = [ln for ln in lines if len(ln) >= 2]
+    deg: dict = {}
+    for ln in lines:
+        for e in (ln[0], ln[-1]):
+            deg[e] = deg.get(e, 0) + 1
+    ends: dict = {}
+    for k, ln in enumerate(lines):
+        ends.setdefault(ln[0], []).append(k)
+        ends.setdefault(ln[-1], []).append(k)
+    used = [False] * len(lines)
+
+    def grow(chain: list, at_end: bool) -> list:
+        while True:
+            node = chain[-1] if at_end else chain[0]
+            if deg.get(node, 0) != 2:
+                return chain
+            nxt = [k for k in ends.get(node, []) if not used[k]]
+            if not nxt:
+                return chain
+            k = nxt[0]
+            used[k] = True
+            ln = lines[k]
+            if at_end:
+                chain = chain + (ln[1:] if ln[0] == node else ln[::-1][1:])
+            else:
+                chain = (ln[:-1] if ln[-1] == node else ln[::-1][:-1]) + chain
+    out = []
+    for k, ln in enumerate(lines):
+        if used[k]:
+            continue
+        used[k] = True
+        chain = grow(grow(list(ln), True), False)
+        out.append(chain)
+    return out
+
+
 def waterways(bbox: list[float]) -> list[dict]:
     """Corsi d'acqua OSM nel riquadro [lon_min, lat_min, lon_max, lat_max]:
     [{id, waterway, name, intermittent, coords [[lon, lat], ...]}], linee ricucite fra tasselli."""
-    from shapely.geometry import LineString, MultiLineString, box
-    from shapely.ops import linemerge
-
     w, s, e, n = bbox
     z = Z
     while True:
@@ -212,27 +292,21 @@ def waterways(bbox: list[float]) -> list[dict]:
         if not data:
             continue
         extent, feats = decode_layer(data, "waterway")
-        clip = box(0, 0, extent, extent)              # i tasselli sbordano: ritaglio sul bordo vero
         for f in feats:
             cls = f["props"].get("class")
             if cls not in CLASSES:
                 continue
             key = (cls, f["props"].get("name") or f["props"].get("name:latin") or "", int(f["props"].get("intermittent") or 0))
             for ln in f["lines"]:
-                g = LineString(ln).intersection(clip)
-                parts = [g] if g.geom_type == "LineString" else list(getattr(g, "geoms", []))
-                for p in parts:
-                    if p.geom_type != "LineString" or p.length <= 0:
-                        continue
-                    ll = [_lonlat(tx + px / extent, ty + py / extent, z) for px, py in p.coords]
+                for p in _clip([(float(x), float(y)) for x, y in ln], 0.0, float(extent)):   # i tasselli sbordano
+                    ll = [_lonlat(tx + px / extent, ty + py / extent, z) for px, py in p]
                     # 5 decimali (~1 m): i punti sul bordo comune di due tasselli coincidono
                     # e le linee si ricuciono
                     groups.setdefault(key, []).append([(round(a, 5), round(b, 5)) for a, b in ll])
     out, k = [], 0
     for (cls, name, inter), lines in groups.items():
-        merged = linemerge(MultiLineString(lines))
-        for g in ([merged] if merged.geom_type == "LineString" else list(merged.geoms)):
+        for g in _merge(lines):
             k += 1
             out.append({"id": k, "waterway": cls, "name": name or None, "intermittent": "yes" if inter else None,
-                        "coords": [[round(a, 6), round(b, 6)] for a, b in g.coords]})
+                        "coords": [[round(a, 6), round(b, 6)] for a, b in g]})
     return out

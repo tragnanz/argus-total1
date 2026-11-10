@@ -39,3 +39,23 @@ def test_coordinate_tasselli():
     x, y = O._tile_xy(-12.77, 16.13, 14)
     lon, lat = O._lonlat(x, y, 14)
     assert abs(lon + 12.77) < 1e-9 and abs(lat - 16.13) < 1e-9
+
+
+def test_ritaglio_e_ricucitura():
+    # linea che esce dal tassello e rientra: due pezzi ritagliati sul bordo
+    parts = O._clip([(-10.0, 5.0), (5.0, 5.0), (15.0, 5.0), (15.0, 8.0), (5.0, 8.0)], 0.0, 10.0)
+    assert parts == [[(0.0, 5.0), (5.0, 5.0), (10.0, 5.0)], [(10.0, 8.0), (5.0, 8.0)]]
+    assert O._clip([(20.0, 20.0), (30.0, 30.0)], 0.0, 10.0) == []
+    # tre pezzi dello stesso fiume, uno al contrario: una linea sola
+    m = O._merge([[(0, 0), (1, 0)], [(2, 0), (1, 0)], [(2, 0), (3, 1)]])
+    assert len(m) == 1 and m[0][0] in ((0, 0), (3, 1)) and len(m[0]) == 4
+    # confluenza (tre linee nello stesso punto): restano tre
+    assert len(O._merge([[(0, 0), (1, 0)], [(1, 0), (2, 0)], [(1, 0), (1, 1)]])) == 3
+
+
+def test_senza_shapely(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "shapely", None)
+    monkeypatch.setitem(sys.modules, "shapely.geometry", None)
+    monkeypatch.setitem(sys.modules, "shapely.ops", None)
+    assert O._merge(O._clip([(0.0, 1.0), (5.0, 1.0)], 0.0, 4.0)) == [[(0.0, 1.0), (4.0, 1.0)]]

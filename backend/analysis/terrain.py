@@ -281,7 +281,9 @@ def detect_watercourses(client, geom: dict, date: str | None = None, min_area_ha
             ring = geom["coordinates"][0]
             lo, la = [p[0] for p in ring], [p[1] for p in ring]
             osm = _osm_ww([min(lo), min(la), max(lo), max(la)])
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning("corsi d'acqua OSM non disponibili: %r", e)
             osm, osm_error = [], True
     ww = detect_waterways(client, geom, date_to=date, months=months, sens=sens, osm=osm)
     out: list[dict] = []
