@@ -67,6 +67,12 @@ export type MapHandle = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   confirmWater: () => { kind: string; geom: { type: string; coordinates: any }; props?: any; edited?: boolean }[];
   cancelWater: () => void;
+  // modifica di UN corso d'acqua confermato: punti trascinabili; modo «add» = clic sulla linea per
+  // inserire un punto, clic altrove per prolungare dall'estremo più vicino; «del» = clic su un punto per
+  // toglierlo (doppio clic o tasto destro lo tolgono in ogni modo). snapLines: gli altri corsi, a cui
+  // i punti si agganciano (così si collegano). null = fine modifica
+  editWater: (coords: number[][] | null, opts?: { color?: string; snapLines?: number[][][]; onChange?: (c: number[][]) => void }) => void;
+  waterEditMode: (m: "move" | "add" | "del") => void;
   clearAll: () => void;
   fitAll: () => void;
   flyTo: (lat: number, lon: number, zoom?: number) => void;
@@ -251,6 +257,9 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const hydroRef = useRef<L.LayerGroup | null>(null);
   const roadManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
   const waterRemoveRef = useRef(false);
+  const waterEditRef = useRef<L.LayerGroup | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const weRef = useRef<{ pts: number[][]; mode: "move" | "add" | "del"; opts: any; render: () => void } | null>(null);
   const canalManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
   const pipeManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
   const pipeSnapRef = useRef<{ pts: number[][]; lines: number[][][] }>({ pts: [], lines: [] });
@@ -272,6 +281,90 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const elabelsRef = useRef<string[]>([]);
   const imperialRef = useRef(false);
 
+  // un comando della mappa in corso (scelta di un punto, misura, cerchi, profilo, disegno)
+  function _mapBusy(): boolean {
+    return !!(pickRef.current || pickCbRef.current || measuringRef.current || circlingRef.current || elevingRef.current || drawModeRef.current);
+  }
+  // ---- modifica di un corso d'acqua confermato ----
+  // proiezione in pixel di p sul segmento a-b: [distanza, t, punto]
+  function _projPx(p: L.Point, a: L.Point, b: L.Point): [number, number, L.Point] {
+    const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-9;
+    const tt = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+    const q = L.point(a.x + dx * tt, a.y + dy * tt);
+    return [Math.hypot(q.x - p.x, q.y - p.y), tt, q];
+  }
+  // aggancio agli altri corsi d'acqua (entro 14 px): restituisce [lon, lat]
+  function _waterSnap(ll: L.LatLng): number[] {
+    const map = mapRef.current, we = weRef.current;
+    if (!map || !we) return [ll.lng, ll.lat];
+    const here = map.latLngToContainerPoint(ll);
+    const view = map.getBounds().pad(0.2);
+    let best: number[] = [ll.lng, ll.lat], bd = 14;
+    for (const ln of (we.opts?.snapLines ?? []) as number[][][]) {
+      for (let i = 0; i < ln.length - 1; i++) {
+        if (!view.contains([ln[i][1], ln[i][0]]) && !view.contains([ln[i + 1][1], ln[i + 1][0]])) continue;
+        const a = map.latLngToContainerPoint([ln[i][1], ln[i][0]]), b = map.latLngToContainerPoint([ln[i + 1][1], ln[i + 1][0]]);
+        const [d, , q] = _projPx(here, a, b);
+        if (d < bd) { bd = d; const r = map.containerPointToLatLng(q); best = [r.lng, r.lat]; }
+      }
+    }
+    return best;
+  }
+  function _waterEditFire() { const we = weRef.current; we?.opts?.onChange?.(we.pts.map((q) => [...q])); }
+  // clic in modo «aggiungi»: sulla linea inserisce un punto, altrove prolunga dall'estremo più vicino
+  function _waterEditAdd(ll: L.LatLng) {
+    const map = mapRef.current, we = weRef.current;
+    if (!map || !we) return;
+    const here = map.latLngToContainerPoint(ll);
+    const P = we.pts.map((q) => map.latLngToContainerPoint([q[1], q[0]]));
+    let bi = -1, bd = 10;
+    for (let i = 0; i < P.length - 1; i++) { const [d] = _projPx(here, P[i], P[i + 1]); if (d < bd) { bd = d; bi = i; } }
+    if (bi >= 0) we.pts.splice(bi + 1, 0, [ll.lng, ll.lat]);
+    else {
+      const q = _waterSnap(ll);
+      const d0 = here.distanceTo(P[0]), d1 = here.distanceTo(P[P.length - 1]);
+      if (d0 < d1) we.pts.unshift(q); else we.pts.push(q);
+    }
+    _waterEditFire(); we.render();
+  }
+  function _waterEditRender() {
+    const map = mapRef.current, g = waterEditRef.current, we = weRef.current;
+    if (!map || !g) return;
+    g.clearLayers();
+    if (!we) return;
+    const pts = we.pts;
+    const ll = () => pts.map((p) => [p[1], p[0]] as [number, number]);
+    g.addLayer(L.polyline(ll(), { color: "#ffffff", weight: 11, opacity: 0.85, interactive: false }));
+    const line = L.polyline(ll(), { color: we.opts?.color ?? "#1d4ed8", weight: 5, opacity: 1, interactive: false });
+    g.addLayer(line);
+    // maniglie solo per i punti nella vista (un fiume lungo ne ha centinaia)
+    const view = map.getBounds().pad(0.1);
+    const vis: number[] = [];
+    pts.forEach((p, i) => { if (i === 0 || i === pts.length - 1 || view.contains([p[1], p[0]])) vis.push(i); });
+    const many = vis.length > 600;
+    const dot = (end: boolean) => L.divIcon({ className: "", iconSize: end ? [16, 16] : [11, 11], iconAnchor: end ? [8, 8] : [5.5, 5.5],
+      html: `<div data-we-vertex="${end ? "end" : "mid"}" style="width:${end ? 16 : 11}px;height:${end ? 16 : 11}px;border-radius:50%;background:${end ? "#f0b429" : "#ffffff"};border:2px solid ${we.opts?.color ?? "#1d4ed8"};box-shadow:0 0 0 1px rgba(0,0,0,.35);cursor:${we.mode === "del" ? "not-allowed" : "grab"}"></div>` });
+    for (const i of vis) {
+      const end = i === 0 || i === pts.length - 1;
+      if (many && !end) continue;
+      const m = L.marker([pts[i][1], pts[i][0]], { draggable: we.mode !== "del", zIndexOffset: end ? 1300 : 1200, icon: dot(end) });
+      m.bindTooltip(end ? tRef.current("Estremo: trascinalo su un altro corso per collegarli") : tRef.current("Trascina per spostare; doppio clic per togliere"), { direction: "top", offset: [0, -8] });
+      m.on("drag", (e) => {
+        const p2 = (e.target as L.Marker).getLatLng();
+        pts[i] = end ? _waterSnap(p2) : [p2.lng, p2.lat];
+        line.setLatLngs(ll());
+      });
+      m.on("dragend", () => { _waterEditFire(); _waterEditRender(); });
+      const kill = (e: L.LeafletMouseEvent) => {
+        L.DomEvent.stop(e);
+        if (pts.length <= 2) return;
+        pts.splice(i, 1); _waterEditFire(); _waterEditRender();
+      };
+      m.on("dblclick", kill); m.on("contextmenu", kill);
+      m.on("click", (e: L.LeafletMouseEvent) => { if (weRef.current?.mode === "del") kill(e); else L.DomEvent.stop(e); });
+      g.addLayer(m);
+    }
+  }
   // Callback sempre aggiornate (la mappa viene creata una sola volta).
   const baseRef = useRef<L.TileLayer | null>(null);
   const labelsRef = useRef<L.TileLayer | null>(null);
@@ -311,6 +404,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     reachRef.current = L.layerGroup().addTo(map);
     canalRef.current = L.layerGroup().addTo(map);
     canalEditRef.current = L.layerGroup().addTo(map);
+    waterEditRef.current = L.layerGroup().addTo(map);
     pendingRef.current = L.layerGroup().addTo(map);
     // pannello sotto gli overlay (400): il tratteggio sta sotto campi e pivot e
     // non intercetta i clic
@@ -327,12 +421,15 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     elevRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
     map.on("zoomend", updatePvLabels);
+    map.on("moveend", () => { weRef.current?.render(); });
     commentsRef.current = L.layerGroup().addTo(map);
     sourceRef.current = L.layerGroup().addTo(map);
 
     // Clic sulla mappa: misura (se attiva) oppure selezione punto (presa/finale).
     map.on("click", (e: L.LeafletMouseEvent) => {
-      waterClearRef.current?.();                     // clic fuori dai corsi d'acqua: selezione annullata
+      const we = weRef.current;
+      if (we && we.mode === "add") { _waterEditAdd(e.latlng); return; }   // aggiunta di punti / prolungamento
+      if (!we && !_mapBusy()) waterClearRef.current?.();   // clic fuori dai corsi d'acqua: selezione annullata
       if (pickRef.current) {
         const cb = pickRef.current; pickRef.current = null;
         map.getContainer().style.cursor = "";
@@ -1074,7 +1171,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             if (cbs?.onPick && it.idx != null) {
               // fascia invisibile più larga: il clic prende anche le linee sottili
               const hit = L.polyline(latlngs, { color: "#000", weight: Math.max(14, wpx + 8), opacity: 0 });
-              const pick = (e: L.LeafletMouseEvent) => { L.DomEvent.stop(e); cbs.onPick?.(it.idx!); };
+              // con un comando in corso (presa, misura, aggiunta di punti…) il clic passa alla mappa
+              const pick = (e: L.LeafletMouseEvent) => { if (_mapBusy() || weRef.current) return; L.DomEvent.stop(e); cbs.onPick?.(it.idx!); };
               hit.on("click", pick); ly.on("click", pick);
               hit.bindTooltip(it.label || tRef.current("Fiume/canale"), { direction: "center", sticky: true });
               g.addLayer(hit);
@@ -1094,7 +1192,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             fillOpacity: isBasin ? 0.45 : 0.3, dashArray: isBasin ? undefined : "5,4",
           });
           ly.bindTooltip(it.label || (isBasin ? tRef.current("Bacino/lago") : tRef.current("Palude")), { direction: "center" });
-          if (cbs?.onPick && it.idx != null) ly.on("click", (e: L.LeafletMouseEvent) => { L.DomEvent.stop(e); cbs.onPick?.(it.idx!); });
+          if (cbs?.onPick && it.idx != null) ly.on("click", (e: L.LeafletMouseEvent) => { if (_mapBusy() || weRef.current) return; L.DomEvent.stop(e); cbs.onPick?.(it.idx!); });
           if (it.sel === "dim") ly.setStyle({ opacity: 0.25, fillOpacity: 0.1 });
           g.addLayer(ly);
         }
@@ -1167,6 +1265,24 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         drawModeRef.current = null; waterRemoveRef.current = false;
         try { if (map) { (map as any).pm.disableDraw(); map.getContainer().style.cursor = ""; } } catch { /* */ }
         return out;
+      },
+      editWater(coords, opts) {
+        const map = mapRef.current;
+        if (!coords || coords.length < 2) {
+          weRef.current = null; waterEditRef.current?.clearLayers();
+          try { if (map) map.getContainer().style.cursor = ""; } catch { /* */ }
+          return;
+        }
+        const mode = weRef.current?.mode ?? "move";
+        weRef.current = { pts: coords.map((p) => [...p]), mode, opts: opts ?? {}, render: _waterEditRender };
+        try { if (map) map.getContainer().style.cursor = mode === "add" ? "copy" : ""; } catch { /* */ }
+        _waterEditRender();
+      },
+      waterEditMode(m) {
+        const we = weRef.current; if (!we) return;
+        we.mode = m;
+        try { const map = mapRef.current; if (map) map.getContainer().style.cursor = m === "add" ? "copy" : ""; } catch { /* */ }
+        _waterEditRender();
       },
       cancelWater() {
         const map = mapRef.current;

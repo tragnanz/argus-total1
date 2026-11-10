@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.248";
+const REV = "v0.6.249";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -125,7 +125,12 @@ type Field = {
 // Wrapper front-end con visibilità per-oggetto e proprietario (campo) per il
 // pannello Livelli stile Photoshop: owner = id del campo a cui l'oggetto appartiene.
 type CanalL = Canal & { hidden?: boolean; uid?: number; owner?: number; exist?: boolean };   // exist: canale esistente (non entra nel computo)
-type WaterL = Watercourse & { hidden?: boolean; uid?: number; owner?: number };
+type WaterL = Watercourse & { hidden?: boolean; uid?: number; owner?: number;
+  // come era registrato (OpenStreetMap / rilevamento) prima che l'utente forzasse nome o tipo
+  name_orig?: string | null; kind_orig?: string;
+  // idraulica per la stima della portata (Manning): profondità a larghezza tipica, pendenza del fondo,
+  // scabrezza; quote degli estremi dal DEM; portata nota inserita a mano
+  depth_m?: number; slope_pm?: number; slope_from?: "dem" | "manual"; z_hi?: number; z_lo?: number; manning_n?: number; q_known_ls?: number };
 // kind: assente/"existing" = strada preesistente tracciata o importata; "osm" = da
 // OpenStreetMap (preesistente); "service" = viabilità di servizio generata per i
 // pivot (NON è un ostacolo per il layout).
@@ -408,6 +413,8 @@ function distM(a: number[], b: number[]): number {
   const s = Math.sin(dLa / 2) ** 2 + Math.cos(rad(a[1])) * Math.cos(rad(b[1])) * Math.sin(dLo / 2) ** 2;
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
 }
+// stesso calcolo con un nome che il componente non ridichiara (là dentro distM è un'altra costante)
+const geoDist = distM;
 // Proiezione del punto p sul segmento a-b (approssimazione planare locale).
 function projPointSeg(p: number[], a: number[], b: number[]): number[] {
   const latm = (a[1] + b[1]) / 2, kx = Math.cos((latm * Math.PI) / 180) || 1e-9;
@@ -1231,6 +1238,13 @@ export default function Page() {
   // selezione dei corsi d'acqua dalla mappa: primo clic = tutto il tipo, secondo = il singolo tratto
   const [waterSel, setWaterSel] = useState<{ kind: string | null; idx: number | null }>({ kind: null, idx: null });
   const waterSelRef = useRef(waterSel); waterSelRef.current = waterSel;
+  // modifica dei punti del corso selezionato e collegamento a un altro corso (pagina Fonte d'acqua)
+  const [waterEdit, setWaterEdit] = useState<{ i: number; orig: number[][]; mode: "move" | "add" | "del" } | null>(null);
+  const waterEditRef = useRef(waterEdit); waterEditRef.current = waterEdit;
+  const [waterConnect, setWaterConnect] = useState(false);
+  const waterConnectRef = useRef(waterConnect); waterConnectRef.current = waterConnect;
+  const [waterSlopeBusy, setWaterSlopeBusy] = useState<number | null>(null);
+  const waterSlopeTried = useRef<Set<string>>(new Set());
   const wcRef = useRef<WaterL[]>([]);
   const waterPending = useRef<{ surface: { type: "Polygon"; coordinates: unknown }[]; dates: string[]; res_m: number } | null>(null);
   const [waterRemoveOn, setWaterRemoveOn] = useState(false);
@@ -1532,6 +1546,7 @@ export default function Page() {
   }, [et0Peak, infiltration, cur.kc, cur.eff, cur.hours, cur.radius]);
 
   const [tab, setTab] = useState("analisi");
+  const tabRef = useRef(tab); tabRef.current = tab;
   // Menu verticale: clic su una voce apre la sua finestra; ri-clic sulla voce
   // attiva la chiude (mappa libera). Usato anche dai salti automatici di pagina.
   function goTab(k: string) { setTab(k); setRightMin(false); }
@@ -1863,9 +1878,12 @@ export default function Page() {
       .map(({ w, i }) => ({ geom: w.geojson, kind: w.kind, label: waterLabel(w, codes[i]), width_m: w.kind === "drainage" ? undefined : w.mean_width_m,
         dash: !!w.regime && w.regime !== "perennial", idx: i,
         sel: sel.idx === i ? "single" as const : sel.kind == null ? undefined : w.kind === sel.kind ? (sel.idx == null ? "on" as const : undefined) : "dim" as const })),
-    { onPick: (i) => pickWater(i), onClear: () => { if (waterSelRef.current.kind != null) selectWater({ kind: null, idx: null }); } });
+    // i corsi si selezionano dalla mappa solo nella pagina Fonte d'acqua: nelle altre pagine il clic resta ai pivot e ai disegni
+    tabRef.current === "fonte" ? { onPick: (i) => pickWater(i), onClear: () => { if (waterSelRef.current.kind != null && !waterEditRef.current) selectWater({ kind: null, idx: null }); } } : undefined);
   }
   function selectWater(sel: { kind: string | null; idx: number | null }) {
+    if (waterEditRef.current && waterEditRef.current.i !== sel.idx) stopEditWater();
+    if (waterConnectRef.current) setWaterConnect(false);
     waterSelRef.current = sel; setWaterSel(sel);
     setWaterOpen(sel.idx);
     renderWater(wcRef.current, sel);
@@ -1876,6 +1894,7 @@ export default function Page() {
   function pickWater(i: number) {
     const w = wcRef.current[i]; if (!w) return;
     const cur = waterSelRef.current;
+    if (waterConnectRef.current && cur.idx != null && cur.idx !== i) { connectWater(cur.idx, i); return; }
     if (cur.kind === w.kind && cur.idx !== i) selectWater({ kind: w.kind, idx: i });
     else if (cur.kind === w.kind && cur.idx === i) selectWater({ kind: w.kind, idx: null });
     else selectWater({ kind: w.kind, idx: null });
@@ -1891,6 +1910,7 @@ export default function Page() {
   function toggleCanalHidden(i: number) { setCanals((cs) => { const arr = cs.map((c, k) => k === i ? { ...c, hidden: !c.hidden } : c); renderCanals(arr); return arr; }); }
   function toggleWaterHidden(i: number) { setWatercourses((ws) => { const arr = ws.map((w, k) => k === i ? { ...w, hidden: !w.hidden } : w); renderWater(arr); return arr; }); }
   function removeWater(i: number) {
+    stopEditWater(); setWaterConnect(false);
     waterSelRef.current = { kind: null, idx: null }; setWaterSel(waterSelRef.current); setWaterOpen(null);
     setWatercourses((ws) => { const arr = ws.filter((_, k) => k !== i); renderWater(arr); return arr; });
   }
@@ -2214,10 +2234,10 @@ export default function Page() {
       const cs = w.geojson.coordinates as number[][];
       let m = 0;
       for (let k = 1; k < cs.length; k++) {
-        const a = cs[k - 1], b = cs[k], L = distM(a, b), n = Math.max(1, Math.ceil(L / 10));
+        const a = cs[k - 1], b = cs[k], L = geoDist(a, b), n = Math.max(1, Math.ceil(L / 10));
         for (let j = 0; j < n; j++) {
           const q = [a[0] + (b[0] - a[0]) * (j + 0.5) / n, a[1] + (b[1] - a[1]) * (j + 0.5) / n];
-          if (pv.some((p) => Math.abs(p.c[1] - q[1]) * 111320 <= p.r && distM(p.c, q) <= p.r)) m += L / n;
+          if (pv.some((p) => Math.abs(p.c[1] - q[1]) * 111320 <= p.r && geoDist(p.c, q) <= p.r)) m += L / n;
         }
       }
       if (m > 0) out.set(i, m);
@@ -2251,6 +2271,7 @@ export default function Page() {
   }
   async function detectWater() {
     if (!activeGeom) return needField();
+    stopEditWater(); setWaterConnect(false);
     setBusy("water"); setMsg(t("Leggo 12 mesi di immagini Sentinel-2 (una o due date per mese): può richiedere 1–3 minuti…"));
     try {
       const p = waterParams();
@@ -2273,6 +2294,7 @@ export default function Page() {
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   function confirmWaterUI() {
+    stopEditWater();
     const raw = mapApi.current?.confirmWater() || [];
     const feats: WaterL[] = raw.map((c) => {
       const p = (c.props ?? {}) as Partial<Watercourse>;
@@ -2304,6 +2326,271 @@ export default function Page() {
   function setWaterAt(i: number, patch: Partial<WaterL>) {
     setWatercourses((ws) => { const arr = ws.map((w, k) => (k === i ? { ...w, ...patch, edited: true } : w)); renderWater(arr); return arr; });
   }
+  // aggiornamento senza segnare il tratto come «modificato a mano» (dati calcolati: pendenza dal DEM…)
+  function patchWater(i: number, patch: Partial<WaterL>) {
+    setWatercourses((ws) => { const arr = ws.map((w, k) => (k === i ? { ...w, ...patch } : w)); wcRef.current = arr; return arr; });
+  }
+  // ---- registrazione: nome e tipo forzati a mano (resta quello registrato, per tornare indietro) ----
+  const waterRegName = (w: WaterL) => (w.name_orig !== undefined ? w.name_orig : w.name) || null;
+  function renameWater(i: number, name: string) {
+    setWatercourses((ws) => { const arr = ws.map((w, k) => (k !== i ? w : { ...w, name_orig: w.name_orig !== undefined ? w.name_orig : (w.name ?? null), name: name || undefined })); renderWater(arr); return arr; });
+  }
+  function retypeWater(i: number, kind: string) {
+    setWatercourses((ws) => { const arr = ws.map((w, k) => (k !== i ? w : { ...w, kind_orig: w.kind_orig ?? w.kind, kind, movable: undefined, edited: true })); renderWater(arr); return arr; });
+    if (waterSelRef.current.idx === i) { waterSelRef.current = { kind, idx: i }; setWaterSel(waterSelRef.current); }
+  }
+  function restoreWaterReg(i: number) {
+    setWatercourses((ws) => {
+      const arr = ws.map((w, k) => {
+        if (k !== i) return w;
+        const o: WaterL = { ...w, name: w.name_orig !== undefined ? (w.name_orig ?? undefined) : w.name, kind: w.kind_orig ?? w.kind };
+        delete o.name_orig; delete o.kind_orig; return o;
+      });
+      renderWater(arr); return arr;
+    });
+    const w = wcRef.current[i]; if (w && waterSelRef.current.idx === i) { waterSelRef.current = { kind: w.kind_orig ?? w.kind, idx: i }; setWaterSel(waterSelRef.current); }
+  }
+  // stesso nome e stesso tipo a tutti i tratti registrati con lo stesso nome (un fiume OSM è spesso in più pezzi)
+  function applyRegToSameName(i: number) {
+    const src = wcRef.current[i]; const reg = src && waterRegName(src); if (!reg) return;
+    setWatercourses((ws) => {
+      const arr = ws.map((w, k) => (k === i || waterRegName(w) !== reg ? w : {
+        ...w, name_orig: w.name_orig !== undefined ? w.name_orig : (w.name ?? null), name: src.name,
+        kind_orig: w.kind !== src.kind ? (w.kind_orig ?? w.kind) : w.kind_orig, kind: src.kind, movable: w.kind !== src.kind ? undefined : w.movable }));
+      renderWater(arr); return arr;
+    });
+  }
+  // ---- geometria: modifica dei punti sulla mappa ----
+  function setWaterGeom(i: number, coords: number[][]) {
+    setWatercourses((ws) => {
+      const arr = ws.map((w, k) => (k === i ? { ...w, geojson: { type: "LineString" as const, coordinates: coords }, length_m: Math.round(lineLenKm(coords) * 10000) / 10, edited: true, profile: undefined } : w));
+      renderWater(arr); return arr;
+    });
+  }
+  function openWaterEditor(i: number, coords: number[][]) {
+    const w = wcRef.current[i]; if (!w) return;
+    const others = wcRef.current.filter((x, k) => k !== i && !x.hidden)
+      .map((x) => (x.geojson.type === "LineString" ? x.geojson.coordinates : x.geojson.coordinates[0]) as number[][]);
+    mapApi.current?.editWater(coords, { color: WATER_COL[w.kind] ?? "#0369a1", snapLines: others, onChange: (c) => setWaterGeom(i, c) });
+  }
+  function startEditWater(i: number) {
+    const w = wcRef.current[i]; if (!w || w.geojson.type !== "LineString") return;
+    setWaterConnect(false);
+    const cs = (w.geojson.coordinates as number[][]).map((p) => [...p]);
+    mapApi.current?.editWater(null);
+    setWaterEdit({ i, orig: cs, mode: "move" });
+    openWaterEditor(i, cs);
+  }
+  function setWaterEditMode(m: "move" | "add" | "del") {
+    if (!waterEditRef.current) return;
+    setWaterEdit({ ...waterEditRef.current, mode: m });
+    mapApi.current?.waterEditMode(m);
+  }
+  function undoEditWater() {
+    const e = waterEditRef.current; if (!e) return;
+    setWaterGeom(e.i, e.orig);
+    openWaterEditor(e.i, e.orig);
+  }
+  function stopEditWater() {
+    if (!waterEditRef.current) return;
+    mapApi.current?.editWater(null); setWaterEdit(null);
+  }
+  // punto di una linea più vicino a p: punto, segmento, distanza (m)
+  function nearestOnLine(p: number[], cs: number[][]): { q: number[]; k: number; d: number } {
+    let best = { q: cs[0], k: 0, d: Infinity };
+    for (let k = 0; k < cs.length - 1; k++) {
+      const q = projPointSeg(p, cs[k], cs[k + 1]); const d = geoDist(p, q);
+      if (d < best.d) best = { q, k, d };
+    }
+    if (cs.length === 1) best = { q: cs[0], k: 0, d: geoDist(p, cs[0]) };
+    return best;
+  }
+  const waterLineOf = (w: WaterL) => (w.geojson.type === "LineString" ? w.geojson.coordinates : w.geojson.coordinates[0]) as number[][];
+  // ---- collegamenti fra corsi d'acqua ----
+  // collega il corso a al corso b: l'estremo di a più vicino a b si prolunga fino a b, e su b nasce un
+  // punto in comune (il nodo della rete)
+  function connectWater(a: number, b: number) {
+    setWaterConnect(false);
+    const ws = wcRef.current, A = ws[a], B = ws[b];
+    if (!A || !B || A.geojson.type !== "LineString") return;
+    stopEditWater();
+    const ac = A.geojson.coordinates as number[][], bc = waterLineOf(B);
+    const e0 = nearestOnLine(ac[0], bc), e1 = nearestOnLine(ac[ac.length - 1], bc);
+    const atStart = e0.d <= e1.d, e = atStart ? e0 : e1;
+    const codes = waterCodes(ws);
+    if (e.d > 5000) { setMsg(t("{a} e {b} sono a {d}: avvicina prima gli estremi con «Modifica punti».", { a: codes[a], b: codes[b], d: uM(e.d) })); return; }
+    const q = [Math.round(e.q[0] * 1e7) / 1e7, Math.round(e.q[1] * 1e7) / 1e7];
+    const na = e.d < 0.5 ? ac : atStart ? [q, ...ac] : [...ac, q];
+    let nb: number[][] | null = null;
+    if (B.geojson.type === "LineString" && geoDist(q, bc[e.k]) > 0.5 && geoDist(q, bc[e.k + 1]) > 0.5) nb = [...bc.slice(0, e.k + 1), q, ...bc.slice(e.k + 1)];
+    setWatercourses((cur) => {
+      const arr = cur.map((w, k) => k === a ? { ...w, geojson: { type: "LineString" as const, coordinates: na }, length_m: Math.round(lineLenKm(na) * 10000) / 10, edited: true }
+        : k === b && nb ? { ...w, geojson: { type: "LineString" as const, coordinates: nb } } : w);
+      renderWater(arr); return arr;
+    });
+    setMsg(e.d < 0.5 ? t("{a} era già collegato a {b} ✓", { a: codes[a], b: codes[b] })
+      : t("{a} collegato a {b}: raccordo di {d} ✓", { a: codes[a], b: codes[b], d: uM(e.d, e.d < 20 ? 1 : 0) }));
+  }
+  // corsi che toccano il selezionato (entro 5 m): un suo estremo sulla loro linea o un loro estremo sulla sua
+  const waterLinks = useMemo(() => {
+    const i = waterSel.idx; if (i == null) return [];
+    const W = watercourses[i]; if (!W) return [];
+    const ci = waterLineOf(W), TOL = 5;
+    const bb = (cs: number[][]) => { let a = 180, b = 90, c = -180, d = -90; for (const p of cs) { if (p[0] < a) a = p[0]; if (p[1] < b) b = p[1]; if (p[0] > c) c = p[0]; if (p[1] > d) d = p[1]; } return [a, b, c, d]; };
+    const bi = bb(ci), pad = 0.0002;
+    const ends = W.geojson.type === "LineString" ? [ci[0], ci[ci.length - 1]] : [];
+    const out: { j: number; endToEnd: boolean; how: "mine" | "theirs" }[] = [];
+    watercourses.forEach((V, j) => {
+      if (j === i || V.hidden) return;
+      const cj = waterLineOf(V), bj = bb(cj);
+      if (bj[0] > bi[2] + pad || bj[2] < bi[0] - pad || bj[1] > bi[3] + pad || bj[3] < bi[1] - pad) return;
+      const jEnds = V.geojson.type === "LineString" ? [cj[0], cj[cj.length - 1]] : [];
+      const e2e = ends.some((p) => jEnds.some((q) => geoDist(p, q) <= TOL));
+      if (ends.some((p) => nearestOnLine(p, cj).d <= TOL)) out.push({ j, endToEnd: e2e, how: "mine" });
+      else if (jEnds.some((p) => nearestOnLine(p, ci).d <= TOL)) out.push({ j, endToEnd: e2e, how: "theirs" });
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watercourses, waterSel.idx]);
+  // unisce due tratti che si toccano agli estremi in uno solo (resta il primo, con le sue misure)
+  function mergeWater(a: number, b: number) {
+    const ws = wcRef.current, A = ws[a], B = ws[b];
+    if (!A || !B || A.geojson.type !== "LineString" || B.geojson.type !== "LineString") return;
+    stopEditWater();
+    let ac = (A.geojson.coordinates as number[][]).slice(), bc = (B.geojson.coordinates as number[][]).slice();
+    const cand = [[ac[ac.length - 1], bc[0], 0], [ac[ac.length - 1], bc[bc.length - 1], 1], [ac[0], bc[bc.length - 1], 2], [ac[0], bc[0], 3]] as [number[], number[], number][];
+    const best = cand.reduce((x, y) => (geoDist(x[0], x[1]) <= geoDist(y[0], y[1]) ? x : y));
+    if (best[2] === 1) bc = bc.reverse();
+    if (best[2] === 2) [ac, bc] = [bc, ac];
+    if (best[2] === 3) ac = ac.reverse();
+    const merged = [...ac, ...bc.slice(geoDist(ac[ac.length - 1], bc[0]) < 0.5 ? 1 : 0)];
+    const codes = waterCodes(ws);
+    const L = Math.round(lineLenKm(merged) * 10000) / 10;
+    const la = A.length_m ?? 0, lb = B.length_m ?? 0;
+    // larghezza tipica pesata sulle lunghezze
+    const wm = A.mean_width_m != null && B.mean_width_m != null && la + lb > 0 ? Math.round(((A.mean_width_m * la + B.mean_width_m * lb) / (la + lb)) * 10) / 10 : (A.mean_width_m ?? B.mean_width_m);
+    const ni = b < a ? a - 1 : a;
+    setWatercourses((cur) => {
+      const arr = cur.map((w, k) => (k === a ? { ...w, name: w.name ?? B.name, geojson: { type: "LineString" as const, coordinates: merged }, length_m: L, mean_width_m: wm, edited: true } : w)).filter((_, k) => k !== b);
+      waterSelRef.current = { kind: A.kind, idx: ni }; setWaterSel(waterSelRef.current);
+      renderWater(arr, waterSelRef.current); return arr;
+    });
+    setMsg(t("{a} e {b} uniti in un solo tratto ({l}) ✓", { a: codes[a], b: codes[b], l: uM(L) }));
+  }
+  // ---- portata stimata (Manning, sezione trapezia) ----
+  const MANNING_N: Record<string, number> = { river: 0.035, canal: 0.025, drain: 0.03 };
+  // profondità tipica dalla larghezza (relazione idraulica media di fiumi e canali in terra): solo un punto di partenza
+  const waterDepthDef = (W: number) => Math.max(0.2, Math.min(12, Math.round(0.35 * Math.pow(W, 0.55) * 10) / 10));
+  const waterBank = (w: WaterL) => w.bank_m ?? (w.kind === "river" ? 2 : 1.5);
+  function waterFlow(w: WaterL) {
+    if (w.geojson.type !== "LineString" || !["river", "canal", "drain"].includes(w.kind) || !w.mean_width_m || w.bed) return null;
+    const W = w.mean_width_m, m = waterBank(w), n = w.manning_n ?? MANNING_N[w.kind] ?? 0.03;
+    const d = w.depth_m ?? waterDepthDef(W);
+    if (w.slope_pm == null) return { W, m, n, d, S: null as number | null };
+    const S = Math.max(0.05, w.slope_pm) / 1000;
+    const sec = (top: number, dd: number) => {
+      if (top <= 0 || dd <= 0) return { Q: 0, v: 0, A: 0 };
+      let b = top - 2 * m * dd;
+      if (b < 0) { dd = top / (2 * m); b = 0; }
+      const A = (b + m * dd) * dd, P = b + 2 * dd * Math.sqrt(1 + m * m), R = A / P;
+      const v = Math.pow(R, 2 / 3) * Math.sqrt(S) / n;
+      return { Q: A * v, v, A };
+    };
+    // altre date: profondità proporzionale alla larghezza (geometria idraulica di stazione); dedurla
+    // dalla sola differenza di larghezza e dalla scarpa la porterebbe a zero per pochi pixel di rumore
+    const at = (top: number) => sec(top, Math.max(0.05, d * top / W));
+    const typ = sec(W, d);
+    const low = w.width_low_m != null ? { ...at(w.width_low_m), date: w.date_low } : null;
+    const high = w.width_high_m != null ? { ...at(w.width_high_m), date: w.date_high } : null;
+    const byDate = (w.widths_by_date ?? []).map(([dt, x]) => [dt, x > 0 ? at(x).Q : 0] as [string, number]);
+    const dryMonths = w.regime && w.regime !== "perennial";
+    return { W, m, n, d, S: w.slope_pm, typ, low, high, byDate, dry: !!dryMonths };
+  }
+  // pendenza del fondo dal DEM: quote lungo il tracciato (fino a 80 punti) e retta di regressione
+  async function readWaterSlope(i: number) {
+    const w = wcRef.current[i]; if (!w || w.geojson.type !== "LineString") return;
+    const cs = w.geojson.coordinates as number[][];
+    const Ltot = lineLenKm(cs) * 1000; if (Ltot < 50) return;
+    const N = Math.max(3, Math.min(80, Math.round(Ltot / 100)));
+    const pts: number[][] = []; let acc = 0, k = 0;
+    for (let s2 = 0; s2 <= N; s2++) {
+      const target = (Ltot * s2) / N;
+      while (k < cs.length - 2 && acc + geoDist(cs[k], cs[k + 1]) < target) { acc += geoDist(cs[k], cs[k + 1]); k++; }
+      const seg = geoDist(cs[k], cs[k + 1]) || 1, f = Math.max(0, Math.min(1, (target - acc) / seg));
+      pts.push([cs[k][0] + (cs[k + 1][0] - cs[k][0]) * f, cs[k][1] + (cs[k + 1][1] - cs[k][1]) * f]);
+    }
+    setWaterSlopeBusy(i);
+    try {
+      const r = await api.fetchElevation(pts);
+      const xs: number[] = [], zs: number[] = [];
+      r.points.forEach((p, j) => { if (p.elev_m != null) { xs.push((Ltot * j) / N); zs.push(Number(p.elev_m)); } });
+      if (zs.length < 3) throw new Error(t("Quote non disponibili"));
+      const mx = xs.reduce((a, b) => a + b, 0) / xs.length, mz = zs.reduce((a, b) => a + b, 0) / zs.length;
+      let sxz = 0, sxx = 0; xs.forEach((x, j) => { sxz += (x - mx) * (zs[j] - mz); sxx += (x - mx) ** 2; });
+      const b = sxx > 0 ? sxz / sxx : 0;
+      const z0 = mz + b * (0 - mx), z1 = mz + b * (Ltot - mx);
+      const cur = wcRef.current[i];
+      if (cur && cur.geojson.coordinates === w.geojson.coordinates)
+        patchWater(i, { slope_pm: Math.round(Math.abs(b) * 1000 * 100) / 100, slope_from: "dem", z_hi: Math.round(Math.max(z0, z1) * 10) / 10, z_lo: Math.round(Math.min(z0, z1) * 10) / 10 });
+    } catch (e) { setMsg(t("Pendenza dal DEM non disponibile: inseriscila a mano.") + " " + (e instanceof Error ? e.message : "")); }
+    finally { setWaterSlopeBusy(null); }
+  }
+  // corso selezionato nella pagina Fonte: pendenza letta una volta dal DEM, se manca
+  useEffect(() => {
+    const i = waterSel.idx; if (i == null || tab !== "fonte") return;
+    const w = watercourses[i]; if (!w || w.slope_pm != null || !waterFlow(w)) return;
+    const key = `${i}|${w.geojson.coordinates.length}|${w.length_m}`;
+    if (waterSlopeTried.current.has(key)) return;
+    waterSlopeTried.current.add(key);
+    readWaterSlope(i);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waterSel.idx, tab, watercourses]);
+  // cambiando pagina: le linee si selezionano solo in Fonte d'acqua; la modifica dei punti si chiude
+  useEffect(() => {
+    if (tab !== "fonte") { stopEditWater(); setWaterConnect(false); }
+    if (wcRef.current.length) renderWater(wcRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+  // portata disponibile alla presa da un corso: nota, oppure magra stimata (tipica se non c'è la magra)
+  function waterQAvailLs(w: WaterL): number | null {
+    if (w.q_known_ls != null) return w.q_known_ls;
+    const f = waterFlow(w); if (!f || !("typ" in f) || !f.typ) return null;
+    const q = f.low && !f.dry ? f.low.Q : f.typ.Q;
+    return Math.round(q * 1000);
+  }
+  // il corso diventa la fonte: presa nel suo punto più vicino ai pivot (o al campo), tipo, escursione e portata
+  function takeWaterAsSource(i: number) {
+    const w = wcRef.current[i]; if (!w) return;
+    const cs = waterLineOf(w);
+    const ref = pivots.length ? [pivots.reduce((a, p) => a + p.lng, 0) / pivots.length, pivots.reduce((a, p) => a + p.lat, 0) / pivots.length]
+      : activeGeom ? (() => { const r = activeGeom.coordinates[0] as number[][]; return [r.reduce((a, p) => a + p[0], 0) / r.length, r.reduce((a, p) => a + p[1], 0) / r.length]; })()
+      : cs[Math.floor(cs.length / 2)];
+    const e = nearestOnLine(ref, cs);
+    const ty: SrcType = w.geojson.type === "Polygon" ? "invaso" : w.kind === "river" ? "fiume" : "canale";
+    setSrcType(ty); setSrcSediment(ty === "fiume");
+    const dh = waterRange(w);
+    setSrcRange(dh != null ? Math.max(0.3, Math.round(dh * 10) / 10) : SRC_RANGE_DEF[ty]);
+    const q = waterQAvailLs(w);
+    if (q != null) setSrcQmax(Math.max(1, q));
+    setSrcRoute(null); setSrcShown(null);
+    setSrcPt([Math.round(e.q[0] * 1e7) / 1e7, Math.round(e.q[1] * 1e7) / 1e7]);
+    const code = waterCodes(wcRef.current)[i];
+    setMsg(t("Presa sul corso {c}{n}: {d} dal baricentro dei pivot.", { c: code, n: w.name ? " · " + w.name : "", d: uM(geoDist(ref, e.q)) })
+      + " " + (q != null ? t("Portata disponibile impostata a {q} l/s ({k}).", { q: fmt(Math.max(1, q)), k: w.q_known_ls != null ? t("portata nota") : t("stima di magra") }) : t("Portata disponibile da inserire: manca la stima della portata."))
+      + (w.regime && w.regime !== "perennial" ? " " + t("Attenzione: corso non perenne, in secca in alcuni mesi.") : ""));
+  }
+  // corso d'acqua su cui sta la presa (entro 15 m)
+  const srcOnWater = useMemo(() => {
+    if (!srcPt) return null;
+    let best: { i: number; d: number } | null = null;
+    watercourses.forEach((w, i) => {
+      if (w.hidden || w.kind === "drainage") return;
+      const d = nearestOnLine(srcPt, waterLineOf(w)).d;
+      if (d <= 15 && (!best || d < best.d)) best = { i, d };
+    });
+    return best as { i: number; d: number } | null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcPt, watercourses]);
   // KMZ dei corsi d'acqua: cartelle per tipo, nome con misure, scheda con lunghezza,
   // larghezze (tipica, min–max, stato bagnato), fonte e date; superficie d'acqua.
   async function exportWaterKmz() {
@@ -2358,6 +2645,18 @@ export default function Page() {
       } else {
         rows.push([t("Superficie"), uHa(w.area_ha || 0, 2)]); data.push(["superficie_ha", w.area_ha || 0]);
       }
+      {
+        const fl = waterFlow(w);
+        if (fl && "typ" in fl && fl.typ) {
+          rows.push([t("Portata stimata"), `${fmt(Math.round(fl.typ.Q * 1000))} l/s (${t("profondità {d} m, pendenza {s}‰, n {n}", { d: fmt(fl.d, { maximumFractionDigits: 2 }), s: fmt(fl.S ?? 0, { maximumFractionDigits: 2 }), n: fmt(fl.n, { maximumFractionDigits: 3 }) })})`]);
+          data.push(["portata_ls", Math.round(fl.typ.Q * 1000)], ["profondita_m", fl.d], ["pendenza_permille", fl.S ?? ""]);
+          if (fl.low) { rows.push([t("Portata di magra stimata"), `${fmt(Math.round(fl.low.Q * 1000))} l/s (${wDate(fl.low.date)})`]); data.push(["portata_magra_ls", Math.round(fl.low.Q * 1000)]); }
+          if (fl.high) { rows.push([t("Portata di piena stimata"), `${fmt(Math.round(fl.high.Q * 1000))} l/s (${wDate(fl.high.date)})`]); data.push(["portata_piena_ls", Math.round(fl.high.Q * 1000)]); }
+        }
+        if (w.q_known_ls != null) { rows.push([t("Portata nota"), `${fmt(w.q_known_ls)} l/s`]); data.push(["portata_nota_ls", w.q_known_ls]); }
+        if (w.name_orig !== undefined && (w.name_orig ?? "") !== (w.name ?? "")) { rows.push([t("Nome registrato"), w.name_orig || t("senza nome")]); data.push(["nome_registrato", w.name_orig ?? ""]); }
+        if (w.kind_orig && w.kind_orig !== w.kind) { rows.push([t("Tipo registrato"), waterKindName(w.kind_orig)]); data.push(["tipo_registrato", w.kind_orig]); }
+      }
       if (w.geojson.type === "LineString" && w.kind !== "drainage") {
         rows.push([t("Spostabile"), waterMovable(w) ? t("sì: i pivot lo possono coprire, il tratto si devia") : t("no: i pivot lo evitano")]);
         data.push(["spostabile", waterMovable(w) ? 1 : 0]);
@@ -2401,16 +2700,18 @@ export default function Page() {
   }
   function exportWaterCsv() {
     const codes = waterCodes(watercourses);
-    const head = ["codice", "nome", "tipo", "spostabile", "da_deviare_m", "regime", "alveo", "lunghezza_m", "larghezza_m", "larghezza_min_m", "larghezza_max_m", "larghezza_bagnato_m", "mesi_acqua", "mesi_osservati", "larghezza_min_oss_m", "data_min", "larghezza_max_oss_m", "data_max", "scarpa", "escursione_stimata_m", "quota_min_msl", "quota_max_msl", "superficie_ha", "fonte", "sotto_pixel", "modificato"];
+    const head = ["codice", "nome", "tipo", "spostabile", "da_deviare_m", "regime", "alveo", "lunghezza_m", "larghezza_m", "larghezza_min_m", "larghezza_max_m", "larghezza_bagnato_m", "mesi_acqua", "mesi_osservati", "larghezza_min_oss_m", "data_min", "larghezza_max_oss_m", "data_max", "scarpa", "escursione_stimata_m", "quota_min_msl", "quota_max_msl", "superficie_ha", "fonte", "sotto_pixel", "modificato", "nome_registrato", "tipo_registrato", "profondita_m", "pendenza_permille", "portata_ls", "portata_magra_ls", "portata_piena_ls", "portata_nota_ls"];
     const rows = watercourses.map((w, i) => [codes[i], (w.name ?? "").replace(/;/g, ","), w.kind, waterMovable(w) ? 1 : 0, Math.round(waterUnderPivots.get(i) ?? 0), w.regime ?? "", w.bed ? 1 : 0, w.geojson.type === "LineString" ? Math.round(w.length_m ?? 0) : "", w.mean_width_m ?? "", w.width_min_m ?? "", w.width_max_m ?? "",
       w.width_wet_m ?? "", (w.months_wet ?? []).join(","), (w.months_seen ?? []).join(","), w.width_low_m ?? "", w.date_low ?? "", w.width_high_m ?? "", w.date_high ?? "",
-      w.bank_m ?? "", waterRange(w) != null ? Math.round(waterRange(w)! * 100) / 100 : "", w.level_abs?.min ?? "", w.level_abs?.max ?? "", w.geojson.type === "Polygon" ? w.area_ha : "", w.source ?? "", w.below_pixel ? 1 : 0, w.edited ? 1 : 0]);
+      w.bank_m ?? "", waterRange(w) != null ? Math.round(waterRange(w)! * 100) / 100 : "", w.level_abs?.min ?? "", w.level_abs?.max ?? "", w.geojson.type === "Polygon" ? w.area_ha : "", w.source ?? "", w.below_pixel ? 1 : 0, w.edited ? 1 : 0,
+      ...(() => { const fl = waterFlow(w), q = fl && "typ" in fl && fl.typ ? fl : null;
+        return [(w.name_orig ?? "").replace(/;/g, ","), w.kind_orig ?? "", fl ? fl.d : "", w.slope_pm ?? "", q ? Math.round(q.typ.Q * 1000) : "", q?.low ? Math.round(q.low.Q * 1000) : "", q?.high ? Math.round(q.high.Q * 1000) : "", w.q_known_ls ?? ""]; })()]);
     const csv = [head, ...rows].map((r) => r.join(";")).join("\n");
     saveBlob(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }), "corsi_dacqua.csv");
   }
   function cancelWaterPreview() { mapApi.current?.cancelWater(); setWaterPreview(false); setWaterRemoveOn(false); setMsg(""); }
   function toggleWaterRemove() { const v = !waterRemoveOn; setWaterRemoveOn(v); mapApi.current?.waterRemoveMode(v); }
-  function clearWater() { setWatercourses([]); setWaterSurface([]); setWaterMeta(null); setWaterPreview(false); mapApi.current?.clearWater(); mapApi.current?.cancelWater(); }
+  function clearWater() { stopEditWater(); setWatercourses([]); setWaterSurface([]); setWaterMeta(null); setWaterPreview(false); mapApi.current?.clearWater(); mapApi.current?.cancelWater(); }
 
   // Aggiunge una macro-area come SOTTO-LIVELLO del campo attivo (il poligono in
   // cui è inscritta), non come nuovo campo di primo livello.
@@ -8280,6 +8581,204 @@ export default function Page() {
       </div>
     );
   }
+  // Scheda del corso d'acqua selezionato (pagina Fonte d'acqua): come è registrato, nome e tipo forzati,
+  // modifica dei punti, collegamenti con gli altri corsi, portata stimata, presa da questo corso.
+  function renderWaterCard(i: number, codes: string[]) {
+    const w = watercourses[i];
+    const isLine = w.geojson.type === "LineString";
+    const reg = waterRegName(w);
+    const sameName = reg ? watercourses.filter((x, k) => k !== i && waterRegName(x) === reg).length : 0;
+    const editing = waterEdit?.i === i ? waterEdit : null;
+    const f = waterFlow(w);
+    const fq = f && "typ" in f ? f : null;
+    const ls = (q: number) => (q >= 10 ? `${fmt(Math.round(q * 1000))} l/s (${fmt(q, { maximumFractionDigits: 1 })} m³/s)` : `${fmt(Math.round(q * 1000))} l/s`);
+    const regTxt = w.source === "osm" || w.source === "osm+s2"
+      ? <>OpenStreetMap: <code className="text-[10px]">waterway={w.osm_type ?? "?"}</code>{reg ? <> · «{reg}»</> : <> · {t("senza nome")}</>}
+          {w.sat_cover != null && <> · {t("confermato dal satellite per il {p}% del tracciato", { p: Math.round(w.sat_cover * 100) })}</>}</>
+      : w.source === "s2" ? <>{t("Solo satellite (Sentinel-2): non presente in OpenStreetMap")}{reg ? <> · «{reg}»</> : null}</>
+      : w.source === "dem" ? <>{t("Modello del terreno (Copernicus DEM): impluvio")}</>
+      : <>{t("Tracciato a mano")}</>;
+    const kindOpts = <>
+      <option value="river">{t("Fiume")}</option><option value="canal">{t("Canale")}</option><option value="drain">{t("Dreno / fosso")}</option><option value="drainage">{t("Impluvio (DEM)")}</option>
+      {!isLine && <><option value="basin">{t("Bacino/lago")}</option><option value="wetland">{t("Palude")}</option></>}</>;
+    return (
+      <div className="mt-1.5 bg-white rounded-lg border border-amber-300 p-2 space-y-1.5 text-[11px] text-brand-darker" data-water-card>
+        <div className="flex items-center gap-1.5">
+          <span className="inline-block w-3 h-1 rounded" style={{ background: WATER_COL[w.kind] ?? "#0369a1" }} />
+          <b className="text-[12px]">{codes[i]}</b>
+          <span className="truncate flex-1" title={w.name || undefined}>{w.name || waterKindName(w.kind)}</span>
+          {isLine && w.length_m != null && <span className="opacity-70 whitespace-nowrap">{uM(w.length_m)}</span>}
+          {!isLine && <span className="opacity-70 whitespace-nowrap">{uHa(w.area_ha || 0, 1)}</span>}
+          <button className="text-brand-mid" title={t("Zoom")} onClick={() => zoomToCoords(waterLineOf(w))}>⌖</button>
+          <button className="opacity-60 hover:opacity-100" title={t("Chiudi")} onClick={() => selectWater({ kind: w.kind, idx: null })}>✕</button>
+        </div>
+
+        {/* registrazione */}
+        <div className="bg-panel rounded p-1.5 space-y-1" data-water-reg>
+          <div><span className="opacity-70">{t("Registrato come")}:</span> {regTxt}</div>
+          <div className="flex gap-1.5 items-center">
+            <input className="field-input px-1.5 py-0.5 text-[11px] flex-1 min-w-0" value={w.name ?? ""} placeholder={waterKindName(w.kind)}
+              onChange={(e) => renameWater(i, e.target.value)} data-water-name />
+            <select className="field-input px-1 py-0.5 text-[11px] w-auto" value={w.kind} onChange={(e) => retypeWater(i, e.target.value)} data-water-kind>{kindOpts}</select>
+          </div>
+          {(w.name_orig !== undefined && (w.name_orig ?? "") !== (w.name ?? "")) || (w.kind_orig && w.kind_orig !== w.kind) ? (
+            <div className="text-amber-800 flex flex-wrap gap-x-2 items-center">
+              <span>{t("Forzato a mano")}:</span>
+              {w.name_orig !== undefined && (w.name_orig ?? "") !== (w.name ?? "") && <span>{t("nome registrato")} «{w.name_orig || t("senza nome")}»</span>}
+              {w.kind_orig && w.kind_orig !== w.kind && <span>{t("tipo registrato")} {waterKindName(w.kind_orig)}</span>}
+              <button className="text-brand-mid" onClick={() => restoreWaterReg(i)}>↺ {t("ripristina")}</button>
+            </div>
+          ) : null}
+          {sameName > 0 && (
+            <button className="text-brand-mid" onClick={() => applyRegToSameName(i)} data-water-same>
+              ⇉ {t("Stesso nome e tipo agli altri {n} tratti «{r}»", { n: sameName, r: reg ?? "" })}</button>
+          )}
+          {isLine && w.kind !== "drainage" && (
+            <label className="flex items-center gap-1.5"><input type="checkbox" checked={waterMovable(w)} onChange={(e) => setWaterAt(i, { movable: e.target.checked })} />
+              {t("⇄ spostabile: i pivot lo possono coprire e il tratto si devia")}
+              {waterUnderPivots.get(i) ? <span className="text-amber-700">· ↯ {uM(waterUnderPivots.get(i)!)}</span> : null}</label>
+          )}
+        </div>
+
+        {/* geometria e collegamenti */}
+        {isLine && (
+          <div className="space-y-1" data-water-geom>
+            {!editing ? (
+              <div className="flex flex-wrap gap-1.5">
+                <button className="btn-ghost text-[11px] px-2 py-0.5" onClick={() => startEditWater(i)} data-water-edit>✎ {t("Modifica punti")}</button>
+                <button className={"text-[11px] px-2 py-0.5 rounded-lg " + (waterConnect ? "bg-brand text-white" : "btn-ghost")} onClick={() => { stopEditWater(); setWaterConnect(!waterConnect); }} data-water-connect>
+                  🔗 {waterConnect ? t("Clic sul corso da collegare… (annulla)") : t("Collega a un altro corso")}</button>
+                <button className="text-[11px] px-2 py-0.5 rounded-lg text-danger hover:bg-danger/10" onClick={() => removeWater(i)}>{t("Elimina corso")}</button>
+              </div>
+            ) : (
+              <div className="bg-amber-50 rounded p-1.5 space-y-1">
+                <div className="seg text-[11px]" data-water-modes>
+                  <div className="seg-item" data-active={editing.mode === "move"} onClick={() => setWaterEditMode("move")}>{t("Sposta")}</div>
+                  <div className="seg-item" data-active={editing.mode === "add"} onClick={() => setWaterEditMode("add")}>+ {t("Aggiungi / prolunga")}</div>
+                  <div className="seg-item" data-active={editing.mode === "del"} onClick={() => setWaterEditMode("del")}>− {t("Elimina punti")}</div>
+                </div>
+                <div className="opacity-80 leading-snug">
+                  {editing.mode === "move" ? t("Trascina i punti; gli estremi (gialli) si agganciano agli altri corsi: trascinane uno su un canale per collegarli. Doppio clic su un punto per toglierlo.")
+                    : editing.mode === "add" ? t("Clic sulla linea per inserire un punto; clic fuori dalla linea per prolungare il corso dall'estremo più vicino (si aggancia agli altri corsi).")
+                    : t("Clic su un punto per toglierlo (restano almeno 2 punti).")}
+                </div>
+                <div className="flex gap-1.5 items-center">
+                  <span className="opacity-70 flex-1">{(w.geojson.coordinates as number[][]).length} {t("punti")} · {uM(w.length_m ?? 0)}</span>
+                  <button className="btn-ghost text-[11px] px-2 py-0.5" onClick={undoEditWater}>↺ {t("Annulla modifiche")}</button>
+                  <button className="btn-primary text-[11px] px-2 py-0.5" onClick={stopEditWater} data-water-done>{t("Fine")}</button>
+                </div>
+              </div>
+            )}
+            {waterConnect && <div className="opacity-80">{t("Clic sulla mappa sul corso da collegare: l'estremo più vicino di {c} si prolunga fino a quel corso.", { c: codes[i] })}</div>}
+          </div>
+        )}
+        {waterLinks.length > 0 && (
+          <div data-water-links>
+            <span className="opacity-70">{t("Collegato a")}:</span>{" "}
+            {waterLinks.map(({ j, endToEnd, how }) => {
+              const v = watercourses[j];
+              return (
+                <span key={j} className="inline-flex items-center gap-1 mr-2 whitespace-nowrap">
+                  <button className="underline decoration-dotted" style={{ color: WATER_COL[v.kind] ?? "#0369a1" }} onClick={() => selectWater({ kind: v.kind, idx: j })}
+                    title={how === "mine" ? t("un estremo di questo corso è sulla sua linea") : t("un suo estremo è su questo corso")}>
+                    {codes[j]}{v.name ? ` ${v.name.length > 18 ? v.name.slice(0, 17) + "…" : v.name}` : ""}</button>
+                  {endToEnd && v.kind === w.kind && isLine && v.geojson.type === "LineString" &&
+                    <button className="text-brand-mid" title={t("Unisci i due tratti in uno solo")} onClick={() => mergeWater(i, j)}>⧉ {t("unisci")}</button>}
+                </span>
+              );
+            })}
+          </div>
+        )}
+
+        {/* portata */}
+        {isLine && w.bed && <div className="text-amber-800">{t("Alveo asciutto (greto): l'acqua scorre solo durante le piene; non è una fonte continua.")}</div>}
+        {f && (
+          <div className="bg-sky-50 rounded p-1.5 space-y-1" data-water-flow>
+            <div className="font-semibold">{t("Portata stimata")} <span className="font-normal opacity-70">({t("formula di Manning, sezione trapezia")})</span></div>
+            <div className="grid grid-cols-4 gap-1">
+              <label className="opacity-80">{t("Profondità (m)")}
+                <input type="number" min={0.1} step={0.1} className="field-input px-1 py-0.5 text-[11px]" value={Math.round(f.d * 100) / 100}
+                  onChange={(e) => { const v = Number(e.target.value); if (v > 0) patchWater(i, { depth_m: v }); }} data-water-depth /></label>
+              <label className="opacity-80">{t("Pendenza (‰)")}
+                <input type="number" min={0} step={0.05} className="field-input px-1 py-0.5 text-[11px]" value={w.slope_pm ?? ""} placeholder={waterSlopeBusy === i ? "…" : "–"}
+                  onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0) patchWater(i, { slope_pm: v, slope_from: "manual" }); }} data-water-slope /></label>
+              <label className="opacity-80">{t("Scabrezza n")}
+                <input type="number" min={0.01} max={0.2} step={0.005} className="field-input px-1 py-0.5 text-[11px]" value={f.n}
+                  onChange={(e) => { const v = Number(e.target.value); if (v > 0) patchWater(i, { manning_n: v }); }} /></label>
+              <label className="opacity-80">{t("Scarpa 1:")}
+                <input type="number" min={0.2} max={30} step={0.1} className="field-input px-1 py-0.5 text-[11px]" value={f.m}
+                  onChange={(e) => { const v = Number(e.target.value); if (v > 0) patchWater(i, { bank_m: v, bank_from: "manual" }); }} /></label>
+            </div>
+            <div className="opacity-70 leading-snug">
+              {w.depth_m == null ? t("Profondità stimata dalla larghezza ({w}): il satellite non la misura, inseriscila se la conosci.", { w: uM(f.W, 1) }) + " " : ""}
+              {waterSlopeBusy === i ? t("Leggo la pendenza dal DEM…")
+                : w.slope_from === "dem" && w.z_hi != null ? t("Pendenza dal DEM: quota {a} → {b} m s.l.m. lungo il tracciato.", { a: fmt(w.z_hi, { maximumFractionDigits: 1 }), b: fmt(w.z_lo ?? 0, { maximumFractionDigits: 1 }) })
+                : w.slope_pm == null ? <button className="text-brand-mid" onClick={() => readWaterSlope(i)}>{t("Leggi la pendenza dal DEM")}</button> : t("Pendenza inserita a mano.")}
+              {w.slope_pm != null && w.slope_pm < 0.1 && " " + t("Pianura: pendenza sotto la precisione del DEM, il calcolo usa almeno 0,05‰.")}
+            </div>
+            {fq && fq.typ && (
+              <div className="leading-relaxed">
+                <div>{t("Tipica")} ({uM(fq.W, 1)}): <b>{ls(fq.typ.Q)}</b> · v {fmt(fq.typ.v, { maximumFractionDigits: 2 })} m/s</div>
+                {fq.low && <div>{t("Magra")} ({uM(w.width_low_m ?? 0, 1)}, {wDate(fq.low.date)}): <b>{ls(fq.low.Q)}</b></div>}
+                {fq.high && <div>{t("Piena")} ({uM(w.width_high_m ?? 0, 1)}, {wDate(fq.high.date)}): <b>{ls(fq.high.Q)}</b></div>}
+                {fq.dry && <div className="text-amber-800">{t("Corso non perenne: portata nulla nei mesi senz'acqua ({m}).", { m: waterMonthsTxt(w) })}</div>}
+                {fq.typ.v > 3 && <div className="text-rust">{t("Velocità alta: controlla profondità e pendenza.")}</div>}
+                {!!fq.byDate.length && (() => {
+                  const mx = Math.max(...fq.byDate.map(([, q]) => q), 1e-6);
+                  return (
+                    <svg viewBox={`0 0 ${fq.byDate.length * 10} 30`} className="w-full h-8" preserveAspectRatio="none" data-water-qchart>
+                      {fq.byDate.map(([d, q], k) => <rect key={k} x={k * 10 + 1} y={30 - (q / mx) * 28} width={8} height={Math.max(0.5, (q / mx) * 28)} fill="#0369a1" opacity={0.7}><title>{`${wDate(d)}: ${fmt(Math.round(q * 1000))} l/s`}</title></rect>)}
+                    </svg>
+                  );
+                })()}
+              </div>
+            )}
+            <label className="flex items-center gap-1.5">{t("Portata nota (l/s)")}
+              <input type="number" min={0} step={1} className="field-input px-1 py-0.5 text-[11px] w-20" value={w.q_known_ls ?? ""} placeholder="–"
+                onChange={(e) => { const v = e.target.value === "" ? undefined : Number(e.target.value); patchWater(i, { q_known_ls: v != null && Number.isFinite(v) && v >= 0 ? v : undefined }); }} data-water-qknown />
+              <span className="opacity-70">{t("misurata o concessa: sostituisce la stima")}</span></label>
+          </div>
+        )}
+        {w.kind !== "drainage" && !w.bed && (
+          <button className="btn-primary w-full text-[12px] py-1" onClick={() => takeWaterAsSource(i)} data-water-use>
+            📍 {t("Prendi l'acqua da questo corso")}{waterQAvailLs(w) != null ? ` · ${fmt(waterQAvailLs(w)!)} l/s` : ""}</button>
+        )}
+
+        {/* variazioni nell'anno e livelli */}
+        {isLine && (
+          <div className="space-y-0.5" data-water-detail>
+
+                                  {w.width_low_m != null && w.width_high_m != null ? (
+                                    <div>{w.bed ? t("Larghezza dell'alveo") : t("Larghezza nell'anno")}: <b>{uM(w.width_low_m, 1)}</b> ({wDate(w.date_low)}) – <b>{uM(w.width_high_m, 1)}</b> ({wDate(w.date_high)})</div>
+                                  ) : <div className="opacity-70">{t("Larghezza data per data non disponibile per questo tratto")}</div>}
+                                  {!!w.widths_by_date?.length && (() => {
+                                    const v = w.widths_by_date.map(([, x]) => x); const mx = Math.max(...v, 1);
+                                    return (
+                                      <svg viewBox={`0 0 ${v.length * 10} 30`} className="w-full h-8" preserveAspectRatio="none">
+                                        {w.widths_by_date.map(([d, x], k) => <rect key={k} x={k * 10 + 1} y={30 - (x / mx) * 28} width={8} height={(x / mx) * 28} fill="#0d9488" opacity={0.75}><title>{`${wDate(d)}: ${uM(x, 1)}`}</title></rect>)}
+                                      </svg>
+                                    );
+                                  })()}
+                                  {!f && w.width_low_m != null && !w.bed && w.regime === "perennial" && (
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      {t("Scarpa delle sponde 1:")}
+                                      <input type="number" min={0.2} max={30} step={0.1} className="w-12 text-right bg-transparent border-b border-black/10"
+                                        value={w.bank_m ?? ""} placeholder="–"
+                                        onChange={(e) => { const v = Number(e.target.value); if (v > 0) setWaterAt(i, { bank_m: v, bank_from: "manual" }); }} />
+                                      <span className="opacity-70">({w.bank_from === "canal" ? t("sezione tipo di un canale in terra") : w.bank_from === "dem" ? t("dal DEM") : w.bank_from === "manual" ? t("inserita a mano") : t("da inserire")})</span>
+                                    </div>
+                                  )}
+                                  {waterRange(w) != null && <div>{t("Escursione di livello stimata")}: <b>{fmt(waterRange(w)!, { maximumFractionDigits: 1 })} m</b> <span className="opacity-70">({t("stima dalla larghezza, ±1 m circa")})</span></div>}
+                                  {w.level_abs && (
+                                    <div>{t("Quote misurate dagli altimetri")}: <b>{fmt(w.level_abs.min, { maximumFractionDigits: 1 })} – {fmt(w.level_abs.max, { maximumFractionDigits: 1 })} m s.l.m.</b>
+                                      {" "}({t("escursione {d} m; 5–95%: {a}–{b} m", { d: fmt(w.level_abs.max - w.level_abs.min, { maximumFractionDigits: 1 }), a: fmt(w.level_abs.low, { maximumFractionDigits: 1 }), b: fmt(w.level_abs.high, { maximumFractionDigits: 1 }) })}
+                                      {w.level_abs.dist_km > 0.5 ? ", " + t("punto a {k} km", { k: fmt(w.level_abs.dist_km, { maximumFractionDigits: 0 }) }) : ""})</div>
+                                  )}
+                                          </div>
+        )}
+      </div>
+    );
+  }
   function renderSource() {
     const S = sourceSchemes();
     const num = (label: string, v: number, set: (x: number) => void, step = 1, min = 0, max = 1e9) => (
@@ -8298,6 +8797,18 @@ export default function Page() {
             onClick={srcPicking ? () => { mapApi.current?.pickPoint(null); setSrcPicking(false); } : startPickSource}>
             {srcPicking ? t("Clicca sulla mappa… (Esc annulla)") : srcPt ? t("📍 Sposta il punto di presa") : t("📍 Indica la fonte sulla mappa")}
           </button>
+          {srcOnWater && watercourses[srcOnWater.i] && (() => {
+            const w = watercourses[srcOnWater.i], q = waterQAvailLs(w);
+            return (
+              <div className="text-[11px] text-sage-dark leading-snug" data-src-water>
+                {t("Presa sul corso")} <button className="font-semibold underline decoration-dotted" style={{ color: WATER_COL[w.kind] ?? "#0369a1" }}
+                  onClick={() => selectWater({ kind: w.kind, idx: srcOnWater.i })}>{waterCodes(watercourses)[srcOnWater.i]}{w.name ? ` · ${w.name}` : ""}</button>
+                {w.mean_width_m ? <> · {t("larghezza {w}", { w: uM(w.mean_width_m, 1) })}</> : null}
+                {w.regime ? <> · {waterRegimeName(w.regime)}</> : null}
+                {q != null ? <> · {w.q_known_ls != null ? t("portata nota") : t("portata stimata")} <b>{fmt(q)} l/s</b></> : null}
+              </div>
+            );
+          })()}
           {srcPt && (
             <div className="flex gap-2">
               <button className="btn-ghost flex-1 basis-0 text-[12px]" disabled={srcDrawing} onClick={startDrawRoute}>
@@ -9995,157 +10506,10 @@ export default function Page() {
           </section>
 
           <section hidden={tab !== "analisi"} className="border-t border-black/5 pt-3">
-            <SectionHead title={t("Corsi d'acqua esistenti")} help={t("Legge fiumi, canali e bacini da 12 mesi di immagini Sentinel-2 (10 m) e ne misura lunghezza e larghezza tratto per tratto; aggiunge gli impluvi e gli alvei asciutti dal modello del terreno (DEM). Si leggono bene i corsi d'acqua larghi almeno 10 m; quelli più stretti solo se ben contrastati, con larghezza stimata. Falla prima di progettare: i pivot li evitano automaticamente.")} />
-            <label className="text-xs text-sage-dark block">{t("Sensibilità")}: {waterSens}/5 {waterSens >= 4 ? t("(rileva anche corsi stretti/deboli)") : ""}
-              <input type="range" min={1} max={5} step={1} value={waterSens}
-                onChange={(e) => setWaterSens(Number(e.target.value))} className="w-full accent-brand" disabled={waterPreview} />
-            </label>
-            {!waterPreview ? (
-              <div className="flex gap-2 mt-1">
-                <button className="btn-primary flex-1 basis-0" disabled={busy === "water" || !activeGeom} onClick={detectWater}>
-                  {busy === "water" ? t("Lettura immagini…") : t("Rileva corsi d'acqua")}
-                </button>
-                <button className="btn-ghost flex-1 basis-0" onClick={clearWater}>{t("Rimuovi")}</button>
-              </div>
-            ) : (
-              <div className="mt-1 bg-brand/5 rounded-lg p-2">
-                <p className="hint mb-1">{t("Anteprima modificabile: trascina i vertici, aggiungi o elimina elementi, poi Conferma.")}</p>
-                <div className="flex gap-2 flex-wrap">
-                  <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("river")}>+ {t("Fiume")}</button>
-                  <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("canal")}>+ {t("Canale")}</button>
-                  <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("basin")}>+ {t("Bacino")}</button>
-                  <button className={"text-xs px-2 py-1 rounded-lg " + (waterRemoveOn ? "bg-danger text-white" : "btn-ghost")} onClick={toggleWaterRemove}>{t("Elimina elemento")}</button>
-                </div>
-                <div className="flex gap-2 mt-2">
-                  <button className="btn-primary flex-1 basis-0" onClick={confirmWaterUI}>{t("Conferma")}</button>
-                  <button className="btn-ghost flex-1 basis-0" onClick={cancelWaterPreview}>{t("Annulla")}</button>
-                </div>
-              </div>
-            )}
-            {!waterPreview && !!watercourses.length && (() => {
-              const codes = waterCodes(watercourses);
-              const allLines = watercourses.map((w, i) => ({ w, i })).filter(({ w }) => w.geojson.type === "LineString");
-              const lines = waterSel.kind ? allLines.filter(({ w }) => w.kind === waterSel.kind) : allLines;
-              const kinds = ["river", "canal", "drain", "drainage"].filter((k) => allLines.some(({ w }) => w.kind === k));
-              const kmOf = (k: string) => allLines.filter(({ w }) => w.kind === k && !w.hidden).reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000;
-              const nBas = watercourses.filter((w) => w.kind === "basin").length;
-              const anyBelow = lines.some(({ w }) => w.below_pixel);
-              return (
-                <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed" data-water-table>
-                  <div>
-                    <b style={{ color: WATER_COL.river }}>━ {t("Fiumi")}</b> {uKm(kmOf("river"), 2)} · <b style={{ color: WATER_COL.canal }}>━ {t("Canali")}</b> {uKm(kmOf("canal"), 2)}
-                    {kmOf("drain") > 0 && <> · <b style={{ color: WATER_COL.drain }}>━ {t("Dreni e fossi")}</b> {uKm(kmOf("drain"), 2)}</>}
-                    {kmOf("drainage") > 0 && <> · {t("Impluvi (DEM)")} {uKm(kmOf("drainage"), 2)}</>}
-                    {nBas > 0 && <> · {nBas} {t("bacini")}</>}
-                  </div>
-                  {allLines.some(({ w }) => w.regime && w.regime !== "perennial") && (
-                    <div>{t("Non perenni")}: {uKm(allLines.filter(({ w }) => !w.hidden && w.regime && w.regime !== "perennial").reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000, 2)}
-                      {allLines.some(({ w }) => w.bed) && <> · {t("di cui alvei asciutti")} {uKm(allLines.filter(({ w }) => !w.hidden && w.bed).reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000, 2)}</>}</div>
-                  )}
-                  {waterMeta?.dates?.length ? <div className="text-[11px] opacity-80">{t("Sentinel-2, {n} date dal {a} al {b}, pixel {r} m", { n: waterMeta.dates.length, a: waterMeta.dates[0], b: waterMeta.dates[waterMeta.dates.length - 1], r: fmt(waterMeta.res_m) })}</div> : null}
-                  {/* selezione per tipo (come il primo clic sulla mappa); poi clic sul singolo tratto */}
-                  <div className="mt-1 flex flex-wrap gap-1 items-center" data-water-kinds>
-                    <button className={"px-1.5 py-0.5 rounded border text-[11px] " + (!waterSel.kind ? "bg-white border-black/20" : "border-transparent opacity-70")}
-                      onClick={() => selectWater({ kind: null, idx: null })}>{t("Tutti")} ({allLines.length})</button>
-                    {kinds.map((k) => (
-                      <button key={k} className={"px-1.5 py-0.5 rounded border text-[11px] " + (waterSel.kind === k ? "bg-white border-black/20 font-semibold" : "border-transparent")}
-                        style={{ color: WATER_COL[k] }} onClick={() => selectWater({ kind: k, idx: null })}>
-                        ━ {waterKindName(k)} ({allLines.filter(({ w }) => w.kind === k).length})
-                      </button>
-                    ))}
-                  </div>
-                  {waterSel.kind && waterSel.kind !== "drainage" && (
-                    <div className="mt-0.5 text-[11px] flex flex-wrap gap-2 items-center">
-                      <span className="opacity-70">{t("Clic sulla mappa su un tratto per selezionarlo.")}</span>
-                      <button className="text-brand-mid" onClick={() => setWaterKindMovable(waterSel.kind!, true)}>⇄ {t("tutti spostabili")}</button>
-                      <button className="text-brand-mid" onClick={() => setWaterKindMovable(waterSel.kind!, false)}>✕ {t("tutti fissi")}</button>
-                    </div>
-                  )}
-                  {!!lines.length && (
-                    <div className="mt-1 max-h-64 overflow-auto">
-                      <table className="w-full text-[11px]">
-                        <thead><tr className="text-left opacity-70"><th className="font-normal">#</th><th className="font-normal">{t("Tipo")}</th><th className="font-normal">{t("Regime")}</th><th className="font-normal text-right">{t("Lunghezza")}</th><th className="font-normal text-right">{t("Larghezza")} ({imperial ? "ft" : "m"})</th><th className="font-normal text-center" title={t("Spostabile: i pivot possono coprirlo e il tratto si devia")}>⇄</th><th /></tr></thead>
-                        <tbody>
-                          {lines.map(({ w, i }) => (<Fragment key={i}>
-                            <tr data-water-row={i} className={(w.hidden ? "opacity-40 " : "") + (waterSel.idx === i ? "bg-amber-100" : "")}
-                              onClick={(e) => { if ((e.target as HTMLElement).closest("input,select,button")) return; selectWater({ kind: w.kind, idx: i }); }}>
-                              <td className="pr-1 whitespace-nowrap">
-                                <button className="text-brand-mid mr-0.5" title={t("Variazioni nell'anno e livelli")} onClick={() => { if (waterOpen === i) setWaterOpen(null); else selectWater({ kind: w.kind, idx: i }); }}>{waterOpen === i ? "▾" : "▸"}</button><span title={w.name || undefined}>{codes[i]}</span>
-                                {w.name ? <div className="text-[10px] opacity-70 max-w-[7rem] truncate" title={w.name}>{w.name}</div> : null}
-                              </td>
-                              <td>
-                                <span className="inline-block w-2.5 h-0.5 align-middle mr-1" style={{ background: WATER_COL[w.kind] ?? "#0369a1" }} />
-                                <select className="bg-transparent text-[11px] p-0" value={w.kind} onChange={(e) => setWaterAt(i, { kind: e.target.value, movable: undefined })}>
-                                  <option value="river">{t("Fiume")}</option><option value="canal">{t("Canale")}</option><option value="drain">{t("Dreno / fosso")}</option><option value="drainage">{t("Impluvio (DEM)")}</option>
-                                </select>
-                                {waterUnderPivots.get(i) ? <div className="text-[10px] text-amber-700" title={t("Tratto sotto i pivot: da deviare")}>↯ {uM(waterUnderPivots.get(i)!)}</div> : null}
-                              </td>
-                              <td className="whitespace-nowrap" title={waterMonthsTxt(w) || undefined}>
-                                {!w.regime && (w.source === "osm") ? <span className="opacity-60" title={t("Corso da OpenStreetMap non visibile dal satellite: regime e larghezza da verificare")}>{t("non visibile")}</span> : null}
-                                {w.regime ? <span className={"px-1 rounded " + (w.regime === "perennial" ? "bg-sky-100 text-sky-800" : w.regime === "seasonal" ? "bg-amber-100 text-amber-800" : "bg-orange-200 text-orange-900")}>
-                                  {waterRegimeName(w.regime)}{w.months_seen?.length ? ` ${w.months_wet?.length ?? 0}/${w.months_seen.length}` : ""}</span> : "–"}
-                                {w.bed ? <span className="ml-1 opacity-80">{t("alveo")}</span> : null}
-                              </td>
-                              <td className="text-right whitespace-nowrap">{w.length_m != null ? uM(w.length_m) : "–"}</td>
-                              <td className="text-right whitespace-nowrap" title={w.width_min_m != null ? `${t("min – max")}: ${uM(w.width_min_m, 1)} – ${uM(w.width_max_m ?? 0, 1)}${w.width_wet_m ? ` · ${t("stato bagnato")}: ${uM(w.width_wet_m, 1)}` : ""}` : undefined}>
-                                <input type="number" min={0} step={0.5} className="w-14 text-right bg-transparent border-b border-black/10"
-                                  value={w.mean_width_m != null ? Math.round((imperial ? w.mean_width_m * 3.28084 : w.mean_width_m) * 10) / 10 : ""}
-                                  onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0) setWaterAt(i, { mean_width_m: imperial ? v / 3.28084 : v }); }} />
-                                {w.below_pixel ? <span title={t("larghezza sotto i 10 m del pixel: stima, da verificare")}> *</span> : null}
-                              </td>
-                              <td className="text-center"><input type="checkbox" checked={waterMovable(w)} title={t("Spostabile: i pivot possono coprirlo e il tratto si devia")}
-                                onChange={(e) => setWaterAt(i, { movable: e.target.checked })} /></td>
-                              <td className="text-right"><button className="text-brand-mid" title={t("Zoom")} onClick={() => zoomToCoords(w.geojson.coordinates)}>⌖</button></td>
-                            </tr>
-                            {waterOpen === i && (
-                              <tr><td colSpan={7} className="pb-2">
-                                <div className="bg-white/70 rounded p-1.5 space-y-0.5" data-water-detail>
-                                  {w.width_low_m != null && w.width_high_m != null ? (
-                                    <div>{w.bed ? t("Larghezza dell'alveo") : t("Larghezza nell'anno")}: <b>{uM(w.width_low_m, 1)}</b> ({wDate(w.date_low)}) – <b>{uM(w.width_high_m, 1)}</b> ({wDate(w.date_high)})</div>
-                                  ) : <div className="opacity-70">{t("Larghezza data per data non disponibile per questo tratto")}</div>}
-                                  {!!w.widths_by_date?.length && (() => {
-                                    const v = w.widths_by_date.map(([, x]) => x); const mx = Math.max(...v, 1);
-                                    return (
-                                      <svg viewBox={`0 0 ${v.length * 10} 30`} className="w-full h-8" preserveAspectRatio="none">
-                                        {w.widths_by_date.map(([d, x], k) => <rect key={k} x={k * 10 + 1} y={30 - (x / mx) * 28} width={8} height={(x / mx) * 28} fill="#0d9488" opacity={0.75}><title>{`${wDate(d)}: ${uM(x, 1)}`}</title></rect>)}
-                                      </svg>
-                                    );
-                                  })()}
-                                  {w.width_low_m != null && !w.bed && w.regime === "perennial" && (
-                                    <div className="flex items-center gap-1 flex-wrap">
-                                      {t("Scarpa delle sponde 1:")}
-                                      <input type="number" min={0.2} max={30} step={0.1} className="w-12 text-right bg-transparent border-b border-black/10"
-                                        value={w.bank_m ?? ""} placeholder="–"
-                                        onChange={(e) => { const v = Number(e.target.value); if (v > 0) setWaterAt(i, { bank_m: v, bank_from: "manual" }); }} />
-                                      <span className="opacity-70">({w.bank_from === "canal" ? t("sezione tipo di un canale in terra") : w.bank_from === "dem" ? t("dal DEM") : w.bank_from === "manual" ? t("inserita a mano") : t("da inserire")})</span>
-                                    </div>
-                                  )}
-                                  {waterRange(w) != null && <div>{t("Escursione di livello stimata")}: <b>{fmt(waterRange(w)!, { maximumFractionDigits: 1 })} m</b> <span className="opacity-70">({t("stima dalla larghezza, ±1 m circa")})</span></div>}
-                                  {w.level_abs && (
-                                    <div>{t("Quote misurate dagli altimetri")}: <b>{fmt(w.level_abs.min, { maximumFractionDigits: 1 })} – {fmt(w.level_abs.max, { maximumFractionDigits: 1 })} m s.l.m.</b>
-                                      {" "}({t("escursione {d} m; 5–95%: {a}–{b} m", { d: fmt(w.level_abs.max - w.level_abs.min, { maximumFractionDigits: 1 }), a: fmt(w.level_abs.low, { maximumFractionDigits: 1 }), b: fmt(w.level_abs.high, { maximumFractionDigits: 1 }) })}
-                                      {w.level_abs.dist_km > 0.5 ? ", " + t("punto a {k} km", { k: fmt(w.level_abs.dist_km, { maximumFractionDigits: 0 }) }) : ""})</div>
-                                  )}
-                                </div>
-                              </td></tr>
-                            )}
-                          </Fragment>))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                  <div className="text-[11px] mt-0.5 opacity-80">{t("⇄ spostabile: i pivot lo possono coprire e il tratto si devia; i corsi non spostabili (fiumi) i pivot li evitano.")}</div>
-                  {waterUnderPivots.size > 0 && (
-                    <div className="text-[11px] mt-0.5 text-amber-800">↯ {t("Da deviare sotto i pivot: {n} tratti, {m}", { n: waterUnderPivots.size, m: uM([...waterUnderPivots.values()].reduce((a, b) => a + b, 0)) })}</div>
-                  )}
-                  {anyBelow && <div className="text-[11px] mt-1">* {t("larghezza sotto i 10 m del pixel: stima, da verificare")}</div>}
-                  <div className="mt-1 flex gap-3">
-                    <button className="text-brand-mid" onClick={exportWaterKmz}>⤓ KMZ</button>
-                    <button className="text-brand-mid" onClick={exportWaterCsv}>⤓ CSV</button>
-                  </div>
-                </div>
-              );
-            })()}
+            <div className="text-xs text-sage-dark flex items-center gap-2" data-water-moved>
+              <span className="flex-1">{t("Corsi d'acqua esistenti: rilevamento, scheda e portata sono nella pagina Fonte d'acqua.")}</span>
+              <button className="btn-ghost text-[11px] px-2 py-1 whitespace-nowrap" onClick={() => goTab("fonte")}>{t("Apri")} →</button>
+            </div>
           </section>
 
           <section hidden={tab !== "analisi"} className="border-t border-black/5 pt-3">
@@ -10797,6 +11161,129 @@ export default function Page() {
               )}
             </div>
 
+          </section>
+
+          <section hidden={tab !== "fonte"} className="pb-3 mb-3 border-b border-black/5" data-water-section>
+            <SectionHead title={t("Corsi d'acqua esistenti")} help={t("Legge fiumi, canali e bacini da 12 mesi di immagini Sentinel-2 (10 m) e ne misura lunghezza e larghezza tratto per tratto; aggiunge gli impluvi e gli alvei asciutti dal modello del terreno (DEM). Si leggono bene i corsi d'acqua larghi almeno 10 m; quelli più stretti solo se ben contrastati, con larghezza stimata. Falla prima di progettare: i pivot li evitano automaticamente.")} />
+            <label className="text-xs text-sage-dark block">{t("Sensibilità")}: {waterSens}/5 {waterSens >= 4 ? t("(rileva anche corsi stretti/deboli)") : ""}
+              <input type="range" min={1} max={5} step={1} value={waterSens}
+                onChange={(e) => setWaterSens(Number(e.target.value))} className="w-full accent-brand" disabled={waterPreview} />
+            </label>
+            {!waterPreview ? (
+              <div className="flex gap-2 mt-1">
+                <button className="btn-primary flex-1 basis-0" disabled={busy === "water" || !activeGeom} onClick={detectWater}>
+                  {busy === "water" ? t("Lettura immagini…") : t("Rileva corsi d'acqua")}
+                </button>
+                <button className="btn-ghost flex-1 basis-0" onClick={clearWater}>{t("Rimuovi")}</button>
+              </div>
+            ) : (
+              <div className="mt-1 bg-brand/5 rounded-lg p-2">
+                <p className="hint mb-1">{t("Anteprima modificabile: trascina i vertici, aggiungi o elimina elementi, poi Conferma.")}</p>
+                <div className="flex gap-2 flex-wrap">
+                  <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("river")}>+ {t("Fiume")}</button>
+                  <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("canal")}>+ {t("Canale")}</button>
+                  <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("basin")}>+ {t("Bacino")}</button>
+                  <button className={"text-xs px-2 py-1 rounded-lg " + (waterRemoveOn ? "bg-danger text-white" : "btn-ghost")} onClick={toggleWaterRemove}>{t("Elimina elemento")}</button>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button className="btn-primary flex-1 basis-0" onClick={confirmWaterUI}>{t("Conferma")}</button>
+                  <button className="btn-ghost flex-1 basis-0" onClick={cancelWaterPreview}>{t("Annulla")}</button>
+                </div>
+              </div>
+            )}
+            {!waterPreview && !!watercourses.length && (() => {
+              const codes = waterCodes(watercourses);
+              const allLines = watercourses.map((w, i) => ({ w, i })).filter(({ w }) => w.geojson.type === "LineString");
+              const lines = waterSel.kind ? allLines.filter(({ w }) => w.kind === waterSel.kind) : allLines;
+              const kinds = ["river", "canal", "drain", "drainage"].filter((k) => allLines.some(({ w }) => w.kind === k));
+              const kmOf = (k: string) => allLines.filter(({ w }) => w.kind === k && !w.hidden).reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000;
+              const nBas = watercourses.filter((w) => w.kind === "basin").length;
+              const anyBelow = lines.some(({ w }) => w.below_pixel);
+              return (
+                <div className="mt-2 text-xs text-sage-dark bg-panel rounded-lg p-2 leading-relaxed" data-water-table>
+                  <div>
+                    <b style={{ color: WATER_COL.river }}>━ {t("Fiumi")}</b> {uKm(kmOf("river"), 2)} · <b style={{ color: WATER_COL.canal }}>━ {t("Canali")}</b> {uKm(kmOf("canal"), 2)}
+                    {kmOf("drain") > 0 && <> · <b style={{ color: WATER_COL.drain }}>━ {t("Dreni e fossi")}</b> {uKm(kmOf("drain"), 2)}</>}
+                    {kmOf("drainage") > 0 && <> · {t("Impluvi (DEM)")} {uKm(kmOf("drainage"), 2)}</>}
+                    {nBas > 0 && <> · {nBas} {t("bacini")}</>}
+                  </div>
+                  {allLines.some(({ w }) => w.regime && w.regime !== "perennial") && (
+                    <div>{t("Non perenni")}: {uKm(allLines.filter(({ w }) => !w.hidden && w.regime && w.regime !== "perennial").reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000, 2)}
+                      {allLines.some(({ w }) => w.bed) && <> · {t("di cui alvei asciutti")} {uKm(allLines.filter(({ w }) => !w.hidden && w.bed).reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000, 2)}</>}</div>
+                  )}
+                  {waterMeta?.dates?.length ? <div className="text-[11px] opacity-80">{t("Sentinel-2, {n} date dal {a} al {b}, pixel {r} m", { n: waterMeta.dates.length, a: waterMeta.dates[0], b: waterMeta.dates[waterMeta.dates.length - 1], r: fmt(waterMeta.res_m) })}</div> : null}
+                  {/* selezione per tipo (come il primo clic sulla mappa); poi clic sul singolo tratto */}
+                  <div className="mt-1 flex flex-wrap gap-1 items-center" data-water-kinds>
+                    <button className={"px-1.5 py-0.5 rounded border text-[11px] " + (!waterSel.kind ? "bg-white border-black/20" : "border-transparent opacity-70")}
+                      onClick={() => selectWater({ kind: null, idx: null })}>{t("Tutti")} ({allLines.length})</button>
+                    {kinds.map((k) => (
+                      <button key={k} className={"px-1.5 py-0.5 rounded border text-[11px] " + (waterSel.kind === k ? "bg-white border-black/20 font-semibold" : "border-transparent")}
+                        style={{ color: WATER_COL[k] }} onClick={() => selectWater({ kind: k, idx: null })}>
+                        ━ {waterKindName(k)} ({allLines.filter(({ w }) => w.kind === k).length})
+                      </button>
+                    ))}
+                  </div>
+                  {waterSel.kind && waterSel.kind !== "drainage" && (
+                    <div className="mt-0.5 text-[11px] flex flex-wrap gap-2 items-center">
+                      <span className="opacity-70">{t("Clic sulla mappa su un tratto per aprirne la scheda.")}</span>
+                      <button className="text-brand-mid" onClick={() => setWaterKindMovable(waterSel.kind!, true)}>⇄ {t("tutti spostabili")}</button>
+                      <button className="text-brand-mid" onClick={() => setWaterKindMovable(waterSel.kind!, false)}>✕ {t("tutti fissi")}</button>
+                    </div>
+                  )}
+                  {waterSel.idx != null && watercourses[waterSel.idx] && renderWaterCard(waterSel.idx, codes)}
+                  {!!lines.length && (
+                    <div className="mt-1 max-h-64 overflow-auto">
+                      <table className="w-full text-[11px]">
+                        <thead><tr className="text-left opacity-70"><th className="font-normal">#</th><th className="font-normal">{t("Tipo")}</th><th className="font-normal">{t("Regime")}</th><th className="font-normal text-right">{t("Lunghezza")}</th><th className="font-normal text-right">{t("Larghezza")} ({imperial ? "ft" : "m"})</th><th className="font-normal text-center" title={t("Spostabile: i pivot possono coprirlo e il tratto si devia")}>⇄</th><th /></tr></thead>
+                        <tbody>
+                          {lines.map(({ w, i }) => (<Fragment key={i}>
+                            <tr data-water-row={i} className={(w.hidden ? "opacity-40 " : "") + (waterSel.idx === i ? "bg-amber-100" : "")}
+                              onClick={(e) => { if ((e.target as HTMLElement).closest("input,select,button")) return; selectWater({ kind: w.kind, idx: i }); }}>
+                              <td className="pr-1 whitespace-nowrap">
+                                <button className="text-brand-mid mr-0.5" title={t("Scheda del corso")} onClick={() => selectWater(waterSel.idx === i ? { kind: w.kind, idx: null } : { kind: w.kind, idx: i })}>{waterSel.idx === i ? "▾" : "▸"}</button><span title={w.name || undefined}>{codes[i]}</span>
+                                {w.name ? <div className="text-[10px] opacity-70 max-w-[7rem] truncate" title={w.name}>{w.name}</div> : null}
+                              </td>
+                              <td>
+                                <span className="inline-block w-2.5 h-0.5 align-middle mr-1" style={{ background: WATER_COL[w.kind] ?? "#0369a1" }} />
+                                <select className="bg-transparent text-[11px] p-0" value={w.kind} onChange={(e) => retypeWater(i, e.target.value)}>
+                                  <option value="river">{t("Fiume")}</option><option value="canal">{t("Canale")}</option><option value="drain">{t("Dreno / fosso")}</option><option value="drainage">{t("Impluvio (DEM)")}</option>
+                                </select>
+                                {waterUnderPivots.get(i) ? <div className="text-[10px] text-amber-700" title={t("Tratto sotto i pivot: da deviare")}>↯ {uM(waterUnderPivots.get(i)!)}</div> : null}
+                              </td>
+                              <td className="whitespace-nowrap" title={waterMonthsTxt(w) || undefined}>
+                                {!w.regime && (w.source === "osm") ? <span className="opacity-60" title={t("Corso da OpenStreetMap non visibile dal satellite: regime e larghezza da verificare")}>{t("non visibile")}</span> : null}
+                                {w.regime ? <span className={"px-1 rounded " + (w.regime === "perennial" ? "bg-sky-100 text-sky-800" : w.regime === "seasonal" ? "bg-amber-100 text-amber-800" : "bg-orange-200 text-orange-900")}>
+                                  {waterRegimeName(w.regime)}{w.months_seen?.length ? ` ${w.months_wet?.length ?? 0}/${w.months_seen.length}` : ""}</span> : "–"}
+                                {w.bed ? <span className="ml-1 opacity-80">{t("alveo")}</span> : null}
+                              </td>
+                              <td className="text-right whitespace-nowrap">{w.length_m != null ? uM(w.length_m) : "–"}</td>
+                              <td className="text-right whitespace-nowrap" title={w.width_min_m != null ? `${t("min – max")}: ${uM(w.width_min_m, 1)} – ${uM(w.width_max_m ?? 0, 1)}${w.width_wet_m ? ` · ${t("stato bagnato")}: ${uM(w.width_wet_m, 1)}` : ""}` : undefined}>
+                                <input type="number" min={0} step={0.5} className="w-14 text-right bg-transparent border-b border-black/10"
+                                  value={w.mean_width_m != null ? Math.round((imperial ? w.mean_width_m * 3.28084 : w.mean_width_m) * 10) / 10 : ""}
+                                  onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0) setWaterAt(i, { mean_width_m: imperial ? v / 3.28084 : v }); }} />
+                                {w.below_pixel ? <span title={t("larghezza sotto i 10 m del pixel: stima, da verificare")}> *</span> : null}
+                              </td>
+                              <td className="text-center"><input type="checkbox" checked={waterMovable(w)} title={t("Spostabile: i pivot possono coprirlo e il tratto si devia")}
+                                onChange={(e) => setWaterAt(i, { movable: e.target.checked })} /></td>
+                              <td className="text-right"><button className="text-brand-mid" title={t("Zoom")} onClick={() => zoomToCoords(w.geojson.coordinates)}>⌖</button></td>
+                            </tr>
+                          </Fragment>))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  <div className="text-[11px] mt-0.5 opacity-80">{t("⇄ spostabile: i pivot lo possono coprire e il tratto si devia; i corsi non spostabili (fiumi) i pivot li evitano.")}</div>
+                  {waterUnderPivots.size > 0 && (
+                    <div className="text-[11px] mt-0.5 text-amber-800">↯ {t("Da deviare sotto i pivot: {n} tratti, {m}", { n: waterUnderPivots.size, m: uM([...waterUnderPivots.values()].reduce((a, b) => a + b, 0)) })}</div>
+                  )}
+                  {anyBelow && <div className="text-[11px] mt-1">* {t("larghezza sotto i 10 m del pixel: stima, da verificare")}</div>}
+                  <div className="mt-1 flex gap-3">
+                    <button className="text-brand-mid" onClick={exportWaterKmz}>⤓ KMZ</button>
+                    <button className="text-brand-mid" onClick={exportWaterCsv}>⤓ CSV</button>
+                  </div>
+                </div>
+              );
+            })()}
           </section>
 
           <section hidden={tab !== "fonte"}>

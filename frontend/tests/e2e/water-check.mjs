@@ -24,16 +24,19 @@ await post("/areas", { project_id: p.id, name: "Area Po", geojson: { type: "Poly
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 }, acceptDownloads: true });
 const page = await ctx.newPage();
-const errors = []; page.on("pageerror", (e) => errors.push(e.message)); page.on("dialog", (d) => d.accept());
+const errors = []; page.on("pageerror", (e) => errors.push(e.message)); page.on("console", (m) => { if (m.type() === "error" && /Error|error/.test(m.text())) errors.push("console: " + m.text().slice(0, 400)); }); page.on("dialog", (d) => d.accept());
+// i corsi d'acqua stanno nella pagina Fonte d'acqua
+const goFonte = async () => {
+  if (!(await page.locator('button:has-text("Rileva corsi d\'acqua")').first().isVisible().catch(() => false))) await page.locator('button[title="Fonte d\'acqua"]').first().click();
+  await page.waitForTimeout(600);
+};
 const download = async (click) => { const [d] = await Promise.all([page.waitForEvent("download", { timeout: 60000 }), click()]); return d; };
 try {
   await page.goto(URL); await page.evaluate((t) => localStorage.setItem("argus-total-token", t), tok);
   await page.goto(URL); await page.waitForTimeout(3500);
   await page.locator('select:has(option:text-is("Chivasso"))').selectOption({ label: "Chivasso" }); await page.waitForTimeout(1200);
   await page.locator('select:has(option:text-is("Chivasso acque"))').selectOption({ label: "Chivasso acque" }); await page.waitForTimeout(5000);
-  const tabBtn = page.locator('button[title="Analisi"]').first();
-  if (!(await page.locator('button:has-text("Rileva corsi d\'acqua")').first().isVisible().catch(() => false))) await tabBtn.click();
-  await page.waitForTimeout(800);
+  await goFonte();
   const t0 = Date.now();
   await page.locator('button:has-text("Rileva corsi d\'acqua")').first().click();
   await page.locator('button:has-text("Conferma")').first().waitFor({ timeout: 400000 });
@@ -62,9 +65,30 @@ try {
   await tbl.locator("tbody tr").nth(cavIdx).locator("button").first().click(); await page.waitForTimeout(400);
   const det = await tbl.locator("[data-water-detail]").first().innerText().catch(() => "");
   console.log("dettaglio Cavour:", det.replace(/\n/g, " | "));
-  ok(/Larghezza nell'anno: .*\d.*–.*\d/.test(det) && /Escursione di livello stimata/.test(det) && /1,5|1.5/.test(await tbl.locator("[data-water-detail] input").first().inputValue()),
-    "Dettaglio del canale: larghezze minima e massima con le date, scarpa 1:1,5, escursione stimata");
-  await tbl.locator("[data-water-detail] input").first().fill("1"); await page.waitForTimeout(400);
+  const scarpa = tbl.locator("[data-water-flow] input").nth(3);
+  ok(/Larghezza nell'anno: .*\d.*–.*\d/.test(det) && /Escursione di livello stimata/.test(det) && /1,5|1.5/.test(await scarpa.inputValue()),
+    "Scheda del canale: larghezze minima e massima con le date, scarpa 1:1,5, escursione stimata");
+  // registrazione: OpenStreetMap canal; nome forzato a mano anche sugli altri tratti con lo stesso nome
+  const card = tbl.locator("[data-water-card]").first();
+  const reg = await card.locator("[data-water-reg]").innerText();
+  ok(/Registrato come: OpenStreetMap: waterway=canal/.test(reg) && /Cavour/.test(reg), `Registrazione: ${reg.split("\n")[0]}`);
+  await card.locator("[data-water-name]").fill("Cavour forzato"); await page.waitForTimeout(300);
+  const reg2 = await card.locator("[data-water-reg]").innerText();
+  const nSame = Number((reg2.match(/altri (\d+) tratti/) || [])[1] || 0);
+  if (nSame) await card.locator("[data-water-same]").click();
+  await page.waitForTimeout(400);
+  const nForced = await tbl.locator("tbody tr").evaluateAll((trs) => trs.filter((tr) => /Cavour forzato/.test(tr.children[0].textContent || "")).length);
+  ok(/Forzato a mano/.test(reg2) && /nome registrato «[^»]*Cavour[^»]*»/.test(reg2) && nForced === nSame + 1, `Nome forzato «Cavour forzato» su ${nForced} tratti (registrato: ${reg2.match(/nome registrato «[^»]*»/)?.[0]})`);
+  // portata: pendenza letta dal DEM, poi Manning
+  for (let k = 0; k < 40 && !(await card.locator("[data-water-slope]").inputValue()); k++) await page.waitForTimeout(1000);
+  const flow = await card.locator("[data-water-flow]").innerText();
+  console.log("portata Cavour:", flow.replace(/\n/g, " | "));
+  const qTyp = Number((flow.match(/Tipica[^:]*: ([\d.]+) l\/s/) || [])[1]?.replace(/\./g, ""));
+  ok(qTyp > 0 && /Pendenza dal DEM: quota/.test(flow) && /Magra/.test(flow), `Portata stimata del Cavour: ${qTyp} l/s, pendenza ${await card.locator("[data-water-slope]").inputValue()}‰`);
+  await card.locator("[data-water-depth]").fill(String(Number(await card.locator("[data-water-depth]").inputValue()) * 2)); await page.waitForTimeout(300);
+  const qTyp2 = Number(((await card.locator("[data-water-flow]").innerText()).match(/Tipica[^:]*: ([\d.]+) l\/s/) || [])[1]?.replace(/\./g, ""));
+  ok(qTyp2 > qTyp * 1.5, `Profondità raddoppiata → portata ${qTyp} → ${qTyp2} l/s`);
+  await scarpa.fill("1"); await page.waitForTimeout(400);
   const det2 = await tbl.locator("[data-water-detail]").first().innerText();
   const dh = (x) => Number((x.match(/stimata: ([\d,]+) m/) || [])[1]?.replace(",", "."));
   ok(dh(det2) > dh(det) * 1.3, `Scarpa 1:1 → escursione ricalcolata (${dh(det)} → ${dh(det2)} m)`);
@@ -85,6 +109,7 @@ try {
   ok(/<Data name="larghezza_m"><value>33<\/value>/.test(kml), "KMZ: la larghezza modificata a mano (33 m) è nel file");
   ok(/<Data name="lunghezza_m">/.test(kml) && /Larghezza tipica/.test(kml) && /Sentinel-2/.test(kml), `KMZ: ${nPm} elementi con lunghezza, larghezza e fonte`);
   ok(/Superficie d'acqua \(satellite\)/.test(kml), "KMZ: superficie d'acqua del satellite");
+  ok(/<Data name="portata_ls">/.test(kml) && /<Data name="nome_registrato">/.test(kml) && /Portata stimata/.test(kml), "KMZ: portata stimata e nome registrato");
   ok(/<Data name="larghezza_min_oss_m">/.test(kml) && /<Data name="escursione_stimata_m">/.test(kml) && /Larghezza massima osservata/.test(kml), "KMZ: larghezze minima/massima osservate ed escursione stimata");
   // CSV
   const csv = await download(() => tbl.locator('button:has-text("CSV")').click());
@@ -95,10 +120,11 @@ try {
   await page.reload(); await page.waitForTimeout(3500);
   await page.locator('select:has(option:text-is("Chivasso"))').selectOption({ label: "Chivasso" }); await page.waitForTimeout(1200);
   await page.locator('select:has(option:text-is("Chivasso acque"))').selectOption({ label: "Chivasso acque" }); await page.waitForTimeout(5000);
-  if (!(await page.locator("[data-water-table]").first().isVisible().catch(() => false))) await page.locator('button[title="Analisi"]').first().click();
+  await goFonte();
   await page.waitForTimeout(1000);
   const txt2 = await page.locator("[data-water-table]").first().innerText().catch(() => "");
   ok(/Sentinel-2, \d+ date/.test(txt2) && (await page.locator("[data-water-table] tbody tr").count()) === rows, "Dopo il salvataggio: tratti, misure e periodo ricaricati");
+  ok(/Cavour forzato/.test(txt2), "Dopo il salvataggio: il nome forzato resta");
   // fiumara Amendolea (Calabria): greto asciutto quasi tutto l'anno → alveo effimero
   const AM = [[15.82, 37.92], [15.90, 37.92], [15.90, 37.99], [15.82, 37.99], [15.82, 37.92]];
   const p2 = await post("/projects", { name: "Amendolea", client_id: c.id }, tok);
@@ -106,7 +132,7 @@ try {
   await page.reload(); await page.waitForTimeout(3500);
   await page.locator('select:has(option:text-is("Chivasso"))').selectOption({ label: "Chivasso" }); await page.waitForTimeout(1200);
   await page.locator('select:has(option:text-is("Amendolea"))').selectOption({ label: "Amendolea" }); await page.waitForTimeout(5000);
-  if (!(await page.locator('button:has-text("Rileva corsi d\'acqua")').first().isVisible().catch(() => false))) await page.locator('button[title="Analisi"]').first().click();
+  await goFonte();
   await page.locator('button:has-text("Rileva corsi d\'acqua")').first().click();
   await page.locator('button:has-text("Conferma")').first().waitFor({ timeout: 400000 });
   await page.locator('button:has-text("Conferma")').first().click(); await page.waitForTimeout(1500);
@@ -134,7 +160,7 @@ try {
     await cs.selectOption({ label: "Chivasso" }); await page.waitForTimeout(2000);
   }
   await page.locator('select:has(option:text-is("Gorgol"))').selectOption({ label: "Gorgol" }); await page.waitForTimeout(5000);
-  if (!(await page.locator('button:has-text("Rileva corsi d\'acqua")').first().isVisible().catch(() => false))) await page.locator('button[title="Analisi"]').first().click();
+  await goFonte();
   await page.locator('button:has-text("Rileva corsi d\'acqua")').first().click();
   await page.locator('button:has-text("Conferma")').first().waitFor({ timeout: 600000 });
   const msgG = await page.locator("text=/tracciati completi da OpenStreetMap/").first().innerText().catch(() => "");
@@ -182,13 +208,57 @@ try {
   const detail = await t4.locator("[data-water-detail]").count();
   ok(!!c2 && selRow === 1 && detail === 1, `Secondo clic: selezionata la singola diramazione (${selRow} riga evidenziata, dettaglio aperto)`);
   await page.screenshot({ path: path.join(SH, "w6_selezione.png") });
+  const gc = t4.locator("[data-water-card]").first();
+  const greg = await gc.locator("[data-water-reg]").innerText().catch(() => "");
+  ok(/Registrato come: OpenStreetMap: waterway=river/.test(greg), `Scheda del fiume: ${greg.split("\n")[0]}`);
+  // modifica dei punti: inserimento sulla linea, prolungamento dall'estremo, annulla
+  await gc.locator("button:has-text('⌖')").click(); await page.waitForTimeout(1500);
+  await gc.locator("[data-water-edit]").click(); await page.waitForTimeout(600);
+  const nPts = async () => Number(((await gc.innerText()).match(/(\d+) punti/) || [])[1]);
+  const lenOf = async () => Number(((await gc.innerText()).match(/punti · ([\d.]+) m/) || [])[1]?.replace(/\./g, ""));
+  const n0 = await nPts(), l0 = await lenOf();
+  const nv = await page.locator("[data-we-vertex]").count();
+  ok(n0 > 2 && nv > 0, `Modifica punti: ${n0} punti, ${nv} maniglie nella vista`);
+  await gc.locator("[data-water-modes] .seg-item").nth(1).click(); await page.waitForTimeout(300);
+  const ends = await page.locator('[data-we-vertex="end"]').evaluateAll((es) => es.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }));
+  const inMap = (q) => q.x > 380 && q.x < 1060 && q.y > 140 && q.y < 880;
+  let ext = null;
+  if (ends.length === 2) for (const [a, b] of [[ends[0], ends[1]], [ends[1], ends[0]]]) {
+    const dx = a.x - b.x, dy = a.y - b.y, L = Math.hypot(dx, dy) || 1, q = { x: a.x + 45 * dx / L, y: a.y + 45 * dy / L };
+    if (inMap(q)) { ext = q; break; }
+  }
+  if (ext) { await page.mouse.click(ext.x, ext.y); await page.waitForTimeout(600); }
+  const n1 = await nPts(), l1 = await lenOf();
+  ok(!!ext && n1 === n0 + 1 && l1 > l0, `Prolungamento dall'estremo: ${n0} → ${n1} punti, ${l0} → ${l1} m`);
+  await page.screenshot({ path: path.join(SH, "w7_modifica.png") });
+  await gc.locator("button:has-text('Annulla modifiche')").click(); await page.waitForTimeout(500);
+  ok((await nPts()) === n0 && (await lenOf()) === l0, `Annulla modifiche: di nuovo ${await nPts()} punti`);
+  await gc.locator("[data-water-done]").click(); await page.waitForTimeout(400);
+  ok((await page.locator("[data-we-vertex]").count()) === 0, "Fine modifica: maniglie tolte");
   const c3 = await clickLine("#059669", 0);
   if (c3) { await page.mouse.click(c3.x, c3.y); await page.waitForTimeout(800); }
   const chip3 = await page.locator("[data-water-kinds] button.font-semibold").first().innerText().catch(() => "");
   ok(!!c3 && /Canale/.test(chip3), `Clic su un canale: si passa ai canali (${chip3})`);
+  // collegamento: un canale si prolunga fino al fiume
+  const c4 = await clickLine("#059669", 1);
+  if (c4) { await page.mouse.click(c4.x, c4.y); await page.waitForTimeout(800); }
+  const cc = t4.locator("[data-water-card]").first();
+  const ccode = (await cc.locator("b").first().innerText().catch(() => "")).trim();
+  await cc.locator("[data-water-connect]").click(); await page.waitForTimeout(300);
+  const c5 = await clickLine("#1d4ed8", 0);
+  if (c5) { await page.mouse.click(c5.x, c5.y); await page.waitForTimeout(900); }
+  const cmsg = await page.locator("text=/collegato a F\\d+/").first().innerText().catch(() => "");
+  const links = await cc.locator("[data-water-links]").innerText().catch(() => "");
+  ok(/collegato a F\d+/.test(cmsg) && /F\d+/.test(links), `Collegamento: ${cmsg.trim()} · scheda: ${links.replace(/\n/g, " ")}`);
+  await page.screenshot({ path: path.join(SH, "w8_collegamento.png") });
+  // il corso diventa la fonte: presa sul canale, portata impostata
+  for (let k = 0; k < 30 && !(await cc.locator("[data-water-slope]").inputValue().catch(() => "x")); k++) await page.waitForTimeout(1000);
+  await cc.locator("[data-water-use]").click(); await page.waitForTimeout(800);
+  const srcW = await page.locator("[data-src-water]").first().innerText().catch(() => "");
+  ok(new RegExp("Presa sul corso " + ccode).test(srcW), `Fonte: ${srcW.replace(/\n/g, " ")}`);
   ok(/Dreni e fossi \(\d+\)/.test(kml3) && /<Data name="spostabile"><value>0<\/value>/.test(kml3) && /<Data name="spostabile"><value>1<\/value>/.test(kml3), "KMZ Gorgol: cartella dei dreni e campo «spostabile»");
   ok(!errors.length, `Nessun errore JS (${errors.slice(0, 3).join(" | ")})`);
-} catch (e) { console.log("ERRORE", e); fail++; await page.screenshot({ path: path.join(SH, "w_err.png") }).catch(() => {}); }
+} catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; await page.screenshot({ path: path.join(SH, "w_err.png") }).catch(() => {}); }
 await browser.close();
 console.log(fail ? `${fail} controlli falliti` : "Tutto ok");
 process.exit(fail ? 1 : 0);
