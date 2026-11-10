@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.251";
+const REV = "v0.6.252";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -67,10 +67,10 @@ const PIVOT_WET_W = 40;   // larghezza bagnata del pacchetto irriguo (m), assunz
 // "Analisi" raggruppa satellite + idoneità + macro-aree in un'unica finestra.
 const TABS: { key: string; label: string }[] = [
   { key: "analisi", label: "Analisi" },
+  { key: "fonte", label: "Fonte d'acqua" },
   { key: "rilievo", label: "Rilievo" },
   { key: "drenaggio", label: "Drenaggio" },
   { key: "impianti", label: "Impianti" },
-  { key: "fonte", label: "Fonte d'acqua" },
   { key: "accessori", label: "Tubazioni" },
   { key: "pompaggio", label: "Pompaggio" },
   { key: "solare", label: "Pivot solari" },
@@ -412,6 +412,14 @@ function distM(a: number[], b: number[]): number {
   const dLa = rad(b[1] - a[1]), dLo = rad(b[0] - a[0]);
   const s = Math.sin(dLa / 2) ** 2 + Math.cos(rad(a[1])) * Math.cos(rad(b[1])) * Math.sin(dLo / 2) ** 2;
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+// punto dentro un poligono con buchi (regola pari-dispari)
+function pointInPolygon(p: number[], rings: number[][][]): boolean {
+  let inside = false;
+  for (const r of rings) for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+    if ((r[i][1] > p[1]) !== (r[j][1] > p[1]) && p[0] < r[i][0] + ((p[1] - r[i][1]) * (r[j][0] - r[i][0])) / (r[j][1] - r[i][1])) inside = !inside;
+  }
+  return inside;
 }
 // stesso calcolo con un nome che il componente non ridichiara (là dentro distM è un'altra costante)
 const geoDist = distM;
@@ -2640,13 +2648,13 @@ export default function Page() {
     return Math.round(q * 1000);
   }
   // il corso diventa la fonte: presa nel suo punto più vicino ai pivot (o al campo), tipo, escursione e portata
-  function takeWaterAsSource(i: number) {
+  function takeWaterAsSource(i: number, at?: number[]) {
     const w = wcRef.current[i]; if (!w) return;
     const cs = waterLineOf(w);
     const ref = pivots.length ? [pivots.reduce((a, p) => a + p.lng, 0) / pivots.length, pivots.reduce((a, p) => a + p.lat, 0) / pivots.length]
       : activeGeom ? (() => { const r = activeGeom.coordinates[0] as number[][]; return [r.reduce((a, p) => a + p[0], 0) / r.length, r.reduce((a, p) => a + p[1], 0) / r.length]; })()
       : cs[Math.floor(cs.length / 2)];
-    const e = nearestOnLine(ref, cs);
+    const e = at ? { q: at, k: 0, d: 0 } : nearestOnLine(ref, cs);
     const ty: SrcType = w.geojson.type === "Polygon" ? "invaso" : w.kind === "river" ? "fiume" : "canale";
     setSrcType(ty); setSrcSediment(ty === "fiume");
     const dh = waterRange(w);
@@ -2656,7 +2664,8 @@ export default function Page() {
     setSrcRoute(null); setSrcShown(null);
     setSrcPt([Math.round(e.q[0] * 1e7) / 1e7, Math.round(e.q[1] * 1e7) / 1e7]);
     const code = waterCodes(wcRef.current)[i];
-    setMsg(t("Presa sul corso {c}{n}: {d} dal baricentro dei pivot.", { c: code, n: w.name ? " · " + w.name : "", d: uM(geoDist(ref, e.q)) })
+    setMsg((at ? t("Presa sul corso {c}{n}, nel punto cliccato.", { c: code, n: w.name ? " · " + w.name : "" })
+      : t("Presa sul corso {c}{n}: {d} dal baricentro dei pivot.", { c: code, n: w.name ? " · " + w.name : "", d: uM(geoDist(ref, e.q)) }))
       + " " + (q != null ? t("Portata disponibile impostata a {q} l/s ({k}).", { q: fmt(Math.max(1, q)), k: w.q_known_ls != null ? t("portata nota") : t("stima di magra") }) : t("Portata disponibile da inserire: manca la stima della portata."))
       + (w.regime && w.regime !== "perennial" ? " " + t("Attenzione: corso non perenne, in secca in alcuni mesi.") : ""));
   }
@@ -8214,8 +8223,23 @@ export default function Page() {
   }
   const elevKey = (src: number[]) => JSON.stringify([src, srcRoute, pivots.map((p) => `${p.lng.toFixed(5)},${p.lat.toFixed(5)}`).join(";")]);
   function startPickSource() {
+    // corsi d'acqua ancora in anteprima: si confermano, così il clic sul fiume li trova
+    if (waterPreviewOn.current) confirmWaterUI();
     setSrcPicking(true);
-    mapApi.current?.pickPoint((lat, lng) => { setSrcPicking(false); setSrcRoute(null); setSrcPt([lng, lat]); });
+    mapApi.current?.pickPoint((lat, lng) => {
+      setSrcPicking(false);
+      // clic su (o accanto a) un corso d'acqua: la presa va sul corso e ne prende tipo, escursione e portata
+      const p = [lng, lat], tol = Math.max(15, 12 * (mapApi.current?.mPerPx() ?? 2));
+      let best: { i: number; q: number[]; d: number } | null = null;
+      wcRef.current.forEach((w, i) => {
+        if (w.hidden || w.kind === "drainage" || waterHideRef.current.includes(w.kind)) return;
+        const e = nearestOnLine(p, waterLineOf(w));
+        const d = w.geojson.type === "Polygon" && pointInPolygon(p, w.geojson.coordinates as number[][][]) ? 0 : e.d - (w.mean_width_m ?? 0) / 2;
+        if (d <= tol && (!best || d < best.d)) best = { i, q: e.q, d };
+      });
+      if (best) { takeWaterAsSource((best as { i: number }).i, (best as { q: number[] }).q); return; }
+      setSrcRoute(null); setSrcPt([lng, lat]);
+    });
   }
   // Tracciato proposto dal sistema: condotta (strade e bordi dei campi, meno
   // risalite, fuori dai cerchi) o canale a gravità (pendenza costante).
@@ -8880,11 +8904,11 @@ export default function Page() {
     const mwh = (x: number) => fmt(Math.round(x));
     return (
       <div className="space-y-3">
-        {!pivots.length && <p className="text-[11px] text-sage-dark">{t("Posa prima i pivot: lo schema d'impianto parte da dove sono i campi.")}</p>}
+        {!pivots.length && <p className="text-[11px] text-sage-dark">{t("Puoi indicare subito la presa; vasca, tracciato e quote si calcolano quando avrai posato i pivot.")}</p>}
         {/* 1 — fonte */}
         <div className="bg-panel rounded-lg p-2 space-y-2">
           <div className="text-xs font-semibold text-brand-darker">{t("1 · Da dove si prende l'acqua")}</div>
-          <button className="btn-primary w-full" disabled={!pivots.length || busy === "fonte"}
+          <button className="btn-primary w-full" disabled={busy === "fonte"} data-src-pick
             onClick={srcPicking ? () => { mapApi.current?.pickPoint(null); setSrcPicking(false); } : startPickSource}>
             {srcPicking ? t("Clicca sulla mappa… (Esc annulla)") : srcPt ? t("📍 Sposta il punto di presa") : t("📍 Indica la fonte sulla mappa")}
           </button>
@@ -9239,8 +9263,8 @@ export default function Page() {
     return [
       { k: "client", ok: clientId != null, label: t("Cliente"), hint: t("Scegli o crea il cliente nel pannello Progetto") },
       { k: "fields", ok: fields.length > 0, label: t("Campi"), hint: t("Disegna o importa i campi"), tab: "analisi" },
-      { k: "pivots", ok: pivots.length > 0 || Object.keys(sysDesigns).length > 0, label: t("Macchine di irrigazione"), hint: t("Posa i pivot sul campo"), tab: "impianti" },
       { k: "source", ok: !!srcPt, label: t("Fonte d'acqua"), hint: t("Indica la presa: fiume, canale, pozzo o invaso"), tab: "fonte" },
+      { k: "pivots", ok: pivots.length > 0 || Object.keys(sysDesigns).length > 0, label: t("Macchine di irrigazione"), hint: t("Posa i pivot sul campo"), tab: "impianti" },
       { k: "pipes", ok: hasPipes, label: t("Rete di tubazioni"), hint: t("Collega i pivot alla fonte con le tubazioni"), tab: "accessori" },
       { k: "dn", ok: !!hydra, warn: hasPipes, label: t("Diametri della rete"), hint: t("Calcola i diametri nella pagina Tubazioni"), tab: "accessori" },
       { k: "pumps", ok: pumpsOk, label: t("Pompe"), hint: t("Scegli le pompe Caprari nella pagina Pompaggio"), tab: "pompaggio" },

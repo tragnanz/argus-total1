@@ -75,6 +75,8 @@ export type MapHandle = {
   waterEditMode: (m: "move" | "add" | "del") => void;
   // tipi di corso nascosti nell'anteprima (river, canal, drain, drainage, basin, wetland): si guarda il satellite sotto
   waterPreviewHide: (kinds: string[]) => void;
+  // metri per pixel al centro della vista (tolleranza dei clic)
+  mPerPx: () => number;
   clearAll: () => void;
   fitAll: () => void;
   flyTo: (lat: number, lon: number, zoom?: number) => void;
@@ -1246,6 +1248,10 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         }
         _applyPreviewHide();
         try { const b = g.getBounds(); if (b.isValid()) map.fitBounds(b, { padding: [50, 50] }); } catch { /* */ }
+      },
+      mPerPx() {
+        const map = mapRef.current; if (!map) return 10;
+        return 40075016.686 * Math.cos((map.getCenter().lat * Math.PI) / 180) / Math.pow(2, map.getZoom() + 8);
       },
       waterPreviewHide(kinds) { previewHideRef.current = new Set(kinds); _applyPreviewHide(); },
       waterDraw(kind) {

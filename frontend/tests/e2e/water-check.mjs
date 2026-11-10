@@ -288,6 +288,15 @@ try {
   await cc.locator("[data-water-use]").click(); await page.waitForTimeout(800);
   const srcW = await page.locator("[data-src-water]").first().innerText().catch(() => "");
   ok(new RegExp("Presa sul corso " + ccode).test(srcW), `Fonte: ${srcW.replace(/\n/g, " ")}`);
+  // clic su un fiume come fonte: la presa va sul fiume, nel punto cliccato
+  await page.locator("[data-src-pick]").click(); await page.waitForTimeout(300);
+  const c6 = await clickLine("#1d4ed8", 2);
+  if (c6) { await page.mouse.click(c6.x, c6.y); await page.waitForTimeout(900); }
+  const srcW2 = await page.locator("[data-src-water]").first().innerText().catch(() => "");
+  const pm = await page.locator("text=/nel punto cliccato/").first().innerText().catch(() => "");
+  const tab2 = await page.evaluate(() => [...document.querySelectorAll("button[title]")].map((b) => b.getAttribute("title")).filter((x) => ["Analisi", "Fonte d'acqua", "Rilievo"].includes(x)).join(" > "));
+  ok(/Presa sul corso F\d+/.test(srcW2) && /nel punto cliccato/.test(pm) && /^Analisi > Fonte d'acqua > Rilievo/.test(tab2),
+    `Clic sul fiume come fonte: ${srcW2.replace(/\n/g, " ").slice(0, 90)} · pagine: ${tab2}`);
   ok(/Dreni e fossi \(\d+\)/.test(kml3) && /<Data name="spostabile"><value>0<\/value>/.test(kml3) && /<Data name="spostabile"><value>1<\/value>/.test(kml3), "KMZ Gorgol: cartella dei dreni e campo «spostabile»");
   ok(!errors.length, `Nessun errore JS (${errors.slice(0, 3).join(" | ")})`);
 } catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; await page.screenshot({ path: path.join(SH, "w_err.png") }).catch(() => {}); }
