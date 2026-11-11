@@ -352,7 +352,9 @@ export type WaterResult = {
   surface?: { type: "Polygon"; coordinates: any }[]; dates?: string[]; res_m?: number; length_m?: number;
 };
 // TERRAFORMING: termitai su terreno aperto dalla scena Sentinel-2 più secca degli ultimi 12 mesi
-export type TermiteResult = { date: string; ndvi_median: number; res_m: number; n_total: number; mounds: { lon: number; lat: number; d_m: number; score: number }[] };
+// classi del terreno per origine (bit nella griglia lon/lat): 1 sale, 2 ristagni, 4 alberi e arbusti, 8 acqua permanente
+export type GroundLayer = { w: number; h: number; bbox: [number, number, number, number]; b64: string; date_dry: string; date_wet: string | null; ha: Record<string, number>; area_ha: number };
+export type TermiteResult = { date: string; ndvi_median: number; res_m: number; n_total: number; mounds: { lon: number; lat: number; d_m: number; score: number }[]; layers?: GroundLayer; termites_skipped?: boolean };
 export const fetchTermites = (geom: Polygon, date: string | null, sens: number) =>
   req<TermiteResult>("/api/terraform/termites", { method: "POST", body: JSON.stringify({ geom, date, sens }) });
 // anteprima rapida: i corsi OSM ritagliati sull'area, senza misure dal satellite (pochi secondi)

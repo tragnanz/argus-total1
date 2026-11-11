@@ -61,10 +61,11 @@ def watercourses_osm(body: WaterIn, user: User = Depends(get_current_user)):
 
 @router.post("/terraform/termites")
 def terraform_termites(body: WaterIn, client=Depends(get_client), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Termitai su terreno aperto dalla scena Sentinel-2 più secca degli ultimi 12 mesi."""
+    """Problemi del terreno per origine da Sentinel-2 (ultimi 12 mesi): termitai, aree saline,
+    ristagni stagionali, alberi e arbusti, acqua permanente."""
     from analysis.termites import detect_termites
     charge(db, user)
     try:
         return detect_termites(client, body.geom.model_dump(), body.date, sens=body.sens)
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"Errore rilevamento termitai: {e}")
+        raise HTTPException(502, f"Errore rilevamento problemi del terreno: {e}")

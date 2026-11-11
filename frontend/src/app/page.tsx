@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.257";
+const REV = "v0.6.258";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -424,6 +424,32 @@ function pointInPolygon(p: number[], rings: number[][][]): boolean {
 }
 // chiave di un pivot (stesso formato di pKey nel componente, ma usabile ovunque)
 const pivKey = (p: { lat: number; lng: number }) => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`;
+// problemi del terreno per origine dalle immagini Sentinel-2 (bit nella griglia del backend)
+const GROUND_CLS = [
+  { k: "salt", bit: 1, label: "Aree saline", short: "Sale", rgb: [217, 70, 239] },
+  { k: "wet", bit: 2, label: "Ristagni stagionali", short: "Rist.", rgb: [6, 182, 212] },
+  { k: "wood", bit: 4, label: "Alberi e arbusti da disboscare", short: "Alberi", rgb: [21, 128, 61] },
+  { k: "water", bit: 8, label: "Specchi d'acqua permanenti", short: "Acqua", rgb: [29, 78, 216] },
+] as const;
+type GroundK = (typeof GROUND_CLS)[number]["k"];
+type GroundL = api.GroundLayer & { flags?: Uint8Array };
+async function inflateB64(b64: string): Promise<Uint8Array> {
+  const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const ds = new Blob([bin]).stream().pipeThrough(new DecompressionStream("deflate"));
+  return new Uint8Array(await new Response(ds).arrayBuffer());
+}
+// classi (OR dei bit) nel punto, da tutte le griglie che lo coprono
+function groundAt(layers: GroundL[], lon: number, lat: number): number {
+  let f = 0;
+  for (const L of layers) {
+    if (!L.flags) continue;
+    const [w, s, e, n] = L.bbox;
+    if (lon < w || lon >= e || lat <= s || lat > n) continue;
+    const c = Math.floor(((lon - w) / (e - w)) * L.w), r = Math.floor(((n - lat) / (n - s)) * L.h);
+    f |= L.flags[r * L.w + c] ?? 0;
+  }
+  return f;
+}
 // superficie di un poligono [lng, lat] in m² (proiezione locale, buchi sottratti)
 function polyAreaM2(rings: number[][][]): number {
   let tot = 0;
@@ -3852,28 +3878,44 @@ export default function Page() {
   const [termMeta, setTermMeta] = useState<{ date: string; n: number } | null>(null);
   const [trackRes, setTrackRes] = useState<Record<string, { max: number; over: number; vol: number }> | null>(null);
   const [moundMode, setMoundMode] = useState<"" | "add" | "del">("");
+  // aree saline, ristagni, alberi e arbusti, acqua: griglie per campo dal backend
+  const [ground, setGround] = useState<GroundL[]>([]);
+  const [groundHide, setGroundHide] = useState<Record<string, boolean>>({});
+  const [termSkipped, setTermSkipped] = useState(false);
+  useEffect(() => {
+    if (!ground.some((L) => !L.flags)) return;
+    let alive = true;
+    Promise.all(ground.map(async (L) => (L.flags ? L : { ...L, flags: await inflateB64(L.b64) })))
+      .then((out) => { if (alive) setGround(out); }).catch(() => { /* griglia illeggibile: resta senza */ });
+    return () => { alive = false; };
+  }, [ground]);
   // volume di un termitaio: cumulo a cono sopra il terreno + scavo del nido sotto (diametro metà)
   // impronta di un termitaio (m²): cerchio del diametro rilevato più la fascia di bonifica intorno
   const moundFoot = (m: Mound) => Math.PI * (m.d / 2 + (termCfg.buf ?? 0)) ** 2;
   const moundVol = (m: Mound) => ({ cone: (Math.PI * (m.d / 2) ** 2 * termCfg.h) / 3, nest: Math.PI * (m.d / 4) ** 2 * termCfg.dig });
   async function detectMounds() {
-    const fs2 = fields.filter((f) => !f.hidden);
+    // un'analisi per poligono visibile (non i figli di un poligono già analizzato)
+    const vis = fields.filter((f) => !f.hidden);
+    const fs2 = vis.filter((f) => !(f.parentId != null && vis.some((p) => p.id === f.parentId)));
     if (!fs2.length) return needField();
     setBusy("termiti"); setMoundMode("");
     try {
-      const found: Mound[] = []; let date = "";
+      const found: Mound[] = []; let date = ""; const lays: GroundL[] = []; let skipped = false;
       for (let i = 0; i < fs2.length; i++) {
-        setMsg(t("Termitai: area {i}/{n}, cerco la scena più secca dell'anno…", { i: i + 1, n: fs2.length }));
+        setMsg(t("Problemi del terreno: area {i}/{n}, leggo le scene Sentinel-2 dell'ultimo anno…", { i: i + 1, n: fs2.length }));
         const r = await api.fetchTermites(fs2[i].geom, null, termCfg.sens);
-        date = r.date;
+        date = r.date; if (r.layers) lays.push(r.layers); if (r.termites_skipped) skipped = true;
         for (const q of r.mounds) if (!found.some((x) => Math.abs(x.lon - q.lon) < 1e-5 && Math.abs(x.lat - q.lat) < 1e-5)) found.push({ lon: q.lon, lat: q.lat, d: q.d_m });
       }
       const man = mounds.filter((m) => m.man);
       setMounds([...man, ...found]);
       setTermMeta({ date, n: found.length });
-      setMsg(t("Termitai rilevati: {n} sulla scena del {d} (stagione secca) ✓ Controlla sulla mappa: aggiungi o togli a mano quelli sbagliati.", { n: fmt(found.length), d: wDate(date) }));
+      setGround(lays); setTermSkipped(skipped);
+      const ha = (k: string) => lays.reduce((a, L) => a + (L.ha?.[k] ?? 0), 0);
+      setMsg(t("Problemi del terreno rilevati ✓ termitai {n} · aree saline {s} ha · ristagni {w} ha · alberi e arbusti {b} ha. Controlla sulla mappa.", { n: fmt(found.length), s: fmt(ha("salt"), { maximumFractionDigits: 1 }), w: fmt(ha("wet"), { maximumFractionDigits: 1 }), b: fmt(ha("wood"), { maximumFractionDigits: 0 }) }));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
+
   // pendenze lungo le carreggiate delle torri: due cerchi (metà e 95% del raggio), un punto ogni 10°
   async function checkTracks() {
     if (!pivots.length) { setMsg(t("Prima disegna i pivot (passo 2).")); return; }
@@ -3951,6 +3993,57 @@ export default function Page() {
     }).filter((x) => x.A > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fields, mounds, termCfg]);
+  // aree per origine (m²) sotto ogni pivot e in ogni campo: campionamento su griglia regolare
+  const terraGround = useMemo(() => {
+    const zero = () => ({ salt: 0, wet: 0, wood: 0, water: 0 } as Record<GroundK, number>);
+    const ready = ground.filter((L) => L.flags);
+    if (!ready.length) return null;
+    const add = (acc: Record<GroundK, number>, f: number, a: number) => { for (const c of GROUND_CLS) if (f & c.bit) acc[c.k] += a; };
+    const piv = pivots.map((p) => {
+      const out = zero(), aP = pvAreaM2(p), R = p.r + Math.max(0, p.gun ?? 0);
+      const step = Math.max(10, Math.sqrt(aP) / 90), kx = 111320 * Math.cos((p.lat * Math.PI) / 180);
+      let nIn = 0; const cnt = zero();
+      for (let y = -R + step / 2; y < R; y += step) for (let x = -R + step / 2; x < R; x += step) {
+        if (x * x + y * y > R * R) continue;
+        nIn++; add(cnt, groundAt(ready, p.lng + x / kx, p.lat + y / 110540), 1);
+      }
+      if (nIn) for (const c of GROUND_CLS) out[c.k] = (cnt[c.k] / nIn) * aP;
+      return { a: out, aP };
+    });
+    const fld = fields.filter((f) => !f.hidden && f.geom?.coordinates?.length).map((f) => {
+      const rings = f.geom.coordinates as number[][][], A = polyAreaM2(rings), out = zero();
+      const xs = rings[0].map((q) => q[0]), ys = rings[0].map((q) => q[1]);
+      const w = Math.min(...xs), e = Math.max(...xs), s0 = Math.min(...ys), n = Math.max(...ys);
+      const kx = 111320 * Math.cos((((s0 + n) / 2) * Math.PI) / 180);
+      const step = Math.max(10, Math.sqrt(((e - w) * kx * (n - s0) * 110540) / 200000));
+      let nIn = 0; const cnt = zero();
+      for (let lat = n - step / 110540 / 2; lat > s0; lat -= step / 110540) for (let lon = w + step / kx / 2; lon < e; lon += step / kx) {
+        if (!pointInPolygon([lon, lat], rings)) continue;
+        nIn++; add(cnt, groundAt(ready, lon, lat), 1);
+      }
+      if (nIn) for (const c of GROUND_CLS) out[c.k] = (cnt[c.k] / nIn) * A;
+      return { f, a: out, A };
+    }).filter((x) => x.A > 0);
+    const tot = zero(); piv.forEach((q) => { for (const c of GROUND_CLS) tot[c.k] += q.a[c.k]; });
+    return { piv, fld, tot };
+  }, [ground, pivots, fields]);
+  // griglie sulla mappa (solo nella pagina Terraforming), una tinta per origine
+  useEffect(() => {
+    const ready = ground.filter((L) => L.flags);
+    if (tab !== "terra" || !ready.length) { mapApi.current?.showGround(null); return; }
+    const imgs = ready.map((L) => {
+      const cv = document.createElement("canvas"); cv.width = L.w; cv.height = L.h;
+      const ctx = cv.getContext("2d")!, im = ctx.createImageData(L.w, L.h);
+      for (let i = 0; i < L.flags!.length; i++) {
+        const f = L.flags![i]; if (!f) continue;
+        const c = GROUND_CLS.find((q) => (f & q.bit) && !groundHide[q.k]); if (!c) continue;
+        im.data[i * 4] = c.rgb[0]; im.data[i * 4 + 1] = c.rgb[1]; im.data[i * 4 + 2] = c.rgb[2]; im.data[i * 4 + 3] = 200;
+      }
+      ctx.putImageData(im, 0, 0);
+      return { url: cv.toDataURL("image/png"), bounds: [[L.bbox[1], L.bbox[0]], [L.bbox[3], L.bbox[2]]] as [[number, number], [number, number]] };
+    });
+    mapApi.current?.showGround(imgs);
+  }, [ground, groundHide, tab]);
   // termitai sulla mappa: nella pagina Terraforming (o se ce ne sono) — rossi quelli sotto un pivot
   useEffect(() => {
     if (!mounds.length && tab !== "terra") { mapApi.current?.showMounds(null); return; }
@@ -5338,6 +5431,16 @@ export default function Page() {
         if (TT.vNest > 0) R.push({ cat: cT, item: tx("Scavo e riempimento dei nidi"), qty: Math.round(TT.vNest), unit: "m³", note: tx("profondità {d} m", { d: fx(termCfg.dig, { maximumFractionDigits: 1 }) }) });
       }
       if (TT.vTrack > 0) R.push({ cat: cT, item: tx("Livellamento delle carreggiate delle torri oltre il {s}%", { s: fx(termCfg.trackMax) }), qty: Math.round(TT.vTrack), unit: "m³", note: tx("larghezza {w} m", { w: fx(termCfg.trackW) }) });
+      // bonifiche per origine (Sentinel-2): superfici sotto i pivot
+      const GG = terraGround?.tot, cB = tx("Bonifiche del terreno");
+      if (GG) {
+        const pct = (a: number) => tx("{p}% della superficie dei pivot", { p: fx(TT.aP ? (100 * a) / TT.aP : 0, { maximumFractionDigits: 1 }) });
+        const ha1 = (a: number) => Math.round(a / 1000) / 10;
+        if (GG.wood >= 500) R.push({ cat: cB, item: tx("Disboscamento, decespugliamento ed estirpazione delle ceppaie sotto i pivot"), qty: ha1(GG.wood), unit: "ha", note: pct(GG.wood) });
+        if (GG.salt >= 500) R.push({ cat: cB, item: tx("Bonifica delle aree saline sotto i pivot (ammendante e lisciviazione)"), qty: ha1(GG.salt), unit: "ha", note: pct(GG.salt) + " · " + tx("dosi da analisi del suolo") });
+        if (GG.wet >= 500) R.push({ cat: cB, item: tx("Drenaggio dei ristagni stagionali sotto i pivot"), qty: ha1(GG.wet), unit: "ha", note: pct(GG.wet) });
+        if (GG.water >= 500) R.push({ cat: cB, item: tx("Specchi d'acqua permanenti sotto i pivot da riempire o evitare"), qty: ha1(GG.water), unit: "ha", note: pct(GG.water) });
+      }
     }
     // canali e fossi esistenti spostabili che cadono sotto i pivot: riempimento e spianamento
     if (common && waterFillM3.size) {
@@ -6503,19 +6606,39 @@ export default function Page() {
         }
         if (ib.length) ch.push({ title: tx("Infrastrutture idriche esistenti e opere di presa"), blocks: ib });
         {   // TERRAFORMING: movimenti di terra prima di montare i pivot
-          const TT = terraPerPivot.tot, vT = TT.vCone + TT.vNest + TT.vCan + TT.vTrack;
-          if (vT > 0) {
+          const TT = terraPerPivot.tot, vT = TT.vCone + TT.vNest + TT.vCan + TT.vTrack, GG = terraGround?.tot;
+          const gAny = !!GG && GROUND_CLS.some((c) => GG[c.k] >= 500);
+          if (vT > 0 || gAny) {
             const tb: Record<string, unknown>[] = [];
             tb.push({ p: tx("Prima del montaggio dei pivot il terreno sotto le macchine va liberato e reso percorribile dalle torri. In totale si stimano {v} m³ di movimenti di terra.", { v: n0(vT) }) });
+            // tabella per origine
+            const oRows: string[][] = [];
+            const pctS = (a: number) => (TT.aP ? n1((100 * a) / TT.aP) : "–");
+            if (TT.nM) oRows.push([tx("Termitai"), n1(TT.aM / 10000), pctS(TT.aM), `${fx(TT.nM)} · ${n0(TT.vCone + TT.vNest)} m³`]);
+            if (GG) GROUND_CLS.forEach((c) => { if (GG[c.k] >= 500) oRows.push([tx(c.label), n1(GG[c.k] / 10000), pctS(GG[c.k]), `${n1(GG[c.k] / 10000)} ha`]); });
+            if (TT.vTrack > 0) oRows.push([tx("Pendenze delle carreggiate"), "–", "–", `${n0(TT.vTrack)} m³`]);
+            if (TT.vCan > 0) oRows.push([tx("Canali e fossi da spianare"), "–", "–", `${n0(TT.vCan)} m³`]);
+            if (oRows.length) tb.push({ table: { header: [tx("Origine"), tx("ha sotto i pivot"), tx("% sup."), tx("Quantità")], widths: [40, 18, 14, 28], rows: oRows },
+              caption: tx("Problemi del terreno sotto i pivot, per origine") });
+            if (GG) {
+              if (GG.wood >= 500) tb.push({ p: tx("Alberi e arbusti: {a} ha sotto i pivot ({p}%) da disboscare, con estirpazione delle ceppaie, riconosciuti come vegetazione verde nella stagione secca.", { a: n1(GG.wood / 10000), p: pctS(GG.wood) }) });
+              if (GG.salt >= 500) tb.push({ p: tx("Aree saline: {a} ha sotto i pivot ({p}%), croste chiare senza vegetazione in almeno una scena dell'anno. Vanno confermate con analisi del suolo (conducibilità elettrica) e bonificate con ammendanti e lisciviazione.", { a: n1(GG.salt / 10000), p: pctS(GG.salt) }) });
+              if (GG.wet >= 500) tb.push({ p: tx("Ristagni stagionali: {a} ha sotto i pivot ({p}%), acqua o suolo saturo nella scena più bagnata dell'anno; servono drenaggi o livellamento.", { a: n1(GG.wet / 10000), p: pctS(GG.wet) }) });
+              if (GG.water >= 500) tb.push({ p: tx("Specchi d'acqua permanenti: {a} ha sotto i pivot ({p}%), da riempire o da escludere spostando i pivot.", { a: n1(GG.water / 10000), p: pctS(GG.water) }) });
+            }
             if (TT.nM) tb.push({ p: tx("Termitai: {n} sotto i pivot, rilevati dalle immagini Sentinel-2 della stagione secca (macchie di vegetazione isolate su terreno aperto) e verificati a mano. Con un'altezza media di {h} m i cumuli da spianare sono {c} m³, a cui si aggiungono {s} m³ di scavo e riempimento dei nidi.", { n: fx(TT.nM), h: n1(termCfg.h), c: n0(TT.vCone), s: n0(TT.vNest) }) });
             if (TT.nM && TT.aP) tb.push({ p: tx("I termitai occupano {a} ha, il {p}% della superficie irrigata dai pivot (impronta del termitaio più una fascia di {b} m intorno).", { a: fx(TT.aM / 10000, { maximumFractionDigits: 1 }), p: n1((100 * TT.aM) / TT.aP), b: fx(termCfg.buf ?? 0, { maximumFractionDigits: 1 }) }) });
             if (TT.vCan > 0) tb.push({ p: tx("Canali e fossi esistenti sotto i pivot: {m} m da riempire, {v} m³.", { m: n0(TT.mCan), v: n0(TT.vCan) }) });
             if (TT.vTrack > 0) tb.push({ p: tx("Carreggiate delle torri: tratti oltre il {s}% di pendenza da addolcire, {v} m³ su una larghezza di {w} m.", { s: fx(termCfg.trackMax), v: n0(TT.vTrack), w: fx(termCfg.trackW) }) });
-            const rowsT = terraPerPivot.rows.map((r) => ({ r, v: r.vCone + r.vNest + r.vCan + r.vTrack })).filter((x) => x.v > 0).sort((a, b) => b.v - a.v).slice(0, 15);
-            if (rowsT.length) tb.push({ table: { header: [tx("Pivot"), tx("Termitai"), tx("Superficie con termitai") + " (%)", tx("Canali") + " (m)", tx("Pendenza max") + " (%)", tx("Terra") + " (m³)"], widths: [12, 14, 20, 18, 18, 18],
-              rows: rowsT.map(({ r, v }) => [`#${r.i + 1}`, fx(r.nM), r.aP ? n1((100 * r.aM) / r.aP) : "–", n0(r.mCan), trackRes && trackRes[pivKey(r.p)] ? n1(r.slope) : "–", n0(v)]) },
-              caption: tx("I 15 pivot con più movimenti di terra") });
-            ch.push({ title: tx("Movimenti di terra (terraforming)"), blocks: tb });
+            const gPct = (i: number, k: GroundK) => { const q = terraGround?.piv[i]; return q && q.aP ? (100 * q.a[k]) / q.aP : 0; };
+            const gSum = (i: number) => (terraGround ? GROUND_CLS.reduce((a, c) => a + gPct(i, c.k), 0) : 0);
+            const rowsT = terraPerPivot.rows.map((r) => ({ r, v: r.vCone + r.vNest + r.vCan + r.vTrack })).filter((x) => x.v > 0 || gSum(x.r.i) >= 0.5)
+              .sort((a, b) => b.v - a.v || gSum(b.r.i) - gSum(a.r.i)).slice(0, 15);
+            if (rowsT.length) tb.push({ table: { header: [tx("Pivot"), tx("Termitai") + " (%)", ...(terraGround ? GROUND_CLS.slice(0, 3).map((c) => tx(c.short) + " (%)") : []), tx("Canali") + " (m)", tx("Pendenza max") + " (%)", tx("Terra") + " (m³)"],
+              widths: terraGround ? [9, 14, 11, 11, 11, 14, 14, 16] : [12, 20, 22, 22, 24],
+              rows: rowsT.map(({ r, v }) => [`#${r.i + 1}`, r.aP && r.nM ? `${fx(r.nM)} · ${n1((100 * r.aM) / r.aP)}` : "–", ...(terraGround ? GROUND_CLS.slice(0, 3).map((c) => n1(gPct(r.i, c.k))) : []), n0(r.mCan), trackRes && trackRes[pivKey(r.p)] ? n1(r.slope) : "–", n0(v)]) },
+              caption: tx("I 15 pivot con più problemi del terreno") });
+            ch.push({ title: tx("Problemi del terreno e movimenti di terra (terraforming)"), blocks: tb });
           }
         }
         // Nota tecnica sulle stime – metodologia
@@ -8476,11 +8599,12 @@ export default function Page() {
     { const ss = (st as { soil_sat?: api.SoilOut & { n: number } }).soil_sat; setSoilSat(ss && typeof ss.sand === "number" ? ss : null);
       const ip = (st as { irr_prog?: { root?: number; p?: number; v100?: number } }).irr_prog ?? {};
       setRootDepth(num(ip.root, 0.8)); setRawP(num(ip.p, 0.5)); setV100(num(ip.v100, 2.3)); }
-    { const tr = (st as { terra?: { mounds?: number[][]; cfg?: Partial<typeof termCfg>; meta?: { date: string; n: number } | null; track?: Record<string, { max: number; over: number; vol: number }> | null } }).terra ?? {};
+    { const tr = (st as { terra?: { mounds?: number[][]; cfg?: Partial<typeof termCfg>; meta?: { date: string; n: number } | null; track?: Record<string, { max: number; over: number; vol: number }> | null; ground?: api.GroundLayer[] } }).terra ?? {};
       setMounds(Array.isArray(tr.mounds) ? tr.mounds.filter((q) => Array.isArray(q) && q.length >= 3).map((q) => ({ lon: q[0], lat: q[1], d: q[2], man: q[3] === 1 })) : []);
       const c2 = tr.cfg ?? {};
       setTermCfg({ h: num(c2.h, 2.5), dig: num(c2.dig, 1), sens: num(c2.sens, 3), trackMax: num(c2.trackMax, 10), trackW: num(c2.trackW, 4), buf: num(c2.buf, 0) });
-      setTermMeta(tr.meta ?? null); setTrackRes(tr.track ?? null); }
+      setTermMeta(tr.meta ?? null); setTrackRes(tr.track ?? null);
+      setGround(Array.isArray(tr.ground) ? tr.ground.filter((L) => L && L.b64 && L.w && L.h) : []); }
     const sy = (st as { systems?: Record<string, SysDesign> }).systems;
     setSysDesigns(sy && typeof sy === "object" ? sy : {});
     projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
@@ -8490,7 +8614,7 @@ export default function Page() {
   }, [projectId, projects]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId) return;
-    const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, fonte: fonteState(), terra: { mounds: mounds.map((m) => [m.lon, m.lat, m.d, m.man ? 1 : 0]), cfg: termCfg, meta: termMeta, track: trackRes }, terrain: { dem: demModel, smooth: demSmooth },
+    const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, fonte: fonteState(), terra: { mounds: mounds.map((m) => [m.lon, m.lat, m.d, m.man ? 1 : 0]), cfg: termCfg, meta: termMeta, track: trackRes, ground: ground.map(({ flags: _f, ...L }) => L) }, terrain: { dem: demModel, smooth: demSmooth },
       crops: { base: farmCrops, fields: fieldCrops }, solar_pv: solarCfg, canal_design: { lin: canalLin, q: canalQ, fb: canalFb }, cu_model: cuModel, fert, ndvi, drain: { on: drainOn, c: drainC, s: drainS, b: drainB, prof: drainProf }, soil_sat: soilSat, irr_prog: { root: rootDepth, p: rawP, v100 },
       systems: Object.fromEntries(Object.entries(sysDesigns).filter(([k]) => k.startsWith("a"))) };
     const js = JSON.stringify(payload);
@@ -8503,7 +8627,7 @@ export default function Page() {
     }, 900);
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, pivotBrand, mounds, termCfg, termMeta, trackRes, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
+  }, [projectId, pivotBrand, mounds, termCfg, termMeta, trackRes, ground, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
     resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, fert, ndvi, drainOn, drainC, drainS, drainB, drainProf, soilSat, rootDepth, rawP, v100, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId || (!pivots.length && !fields.length)) return;
@@ -11332,18 +11456,58 @@ export default function Page() {
                 <label className="text-[11px] text-sage-dark">{label}
                   <input type="number" className="field-input mt-0.5 py-1 text-sm" value={v} step={step} min={min} max={max}
                     onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && x >= min && x <= max) set(x); }} /></label>);
-              const prob = terraPerPivot.rows.filter((r) => r.nM || r.mCan || r.vTrack).sort((a, b) => (b.vCone + b.vNest + b.vCan + b.vTrack) - (a.vCone + a.vNest + a.vCan + a.vTrack));
+              const G = terraGround;
+              const gp = (i: number, k: GroundK) => { const q = G?.piv[i]; return q && q.aP ? (100 * q.a[k]) / q.aP : 0; };
+              const pTerm = (r: { aM: number; aP: number }) => (r.aP ? (100 * r.aM) / r.aP : 0);
+              const prob = terraPerPivot.rows.filter((r) => r.nM || r.mCan || r.vTrack || (G && GROUND_CLS.some((c) => gp(r.i, c.k) >= 0.05)))
+                .sort((a, b) => (b.vCone + b.vNest + b.vCan + b.vTrack) - (a.vCone + a.vNest + a.vCan + a.vTrack) || (G ? GROUND_CLS.reduce((x, c) => x + gp(b.i, c.k) - gp(a.i, c.k), 0) : 0));
+              const pc = (x: number) => (x >= 0.05 ? `${fmt(x, { maximumFractionDigits: 1 })}%` : "–");
+              const red = (x: number) => (x > 5 ? "text-rust font-semibold" : "");
+              const aPtot = T.aP;
+              // riepilogo per origine: superficie sotto i pivot e quota; per i volumi i m³
+              const origins: { k: string; label: string; col: string; ha: number | null; pct: number | null; q: string; hide?: string }[] = [
+                { k: "term", label: t("Termitai"), col: "#b91c1c", ha: mounds.length ? T.aM / 10000 : null, pct: mounds.length && aPtot ? (100 * T.aM) / aPtot : null,
+                  q: mounds.length ? `${fmt(T.nM)} · ${fmt(Math.round(T.vCone + T.vNest))} m³` : "" },
+                ...GROUND_CLS.map((c) => ({ k: c.k, label: t(c.label), col: `rgb(${c.rgb.join(",")})`, ha: G ? G.tot[c.k] / 10000 : null, pct: G && aPtot ? (100 * G.tot[c.k]) / aPtot : null,
+                  q: G ? `${fmt(G.tot[c.k] / 10000, { maximumFractionDigits: 1 })} ha` : "", hide: c.k })),
+                { k: "track", label: t("Pendenze delle carreggiate"), col: "#a16207", ha: null, pct: null, q: trackRes ? `${fmt(Math.round(T.vTrack))} m³` : "" },
+                { k: "canal", label: t("Canali e fossi da spianare"), col: "#059669", ha: null, pct: null, q: T.mCan > 0 ? `${fmt(Math.round(T.vCan))} m³` : "" },
+              ];
               return (
                 <div className="space-y-3 text-xs">
-                  {/* termitai */}
-                  <div className="bg-panel rounded-lg p-2 space-y-2" data-terra-mounds>
-                    <div className="font-semibold text-brand-darker">{t("Termitai")}</div>
+                  {/* rilevamento e riepilogo per origine */}
+                  <div className="bg-panel rounded-lg p-2 space-y-2" data-terra-origins>
+                    <div className="font-semibold text-brand-darker">{t("Problemi del terreno per origine")}</div>
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] text-sage-dark whitespace-nowrap">{t("Sensibilità")}: {termCfg.sens}/5</span>
                       <input type="range" min={1} max={5} step={1} value={termCfg.sens} className="flex-1" onChange={(e) => setTermCfg((c) => ({ ...c, sens: Number(e.target.value) }))} />
                     </div>
                     <button className="btn-primary w-full" disabled={busy === "termiti" || !fields.length} onClick={detectMounds} data-terra-detect>
-                      {busy === "termiti" ? t("Cerco la scena più secca…") : t("Rileva termitai (Sentinel-2, stagione secca)")}</button>
+                      {busy === "termiti" ? t("Leggo le scene dell'anno…") : t("Rileva problemi del terreno (Sentinel-2)")}</button>
+                    <table className="w-full text-[11px] tabular-nums">
+                      <thead className="text-sage-dark text-left"><tr><th className="py-0.5">{t("Origine")}</th><th className="text-right">{t("ha sotto i pivot")}</th><th className="text-right">{t("% sup.")}</th><th className="text-right">{t("Quantità")}</th></tr></thead>
+                      <tbody>
+                        {origins.map((o) => (
+                          <tr key={o.k} className="border-t border-black/5" data-terra-origin={o.k}>
+                            <td className="py-0.5">
+                              <span className="inline-flex items-center gap-1">
+                                {o.hide ? <button title={t("Mostra/nascondi sulla mappa")} onClick={() => setGroundHide((h) => ({ ...h, [o.hide!]: !h[o.hide!] }))}
+                                  className="w-2.5 h-2.5 rounded-sm border" style={{ background: groundHide[o.hide] ? "transparent" : o.col, borderColor: o.col }} />
+                                  : <span className="w-2.5 h-2.5 rounded-sm" style={{ background: o.col }} />}
+                                {o.label}</span></td>
+                            <td className="text-right">{o.ha == null ? "–" : fmt(o.ha, { maximumFractionDigits: 1 })}</td>
+                            <td className={"text-right " + red(o.pct ?? 0)}>{o.pct == null ? "–" : `${fmt(o.pct, { maximumFractionDigits: 1 })}%`}</td>
+                            <td className="text-right">{o.q || "–"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {G && ground[0] && <div className="text-[11px] opacity-70">{t("Scena secca del {d}, scena più bagnata del {w}. Sale: croste chiare senza vegetazione in almeno una scena dell'anno; ristagni: acqua o suolo saturo nella scena più bagnata; alberi e arbusti: macchie verdi nella stagione secca più grandi di un termitaio. Indizi da verificare in campo.", { d: wDate(ground[0].date_dry), w: ground[0].date_wet ? wDate(ground[0].date_wet) : "–" })}</div>}
+                    {termSkipped && <div className="text-[11px] text-sage-dark">{t("Termitai non cercati: l'area è fuori dalla fascia tropicale e subtropicale dove ci sono i termitai a cumulo.")}</div>}
+                  </div>
+                  {/* termitai */}
+                  <div className="bg-panel rounded-lg p-2 space-y-2" data-terra-mounds>
+                    <div className="font-semibold text-brand-darker">{t("Termitai")}</div>
                     <div className="grid grid-cols-3 gap-2">
                       {inp(t("Altezza media del cumulo (m)"), termCfg.h, (x) => setTermCfg((c) => ({ ...c, h: x })), 0.5, 0.2, 10)}
                       {inp(t("Scavo del nido sotto il piano (m)"), termCfg.dig, (x) => setTermCfg((c) => ({ ...c, dig: x })), 0.5, 0, 5)}
@@ -11402,15 +11566,14 @@ export default function Page() {
                     <div className="max-h-64 overflow-auto" data-terra-table>
                       <table className="w-full text-[11px] tabular-nums">
                         <thead className="sticky top-0 bg-white text-sage-dark text-left">
-                          <tr><th className="py-1">{t("Pivot")}</th><th>{t("Termitai")}</th><th>{t("% sup.")}</th><th>{t("Canali")}</th><th>{t("Pendenza")}</th><th className="text-right">m³</th></tr>
+                          <tr><th className="py-1">{t("Pivot")}</th><th>{t("Termitai")}</th>{G && GROUND_CLS.slice(0, 3).map((c) => <th key={c.k}>{t(c.short)}</th>)}<th>{t("Pend.")}</th><th className="text-right">m³</th></tr>
                         </thead>
                         <tbody>
                           {prob.slice(0, 200).map((r) => (
                             <tr key={r.i} className="border-t border-black/5 hover:bg-black/5 cursor-pointer" onClick={() => zoomToCoords([[r.p.lng, r.p.lat]])}>
                               <td className="py-0.5">#{r.i + 1}</td>
-                              <td>{r.nM ? `${r.nM} · ${fmt(Math.round(r.vCone + r.vNest))} m³` : "–"}</td>
-                              <td className={r.aP && r.aM / r.aP > 0.05 ? "text-rust font-semibold" : ""}>{r.nM && r.aP ? `${fmt((100 * r.aM) / r.aP, { maximumFractionDigits: 1 })}%` : "–"}</td>
-                              <td>{r.mCan ? `${uM(r.mCan)} · ${fmt(Math.round(r.vCan))} m³` : "–"}</td>
+                              <td className={red(pTerm(r))}>{r.nM ? `${r.nM} · ${pc(pTerm(r))}` : "–"}</td>
+                              {G && GROUND_CLS.slice(0, 3).map((c) => <td key={c.k} className={red(gp(r.i, c.k))}>{pc(gp(r.i, c.k))}</td>)}
                               <td className={r.vTrack > 0 ? "text-rust" : ""}>{trackRes && trackRes[pivKey(r.p)] ? `${fmt(r.slope, { maximumFractionDigits: 1 })}%` : "–"}</td>
                               <td className="text-right font-semibold">{fmt(Math.round(r.vCone + r.vNest + r.vCan + r.vTrack))}</td>
                             </tr>
@@ -11419,27 +11582,31 @@ export default function Page() {
                       </table>
                     </div>
                   )}
-                  {terraPerField.length > 0 && (
+                  {terraPerField.length > 0 || (G && G.fld.length > 0) ? (
                     <div className="max-h-48 overflow-auto" data-terra-fields>
-                      <div className="font-semibold text-brand-darker mb-0.5">{t("Termitai per campo")}</div>
+                      <div className="font-semibold text-brand-darker mb-0.5">{t("Problemi per campo")}</div>
                       <table className="w-full text-[11px] tabular-nums">
                         <thead className="sticky top-0 bg-white text-sage-dark text-left">
-                          <tr><th className="py-1">{t("Campo")}</th><th className="text-right">{t("Termitai")}</th><th className="text-right">{t("ha con termitai")}</th><th className="text-right">{t("% sup.")}</th></tr>
+                          <tr><th className="py-1">{t("Campo")}</th><th className="text-right">{t("Termitai")}</th>{G && GROUND_CLS.map((c) => <th key={c.k} className="text-right">{t(c.short)}</th>)}</tr>
                         </thead>
                         <tbody>
-                          {terraPerField.map(({ f, n, a, A }) => (
-                            <tr key={f.id} className="border-t border-black/5 hover:bg-black/5 cursor-pointer" onClick={() => zoomToCoords(f.geom.coordinates[0] as number[][])}>
-                              <td className="py-0.5 truncate max-w-[9rem]">{f.name}</td>
-                              <td className="text-right">{fmt(n)}</td>
-                              <td className="text-right">{fmt(a / 10000, { maximumFractionDigits: 1 })} / {fmt(A / 10000, { maximumFractionDigits: 0 })}</td>
-                              <td className={"text-right font-semibold " + (a / A > 0.05 ? "text-rust" : "")}>{fmt((100 * a) / A, { maximumFractionDigits: 1 })}%</td>
-                            </tr>
-                          ))}
+                          {fields.filter((f) => !f.hidden).map((f) => {
+                            const tm = terraPerField.find((x) => x.f.id === f.id), gf = G?.fld.find((x) => x.f.id === f.id);
+                            if (!tm && !gf) return null;
+                            const tp = tm && tm.A ? (100 * tm.a) / tm.A : 0;
+                            return (
+                              <tr key={f.id} className="border-t border-black/5 hover:bg-black/5 cursor-pointer" onClick={() => zoomToCoords(f.geom.coordinates[0] as number[][])}>
+                                <td className="py-0.5 truncate max-w-[7rem]">{f.name} <span className="opacity-60">{fmt(polyAreaM2(f.geom.coordinates as number[][][]) / 10000, { maximumFractionDigits: 0 })} ha</span></td>
+                                <td className={"text-right " + red(tp)}>{tm ? `${fmt(tm.n)} · ${pc(tp)}` : "–"}</td>
+                                {G && GROUND_CLS.map((c) => { const x = gf && gf.A ? (100 * gf.a[c.k]) / gf.A : 0; return <td key={c.k} className={"text-right " + red(x)}>{pc(x)}</td>; })}
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
-                      <div className="text-[11px] opacity-70 mt-0.5">{t("Superficie con termitai = impronta di ogni termitaio (diametro rilevato) più la fascia di bonifica intorno. In rosso oltre il 5%.")}</div>
+                      <div className="text-[11px] opacity-70 mt-0.5">{t("Percentuale della superficie del campo per ogni origine. Termitai: impronta di ogni termitaio più la fascia di bonifica intorno. In rosso oltre il 5%.")}</div>
                     </div>
-                  )}
+                  ) : null}
                 </div>
               );
             })()}

@@ -36,12 +36,23 @@ try {
   ok(await page.locator("[data-terra-section]").isVisible(), "Pagina Terraforming aperta");
   const t0 = Date.now();
   await page.locator("[data-terra-detect]").click();
-  await page.locator("text=/Termitai rilevati: [\\d.]+/").first().waitFor({ timeout: 600000 });
+  await page.locator("text=/Problemi del terreno rilevati/").first().waitFor({ timeout: 900000 });
   const sum = await txt("[data-terra-mound-sum]");
   const nAll = Number((sum.match(/^([\d.]+) termitai/) || [])[1]?.replace(/\./g, "") || 0);
   const nIn = Number((sum.match(/([\d.]+) sotto i pivot/) || [])[1]?.replace(/\./g, "") || 0);
   ok(nAll > 100 && nIn > 0 && /m³ di cumuli/.test(sum), `Termitai in ${((Date.now() - t0) / 1000).toFixed(0)} s: ${sum.split("\n").slice(0, 2).join(" ")}`);
   await page.screenshot({ path: path.join(SH, "t1_termitai.png") });
+  // problemi per origine: tabella, griglia sulla mappa, colonne per pivot e per campo
+  const oRow = async (k) => (await txt(`[data-terra-origin="${k}"]`)).replace(/\s+/g, " ");
+  const wood = await oRow("wood"), salt = await oRow("salt"), wet = await oRow("wet");
+  const woodHa = Number((wood.match(/disboscare ([\d.,]+)/) || [])[1]?.replace(/\./g, "").replace(",", ".") || 0);
+  ok(woodHa > 0, `Per origine: ${wood} | ${salt} | ${wet}`);
+  ok((await page.locator(".leaflet-image-layer").count()) > 0, "Griglia dei problemi sulla mappa");
+  const fHead = (await txt("[data-terra-fields] thead")).replace(/\s+/g, " ");
+  ok(/Alberi/.test(fHead) && /Sale/.test(fHead), `Colonne per campo: ${fHead}`);
+  await page.locator('[data-terra-origin="wood"] button').click(); await page.waitForTimeout(400);
+  await page.screenshot({ path: path.join(SH, "t1c_senza_alberi.png") });
+  await page.locator('[data-terra-origin="wood"] button').click(); await page.waitForTimeout(400);
   // a mano: aggiungi e togli
   await page.locator("[data-terra-add]").click(); await page.waitForTimeout(300);
   await page.mouse.click(900, 500); await page.waitForTimeout(500);
@@ -69,6 +80,13 @@ try {
   const vt = Number((tot.match(/Movimenti di terra: ([\d.]+) m³/) || [])[1]?.replace(/\./g, "") || 0);
   ok(vt > 0 && (await page.locator("[data-terra-table] tbody tr").count()) > 0, `Totale: ${tot.replace(/\n/g, " · ")}`);
   await page.screenshot({ path: path.join(SH, "t2_totale.png") });
+  // computo: voci per origine
+  await page.locator('button[title="Esporta"]').first().click(); await page.waitForTimeout(800);
+  const cBtn = page.locator('button:has-text("Computo metrico")').first();
+  if (!/▾/.test(await cBtn.innerText())) await cBtn.click();
+  await page.waitForTimeout(800);
+  const body = await page.locator("body").innerText();
+  ok(/Bonifiche del terreno/.test(body) && /Disboscamento/.test(body), `Computo: ${(body.match(/Disboscamento[^\n]*\n?[^\n]*/) || [""])[0].replace(/\s+/g, " ").slice(0, 160)}`);
   ok(errors.length === 0, `Nessun errore JavaScript${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; await page.screenshot({ path: path.join(SH, "t_err.png") }).catch(() => {}); }
 await browser.close();

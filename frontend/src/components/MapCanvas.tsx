@@ -76,6 +76,7 @@ export type MapHandle = {
   // tipi di corso nascosti nell'anteprima (river, canal, drain, drainage, basin, wetland): si guarda il satellite sotto
   waterPreviewHide: (kinds: string[]) => void;
   // termitai (terraforming): punti marroni; mode «add» = clic sulla mappa per aggiungerne, «del» = clic su un termitaio per toglierlo
+  showGround: (imgs: { url: string; bounds: [[number, number], [number, number]] }[] | null) => void;
   showMounds: (list: { lon: number; lat: number; d: number; man?: boolean; inPivot?: boolean }[] | null, opts?: { mode?: "" | "add" | "del"; onAdd?: (lon: number, lat: number) => void; onRemove?: (i: number) => void; tip?: (i: number) => string }) => void;
   // metri per pixel al centro della vista (tolleranza dei clic)
   mPerPx: () => number;
@@ -266,6 +267,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const waterEditRef = useRef<L.LayerGroup | null>(null);
   const previewHideRef = useRef<Set<string>>(new Set());
   const moundRef = useRef<L.LayerGroup | null>(null);
+  const groundRef = useRef<L.LayerGroup | null>(null);
   const moundAddRef = useRef<((lon: number, lat: number) => void) | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function _applyPreviewHide() {
@@ -425,6 +427,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     canalRef.current = L.layerGroup().addTo(map);
     canalEditRef.current = L.layerGroup().addTo(map);
     waterEditRef.current = L.layerGroup().addTo(map);
+    groundRef.current = L.layerGroup().addTo(map);
     moundRef.current = L.layerGroup().addTo(map);
     pendingRef.current = L.layerGroup().addTo(map);
     // pannello sotto gli overlay (400): il tratteggio sta sotto campi e pivot e
@@ -1260,6 +1263,11 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         _applyPreviewHide();
         try { const b = g.getBounds(); if (b.isValid()) map.fitBounds(b, { padding: [50, 50] }); } catch { /* */ }
       },
+      showGround(imgs) {
+        const g = groundRef.current; if (!g) return;
+        g.clearLayers();
+        (imgs ?? []).forEach((im) => g.addLayer(L.imageOverlay(im.url, im.bounds, { opacity: 0.75, interactive: false })));
+      },
       showMounds(list, opts) {
         const map = mapRef.current, g = moundRef.current; if (!map || !g) return;
         g.clearLayers();
@@ -1272,7 +1280,11 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           g.addLayer(L.circle([m.lat, m.lon], { radius: m.d / 2, color: col, weight: 1, fillColor: "#d97706", fillOpacity: 0.35, interactive: false }));
           const dot = L.circleMarker([m.lat, m.lon], { radius: 3.5, color: "#fff", weight: 1, fillColor: col, fillOpacity: 1, bubblingMouseEvents: false });
           if (opts?.tip) dot.bindTooltip(opts.tip(i), { direction: "top" });
-          dot.on("click", (e: L.LeafletMouseEvent) => { L.DomEvent.stop(e); if (opts?.mode === "del") opts.onRemove?.(i); });
+          dot.on("click", (e: L.LeafletMouseEvent) => {
+            L.DomEvent.stop(e);
+            if (opts?.mode === "del") opts.onRemove?.(i);
+            else if (opts?.mode === "add") opts.onAdd?.(e.latlng.lng, e.latlng.lat);   // aggiunta anche sopra un termitaio vicino
+          });
           g.addLayer(dot);
         });
       },
