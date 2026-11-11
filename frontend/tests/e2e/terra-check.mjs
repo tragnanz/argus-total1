@@ -48,6 +48,18 @@ try {
   await page.locator("[data-terra-add]").click(); await page.waitForTimeout(300);
   const sum2 = await txt("[data-terra-mound-sum]");
   ok(/\(1 a mano\)/.test(sum2), `Termitaio aggiunto a mano: ${sum2.split("\n")[0]}`);
+  // percentuale di superficie: totale, per pivot e per campo; la fascia di bonifica la fa crescere
+  const pct = async () => Number(((await txt("[data-terra-pct]")).match(/([\d,]+)% della superficie/) || [])[1]?.replace(",", ".") || 0);
+  const p0 = await pct();
+  const fRow = (await txt("[data-terra-fields] tbody tr")).replace(/\s+/g, " ");
+  const pRow = (await txt("[data-terra-table] tbody tr")).replace(/\s+/g, " ");
+  ok(p0 > 0 && p0 < 100 && /%/.test(fRow) && /%/.test(pRow), `Superficie con termitai: ${await txt("[data-terra-pct]")} · campo: ${fRow} · pivot: ${pRow}`);
+  const bufIn = page.locator('label:has-text("Fascia di bonifica") input');
+  await bufIn.fill("5"); await page.waitForTimeout(500);
+  const p5 = await pct();
+  ok(p5 > p0, `Con 5 m di fascia: ${p5}% (contro ${p0}%)`);
+  await page.screenshot({ path: path.join(SH, "t1b_percentuale.png") });
+  await bufIn.fill("0"); await page.waitForTimeout(300);
   // carreggiate
   await page.locator("[data-terra-check]").click();
   await page.locator("[data-terra-track-sum]").waitFor({ timeout: 180000 });
