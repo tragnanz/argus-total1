@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.262";
+const REV = "v0.6.263";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -126,7 +126,7 @@ type Field = {
 // Wrapper front-end con visibilità per-oggetto e proprietario (campo) per il
 // pannello Livelli stile Photoshop: owner = id del campo a cui l'oggetto appartiene.
 type CanalL = Canal & { hidden?: boolean; uid?: number; owner?: number; exist?: boolean };   // exist: canale esistente (non entra nel computo)
-type WaterL = Watercourse & { hidden?: boolean; uid?: number; owner?: number;
+type WaterL = Watercourse & { hidden?: boolean; uid?: number; owner?: number; folder?: string;
   // come era registrato (OpenStreetMap / rilevamento) prima che l'utente forzasse nome o tipo
   name_orig?: string | null; kind_orig?: string;
   // idraulica per la stima della portata (Manning): profondità a larghezza tipica, pendenza del fondo,
@@ -1310,6 +1310,11 @@ export default function Page() {
   const waterHideRef = useRef(waterHide); waterHideRef.current = waterHide;
   const waterSlopeTried = useRef<Set<string>>(new Set());
   const wcRef = useRef<WaterL[]>([]);
+  const [waterCheck, setWaterCheck] = useState<Set<number>>(new Set());
+  const waterLastCheck = useRef<number | null>(null);
+  const [waterFolderOpen, setWaterFolderOpen] = useState<Record<string, boolean>>({});
+  useEffect(() => { setWaterCheck(new Set()); }, [watercourses.length]);   // gli indici cambiano: selezione azzerata
+  useEffect(() => { wcRef.current = watercourses; }, [watercourses]);
   const waterPending = useRef<{ surface: { type: "Polygon"; coordinates: unknown }[]; dates: string[]; res_m: number } | null>(null);
   const [waterRemoveOn, setWaterRemoveOn] = useState(false);
   // barra strumenti in alto: annulla/ripristina, misura, menu livelli
@@ -1766,7 +1771,7 @@ export default function Page() {
     histPaused.current = true;            // il caricamento non entra nella cronologia
     suppressAutosaveRef.current = true;   // non salvare durante il caricamento (evita di sovrascrivere il progetto)
     clearAllFields();
-    setCanals([]); setRoads([]); setWatercourses([]); setWaterSurface([]); setWaterMeta(null); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set()); setHiddenPipeFields(new Set());
+    setCanals([]); setRoads([]); setWatercourses([]); wcRef.current = []; mapApi.current?.clearWater(); mapApi.current?.cancelWater(); setWaterPreview(false); setWaterSurface([]); setWaterMeta(null); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set()); setHiddenPipeFields(new Set());
     setVariants([]);
     try {
       const [areasList, layersList] = await Promise.all([api.listAreas(pid), api.listLayers(pid)]);
@@ -1878,7 +1883,7 @@ export default function Page() {
   function resetProjectView() {
     suppressAutosaveRef.current = true;
     clearAllFields();
-    setCanals([]); setRoads([]); setWatercourses([]); setWaterSurface([]); setWaterMeta(null); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set()); setHiddenPipeFields(new Set());
+    setCanals([]); setRoads([]); setWatercourses([]); wcRef.current = []; mapApi.current?.clearWater(); mapApi.current?.cancelWater(); setWaterPreview(false); setWaterSurface([]); setWaterMeta(null); setGuided(null); setPivots([]); setPivotLines([]); setHiddenPivotFields(new Set()); setHiddenPipeFields(new Set());
     setVariants([]);
   }
   async function deleteCurrentClient() {
@@ -2461,8 +2466,9 @@ export default function Page() {
     setWaterMeta({ dates: w.dates ?? [], res_m: w.res_m ?? 10 });
     setMsg(t("Analisi satellitare pronta in {s} s: {m} corsi misurati, {a} tratti aggiunti (visti solo dal satellite o dal DEM).", { s: secs, m: nMeas, a: extra.length }));
   }
-  function confirmWaterUI() {
+  function confirmWaterUI(): WaterL[] {
     stopEditWater();
+    waterPreviewOn.current = false;
     const raw = mapApi.current?.confirmWater() || [];
     const feats: WaterL[] = raw.map((c) => {
       const p = (c.props ?? {}) as Partial<Watercourse>;
@@ -2476,7 +2482,7 @@ export default function Page() {
       }
       return w;
     });
-    setWatercourses(feats);
+    setWatercourses(feats); wcRef.current = feats;
     waterSelRef.current = { kind: null, idx: null }; setWaterSel(waterSelRef.current); setWaterOpen(null);
     renderWater(feats);
     if (waterPending.current) {
@@ -2487,6 +2493,7 @@ export default function Page() {
     setWaterPreview(false); setWaterRemoveOn(false);
     setMsg(t("Corsi d'acqua confermati: {n}. I pivot li eviteranno.", { n: feats.length })
       + (waterSatBusy ? " " + t("Le misure dell'analisi satellitare si aggiungeranno appena pronte.") : ""));
+    return feats;
   }
   function setWaterKindMovable(kind: string, movable: boolean) {
     setWatercourses((ws) => { const arr = ws.map((w) => (w.kind === kind ? { ...w, movable } : w)); renderWater(arr); return arr; });
@@ -3627,7 +3634,9 @@ export default function Page() {
       </div>
     );
   }
-  function obstacleLines(wcList: WaterL[] = watercourses) {
+  function obstacleLines(wcArg?: WaterL[]) {
+    // corsi d'acqua in anteprima (importati ma non ancora confermati): si confermano prima di posare i pivot
+    const wcList = wcArg ?? (waterPreviewOn.current ? confirmWaterUI() : wcRef.current);
     // Corsi d'acqua rilevati (fiumi/alvei da DEM, canali esistenti, invasi/paludi):
     // l'alveo si evita con la SUA larghezza reale (mean_width_m) più il franco «Da canali/invasi».
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3820,8 +3829,8 @@ export default function Page() {
     try {
       // corsi d'acqua: se non ci sono ancora, importazione topografica delle aree (pochi secondi),
       // così i pivot evitano subito i fiumi; canali e dreni restano spostabili
-      let wc = wcRef.current;
-      if (!wc.length && !waterPreviewOn.current) {
+      let wc = waterPreviewOn.current ? confirmWaterUI() : wcRef.current;
+      if (!wc.length) {
         setMsg(t("Importazione topografica dei corsi d'acqua…"));
         const res = await Promise.all(todo.map((f) => api.fetchOsmCourses(f.geom).catch(() => null)));
         const seen = new Set<string>();
@@ -8199,6 +8208,133 @@ export default function Page() {
 
   // Riga oggetto (canale/strada/invaso/pivot) trascinabile: occhio, zoom, elimina.
   // Trascinandola su un campo diventa «sua»; sulla dropzone si scollega.
+  // ---- ELENCO CORSI D'ACQUA: selezione singola o multipla, cartelle, unione in polilinea, eliminazione di gruppo
+  function waterCoords(w: WaterL) { return (w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates) as number[][]; }
+  function setWaterChecked(next: Set<number>) { setWaterCheck(next); }
+  function waterBulkHide(ids: number[], h: boolean) {
+    const S = new Set(ids);
+    setWatercourses((ws) => { const arr = ws.map((w, k) => (S.has(k) ? { ...w, hidden: h } : w)); renderWater(arr); return arr; });
+  }
+  function waterBulkRemove(ids: number[]) {
+    if (!ids.length || !window.confirm(t("Eliminare {n} elementi?", { n: ids.length }))) return;
+    const S = new Set(ids);
+    stopEditWater(); setWaterConnect(false);
+    waterSelRef.current = { kind: null, idx: null }; setWaterSel(waterSelRef.current); setWaterOpen(null);
+    setWatercourses((ws) => { const arr = ws.filter((_, k) => !S.has(k)); renderWater(arr); return arr; });
+    setWaterCheck(new Set());
+    setMsg(t("{n} elementi eliminati.", { n: ids.length }));
+  }
+  function waterBulkFolder(ids: number[]) {
+    if (!ids.length) return;
+    const names = [...new Set(watercourses.map((w) => w.folder).filter(Boolean))] as string[];
+    const cur = watercourses[ids[0]]?.folder ?? "";
+    const v = window.prompt(t("Nome della cartella (vuoto = fuori dalle cartelle)") + (names.length ? `\n${t("Cartelle esistenti")}: ${names.join(", ")}` : ""), cur);
+    if (v == null) return;
+    const name = v.trim() || undefined, S = new Set(ids);
+    setWatercourses((ws) => ws.map((w, k) => (S.has(k) ? { ...w, folder: name } : w)));
+    if (name) setWaterFolderOpen((o) => ({ ...o, [name]: true }));
+    setWaterCheck(new Set());
+  }
+  // unisce le linee selezionate in una sola polilinea: concatena ogni volta il tratto con l'estremo più vicino
+  function waterBulkMerge(ids: number[]) {
+    const ws = wcRef.current;
+    const L = ids.filter((k) => ws[k]?.geojson.type === "LineString");
+    if (L.length < 2) { setMsg(t("Seleziona almeno due linee da unire.")); return; }
+    stopEditWater();
+    let line = (ws[L[0]].geojson.coordinates as number[][]).slice();
+    const rest = new Set(L.slice(1));
+    let gap = 0;
+    while (rest.size) {
+      let best = -1, bd = Infinity, mode = 0;
+      for (const k of rest) {
+        const c = ws[k].geojson.coordinates as number[][];
+        const a0 = line[0], a1 = line[line.length - 1], b0 = c[0], b1 = c[c.length - 1];
+        const ds = [geoDist(a1, b0), geoDist(a1, b1), geoDist(a0, b1), geoDist(a0, b0)];
+        ds.forEach((d, m) => { if (d < bd) { bd = d; best = k; mode = m; } });
+      }
+      let c = (ws[best].geojson.coordinates as number[][]).slice();
+      if (mode === 1 || mode === 3) c = c.reverse();
+      const join = bd < 0.5 ? 1 : 0;
+      line = mode <= 1 ? [...line, ...c.slice(join)] : [...c, ...line.slice(join)];
+      gap += bd < 0.5 ? 0 : bd;
+      rest.delete(best);
+    }
+    if (gap > 300 && !window.confirm(t("Le linee scelte non si toccano: per unirle aggiungo {g} di collegamenti in linea retta. Procedo?", { g: uM(Math.round(gap)) }))) return;
+    const A = ws[L[0]], len = Math.round(lineLenKm(line) * 10000) / 10;
+    const drop = new Set(L.slice(1));
+    setWatercourses((cur) => {
+      const arr = cur.map((w, k) => (k === L[0] ? { ...w, name: w.name ?? L.map((q) => cur[q].name).find(Boolean), geojson: { type: "LineString" as const, coordinates: line }, length_m: len, edited: true, profile: undefined } : w))
+        .filter((_, k) => !drop.has(k));
+      const ni = L[0] - [...drop].filter((q) => q < L[0]).length;
+      waterSelRef.current = { kind: A.kind, idx: ni }; setWaterSel(waterSelRef.current);
+      renderWater(arr, waterSelRef.current); return arr;
+    });
+    setWaterCheck(new Set());
+    setMsg(t("{n} linee unite in una polilinea di {l}", { n: L.length, l: uM(len) }) + (gap > 0 ? " · " + t("collegamenti aggiunti fra i tratti: {g}", { g: uM(Math.round(gap)) }) : "") + " ✓");
+  }
+  function renderWaterList(items: { w: WaterL; i: number }[], ctx: string) {
+    const codes = waterCodes(watercourses);
+    const ids = items.map((x) => x.i);
+    const sel = ids.filter((k) => waterCheck.has(k));
+    const toggle = (k: number, e: React.MouseEvent) => {
+      const n = new Set(waterCheck);
+      if (e.shiftKey && waterLastCheck.current != null && ids.includes(waterLastCheck.current)) {
+        const a = ids.indexOf(waterLastCheck.current), b = ids.indexOf(k), on = !waterCheck.has(k);
+        ids.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((q) => (on ? n.add(q) : n.delete(q)));
+      } else if (n.has(k)) n.delete(k); else n.add(k);
+      waterLastCheck.current = k; setWaterChecked(n);
+    };
+    const row = ({ w, i }: { w: WaterL; i: number }) => (
+      <li key={`w${i}`} draggable data-wl-row={i}
+        onDragStart={(e) => { e.stopPropagation(); dragRef.current = { kind: "water", id: i }; e.dataTransfer.effectAllowed = "move"; }}
+        onDragEnd={() => { dragRef.current = null; setDragOverField(null); }}
+        className={"flex items-center gap-1 text-[11px] rounded px-1.5 py-0.5 cursor-move " + (waterCheck.has(i) ? "bg-brand/15" : waterSel.idx === i ? "bg-amber-100" : "bg-panel")}>
+        <input type="checkbox" className="w-3 h-3" checked={waterCheck.has(i)} onChange={() => {}} onClick={(e) => toggle(i, e)} data-wl-check={i} />
+        <button className="text-brand-mid w-4" title={t("Mostra/Nascondi")} onClick={() => toggleWaterHidden(i)}>{w.hidden ? "○" : "◉"}</button>
+        <button className="flex-1 text-left leading-tight truncate" title={t("Seleziona sulla mappa · trascina su un campo per assegnarlo")}
+          onClick={() => { zoomToCoords(waterCoords(w)); selectWater({ kind: w.kind, idx: i }); }}>
+          <span className="inline-block w-2 h-2 rounded-sm mr-1 align-middle" style={{ background: WATER_COL[w.kind] ?? "#0369a1" }} />
+          {waterKindName(w.kind)} {codes[i]}{w.name ? <span className="text-sage-dark"> · {w.name}</span> : null}{w.length_m ? <span className="text-sage-dark"> · {uM(w.length_m)}</span> : null}
+        </button>
+        <button className="text-danger w-4" title={t("Rimuovi")} onClick={() => removeWater(i)}>✕</button>
+      </li>
+    );
+    const folders = [...new Set(items.map((x) => x.w.folder).filter(Boolean))].sort() as string[];
+    const loose = items.filter((x) => !x.w.folder);
+    const btn = "px-1.5 py-0.5 rounded border border-black/10 bg-white hover:bg-black/5 disabled:opacity-40";
+    return (
+      <div className="space-y-0.5" data-water-list={ctx}>
+        <div className="flex items-center gap-1 flex-wrap text-[10px] text-sage-dark py-0.5">
+          <input type="checkbox" className="w-3 h-3" checked={sel.length > 0 && sel.length === ids.length} title={t("Seleziona tutti")}
+            onChange={(e) => { const n = new Set(waterCheck); ids.forEach((k) => (e.target.checked ? n.add(k) : n.delete(k))); setWaterChecked(n); }} data-wl-all={ctx} />
+          <span className="mr-1">{sel.length ? t("{n} selezionati", { n: sel.length }) : t("{n} corsi d'acqua", { n: ids.length })}</span>
+          <button className={btn} disabled={!sel.length} onClick={() => waterBulkHide(sel, !sel.every((k) => watercourses[k]?.hidden))}>{t("Mostra/Nascondi")}</button>
+          <button className={btn} disabled={!sel.length} onClick={() => waterBulkFolder(sel)} data-wl-folder>{t("Cartella…")}</button>
+          <button className={btn} disabled={sel.length < 2} onClick={() => waterBulkMerge(sel)} data-wl-merge>{t("Unisci")}</button>
+          <button className={btn + " text-danger"} disabled={!sel.length} onClick={() => waterBulkRemove(sel)} data-wl-del>{t("Elimina")}</button>
+        </div>
+        {folders.map((fo) => {
+          const its = items.filter((x) => x.w.folder === fo), fids = its.map((x) => x.i), open = waterFolderOpen[fo] ?? false;
+          const allHidden = its.every((x) => x.w.hidden);
+          return (
+            <div key={`fo-${fo}`} className="rounded bg-black/[0.03]" data-wl-folder-row={fo}>
+              <div className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 font-semibold text-brand-darker">
+                <input type="checkbox" className="w-3 h-3" checked={fids.every((k) => waterCheck.has(k))}
+                  onChange={(e) => { const n = new Set(waterCheck); fids.forEach((k) => (e.target.checked ? n.add(k) : n.delete(k))); setWaterChecked(n); }} />
+                <button className="text-brand-mid w-4" title={t("Mostra/Nascondi")} onClick={() => waterBulkHide(fids, !allHidden)}>{allHidden ? "○" : "◉"}</button>
+                <button className="flex-1 text-left" onClick={() => setWaterFolderOpen((o) => ({ ...o, [fo]: !open }))}>{open ? "▾" : "▸"} 📁 {fo} <span className="font-normal text-sage-dark">({its.length})</span></button>
+                <button className="text-sage-dark w-4" title={t("Togli la cartella (gli elementi restano)")}
+                  onClick={() => setWatercourses((ws) => ws.map((w) => (w.folder === fo ? { ...w, folder: undefined } : w)))}>⇱</button>
+                <button className="text-danger w-4" title={t("Elimina la cartella e il suo contenuto")} onClick={() => waterBulkRemove(fids)}>✕</button>
+              </div>
+              {open && <ul className="space-y-0.5 pl-3 pb-0.5">{its.map(row)}</ul>}
+            </div>
+          );
+        })}
+        <ul className="space-y-0.5">{loose.map(row)}</ul>
+      </div>
+    );
+  }
   function objRow(kind: "canal" | "road" | "water" | "pivot" | "pipe", dragId: number | string, key: string, hidden: boolean, onToggle: () => void, label: React.ReactNode, onZoom: () => void, onRemove: () => void) {
     return (
       <li key={key} draggable
@@ -10438,7 +10574,7 @@ export default function Page() {
             ))}
             {ownedCanals.map(({ c, i }) => objRow("canal", i, `c${i}`, !!c.hidden, () => toggleCanalHidden(i), <>{t("Canale")} {i + 1} · {uM(c.length_m)}</>, () => zoomToCoords(c.geojson.coordinates), () => removeCanal(i)))}
             {roadGroupRow(`f${f.id}`, ownedRoads)}
-            {ownedWater.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{waterKindName(w.kind)} {waterCodes(watercourses)[i]}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
+            {ownedWater.length > 0 && <li key="wlist">{renderWaterList(ownedWater, `f${f.id}`)}</li>}
             {ownedPivN > 0 && objRow("pivot", f.id, `pv${f.id}`, hiddenPivotFields.has(f.id), () => togglePivotFieldHidden(f.id),
               <>{t("Pivot")} · {ownedPivN} · {uHa(st.irrHa)}<span className="text-sage-dark"> · {t("mediana")} {uHa(st.medHa, 1)} / {uM(st.medR)}</span></>,
               () => zoomToCoords(f.geom.coordinates[0]), () => removePivotsOfField(f.id))}
@@ -10835,7 +10971,7 @@ export default function Page() {
                   <ul className="space-y-0.5">
                     {cItems.map(({ c, i }) => objRow("canal", i, `c${i}`, !!c.hidden, () => toggleCanalHidden(i), <>{t("Canale")} {i + 1} · {uM(c.length_m)}</>, () => zoomToCoords(c.geojson.coordinates), () => removeCanal(i)))}
                     {roadGroupRow("unassigned", rItems)}
-                    {wItems.map(({ w, i }) => { const coords = w.geojson.type === "Polygon" ? w.geojson.coordinates[0] : w.geojson.coordinates; return objRow("water", i, `w${i}`, !!w.hidden, () => toggleWaterHidden(i), <>{waterKindName(w.kind)} {waterCodes(watercourses)[i]}</>, () => zoomToCoords(coords), () => removeWater(i)); })}
+                    {wItems.length > 0 && <li key="wlist">{renderWaterList(wItems, "free")}</li>}
                     {pGroups.map((g) => objRow("pivot", g.fid, `pg${g.fid}`, hiddenPivotFields.has(g.fid), () => togglePivotFieldHidden(g.fid), <>{g.name} · {g.n} pivot</>, () => {}, () => removePivotsOfField(g.fid)))}
                     {tGroups.map((g) => objRow("pipe", g.fid, `tg${g.fid}`, hiddenPipeFields.has(g.fid), () => togglePipeFieldHidden(g.fid), <>{g.name} · {g.n} {t("tubazioni")}</>, () => zoomToPipesOfField(g.fid), () => removePipesOfField(g.fid)))}
                   </ul>
