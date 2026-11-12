@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.258";
+const REV = "v0.6.259";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1982,6 +1982,8 @@ export default function Page() {
   function setRoadsWidthByIds(ids: Set<string>, w: number) { setRoads((rs) => rs.map((r) => (ids.has(r.id) ? { ...r, width_m: w } : r))); }
   function removeRoadsByIds(ids: Set<string>) { setRoads((rs) => rs.filter((r) => !ids.has(r.id))); }
   function toggleRoadHidden(i: number) { setRoads((rs) => rs.map((r, k) => k === i ? { ...r, hidden: !r.hidden } : r)); }
+  // rende di nuovo visibile il gruppo pivot di un campo (dopo averli posati)
+  function showPivotField(fid: number) { setHiddenPivotFields((s) => { if (!s.has(fid)) return s; const n = new Set(s); n.delete(fid); return n; }); }
   function togglePivotFieldHidden(fid: number) { setHiddenPivotFields((s) => { const n = new Set(s); if (n.has(fid)) n.delete(fid); else n.add(fid); return n; }); }
   // ---- Tubazioni (oggetti): visibilità, rimozione e riassegnazione per campo ----
   function togglePipeFieldHidden(fid: number) { setHiddenPipeFields((s) => { const n = new Set(s); if (n.has(fid)) n.delete(fid); else n.add(fid); return n; }); }
@@ -3682,6 +3684,7 @@ export default function Page() {
     const { pivots: np } = pivotsFromFC(r.geojson, radiusM);
     const taggedP = np.map((x) => ({ ...x, field: fid }));
     const mergedP = [...pivots.filter((x) => x.field !== fid), ...taggedP];
+    showPivotField(fid);                                  // pivot appena posati: sempre visibili
     const mergedL = pivotLines.filter((x) => x.field !== fid);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const layGeoNoLines = { type: "FeatureCollection" as const, features: (r.geojson.features || []).filter((ft: any) => ft.geometry?.type !== "LineString") };
@@ -3788,6 +3791,7 @@ export default function Page() {
       }
       setFields((fs) => fs.map((f) => (lays.has(f.id) ? { ...f, lay: lays.get(f.id)!.meta, layGeo: lays.get(f.id)!.geo } : f)));
       setPivots(accP); setPivotSel({ mode: "none", idx: -1 });
+      new Set(accP.map((x) => x.field)).forEach((fid) => { if (fid != null) showPivotField(fid); });
       const netHa = accP.reduce((a, x) => a + pvAreaM2(x) / 10000, 0);
       setGuided({ geojson: fcFromModel(accP, pivotLines), meta: { n_pivots: accP.length, radius_m: pivotR, net_ha: Math.round(netHa * 10) / 10, safety_m: safetyM } });
       refreshUsage();

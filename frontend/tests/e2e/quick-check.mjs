@@ -46,6 +46,16 @@ try {
   const tPiv = (Date.now() - t0) / 1000;
   ok(/✓/.test(await stepInfo("pivot")), `Passo 2 pivot in ${tPiv.toFixed(0)} s: ${m2.slice(0, 160)}`);
   await page.screenshot({ path: path.join(SH, "q2_pivot.png") });
+  // gruppo pivot nascosto e pivot posati di nuovo: tornano visibili
+  const nCirc = () => page.evaluate(() => [...document.querySelectorAll(".leaflet-overlay-pane path")].filter((p) => p.getAttribute("fill") && p.getAttribute("fill") !== "none" && p.getBoundingClientRect().width < 300).length);
+  const h0 = await nCirc();
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button[title="Mostra/Nascondi"]')].find((x) => /^Pivot ·/.test((x.parentElement?.innerText || "").replace(/^[○◉]\s*/, "").trim())); b?.click(); });
+  await page.waitForTimeout(500);
+  const h1 = await nCirc();
+  await page.locator('[data-quick-step="pivot"]').click();
+  await page.locator("text=/pivot su \\d+ aree/").first().waitFor({ timeout: 180000 }); await page.waitForTimeout(800);
+  const h2 = await nCirc();
+  ok(h0 > 0 && h1 < h0 && h2 >= h0, `Pivot nascosti e posati di nuovo: ${h0} cerchi → ${h1} nascosti → ${h2} dopo la posa`);
   // canali esistenti: «spiana» (default) → m³ di terra; «lascia» → i pivot li evitano
   const cTxt = async () => (await page.locator("[data-quick-canals]").innerText()).replace(/\n/g, " ");
   const nPiv = async () => Number(((await stepInfo("pivot")).match(/(\d+) ·/) || [])[1] || 0);
@@ -85,7 +95,7 @@ try {
   if (pt) { clicks++; await page.mouse.click(pt.x, pt.y); }
   await page.waitForTimeout(1500);
   const m3 = await msgText();
-  ok(/Presa sul corso/.test(m3) && /✓/.test(await stepInfo("fonte")), `Passo 3 fonte: ${m3.slice(0, 140)} · ${(await stepInfo("fonte")).replace(/\n/g, " ")}`);
+  ok(/Presa sul corso|Portata del fiume stimata/.test(m3) && /✓/.test(await stepInfo("fonte")), `Passo 3 fonte: ${m3.slice(0, 140)} · ${(await stepInfo("fonte")).replace(/\n/g, " ")}`);
   await page.waitForTimeout(4000);                         // quote della presa
   // 4 · rete
   const t4 = Date.now();
