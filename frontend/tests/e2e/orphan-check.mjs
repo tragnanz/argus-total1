@@ -32,6 +32,15 @@ try {
   await page.locator('li:has-text("Senza campo · 2 pivot") button[title="Rimuovi"]').click(); await page.waitForTimeout(800);
   const body2 = await page.locator("body").innerText();
   ok(!/Senza campo · 2 pivot/.test(body2) && /Pivot · 3/.test(body2), "✕ sul gruppo senza campo: eliminati, restano i 3 del poligono");
+  // pendenza sotto il pivot: bloccata sul valore da manuale, sbloccabile e ripristinabile
+  await page.locator('button[title="Impianti"]').first().click(); await page.waitForTimeout(600);
+  const inp = page.locator("[data-piv-slope-max]");
+  const v0 = await inp.inputValue(), d0 = await inp.isDisabled();
+  await page.locator("[data-piv-slope-unlock]").click(); await inp.fill("8"); await page.waitForTimeout(200);
+  const v1 = await inp.inputValue(), d1 = await inp.isDisabled();
+  await page.locator("[data-piv-slope-reset]").click(); await page.waitForTimeout(200);
+  const v2 = await inp.inputValue(), d2 = await inp.isDisabled();
+  ok(v0 === "12" && d0 && v1 === "8" && !d1 && v2 === "12" && d2, `Pendenza da manuale ${v0} % (bloccata) → a mano ${v1} % → ripristinata ${v2} %`);
   await page.locator("[data-save-now]").click();
   await page.locator("text=/Progetto salvato/").first().waitFor({ timeout: 30000 }).catch(() => {});
   ok(/Progetto salvato/.test(await page.locator("body").innerText()), "Pulsante Salva: progetto salvato");

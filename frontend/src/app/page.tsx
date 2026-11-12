@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.269";
+const REV = "v0.6.270";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -424,6 +424,8 @@ function pointInPolygon(p: number[], rings: number[][][]): boolean {
 }
 // chiave di un pivot (stesso formato di pKey nel componente, ma usabile ovunque)
 const pivKey = (p: { lat: number; lng: number }) => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`;
+// pendenza massima sotto il pivot da manuale (%), secondo il trasporto dell'acqua
+const PIV_SLOPE_MANUAL: Record<string, number> = { canal: 2, buried: 12 };
 // corsi d'acqua esistenti per regola di disegno: fiumi (e impluvi), canali e fossi, laghi/invasi/paludi
 type WaterCat = "river" | "canal" | "basin";
 const waterCat = (k: string): WaterCat => (k === "canal" || k === "drain" ? "canal" : k === "basin" || k === "wetland" ? "basin" : "river");
@@ -1455,7 +1457,9 @@ export default function Page() {
   const [waterRules, setWaterRules] = useState<Record<WaterCat, { over: boolean; buf: number }>>(WATER_RULES0);
   const waterRulesRef = useRef(waterRules); waterRulesRef.current = waterRules;
   // SCARPATE: pendenza massima sotto tutto il cerchio del pivot (non solo al centro) e quota tollerata
-  const [pivSlope, setPivSlope] = useState({ on: true, max: 12, tol: 5 });
+  // valore da manuale (limite pratico del pivot, secondo il trasporto dell'acqua): canali a gravità ~2 %,
+  // tubazioni in pressione ~12 %; si cambia solo sbloccando il campo («a mano»)
+  const [pivSlope, setPivSlope] = useState({ on: true, manual: false, max: 12, tol: 5 });
   const [pivotR, setPivotR] = useState(400);    // raggio pivot (parametro proprio della scheda Pivot)
   const [minPivotPct, setMinPivotPct] = useState(100);   // dimensione minima pivot di riempimento bordi (% del raggio); 100 = disattivato
   const [fillFull, setFillFull] = useState(false);       // riempie i vuoti con pivot interi fuori griglia
@@ -3776,7 +3780,7 @@ export default function Page() {
       overhang_pct: s.overhang, n_phases: s.nPhases, phase_order: s.phaseOrder,
       kc_peak: s.kc, efficiency: s.eff, hours_per_day: s.hours,
       dem: demModel, dem_smooth_m: demSmooth,
-      pivot_slope_max_pct: pivSlope.on ? pivSlope.max : 0, pivot_slope_tol_pct: pivSlope.tol,
+      pivot_slope_max_pct: pivSlope.on ? (pivSlope.manual ? pivSlope.max : PIV_SLOPE_MANUAL[s.transport] ?? 12) : 0, pivot_slope_tol_pct: pivSlope.tol,
     };
   }
   async function genLayout() {
@@ -8919,8 +8923,8 @@ export default function Page() {
     { const wr = (st as { water_rules?: Partial<Record<WaterCat, { over?: boolean; buf?: number }>> }).water_rules ?? {};
       const R = Object.fromEntries((Object.keys(WATER_RULES0) as WaterCat[]).map((k) => [k, { over: typeof wr[k]?.over === "boolean" ? !!wr[k]!.over : WATER_RULES0[k].over, buf: num(wr[k]?.buf, 0) }])) as Record<WaterCat, { over: boolean; buf: number }>;
       setWaterRules(R); setCanalPolicyS(R.canal.over ? "spiana" : "lascia");
-      const ps = (st as { pivot_slope?: { on?: boolean; max?: number; tol?: number } }).pivot_slope;
-      setPivSlope({ on: typeof ps?.on === "boolean" ? ps.on : true, max: num(ps?.max, 12) || 12, tol: num(ps?.tol, 5) }); }
+      const ps = (st as { pivot_slope?: { on?: boolean; manual?: boolean; max?: number; tol?: number } }).pivot_slope;
+      setPivSlope({ on: typeof ps?.on === "boolean" ? ps.on : true, manual: !!ps?.manual, max: num(ps?.max, 12) || 12, tol: num(ps?.tol, 5) }); }
     const sy = (st as { systems?: Record<string, SysDesign> }).systems;
     setSysDesigns(sy && typeof sy === "object" ? sy : {});
     projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
@@ -12021,14 +12025,29 @@ export default function Page() {
                 <input type="checkbox" checked={pivSlope.on} onChange={(e) => setPivSlope((p) => ({ ...p, on: e.target.checked }))} data-piv-slope-on />
                 {t("Niente pivot sulle scarpate")}
               </label>
-              <div className="grid grid-cols-2 gap-2 mt-1">
-                <label className="text-[10px] text-sage-dark leading-tight">{t("Pendenza massima sotto il pivot (%)")}
-                  <input type="number" min={2} max={60} step={1} value={pivSlope.max} disabled={!pivSlope.on} data-piv-slope-max
-                    onChange={(e) => setPivSlope((p) => ({ ...p, max: Math.max(1, Number(e.target.value) || 0) }))} className="field-input px-1.5 py-1 text-sm mt-0.5 disabled:opacity-40" /></label>
-                <label className="text-[10px] text-sage-dark leading-tight">{t("Superficie tollerata oltre il limite (%)")}
-                  <input type="number" min={0} max={50} step={1} value={pivSlope.tol} disabled={!pivSlope.on}
-                    onChange={(e) => setPivSlope((p) => ({ ...p, tol: Math.max(0, Number(e.target.value) || 0) }))} className="field-input px-1.5 py-1 text-sm mt-0.5 disabled:opacity-40" /></label>
-              </div>
+              {(() => {
+                const man = PIV_SLOPE_MANUAL[cur.transport] ?? 12;
+                const val = pivSlope.manual ? pivSlope.max : man;
+                return (
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    <label className="text-[10px] text-sage-dark leading-tight">{t("Pendenza massima sotto il pivot (%)")}
+                      <span className="flex items-center gap-1 mt-0.5">
+                        <input type="number" min={1} max={60} step={0.5} value={val} disabled={!pivSlope.on || !pivSlope.manual} data-piv-slope-max
+                          onChange={(e) => setPivSlope((p) => ({ ...p, max: Math.max(1, Number(e.target.value) || 0) }))} className="field-input px-1.5 py-1 text-sm flex-1 min-w-0 disabled:opacity-60" />
+                        {pivSlope.manual
+                          ? <button className="text-[10px] px-1.5 py-1 rounded border border-black/10 bg-white hover:bg-black/5 whitespace-nowrap" disabled={!pivSlope.on}
+                              title={t("Torna al valore da manuale ({v} %)", { v: fmt(man) })} onClick={() => setPivSlope((p) => ({ ...p, manual: false }))} data-piv-slope-reset>↺ {t("manuale")}</button>
+                          : <button className="text-[10px] px-1.5 py-1 rounded border border-black/10 bg-white hover:bg-black/5 whitespace-nowrap" disabled={!pivSlope.on}
+                              title={t("Sblocca per regolarla a mano")} onClick={() => setPivSlope((p) => ({ ...p, manual: true, max: man }))} data-piv-slope-unlock>✎ {t("a mano")}</button>}
+                      </span>
+                      <span className={"block mt-0.5 " + (pivSlope.manual ? "text-amber-700" : "")}>
+                        {pivSlope.manual ? t("regolata a mano (manuale: {v} %)", { v: fmt(man) }) : t("da manuale ({t})", { t: cur.transport === "canal" ? t("canali a gravità") : t("tubazioni in pressione") })}</span></label>
+                    <label className="text-[10px] text-sage-dark leading-tight">{t("Superficie tollerata oltre il limite (%)")}
+                      <input type="number" min={0} max={50} step={1} value={pivSlope.tol} disabled={!pivSlope.on}
+                        onChange={(e) => setPivSlope((p) => ({ ...p, tol: Math.max(0, Number(e.target.value) || 0) }))} className="field-input px-1.5 py-1 text-sm mt-0.5 disabled:opacity-40" /></label>
+                  </div>
+                );
+              })()}
               <div className="text-[10px] text-sage-dark mt-1 leading-snug">{t("La pendenza si misura su tutto il cerchio del pivot dal modello del terreno: se la parte oltre il limite supera la superficie tollerata, il pivot non si posa. Vale alla prossima posa dei pivot.")}</div>
             </div>
             {renderWaterRules()}
