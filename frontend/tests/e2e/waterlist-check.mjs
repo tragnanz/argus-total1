@@ -69,6 +69,18 @@ try {
     const rowTxt2 = await page.locator(`[data-wl-row="${idx}"]`).innerText();
     ok(/Canale/.test(rowTxt2), `Tipo cambiato da fiume a canale: ${rowTxt2.replace(/\s+/g, " ")}`);
     const nb = await rows();
+    // dividi in due nel punto cliccato, poi Canc toglie il secondo pezzo (accorciato)
+    const L0 = Number((rowTxt2.match(/([\d.]+) m/) || [])[1]?.replace(/\./g, "") || 0);
+    await page.locator(`[data-wl-split="${idx}"]`).click(); await page.waitForTimeout(300);
+    await page.mouse.click(pt.x, pt.y); await page.waitForTimeout(800);
+    const nSplit = await rows();
+    const msgS = ((await page.locator("body").innerText()).match(/Diviso in due[^\n]*/) || [""])[0];
+    ok(nSplit === nb + 1 && /Diviso in due/.test(msgS), `Dividi: ${nb} → ${nSplit} · ${msgS.slice(0, 90)}`);
+    await page.keyboard.press("Delete"); await page.waitForTimeout(600);
+    const L1 = Number(((await page.locator(`[data-wl-row="${idx}"]`).innerText()).match(/([\d.]+) m/) || [])[1]?.replace(/\./g, "") || 0);
+    ok((await rows()) === nb && L1 > 0 && L1 < L0, `Canc toglie il secondo pezzo: ${await rows()} corsi, tratto accorciato da ${L0} a ${L1} m`);
+    // Canc sul selezionato
+    await page.locator(`[data-wl-row="${idx}"] button`).nth(1).click(); await page.waitForTimeout(400);
     await page.keyboard.press("Delete"); await page.waitForTimeout(600);
     ok((await rows()) === nb - 1, `Canc elimina il corso selezionato: ${nb} → ${await rows()}`);
   }

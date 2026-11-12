@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.265";
+const REV = "v0.6.266";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -2607,6 +2607,41 @@ export default function Page() {
     return best;
   }
   const waterLineOf = (w: WaterL) => (w.geojson.type === "LineString" ? w.geojson.coordinates : w.geojson.coordinates[0]) as number[][];
+  // ---- dividere un corso in due nel punto cliccato (per accorciarlo: poi si elimina il pezzo che non serve) ----
+  const [waterSplitting, setWaterSplitting] = useState<number | null>(null);
+  function splitWaterAt(i: number, p: number[]): boolean {
+    const w = wcRef.current[i]; if (!w || w.geojson.type !== "LineString") return false;
+    const cs = w.geojson.coordinates as number[][];
+    const e = nearestOnLine(p, cs);
+    const a = [...cs.slice(0, e.k + 1), e.q], b = [e.q, ...cs.slice(e.k + 1)];
+    const la = lineLenKm(a) * 1000, lb = lineLenKm(b) * 1000;
+    if (la < 2 || lb < 2) { setMsg(t("Punto troppo vicino a un estremo: clicca più all'interno del tratto.")); return false; }
+    stopEditWater();
+    const A: WaterL = { ...w, geojson: { type: "LineString", coordinates: a }, length_m: Math.round(la * 10) / 10, edited: true, profile: undefined };
+    const B: WaterL = { ...w, geojson: { type: "LineString", coordinates: b }, length_m: Math.round(lb * 10) / 10, edited: true, profile: undefined };
+    setWatercourses((cur) => {
+      const arr = [...cur.slice(0, i), A, B, ...cur.slice(i + 1)];
+      waterSelRef.current = { kind: w.kind, idx: i + 1 }; setWaterSel(waterSelRef.current); setWaterOpen(i + 1);
+      renderWater(arr, waterSelRef.current); return arr;
+    });
+    setMsg(t("Diviso in due: {a} e {b}. Il secondo pezzo è selezionato: premi Canc per eliminarlo, oppure clicca l'altro.", { a: uM(Math.round(la)), b: uM(Math.round(lb)) }));
+    return true;
+  }
+  function startSplitWater(i: number) {
+    if (waterSplitting === i) { mapApi.current?.pickPoint(null); setWaterSplitting(null); setMsg(""); return; }
+    setWaterSplitting(i);
+    setMsg(t("Clicca sul corso nel punto in cui dividerlo in due (Esc per annullare)."));
+    const once = () => mapApi.current?.pickPoint((lat, lng) => {
+      const ww = wcRef.current[i]; if (!ww) { setWaterSplitting(null); return; }
+      const tol = Math.max(20, 15 * (mapApi.current?.mPerPx() ?? 2));
+      if (nearestOnLine([lng, lat], ww.geojson.coordinates as number[][]).d > tol) {
+        setMsg(t("Troppo lontano dal corso: clicca sulla linea evidenziata (Esc per annullare).")); once(); return;
+      }
+      setWaterSplitting(null);
+      splitWaterAt(i, [lng, lat]);
+    });
+    once();
+  }
   // ---- collegamenti fra corsi d'acqua ----
   // collega il corso a al corso b: l'estremo di a più vicino a b si prolunga fino a b, e su b nasce un
   // punto in comune (il nodo della rete)
@@ -3525,6 +3560,7 @@ export default function Page() {
     },
     esc: () => {
       if (drawing) return false;
+      if (waterSplitting != null) { mapApi.current?.pickPoint(null); setWaterSplitting(null); setMsg(""); return true; }
       if (waterSelRef.current.idx != null || waterCheck.size) { setWaterCheck(new Set()); selectWater({ kind: null, idx: null }); return true; }
       return clearSel();
     },
@@ -8341,6 +8377,11 @@ export default function Page() {
         <input className="field-input !py-0.5 !px-1 !text-[11px] flex-1 min-w-0" placeholder={t("Nome")} defaultValue={w.name ?? ""} key={`n${i}-${w.name ?? ""}`}
           onBlur={(e) => { if ((e.target.value || "") !== (w.name ?? "")) renameWater(i, e.target.value.trim()); }}
           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} data-wl-name={i} />
+        {w.geojson.type === "LineString" && (
+          <button className={"px-1.5 rounded border border-black/10 " + (waterSplitting === i ? "bg-brand text-white" : "bg-white hover:bg-black/5")}
+            title={t("Dividi in due nel punto che clicchi sulla mappa (per accorciarlo elimina poi il pezzo che non serve)")}
+            onClick={() => startSplitWater(i)} data-wl-split={i}>✂ {t("Dividi")}</button>
+        )}
         {w.kind_orig !== undefined || w.name_orig !== undefined ? <button className="text-sage-dark" title={t("Ripristina la registrazione originale")} onClick={() => restoreWaterReg(i)}>↺</button> : null}
       </li>
     );
