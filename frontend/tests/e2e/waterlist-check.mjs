@@ -41,12 +41,52 @@ try {
   const nRules = await page.locator('[data-water-rule="river"]').innerText();
   const n0 = await rows();
   ok(n0 > 10 && /\(\d+\)/.test(nRules) && !/\(0\)/.test(nRules), `Posa dei pivot: anteprima confermata da sola · ${n0} corsi nell'elenco · regole: ${nRules}`);
+  // clic su un fiume sulla mappa → riga evidenziata a sinistra con tipo e nome modificabili; Canc lo elimina
+  await page.waitForTimeout(1500);
+  const pt = await page.evaluate(() => {
+    const boxes = [...document.querySelectorAll(".leaflet-overlay-pane path")].filter((p) => p.getAttribute("fill") && p.getAttribute("fill") !== "none").map((c) => c.getBoundingClientRect()).filter((b) => b.width < 300);
+    for (const p of [...document.querySelectorAll(".leaflet-overlay-pane path")].filter((p) => p.getAttribute("stroke") === "#1d4ed8" && p.getAttribute("stroke-opacity") !== "0")) {
+      const L = p.getTotalLength(); if (L < 80) continue;
+      for (let f = 0.1; f < 0.95; f += 0.05) {
+        const q = p.getPointAtLength(L * f), m = p.getScreenCTM(), x = m.a * q.x + m.c * q.y + m.e, y = m.b * q.x + m.d * q.y + m.f;
+        if (x < 480 || x > 1180 || y < 120 || y > 900) continue;
+        if (boxes.some((b) => x > b.left - 8 && x < b.right + 8 && y > b.top - 8 && y < b.bottom + 8)) continue;
+        return { x, y };
+      }
+    }
+    return null;
+  });
+  ok(!!pt, "Fiume visibile da cliccare");
+  if (pt) await page.mouse.click(pt.x, pt.y);
+  await page.waitForTimeout(800);
+  const ed = page.locator("[data-wl-edit]").first();
+  const edOk = await ed.isVisible().catch(() => false);
+  const idx = edOk ? await ed.getAttribute("data-wl-edit") : null;
+  const rowTxt = idx ? await page.locator(`[data-wl-row="${idx}"]`).innerText() : "";
+  ok(edOk && /Fiume/.test(rowTxt), `Selezionato sulla mappa e nell'elenco: ${rowTxt.replace(/\s+/g, " ")}`);
+  if (idx) {
+    await page.locator(`[data-wl-kind="${idx}"]`).selectOption("canal"); await page.waitForTimeout(500);
+    const rowTxt2 = await page.locator(`[data-wl-row="${idx}"]`).innerText();
+    ok(/Canale/.test(rowTxt2), `Tipo cambiato da fiume a canale: ${rowTxt2.replace(/\s+/g, " ")}`);
+    const nb = await rows();
+    await page.keyboard.press("Delete"); await page.waitForTimeout(600);
+    ok((await rows()) === nb - 1, `Canc elimina il corso selezionato: ${nb} → ${await rows()}`);
+  }
+  const n0b = await rows();
+  // tipo di gruppo
+  await page.locator('[data-water-list="free"] [data-wl-check]').nth(0).click();
+  await page.locator('[data-water-list="free"] [data-wl-check]').nth(1).click();
+  await page.locator('[data-water-list="free"] [data-wl-bulkkind]').selectOption("drain"); await page.waitForTimeout(500);
+  const t01 = (await page.locator('[data-water-list="free"] [data-wl-row]').nth(0).innerText()) + " | " + (await page.locator('[data-water-list="free"] [data-wl-row]').nth(1).innerText());
+  ok((t01.match(/Dreno/g) || []).length === 2, `Tipo di gruppo: ${t01.replace(/\s+/g, " ")}`);
+  await page.locator('[data-water-list="free"] [data-wl-check]').nth(0).click();
+  await page.locator('[data-water-list="free"] [data-wl-check]').nth(1).click();
   // unisci due linee
   await page.locator('[data-water-list="free"] [data-wl-check]').nth(0).click();
   await page.locator('[data-water-list="free"] [data-wl-check]').nth(1).click();
   await page.locator('[data-water-list="free"] [data-wl-merge]').click(); await page.waitForTimeout(800);
   const n1 = await rows(), m1 = ((await page.locator("body").innerText()).match(/[^\n]*unite in una polilinea[^\n]*/) || [""])[0];
-  ok(n1 === n0 - 1 && /unite in una polilinea/.test(m1), `Unione: ${n0} → ${n1} · ${m1.slice(0, 120)}`);
+  ok(n1 === n0b - 1 && /unite in una polilinea/.test(m1), `Unione: ${n0b} → ${n1} · ${m1.slice(0, 120)}`);
   // cartella con 3 elementi (selezione con Maiusc)
   await page.locator('[data-water-list="free"] [data-wl-check]').nth(0).click();
   await page.locator('[data-water-list="free"] [data-wl-check]').nth(2).click({ modifiers: ["Shift"] });

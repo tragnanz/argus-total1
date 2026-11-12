@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.263";
+const REV = "v0.6.264";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1954,7 +1954,7 @@ export default function Page() {
         dash: !!w.regime && w.regime !== "perennial", idx: i,
         sel: sel.idx === i ? "single" as const : sel.kind == null ? undefined : w.kind === sel.kind ? (sel.idx == null ? "on" as const : undefined) : "dim" as const })),
     // i corsi si selezionano dalla mappa solo nella pagina Fonte d'acqua: nelle altre pagine il clic resta ai pivot e ai disegni
-    tabRef.current === "fonte" ? { onPick: (i) => pickWater(i), onClear: () => { if (waterSelRef.current.kind != null && !waterEditRef.current) selectWater({ kind: null, idx: null }); } } : undefined);
+    { onPick: (i) => pickWater(i), onClear: () => { if (waterSelRef.current.kind != null && !waterEditRef.current) selectWater({ kind: null, idx: null }); } });
   }
   function selectWater(sel: { kind: string | null; idx: number | null }) {
     if (waterEditRef.current && waterEditRef.current.i !== sel.idx) stopEditWater();
@@ -1962,7 +1962,15 @@ export default function Page() {
     waterSelRef.current = sel; setWaterSel(sel);
     setWaterOpen(sel.idx);
     renderWater(wcRef.current, sel);
-    if (sel.idx != null) setTimeout(() => document.querySelector(`[data-water-row="${sel.idx}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 50);
+    if (sel.idx != null) {
+      const fo = wcRef.current[sel.idx]?.folder;
+      if (fo) setWaterFolderOpen((o) => (o[fo] ? o : { ...o, [fo]: true }));
+      setLeftMin(false);
+      setTimeout(() => {
+        document.querySelector(`[data-water-row="${sel.idx}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        document.querySelector(`[data-wl-row="${sel.idx}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }, 60);
+    }
   }
   // clic sulla mappa: il primo seleziona il tipo (tutti i fiumi, tutti i canali…), un clic su un
   // corso dello stesso tipo seleziona quella diramazione; un clic su un altro tipo cambia tipo
@@ -1970,9 +1978,9 @@ export default function Page() {
     const w = wcRef.current[i]; if (!w) return;
     const cur = waterSelRef.current;
     if (waterConnectRef.current && cur.idx != null && cur.idx !== i) { connectWater(cur.idx, i); return; }
-    if (cur.kind === w.kind && cur.idx !== i) selectWater({ kind: w.kind, idx: i });
-    else if (cur.kind === w.kind && cur.idx === i) selectWater({ kind: w.kind, idx: null });
-    else selectWater({ kind: w.kind, idx: null });
+    // un clic seleziona quel corso (anche nell'elenco a sinistra); un secondo clic sullo stesso lo deseleziona
+    if (cur.idx === i) selectWater({ kind: null, idx: null });
+    else selectWater({ kind: w.kind, idx: i });
   }
   // Zoom su un oggetto a partire dai suoi vertici (lon,lat).
   function zoomToCoords(coords: number[][]) {
@@ -3492,10 +3500,17 @@ export default function Page() {
   selKeys.current = {
     del: () => {
       if (delTarget) { delTarget.del(); return true; }
+      // corsi d'acqua: prima quelli spuntati nell'elenco, altrimenti quello selezionato sulla mappa
+      if (waterCheck.size) { waterBulkRemove([...waterCheck]); return true; }
+      if (waterSelRef.current.idx != null && !waterEditRef.current) { removeWater(waterSelRef.current.idx); return true; }
       if (pivotSel.mode === "group" || pipeSel.mode === "group") { setMsg(t("Clicca ancora l'elemento da eliminare: il primo clic seleziona il gruppo.")); return true; }
       return false;
     },
-    esc: () => (drawing ? false : clearSel()),
+    esc: () => {
+      if (drawing) return false;
+      if (waterSelRef.current.idx != null || waterCheck.size) { setWaterCheck(new Set()); selectWater({ kind: null, idx: null }); return true; }
+      return clearSel();
+    },
   };
   function applyRadiusToAll() { commitPivots(pivots.map((p) => ({ ...p, r: pivotR }))); }
 
@@ -8299,6 +8314,26 @@ export default function Page() {
         <button className="text-danger w-4" title={t("Rimuovi")} onClick={() => removeWater(i)}>✕</button>
       </li>
     );
+    const KINDS = ["river", "canal", "drain", "drainage", "basin", "wetland"];
+    const editor = (w: WaterL, i: number) => (
+      <li key={`we${i}`} className="ml-5 mb-1 flex items-center gap-1 text-[11px] bg-amber-50 rounded px-1.5 py-1" data-wl-edit={i}>
+        <select className="field-input !py-0.5 !px-1 !text-[11px] w-28" value={w.kind} onChange={(e) => { retypeWater(i, e.target.value); e.target.blur(); }} data-wl-kind={i}
+          disabled={w.geojson.type !== "LineString" && !["basin", "wetland"].includes(w.kind)}>
+          {KINDS.filter((k) => (w.geojson.type === "LineString" ? !["basin", "wetland"].includes(k) : ["basin", "wetland"].includes(k))).map((k) => <option key={k} value={k}>{waterKindName(k)}</option>)}
+        </select>
+        <input className="field-input !py-0.5 !px-1 !text-[11px] flex-1 min-w-0" placeholder={t("Nome")} defaultValue={w.name ?? ""} key={`n${i}-${w.name ?? ""}`}
+          onBlur={(e) => { if ((e.target.value || "") !== (w.name ?? "")) renameWater(i, e.target.value.trim()); }}
+          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} data-wl-name={i} />
+        {w.kind_orig !== undefined || w.name_orig !== undefined ? <button className="text-sage-dark" title={t("Ripristina la registrazione originale")} onClick={() => restoreWaterReg(i)}>↺</button> : null}
+      </li>
+    );
+    const rowE = (x: { w: WaterL; i: number }) => (waterSel.idx === x.i ? [row(x), editor(x.w, x.i)] : [row(x)]);
+    const bulkKind = (kind: string) => {
+      const S = new Set(sel.filter((k) => watercourses[k]?.geojson.type === "LineString"));
+      if (!S.size) return;
+      setWatercourses((ws) => { const arr = ws.map((w, k) => (S.has(k) ? { ...w, kind_orig: w.kind_orig ?? w.kind, kind, movable: undefined, edited: true } : w)); renderWater(arr); return arr; });
+      setMsg(t("{n} elementi ora sono: {k}", { n: S.size, k: waterKindName(kind) }));
+    };
     const folders = [...new Set(items.map((x) => x.w.folder).filter(Boolean))].sort() as string[];
     const loose = items.filter((x) => !x.w.folder);
     const btn = "px-1.5 py-0.5 rounded border border-black/10 bg-white hover:bg-black/5 disabled:opacity-40";
@@ -8311,6 +8346,10 @@ export default function Page() {
           <button className={btn} disabled={!sel.length} onClick={() => waterBulkHide(sel, !sel.every((k) => watercourses[k]?.hidden))}>{t("Mostra/Nascondi")}</button>
           <button className={btn} disabled={!sel.length} onClick={() => waterBulkFolder(sel)} data-wl-folder>{t("Cartella…")}</button>
           <button className={btn} disabled={sel.length < 2} onClick={() => waterBulkMerge(sel)} data-wl-merge>{t("Unisci")}</button>
+          <select className={btn + " !py-0"} disabled={!sel.length} value="" onChange={(e) => { if (e.target.value) bulkKind(e.target.value); }} data-wl-bulkkind>
+            <option value="">{t("Tipo…")}</option>
+            {["river", "canal", "drain", "drainage"].map((k) => <option key={k} value={k}>{waterKindName(k)}</option>)}
+          </select>
           <button className={btn + " text-danger"} disabled={!sel.length} onClick={() => waterBulkRemove(sel)} data-wl-del>{t("Elimina")}</button>
         </div>
         {folders.map((fo) => {
@@ -8327,11 +8366,11 @@ export default function Page() {
                   onClick={() => setWatercourses((ws) => ws.map((w) => (w.folder === fo ? { ...w, folder: undefined } : w)))}>⇱</button>
                 <button className="text-danger w-4" title={t("Elimina la cartella e il suo contenuto")} onClick={() => waterBulkRemove(fids)}>✕</button>
               </div>
-              {open && <ul className="space-y-0.5 pl-3 pb-0.5">{its.map(row)}</ul>}
+              {open && <ul className="space-y-0.5 pl-3 pb-0.5">{its.flatMap(rowE)}</ul>}
             </div>
           );
         })}
-        <ul className="space-y-0.5">{loose.map(row)}</ul>
+        <ul className="space-y-0.5">{loose.flatMap(rowE)}</ul>
       </div>
     );
   }
