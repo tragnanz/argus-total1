@@ -390,42 +390,71 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         px = np.array([c[0] for c in centers], float) if centers else np.zeros(0)
         py = np.array([c[1] for c in centers], float) if centers else np.zeros(0)
         pr = np.full(px.shape, R, float)
-        # raggi da provare, dal più grande al più piccolo (fino a min_r)
-        r_steps = [r for r in (R * f for f in (0.9, 0.8, 0.7, 0.6, 0.5, 0.4)) if r > min_r] + [min_r]
-        step = max(res * 2.0, min_r * 0.25)        # passo di ricerca dei posti liberi
-        cy = rminy + min_r
-        while cy <= rmaxy - min_r + 1e-6:
-            cx = rminx + min_r
-            while cx <= rmaxx - min_r + 1e-6:
-                if path_rot.contains_point((cx, cy)):
-                    best_r = 0.0
-                    for r in r_steps:
-                        edge = r * (1.0 - overhang) * 0.999
-                        if not path_rot.contains_points(unit * edge + np.array([cx, cy])).all():
-                            continue
-                        if px.size:
-                            d2 = (cx - px) ** 2 + (cy - py) ** 2
-                            if np.any(d2 < (r + pr + gap) ** 2 - 1.0):
-                                continue
-                        xu, yu = unrot(cx, cy)
-                        if _slope_at(g, xu, yu) > slope_max or not _steep_ok(xu, yu, r):
-                            continue
-                        if dist_obs is not None:
-                            col = int((xu - g["minx"]) / g["res"]); row = int((g["top"] - yu) / g["res"])
-                            if 0 <= row < g["hp"] and 0 <= col < g["wp"] and dist_obs[row, col] < r:
-                                continue
-                        if only_suitable and suit is not None:
-                            sc = sample_grid(suit[0], suit[1], xu, yu)
-                            if not (sc == sc and sc >= min_suit):
-                                continue
-                        best_r = r
-                        break
-                    if best_r > 0.0:
-                        xu, yu = unrot(cx, cy)
-                        fill.append((xu, yu, best_r))
-                        px = np.append(px, cx); py = np.append(py, cy); pr = np.append(pr, best_r)
-                cx += step
-            cy += step
+        # raggi da provare, DAL PIÙ GRANDE AL PIÙ PICCOLO: prima si posano tutti i pivot più grandi che
+        # entrano, poi i più piccoli negli spazi rimasti (prima si posava il primo raggio che entrava
+        # nell'ordine di scansione, e un pivot piccolo poteva occupare il posto di uno più grande)
+        r_steps = ([R] if fill_full else []) + [r for r in (R * f for f in (0.9, 0.8, 0.7, 0.6, 0.5, 0.4)) if r > min_r + 1e-6] + [min_r]
+        r_steps = sorted(set(round(r, 3) for r in r_steps), reverse=True)
+        segs = np.array([[ring_rot[i][0], ring_rot[i][1], ring_rot[i + 1][0], ring_rot[i + 1][1]] for i in range(len(ring_rot) - 1)], float)
+
+        def _edge_dist(qx, qy):
+            """Distanza (m) di ogni punto dal bordo del campo (frame ruotato)."""
+            ax_, ay_, bx_, by_ = segs[:, 0][None, :], segs[:, 1][None, :], segs[:, 2][None, :], segs[:, 3][None, :]
+            vx, vy = bx_ - ax_, by_ - ay_
+            L2 = np.maximum(vx * vx + vy * vy, 1e-9)
+            t_ = np.clip(((qx[:, None] - ax_) * vx + (qy[:, None] - ay_) * vy) / L2, 0, 1)
+            return np.sqrt((qx[:, None] - ax_ - t_ * vx) ** 2 + (qy[:, None] - ay_ - t_ * vy) ** 2).min(1)
+
+        for r in r_steps:
+            stp = max(res, r * 0.12)
+            gx = np.arange(rminx + r * (1 - overhang), rmaxx - r * (1 - overhang) + 1e-6, stp)
+            gy = np.arange(rminy + r * (1 - overhang), rmaxy - r * (1 - overhang) + 1e-6, stp)
+            if not len(gx) or not len(gy):
+                continue
+            GX, GY = np.meshgrid(gx, gy)
+            qx, qy = GX.ravel(), GY.ravel()
+            ins = path_rot.contains_points(np.c_[qx, qy])
+            qx, qy = qx[ins], qy[ins]
+            if not qx.size:
+                continue
+            edge = r * (1.0 - overhang) * 0.999
+            de = _edge_dist(qx, qy)
+            keep = de >= edge
+            qx, qy, de = qx[keep], qy[keep], de[keep]
+            # controlli che non dipendono dagli altri pivot: pendenza, scarpate, ostacoli, idoneità
+            okm = np.ones(qx.size, bool)
+            for k in range(qx.size):
+                xu, yu = unrot(qx[k], qy[k])
+                if _slope_at(g, xu, yu) > slope_max or not _steep_ok(xu, yu, r):
+                    okm[k] = False; continue
+                if dist_obs is not None:
+                    col = int((xu - g["minx"]) / g["res"]); row = int((g["top"] - yu) / g["res"])
+                    if 0 <= row < g["hp"] and 0 <= col < g["wp"] and dist_obs[row, col] < r:
+                        okm[k] = False; continue
+                if only_suitable and suit is not None:
+                    sc = sample_grid(suit[0], suit[1], xu, yu)
+                    if not (sc == sc and sc >= min_suit):
+                        okm[k] = False
+            qx, qy, de = qx[okm], qy[okm], de[okm]
+            if not qx.size:
+                continue
+            # spazio libero verso i pivot già posati: si sceglie ogni volta il posto più «stretto»
+            # (aderente a pivot o bordo), così i pivot si impacchettano senza lasciare spazi
+            if px.size:
+                dpv = (np.sqrt((qx[:, None] - px[None, :]) ** 2 + (qy[:, None] - py[None, :]) ** 2) - pr[None, :] - gap).min(1) - r
+            else:
+                dpv = np.full(qx.size, np.inf)
+            alive = dpv >= -1.0
+            slack = np.minimum(dpv, de - edge)
+            while alive.any():
+                k = int(np.argmin(np.where(alive, slack, np.inf)))
+                cx, cy = float(qx[k]), float(qy[k])
+                xu, yu = unrot(cx, cy)
+                fill.append((xu, yu, r))
+                px = np.append(px, cx); py = np.append(py, cy); pr = np.append(pr, r)
+                d_new = np.sqrt((qx - cx) ** 2 + (qy - cy) ** 2) - r - gap - r
+                alive &= d_new >= -1.0
+                slack = np.minimum(slack, d_new)
 
     n = len(centers)
     pivot_ha = math.pi * R * R / 10000.0
