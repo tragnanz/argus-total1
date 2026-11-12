@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.261";
+const REV = "v0.6.262";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -10483,7 +10483,7 @@ export default function Page() {
         {/* Header "famiglia Argus": cluster flottanti sopra la mappa, non una
             barra piena. Il contenitore lascia passare i click alla mappa negli
             spazi vuoti; ogni cluster è un'isola con ombra propria. */}
-        <div className="absolute top-3 left-3 right-3 grid grid-cols-[1fr_auto_1fr] items-start gap-3 z-[1500] font-brand">
+        <div className="absolute top-3 left-3 right-3 grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 z-[1500] font-brand">
 
           {/* colonna sinistra */}
           <div className="flex items-center gap-3 flex-wrap justify-self-start">
@@ -10609,8 +10609,9 @@ export default function Page() {
           )}
           </div>
 
-          {/* 3 — ricerca: colonna centrale della griglia, quindi centrata sullo schermo */}
-          <form onSubmit={geocode} className="nabu-cluster gap-2 pl-1.5 pr-1.5 py-1.5 w-[min(28rem,calc(42vw/var(--ui-scale)))] min-w-[220px] justify-self-center">
+          {/* 3 — ricerca e progetto rapido sulla stessa riga, al centro (vanno a capo solo su schermi stretti) */}
+          <div className="justify-self-center flex flex-wrap items-center justify-center gap-2 min-w-0">
+          <form onSubmit={geocode} className="nabu-cluster gap-2 pl-1.5 pr-1.5 py-1.5 flex-1 basis-[15rem] max-w-[22rem] min-w-[200px]">
             <button type="button" onClick={() => mapApi.current?.locate()}
               className="bg-nabu-accent text-white rounded-[9px] w-9 h-9 grid place-items-center shrink-0 hover:bg-nabu-accentDark"
               title={t("Usa la mia posizione (GPS)")} aria-label={t("La mia posizione")}><IcoCross /></button>
@@ -10622,6 +10623,59 @@ export default function Page() {
               {t("Cerca")}
             </button>
           </form>
+        {!elevOn && projectId != null && (() => {
+            // PROGETTO RAPIDO: i quattro passi fino al computo, con lo stato di ciascuno
+            const haA = fields.filter((f) => !f.hidden).reduce((x, f) => x + ringAreaHa(f.geom.coordinates as number[][][]), 0);
+            const haP = pivots.reduce((x, p) => x + pvAreaM2(p) / 10000, 0);
+            const pipesKm = pivotLines.filter((l) => l.kind === "pipe").reduce((x, l) => x + lineLenKm(l.coords), 0);
+            const unfed = (() => { const fed = fedPivotKeys(pivotLines); return pivots.filter((p) => !fed.has(pKey(p))).length; })();
+            const steps = [
+              { k: "aree", n: 1, label: t("Aree"), ok: fields.length > 0, info: fields.length ? `${fields.length} · ${uHa(Math.round(haA))}` : t("disegna"),
+                busy: false, run: () => { goTab("analisi"); draw(); }, tip: t("Aree di intervento") + ": " + t("Disegna un'area di intervento sulla mappa (per importarne una: pannello Progetto a sinistra).") },
+              { k: "pivot", n: 2, label: t("Pivot"), ok: pivots.length > 0, info: pivots.length ? `${pivots.length} · ${uHa(Math.round(haP))}` : t("disponi"),
+                busy: busy === "layout", run: quickPivots, tip: t("Dispone i pivot su tutte le aree che non li hanno, con raggio e regole della pagina Impianti.") },
+              { k: "fonte", n: 3, label: t("Fonte"), ok: !!srcPt, info: srcPt ? (srcLabel.name.trim() || t(srcType)) : srcPicking ? t("clicca il fiume") : t("scegli"),
+                busy: waterTopoBusy || srcPicking, run: quickSource, tip: t("Fonte idrica") + ": " + t("Importa i corsi d'acqua e clicca il fiume o il canale da cui prendere l'acqua.") },
+              { k: "rete", n: 4, label: t("Rete"), ok: !!srcPt && pivots.length > 0 && unfed === 0 && !!hydra, info: pivotLines.some((l) => l.kind === "pipe") ? `${uKm(pipesKm, 1)}${unfed ? ` · ${unfed} ${t("da collegare")}` : ""}` : t("progetta"),
+                busy: !!quickNet || busy === "route" || busy === "hydra", run: quickNetwork, tip: t("Adduttrice dalla presa, vasca o canale se servono, tubazioni fino a ogni pivot, diametri e pompe.") },
+            ];
+            return (
+              <div className="flex items-stretch gap-1 widget p-1 text-[11px] font-brand w-[40rem] max-w-full shrink-0" data-quick-bar>
+                {steps.map((st, i) => (
+                  <Fragment key={st.k}>
+                    {i > 0 && <span className="self-center text-sage-dark opacity-50">›</span>}
+                    {st.k === "fonte" && (() => {
+                      const cs = watercourses.filter((w) => w.kind === "canal" || w.kind === "drain");
+                      const pol = cs.length ? (cs.every((w) => !waterMovable(w)) ? "lascia" : "spiana") : canalPolicy;
+                      const vTot = [...waterFillM3.values()].reduce((x, y) => x + y, 0);
+                      return (
+                        <div className="flex flex-col justify-center gap-0.5 text-[10px] text-sage-dark shrink-0" data-quick-canals
+                          title={t("Canali e fossi esistenti sotto i pivot: «spiana» = i pivot ci passano sopra e il tratto si riempie (m³ di terra nel computo); «lascia» = i pivot li evitano. I fiumi si evitano sempre.")}>
+                          <span className="leading-none">{t("canali")}{pol === "spiana" && vTot > 0 ? ` · ${fmt(Math.round(vTot))} m³` : ""}</span>
+                          <div className="seg text-[10px]">
+                            <div className="seg-item px-1.5 py-0.5" data-active={pol === "spiana"} onClick={() => setCanalPolicy("spiana")} data-quick-canal="spiana">{t("spiana")}</div>
+                            <div className="seg-item px-1.5 py-0.5" data-active={pol === "lascia"} onClick={() => setCanalPolicy("lascia")} data-quick-canal="lascia">{t("lascia")}</div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    <button className={"flex-1 min-w-0 rounded-lg px-2 py-1 text-left leading-tight transition " + (st.ok ? "bg-brand/10 hover:bg-brand/20" : "bg-panel hover:bg-black/5")}
+                      title={st.tip} disabled={st.busy} onClick={() => st.run()} data-quick-step={st.k}>
+                      <div className="flex items-center gap-1 font-semibold text-brand-darker whitespace-nowrap">
+                        <span className={"inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] " + (st.ok ? "bg-brand text-white" : "bg-black/10")}>{st.ok ? "✓" : st.n}</span>
+                        <span className="truncate">{st.label}</span>
+                      </div>
+                      <div className="text-sage-dark truncate">{st.busy ? "…" : st.info}</div>
+                    </button>
+                  </Fragment>
+                ))}
+                <span className="self-center text-sage-dark opacity-50">›</span>
+                <button className="rounded-lg px-2 py-1 bg-brand text-white font-semibold whitespace-nowrap disabled:opacity-40" disabled={!pivots.length}
+                  onClick={() => goTab("export")} data-quick-step="computo" title={t("Computo metrico, relazione e tavole nella pagina Esporta.")}>{t("Computo")} →</button>
+              </div>
+            );
+          })()}
+          </div>
 
           {/* 4 — blocco destro */}
           <div className="flex items-center gap-3 flex-wrap justify-end justify-self-end">
@@ -10668,58 +10722,6 @@ export default function Page() {
           </div>
         </div>
 
-        {!elevOn && projectId != null && (() => {
-          // PROGETTO RAPIDO: i quattro passi fino al computo, con lo stato di ciascuno
-          const haA = fields.filter((f) => !f.hidden).reduce((x, f) => x + ringAreaHa(f.geom.coordinates as number[][][]), 0);
-          const haP = pivots.reduce((x, p) => x + pvAreaM2(p) / 10000, 0);
-          const pipesKm = pivotLines.filter((l) => l.kind === "pipe").reduce((x, l) => x + lineLenKm(l.coords), 0);
-          const unfed = (() => { const fed = fedPivotKeys(pivotLines); return pivots.filter((p) => !fed.has(pKey(p))).length; })();
-          const steps = [
-            { k: "aree", n: 1, label: t("Aree"), ok: fields.length > 0, info: fields.length ? `${fields.length} · ${uHa(Math.round(haA))}` : t("disegna"),
-              busy: false, run: () => { goTab("analisi"); draw(); }, tip: t("Aree di intervento") + ": " + t("Disegna un'area di intervento sulla mappa (per importarne una: pannello Progetto a sinistra).") },
-            { k: "pivot", n: 2, label: t("Pivot"), ok: pivots.length > 0, info: pivots.length ? `${pivots.length} · ${uHa(Math.round(haP))}` : t("disponi"),
-              busy: busy === "layout", run: quickPivots, tip: t("Dispone i pivot su tutte le aree che non li hanno, con raggio e regole della pagina Impianti.") },
-            { k: "fonte", n: 3, label: t("Fonte"), ok: !!srcPt, info: srcPt ? (srcLabel.name.trim() || t(srcType)) : srcPicking ? t("clicca il fiume") : t("scegli"),
-              busy: waterTopoBusy || srcPicking, run: quickSource, tip: t("Fonte idrica") + ": " + t("Importa i corsi d'acqua e clicca il fiume o il canale da cui prendere l'acqua.") },
-            { k: "rete", n: 4, label: t("Rete"), ok: !!srcPt && pivots.length > 0 && unfed === 0 && !!hydra, info: pivotLines.some((l) => l.kind === "pipe") ? `${uKm(pipesKm, 1)}${unfed ? ` · ${unfed} ${t("da collegare")}` : ""}` : t("progetta"),
-              busy: !!quickNet || busy === "route" || busy === "hydra", run: quickNetwork, tip: t("Adduttrice dalla presa, vasca o canale se servono, tubazioni fino a ogni pivot, diametri e pompe.") },
-          ];
-          return (
-            <div className="absolute top-[4.5rem] left-1/2 -translate-x-1/2 z-[1400] flex items-stretch gap-1 widget p-1 text-[11px] font-brand w-[44rem] max-w-[calc(100vw/var(--ui-scale)_-_2rem)]" data-quick-bar>
-              {steps.map((st, i) => (
-                <Fragment key={st.k}>
-                  {i > 0 && <span className="self-center text-sage-dark opacity-50">›</span>}
-                  {st.k === "fonte" && (() => {
-                    const cs = watercourses.filter((w) => w.kind === "canal" || w.kind === "drain");
-                    const pol = cs.length ? (cs.every((w) => !waterMovable(w)) ? "lascia" : "spiana") : canalPolicy;
-                    const vTot = [...waterFillM3.values()].reduce((x, y) => x + y, 0);
-                    return (
-                      <div className="flex flex-col justify-center gap-0.5 text-[10px] text-sage-dark shrink-0" data-quick-canals
-                        title={t("Canali e fossi esistenti sotto i pivot: «spiana» = i pivot ci passano sopra e il tratto si riempie (m³ di terra nel computo); «lascia» = i pivot li evitano. I fiumi si evitano sempre.")}>
-                        <span className="leading-none">{t("canali")}{pol === "spiana" && vTot > 0 ? ` · ${fmt(Math.round(vTot))} m³` : ""}</span>
-                        <div className="seg text-[10px]">
-                          <div className="seg-item px-1.5 py-0.5" data-active={pol === "spiana"} onClick={() => setCanalPolicy("spiana")} data-quick-canal="spiana">{t("spiana")}</div>
-                          <div className="seg-item px-1.5 py-0.5" data-active={pol === "lascia"} onClick={() => setCanalPolicy("lascia")} data-quick-canal="lascia">{t("lascia")}</div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  <button className={"flex-1 min-w-0 rounded-lg px-2 py-1 text-left leading-tight transition " + (st.ok ? "bg-brand/10 hover:bg-brand/20" : "bg-panel hover:bg-black/5")}
-                    title={st.tip} disabled={st.busy} onClick={() => st.run()} data-quick-step={st.k}>
-                    <div className="flex items-center gap-1 font-semibold text-brand-darker whitespace-nowrap">
-                      <span className={"inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] " + (st.ok ? "bg-brand text-white" : "bg-black/10")}>{st.ok ? "✓" : st.n}</span>
-                      <span className="truncate">{st.label}</span>
-                    </div>
-                    <div className="text-sage-dark truncate">{st.busy ? "…" : st.info}</div>
-                  </button>
-                </Fragment>
-              ))}
-              <span className="self-center text-sage-dark opacity-50">›</span>
-              <button className="rounded-lg px-2 py-1 bg-brand text-white font-semibold whitespace-nowrap disabled:opacity-40" disabled={!pivots.length}
-                onClick={() => goTab("export")} data-quick-step="computo" title={t("Computo metrico, relazione e tavole nella pagina Esporta.")}>{t("Computo")} →</button>
-            </div>
-          );
-        })()}
 
         {elevOn && (
           <div className="absolute top-[4.5rem] left-1/2 -translate-x-1/2 z-[1400] px-3 py-1.5 rounded-xl text-xs text-white shadow-cluster w-[280px] bg-nabu-green">
