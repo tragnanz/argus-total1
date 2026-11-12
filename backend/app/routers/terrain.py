@@ -53,10 +53,13 @@ def watercourses_osm(body: WaterIn, user: User = Depends(get_current_user)):
     """Anteprima rapida dei corsi d'acqua da OpenStreetMap (pochi secondi), mentre il
     rilevamento completo legge le immagini Sentinel-2."""
     from analysis.osm_tiles import courses_in_polygon
+    import requests
     try:
         return courses_in_polygon(body.geom.model_dump())
+    except requests.RequestException as e:
+        raise HTTPException(502, f"Importazione topografica: servizio cartografico non raggiungibile ({str(e)[:120]})")
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"OpenStreetMap non raggiungibile: {e}")
+        raise HTTPException(500, f"Importazione topografica non riuscita: {str(e)[:160]}")
 
 
 @router.post("/terraform/termites")

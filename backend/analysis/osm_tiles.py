@@ -384,9 +384,11 @@ def courses_in_polygon(geom: dict, osm: list[dict] | None = None) -> dict:
     """Anteprima rapida (pochi secondi): i corsi d'acqua OSM ritagliati sull'area, con tipo
     (fiume / canale / dreno), nome e lunghezza, senza misure dal satellite."""
     from .waterways import OSM_KIND
-    rings = geom["coordinates"]
-    lo = [p[0] for p in rings[0]]
-    la = [p[1] for p in rings[0]]
+    # poligoni importati (KML/KMZ): i vertici possono avere la quota (lon, lat, z); multipoligoni ammessi
+    polys = geom["coordinates"] if geom.get("type") == "MultiPolygon" else [geom["coordinates"]]
+    polys = [[[[float(q[0]), float(q[1])] for q in ring] for ring in poly] for poly in polys]
+    lo = [p[0] for poly in polys for p in poly[0]]
+    la = [p[1] for poly in polys for p in poly[0]]
     if osm is None:
         osm = waterways([min(lo), min(la), max(lo), max(la)])
     feats = []
@@ -394,7 +396,8 @@ def courses_in_polygon(geom: dict, osm: list[dict] | None = None) -> dict:
         kind = OSM_KIND.get(str(w.get("waterway", "")))
         if not kind or len(w.get("coords") or []) < 2:
             continue
-        for pc in clip_to_polygon(w["coords"], rings):
+        line = [[float(q[0]), float(q[1])] for q in w["coords"]]
+        for pc in (c for rings in polys for c in clip_to_polygon(line, rings)):
             L = _len_m(pc)
             if L < 50:
                 continue

@@ -79,3 +79,14 @@ def test_clip_to_polygon_esce_e_rientra():
     r = courses_in_polygon(geom, osm)
     assert r["n_osm"] == 1 and r["features"][0]["kind"] == "canal" and r["features"][0]["name"] == "C"
     assert abs(r["features"][0]["length_m"] - 788) < 5
+
+
+def test_poligono_con_quota_e_multipoligono():
+    from analysis.osm_tiles import courses_in_polygon
+    osm = [{"waterway": "river", "name": "R", "coords": [[0.0, 0.005], [0.02, 0.005]]}]
+    sq = [[0.0, 0.0, 12.5], [0.01, 0.0, 12.5], [0.01, 0.01, 13.0], [0.0, 0.01, 12.0], [0.0, 0.0, 12.5]]
+    r = courses_in_polygon({"type": "Polygon", "coordinates": [sq]}, osm=osm)
+    assert r["n_river"] == 1 and 1000 < r["features"][0]["length_m"] < 1200
+    sq2 = [[x + 0.012, y, z] for x, y, z in sq]
+    r2 = courses_in_polygon({"type": "MultiPolygon", "coordinates": [[sq], [sq2]]}, osm=osm)
+    assert r2["n_river"] == 2
