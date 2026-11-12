@@ -159,9 +159,10 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     piv_slope_tol = max(0.0, min(1.0, float(params.get("pivot_slope_tol_pct", 5.0)) / 100.0))
     _steep_cache: dict[int, np.ndarray] = {}
 
-    def _steep_ok(x: float, y: float, r: float) -> bool:
+    def _steep_grid(r: float):
+        """Quota del cerchio di raggio r sopra il limite di pendenza, per ogni pixel (None = controllo spento)."""
         if piv_slope_max <= 0:
-            return True
+            return None
         key = max(1, int(round(r / 10.0)) * 10)
         fr = _steep_cache.get(key)
         if fr is None:
@@ -174,6 +175,12 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
             disk = ((xx * xx + yy * yy) <= rp * rp).astype("float64")
             fr = fftconvolve(steep, disk / disk.sum(), mode="same")
             _steep_cache[key] = fr
+        return fr
+
+    def _steep_ok(x: float, y: float, r: float) -> bool:
+        fr = _steep_grid(r)
+        if fr is None:
+            return True
         col = int((x - g["minx"]) / g["res"]); row = int((g["top"] - y) / g["res"])
         if not (0 <= row < fr.shape[0] and 0 <= col < fr.shape[1]):
             return True
@@ -189,6 +196,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     obs_roads = params.get("roads")
     dist_obs = None
     obs_mask = None
+    _obs_geo: list = []                 # (geometria UTM, semi-spessore + franco) per la distanza esatta
     if obs_roads:
         try:
             from rasterio.features import rasterize as _rz
@@ -211,6 +219,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
                     gu = {"type": "Polygon", "coordinates": [[to_utm.transform(lo, la) for lo, la, *_ in coords[0]]]}
                 else:
                     continue
+                _obs_geo.append((gu, w / 2.0 + cl))
                 rm = _rz([(gu, 1)], out_shape=(hp0, wp0), transform=tr, fill=0, all_touched=True).astype(bool)
                 pad = int(round((w / 2.0 + cl) / res0))     # semi-spessore + franco proprio
                 if pad >= 1:
@@ -222,13 +231,52 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         except Exception:  # noqa: BLE001
             dist_obs = None
 
+    # Distanza ESATTA (m) dal bordo del footprint degli ostacoli: punti fitti (ogni 4 m) lungo le linee e i
+    # contorni, un albero per spessore; dentro un poligono la distanza è 0. La griglia del DEM (30 m) da sola
+    # sbagliava di decine di metri e qualche pivot finiva sopra il fiume.
+    _obs_trees = []
+    _obs_polys = []
+    if dist_obs is not None and _obs_geo:
+        try:
+            from scipy.spatial import cKDTree
+            by_pad: dict = {}
+            for gu, pad in _obs_geo:
+                lines = [gu["coordinates"]] if gu["type"] == "LineString" else [gu["coordinates"][0]]
+                if gu["type"] == "Polygon":
+                    _obs_polys.append((Path(gu["coordinates"][0]), pad))
+                for ln in lines:
+                    pts = []
+                    for (x1, y1), (x2, y2) in zip(ln[:-1], ln[1:]):
+                        nseg = max(1, int(math.hypot(x2 - x1, y2 - y1) / 4.0))
+                        t = np.arange(nseg) / nseg
+                        pts.append(np.c_[x1 + (x2 - x1) * t, y1 + (y2 - y1) * t])
+                    pts.append(np.array([ln[-1]], float))
+                    by_pad.setdefault(round(pad, 2), []).append(np.vstack(pts))
+            _obs_trees = [(cKDTree(np.vstack(v)), pad) for pad, v in by_pad.items()]
+        except Exception:  # noqa: BLE001
+            _obs_trees = []
+
+    def _obs_dist(xs, ys):
+        xs = np.atleast_1d(np.asarray(xs, float)); ys = np.atleast_1d(np.asarray(ys, float))
+        if dist_obs is None:
+            return np.full(xs.shape, np.inf)
+        if not _obs_trees:                          # ripiego: griglia del DEM
+            cols = ((xs - g["minx"]) / g["res"]).astype(int); rows = ((g["top"] - ys) / g["res"]).astype(int)
+            okg = (rows >= 0) & (rows < g["hp"]) & (cols >= 0) & (cols < g["wp"])
+            return np.where(okg, dist_obs[np.clip(rows, 0, g["hp"] - 1), np.clip(cols, 0, g["wp"] - 1)], np.inf)
+        out = np.full(xs.shape, np.inf)
+        q = np.c_[xs, ys]
+        for tree, pad in _obs_trees:
+            dd, _ = tree.query(q)
+            np.minimum(out, dd - pad, out=out)
+        for pth, pad in _obs_polys:
+            out[pth.contains_points(q)] = 0.0
+        return np.maximum(out, 0.0)
+
     def _obs_ok(x, y):
         if dist_obs is None:
             return True
-        col = int((x - g["minx"]) / g["res"]); row = int((g["top"] - y) / g["res"])
-        if 0 <= row < g["hp"] and 0 <= col < g["wp"]:
-            return dist_obs[row, col] >= R - 1.0        # franco già incluso nel footprint
-        return True
+        return float(_obs_dist(x, y)[0]) >= R - 1.0     # franco già incluso nel footprint
 
     # griglia di idoneità (M2): serve se posiamo solo su aree idonee OPPURE se le
     # fasi sono ordinate per idoneità
@@ -386,77 +434,25 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     # (con min_pct = 100% il passaggio prima era saltato del tutto).
     fill_full = bool(params.get("fill_full", False))
     fill = []                                    # (x_utm, y_utm, r_m)
+    # disposizione LIBERA: niente maglia fissa, tutti i pivot posati dove ci stanno (dal più grande, nel
+    # posto più stretto) — copre più superficie nei campi irregolari, a scapito di dorsali dritte
+    free = bool(params.get("free_layout", False)) and transport != "canal"
+    if free:
+        fill_full = True
+        centers = []
     if (min_pct < 0.999 or fill_full) and centers is not None:
-        min_r = min_pct * R
-        unit = np.stack([np.cos(ang), np.sin(ang)], 1)     # 16 direzioni unitarie
-        px = np.array([c[0] for c in centers], float) if centers else np.zeros(0)
-        py = np.array([c[1] for c in centers], float) if centers else np.zeros(0)
-        pr = np.full(px.shape, R, float)
-        # raggi da provare, DAL PIÙ GRANDE AL PIÙ PICCOLO: prima si posano tutti i pivot più grandi che
-        # entrano, poi i più piccoli negli spazi rimasti (prima si posava il primo raggio che entrava
-        # nell'ordine di scansione, e un pivot piccolo poteva occupare il posto di uno più grande)
-        r_steps = ([R] if fill_full else []) + [r for r in (R * f for f in (0.9, 0.8, 0.7, 0.6, 0.5, 0.4)) if r > min_r + 1e-6] + [min_r]
-        r_steps = sorted(set(round(r, 3) for r in r_steps), reverse=True)
-        segs = np.array([[ring_rot[i][0], ring_rot[i][1], ring_rot[i + 1][0], ring_rot[i + 1][1]] for i in range(len(ring_rot) - 1)], float)
-
-        def _edge_dist(qx, qy):
-            """Distanza (m) di ogni punto dal bordo del campo (frame ruotato)."""
-            ax_, ay_, bx_, by_ = segs[:, 0][None, :], segs[:, 1][None, :], segs[:, 2][None, :], segs[:, 3][None, :]
-            vx, vy = bx_ - ax_, by_ - ay_
-            L2 = np.maximum(vx * vx + vy * vy, 1e-9)
-            t_ = np.clip(((qx[:, None] - ax_) * vx + (qy[:, None] - ay_) * vy) / L2, 0, 1)
-            return np.sqrt((qx[:, None] - ax_ - t_ * vx) ** 2 + (qy[:, None] - ay_ - t_ * vy) ** 2).min(1)
-
-        for r in r_steps:
-            stp = max(res, r * 0.12)
-            gx = np.arange(rminx + r * (1 - overhang), rmaxx - r * (1 - overhang) + 1e-6, stp)
-            gy = np.arange(rminy + r * (1 - overhang), rmaxy - r * (1 - overhang) + 1e-6, stp)
-            if not len(gx) or not len(gy):
-                continue
-            GX, GY = np.meshgrid(gx, gy)
-            qx, qy = GX.ravel(), GY.ravel()
-            ins = path_rot.contains_points(np.c_[qx, qy])
-            qx, qy = qx[ins], qy[ins]
-            if not qx.size:
-                continue
-            edge = r * (1.0 - overhang) * 0.999
-            de = _edge_dist(qx, qy)
-            keep = de >= edge
-            qx, qy, de = qx[keep], qy[keep], de[keep]
-            # controlli che non dipendono dagli altri pivot: pendenza, scarpate, ostacoli, idoneità
-            okm = np.ones(qx.size, bool)
-            for k in range(qx.size):
-                xu, yu = unrot(qx[k], qy[k])
-                if _slope_at(g, xu, yu) > slope_max or not _steep_ok(xu, yu, r):
-                    okm[k] = False; continue
-                if dist_obs is not None:
-                    col = int((xu - g["minx"]) / g["res"]); row = int((g["top"] - yu) / g["res"])
-                    if 0 <= row < g["hp"] and 0 <= col < g["wp"] and dist_obs[row, col] < r:
-                        okm[k] = False; continue
-                if only_suitable and suit is not None:
-                    sc = sample_grid(suit[0], suit[1], xu, yu)
-                    if not (sc == sc and sc >= min_suit):
-                        okm[k] = False
-            qx, qy, de = qx[okm], qy[okm], de[okm]
-            if not qx.size:
-                continue
-            # spazio libero verso i pivot già posati: si sceglie ogni volta il posto più «stretto»
-            # (aderente a pivot o bordo), così i pivot si impacchettano senza lasciare spazi
-            if px.size:
-                dpv = (np.sqrt((qx[:, None] - px[None, :]) ** 2 + (qy[:, None] - py[None, :]) ** 2) - pr[None, :] - gap).min(1) - r
-            else:
-                dpv = np.full(qx.size, np.inf)
-            alive = dpv >= -1.0
-            slack = np.minimum(dpv, de - edge)
-            while alive.any():
-                k = int(np.argmin(np.where(alive, slack, np.inf)))
-                cx, cy = float(qx[k]), float(qy[k])
-                xu, yu = unrot(cx, cy)
-                fill.append((xu, yu, r))
-                px = np.append(px, cx); py = np.append(py, cy); pr = np.append(pr, r)
-                d_new = np.sqrt((qx - cx) ** 2 + (qy - cy) ** 2) - r - gap - r
-                alive &= d_new >= -1.0
-                slack = np.minimum(slack, d_new)
+        fill = _fill_gaps(
+            centers=centers, R=R, min_r=min_pct * R, gap=gap, overhang=overhang, fill_full=fill_full,
+            ring_rot=ring_rot, path_rot=path_rot, bbox_rot=(rminx, rmaxx, rminy, rmaxy), unrot=unrot,
+            g=g, slope_max=slope_max, obs_dist=(_obs_dist if dist_obs is not None else None), steep_ok=_steep_ok, steep_grid=_steep_grid, steep_tol=piv_slope_tol,
+            suit_ok=(lambda xu, yu: (lambda sc: sc == sc and sc >= min_suit)(sample_grid(suit[0], suit[1], xu, yu)))
+            if (only_suitable and suit is not None) else None)
+        if free:
+            # i pivot a piena dimensione tornano «pieni» (fasi, collettore, dorsali); il resto è riempimento
+            full = [f for f in fill if f[2] >= R - 0.5]
+            fill = [f for f in fill if f[2] < R - 0.5]
+            centers = [(*rot(xf, yf), xf, yf) for (xf, yf, _) in full]
+            centers.sort(key=lambda c: (-c[1] if top else c[1], c[0]))
 
     n = len(centers)
     pivot_ha = math.pi * R * R / 10000.0
@@ -672,7 +668,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         "only_suitable": only_suitable, "min_suitability": min_suit if only_suitable else None,
         "overhang_pct": round(overhang * 100, 1),
         "n_phases": n_phases, "phase_order": phase_order, "phases": phases_out,
-        "n_pivots": n + len(fill), "n_pivots_full": n, "n_pivots_fill": len(fill), "min_pivot_pct": round(min_pct * 100), "fill_full": fill_full,
+        "free_layout": free, "n_pivots": n + len(fill), "n_pivots_full": n, "n_pivots_fill": len(fill), "min_pivot_pct": round(min_pct * 100), "fill_full": fill_full,
         "grid_shift_m": [round(grid_shift[0], 1), round(grid_shift[1], 1)], "n_pumps": n_pumps,
         "net_ha": net_ha, "field_ha": field_ha, "coverage_pct": coverage,
         "excluded_slope_ha": excluded_ha, "excluded_water_ha": excluded_water_ha, "excluded_steep_ha": excluded_steep_ha,
@@ -697,6 +693,144 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     }
     return {"geojson": {"type": "FeatureCollection", "features": features},
             "bounds": bounds, "meta": meta}
+
+
+def _fill_gaps(*, centers, R, min_r, gap, overhang, fill_full, ring_rot, path_rot, bbox_rot, unrot,
+               g, slope_max, obs_dist, steep_ok, steep_grid, steep_tol=0.05, suit_ok=None):
+    """Riempie i vuoti lasciati dalla maglia dei pivot pieni con pivot di raggio variabile (da min_r a R).
+
+    Su una griglia fine di posizioni (frame ruotato) si calcola per ognuna il raggio massimo che ci sta:
+    distanza dal bordo del campo, dagli ostacoli (corsi d'acqua da evitare, strade) e dai pivot già posati
+    (meno la distanza tra i pivot). Poi, per raggi decrescenti, si posa ogni volta nel posto più «stretto»
+    (aderente a pivot, bordo od ostacolo) e si INGRANDISCE il pivot fino al raggio massimo del posto.
+    Infine ogni pivot di riempimento si prova a SPOSTARE nei dintorni dove può essere più grande, e si
+    riempie di nuovo lo spazio liberato. Restituisce [(x_utm, y_utm, r_m)]."""
+    rminx, rmaxx, rminy, rmaxy = bbox_rot
+    res = g["res"]
+    oh_k = max(1e-6, (1.0 - overhang) * 0.999)
+    h = max(10.0, min(res, R * 0.04))                       # passo delle posizioni candidate (16 m con R = 400)
+    m = min_r * (1.0 - overhang)
+    gx = np.arange(rminx + m, rmaxx - m + 1e-6, h)
+    gy = np.arange(rminy + m, rmaxy - m + 1e-6, h)
+    if not len(gx) or not len(gy):
+        return []
+    GX, GY = np.meshgrid(gx, gy)
+    qx, qy = GX.ravel(), GY.ravel()
+    ins = path_rot.contains_points(np.c_[qx, qy])
+    qx, qy = qx[ins], qy[ins]
+    if not qx.size:
+        return []
+    # distanza dal bordo del campo (a pezzi: niente matrici enormi)
+    de = np.full(qx.size, np.inf)
+    for i in range(len(ring_rot) - 1):
+        ax_, ay_ = ring_rot[i]; bx_, by_ = ring_rot[i + 1]
+        vx, vy = bx_ - ax_, by_ - ay_
+        L2 = max(vx * vx + vy * vy, 1e-9)
+        t_ = np.clip(((qx - ax_) * vx + (qy - ay_) * vy) / L2, 0, 1)
+        np.minimum(de, np.hypot(qx - ax_ - t_ * vx, qy - ay_ - t_ * vy), out=de)
+    cap0 = np.minimum(de / oh_k, R)
+    xu, yu = unrot(qx, qy)
+    cols = ((xu - g["minx"]) / res).astype(int); rows = ((g["top"] - yu) / res).astype(int)
+    ing = (rows >= 0) & (rows < g["hp"]) & (cols >= 0) & (cols < g["wp"])
+    rr, cc = np.clip(rows, 0, g["hp"] - 1), np.clip(cols, 0, g["wp"] - 1)
+    sl = np.where(ing, np.nan_to_num(g["slope"][rr, cc], nan=0.0), 0.0)
+    cap0[sl > slope_max] = 0.0                               # pendenza al centro oltre il limite
+    if obs_dist is not None:
+        near = cap0 >= min_r - 1e-6
+        if near.any():
+            cap0[near] = np.minimum(cap0[near], obs_dist(xu[near], yu[near]) + 1.0)
+    if suit_ok is not None:
+        for k in np.flatnonzero(cap0 >= min_r):
+            if not suit_ok(float(xu[k]), float(yu[k])):
+                cap0[k] = 0.0
+    keep = cap0 >= min_r - 1e-6
+    qx, qy, xu, yu, cap0, rr, cc, ing = qx[keep], qy[keep], xu[keep], yu[keep], cap0[keep], rr[keep], cc[keep], ing[keep]
+    if not qx.size:
+        return []
+
+    def steep_mask(r):
+        fr = steep_grid(r)
+        if fr is None:
+            return np.ones(qx.size, bool)
+        return ~ing | (fr[rr, cc] <= steep_tol + 1e-9)
+
+    # pivot già posati, frame ruotato: (x, y, r, è_riempimento)
+    piv = [(float(c[0]), float(c[1]), float(R), False) for c in centers]
+    dpv = np.full(qx.size, np.inf)
+    for (cx, cy, cr, _) in piv:
+        np.minimum(dpv, np.hypot(qx - cx, qy - cy) - cr - gap, out=dpv)
+
+    def grow(k, r_lo, cap_k):
+        """Raggio più grande (≤ cap_k) che passa il controllo scarpate, partendo dall'alto, almeno r_lo."""
+        r = min(cap_k, R)
+        x_, y_ = float(xu[k]), float(yu[k])
+        while r > r_lo + 1e-6:
+            if steep_ok(x_, y_, r):
+                return r
+            r = max(r_lo, r - 0.025 * R)
+        return r_lo
+
+    def place_levels():
+        nonlocal dpv
+        top = R if fill_full else 0.9 * R
+        levels = [top]
+        while levels[-1] - 0.025 * R > min_r + 1e-6:
+            levels.append(levels[-1] - 0.025 * R)
+        levels.append(min_r)
+        cap = np.minimum(cap0, dpv + 1.0)
+        for lv in levels:
+            alive = (cap >= lv - 1e-6) & steep_mask(lv)
+            while alive.any():
+                k = int(np.argmin(np.where(alive, cap, np.inf)))   # il posto più stretto per questo raggio
+                r = grow(k, lv, float(cap[k]))
+                cx, cy = float(qx[k]), float(qy[k])
+                piv.append((cx, cy, r, True))
+                d_new = np.hypot(qx - cx, qy - cy) - r - gap
+                np.minimum(dpv, d_new, out=dpv)
+                cap = np.minimum(cap0, dpv + 1.0)
+                alive &= cap >= lv - 1e-6
+
+    place_levels()
+    # spostamenti locali: ogni pivot di riempimento (dal più piccolo) va dove può essere più grande
+    for _round in range(2):
+        moved = False
+        order = sorted((i for i, p in enumerate(piv) if p[3]), key=lambda i: piv[i][2])
+        for i in order:
+            cx, cy, cr, _ = piv[i]
+            if cr >= R - 0.5:
+                continue
+            win = np.flatnonzero((np.abs(qx - cx) <= cr + 0.25 * R) & (np.abs(qy - cy) <= cr + 0.25 * R))
+            if not win.size:
+                continue
+            d_loc = np.full(win.size, np.inf)
+            for j, (ox, oy, orr, _) in enumerate(piv):
+                if j == i or abs(ox - cx) > orr + cr + 1.3 * R + gap or abs(oy - cy) > orr + cr + 1.3 * R + gap:
+                    continue
+                np.minimum(d_loc, np.hypot(qx[win] - ox, qy[win] - oy) - orr - gap, out=d_loc)
+            capl = np.minimum(cap0[win], d_loc + 1.0)
+            best_r, best_k = cr, -1
+            for kk in np.argsort(-capl)[:12]:                 # i posti col raggio massimo più grande
+                if capl[kk] <= best_r + 2.0:
+                    break
+                r_ = grow(int(win[kk]), min_r, float(capl[kk]))
+                if r_ > best_r + 2.0 and steep_ok(float(xu[win[kk]]), float(yu[win[kk]]), r_):
+                    best_r, best_k = r_, int(win[kk])
+            if best_k >= 0:
+                piv[i] = (float(qx[best_k]), float(qy[best_k]), best_r, True)
+                moved = True
+        if not moved:
+            break
+        dpv = np.full(qx.size, np.inf)
+        for (ox, oy, orr, _) in piv:
+            np.minimum(dpv, np.hypot(qx - ox, qy - oy) - orr - gap, out=dpv)
+        place_levels()
+    out = []
+    for (cx, cy, cr, isf) in piv:
+        if isf:
+            x_, y_ = unrot(cx, cy)
+            out.append((float(x_), float(y_), round(float(cr), 1)))
+    return out
+
 
 
 def _excluded_slope(g, ring_utm, slope_max, to_wgs, min_px: int = 4):

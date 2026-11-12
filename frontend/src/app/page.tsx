@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.275";
+const REV = "v0.6.276";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1462,7 +1462,8 @@ export default function Page() {
   const [pivSlope, setPivSlope] = useState({ on: true, manual: false, max: 12, tol: 5 });
   const [pivotR, setPivotR] = useState(400);    // raggio pivot (parametro proprio della scheda Pivot)
   const [minPivotPct, setMinPivotPct] = useState(100);   // dimensione minima pivot di riempimento bordi (% del raggio); 100 = disattivato
-  const [fillFull, setFillFull] = useState(false);       // riempie i vuoti con pivot interi fuori griglia
+  const [fillFull, setFillFull] = useState(false);
+  const [freeLayout, setFreeLayout] = useState(true);    // disposizione libera: pivot dove ci stanno, non su una maglia fissa       // riempie i vuoti con pivot interi fuori griglia
   // fasi di realizzazione (vedi assignPhases)
   const [phaseN, setPhaseN] = useState(2);
   const [phaseOrderBy, setPhaseOrderBy] = useState<"fonte" | "ovest" | "sud">("fonte");
@@ -3847,7 +3848,7 @@ export default function Page() {
     const fid = active.id;
     setBusy("layout"); setMsg("");
     try {
-      const p: LayoutParams = { ...paramsFrom(effSettings(active)), radius_m: pivotR, gap_m: safetyM, roads: obstacleLines(), clear_road_m: pivClearRoad, min_pivot_pct: minPivotPct, fill_full: fillFull };
+      const p: LayoutParams = { ...paramsFrom(effSettings(active)), radius_m: pivotR, gap_m: safetyM, roads: obstacleLines(), clear_road_m: pivClearRoad, min_pivot_pct: minPivotPct, fill_full: fillFull, free_layout: freeLayout };
       const r = await api.fetchLayout(active.geom, p);
       applyLayoutResult(fid, r, pivotR);
       setMsg(t("Impianti inseriti su «{name}» ✓", { name: active.name }));
@@ -3932,7 +3933,7 @@ export default function Page() {
       for (let i = 0; i < todo.length; i++) {
         const f = todo[i];
         setMsg(t("Pivot sull'area {i}/{n}: {name}…", { i: i + 1, n: todo.length, name: f.name }));
-        const prm: LayoutParams = { ...paramsFrom(effSettings(f)), radius_m: pivotR, gap_m: safetyM, roads: obst, clear_road_m: pivClearRoad, min_pivot_pct: minPivotPct, fill_full: fillFull };
+        const prm: LayoutParams = { ...paramsFrom(effSettings(f)), radius_m: pivotR, gap_m: safetyM, roads: obst, clear_road_m: pivClearRoad, min_pivot_pct: minPivotPct, fill_full: fillFull, free_layout: freeLayout };
         const r = await api.fetchLayout(f.geom, prm);
         const { pivots: np } = pivotsFromFC(r.geojson, pivotR);
         accP = [...accP.filter((x) => x.field !== f.id), ...np.map((x) => ({ ...x, field: f.id }))];
@@ -8958,6 +8959,7 @@ export default function Page() {
       const R = Object.fromEntries((Object.keys(WATER_RULES0) as WaterCat[]).map((k) => [k, { over: typeof wr[k]?.over === "boolean" ? !!wr[k]!.over : WATER_RULES0[k].over, buf: num(wr[k]?.buf, 0) }])) as Record<WaterCat, { over: boolean; buf: number }>;
       setWaterRules(R); setCanalPolicyS(R.canal.over ? "spiana" : "lascia");
       const ps = (st as { pivot_slope?: { on?: boolean; manual?: boolean; max?: number; tol?: number } }).pivot_slope;
+      setFreeLayout((st as { free_layout?: boolean }).free_layout !== false);
       setPivSlope({ on: typeof ps?.on === "boolean" ? ps.on : true, manual: !!ps?.manual, max: num(ps?.max, 12) || 12, tol: num(ps?.tol, 5) }); }
     const sy = (st as { systems?: Record<string, SysDesign> }).systems;
     setSysDesigns(sy && typeof sy === "object" ? sy : {});
@@ -8968,7 +8970,7 @@ export default function Page() {
   }, [projectId, projects]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId) return;
-    const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, water_rules: waterRules, pivot_slope: pivSlope, fonte: fonteState(), terra: { mounds: mounds.map((m) => [m.lon, m.lat, m.d, m.man ? 1 : 0]), cfg: termCfg, meta: termMeta, track: trackRes, ground: ground.map(({ flags: _f, ...L }) => L) }, terrain: { dem: demModel, smooth: demSmooth },
+    const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, water_rules: waterRules, pivot_slope: pivSlope, free_layout: freeLayout, fonte: fonteState(), terra: { mounds: mounds.map((m) => [m.lon, m.lat, m.d, m.man ? 1 : 0]), cfg: termCfg, meta: termMeta, track: trackRes, ground: ground.map(({ flags: _f, ...L }) => L) }, terrain: { dem: demModel, smooth: demSmooth },
       crops: { base: farmCrops, fields: fieldCrops }, solar_pv: solarCfg, canal_design: { lin: canalLin, q: canalQ, fb: canalFb }, cu_model: cuModel, fert, ndvi, drain: { on: drainOn, c: drainC, s: drainS, b: drainB, prof: drainProf }, soil_sat: soilSat, irr_prog: { root: rootDepth, p: rawP, v100 },
       systems: Object.fromEntries(Object.entries(sysDesigns).filter(([k]) => k.startsWith("a"))) };
     const js = JSON.stringify(payload);
@@ -8981,7 +8983,7 @@ export default function Page() {
     }, 900);
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, pivotBrand, waterRules, pivSlope, mounds, termCfg, termMeta, trackRes, ground, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
+  }, [projectId, pivotBrand, waterRules, pivSlope, freeLayout, mounds, termCfg, termMeta, trackRes, ground, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
     resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, fert, ndvi, drainOn, drainC, drainS, drainB, drainProf, soilSat, rootDepth, rawP, v100, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId || (!pivots.length && !fields.length)) return;
@@ -12006,9 +12008,15 @@ export default function Page() {
             </label>
             <label className="text-xs text-sage-dark block mb-1">{t("Disposizione")}</label>
             <div className="seg mb-1">
-              <div className="seg-item" data-active={cur.layoutCfg === "square"} onClick={() => patch({ layoutCfg: "square" })}>{t("A quadrato")}</div>
-              <div className="seg-item" data-active={cur.layoutCfg === "staggered"} onClick={() => patch({ layoutCfg: "staggered" })}>{t("A triangolo")}</div>
+              <div className="seg-item" data-free-layout data-active={freeLayout} onClick={() => setFreeLayout(true)}>{t("Libera")}</div>
+              <div className="seg-item" data-active={!freeLayout && cur.layoutCfg === "square"} onClick={() => { setFreeLayout(false); patch({ layoutCfg: "square" }); }}>{t("A quadrato")}</div>
+              <div className="seg-item" data-active={!freeLayout && cur.layoutCfg === "staggered"} onClick={() => { setFreeLayout(false); patch({ layoutCfg: "staggered" }); }}>{t("A triangolo")}</div>
             </div>
+            <p className="text-[10px] text-sage-dark mb-1 leading-snug">
+              {freeLayout
+                ? t("Libera: i pivot si posano dove ci stanno, dal più grande, aderenti a bordi, corsi d'acqua e pivot vicini, per coprire più superficie possibile. Restano fuori solo le zone tratteggiate in rosso.")
+                : t("Reticolo fisso: pivot pieni allineati in file (dorsali dritte), poi i vuoti si riempiono con pivot più piccoli.")}
+            </p>
             <div className="mb-2" />
 
             <label className="text-xs text-sage-dark block mb-1">{t("Modalità di progettazione")}</label>
@@ -12104,11 +12112,11 @@ export default function Page() {
                     ? t("Tutti i pivot a piena dimensione. Abbassa la percentuale per riempire i contorni con pivot più piccoli e coprire più superficie.")
                     : t("Il grosso del campo resta coperto dai pivot a piena dimensione ({r} m); sui contorni si aggiungono pivot ridotti fino a {min} m di raggio.", { r: Math.round(pivotR), min: Math.round(pivotR * minPivotPct / 100) })}
                 </p>
-                <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
+                {!freeLayout && <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
                   <input type="checkbox" checked={fillFull} onChange={(e) => setFillFull(e.target.checked)} />
                   {t("Riempi i vuoti anche con pivot interi fuori griglia")}
-                </label>
-                {fillFull && (
+                </label>}
+                {fillFull && !freeLayout && (
                   <p className="text-[10px] text-sage-dark mt-1 leading-snug">
                     {t("I pivot fuori griglia non sono allineati alle dorsali: la loro adduzione non entra nel calcolo della rete.")}
                   </p>
