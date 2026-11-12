@@ -34,13 +34,17 @@ try {
   await page.locator('button[title="Fonte d\'acqua"]').first().click(); await page.waitForTimeout(600);
   await page.locator("[data-water-topo]").click();
   await page.locator("text=/Importazione topografica in \\d+ s/").first().waitFor({ timeout: 60000 });
-  ok((await rows()) === 0, "Anteprima topografica aperta, non ancora confermata (elenco vuoto)");
+  const nPre = await rows();
+  ok(nPre > 10 && await page.locator('[data-water-confirm]').isVisible(), `Anteprima non confermata già nell'elenco: ${nPre} corsi`);
+  await page.locator('[data-water-list="free"] [data-wl-check]').nth(0).click();
+  await page.locator("[data-water-del-sel]").click(); await page.waitForTimeout(500);
+  ok((await rows()) === nPre - 1, `Eliminato in anteprima dal pannello a destra: ${nPre} → ${await rows()}`);
   await page.locator('button[title="Impianti"]').first().click(); await page.waitForTimeout(600);
   await page.locator('button:has-text("Inserisci su «")').first().click();
   await page.locator("text=/Impianti inseriti|pivot/i").first().waitFor({ timeout: 180000 }); await page.waitForTimeout(1500);
   const nRules = await page.locator('[data-water-rule="river"]').innerText();
   const n0 = await rows();
-  ok(n0 > 10 && /\(\d+\)/.test(nRules) && !/\(0\)/.test(nRules), `Posa dei pivot: anteprima confermata da sola · ${n0} corsi nell'elenco · regole: ${nRules}`);
+  ok(n0 === nPre - 1 && /\(\d+\)/.test(nRules) && !/\(0\)/.test(nRules), `Posa dei pivot: anteprima confermata da sola · ${n0} corsi nell'elenco · regole: ${nRules}`);
   // clic su un fiume sulla mappa → riga evidenziata a sinistra con tipo e nome modificabili; Canc lo elimina
   await page.waitForTimeout(1500);
   const pt = await page.evaluate(() => {

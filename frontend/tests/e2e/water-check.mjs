@@ -38,13 +38,15 @@ try {
   await page.locator('select:has(option:text-is("Chivasso acque"))').selectOption({ label: "Chivasso acque" }); await page.waitForTimeout(5000);
   await goFonte();
   // due comandi: importazione topografica (secondi) e analisi satellitare (minuti)
+  const nBefore = await page.locator("[data-wl-row]").count();
   const tt = Date.now();
   await page.locator("[data-water-topo]").click();
   await page.locator("text=/Importazione topografica in \\d+ s/").first().waitFor({ timeout: 60000 });
   const tOsm = (Date.now() - tt) / 1000;
   const btns = await page.locator("[data-water-section]").innerText();
   ok(tOsm < 30 && !/OpenStreetMap/.test(btns), `Importazione topografica in ${tOsm.toFixed(0)} s (nessun «OpenStreetMap» nel pannello)`);
-  await page.locator('button:has-text("Annulla")').first().click(); await page.waitForTimeout(500);
+  await page.locator('[data-water-cancel]').click(); await page.waitForTimeout(500);
+  ok((await page.locator('[data-wl-row]').count()) === nBefore, `Annulla: anteprima tolta, elenco come prima (${nBefore})`);
   const t0 = Date.now();
   await page.locator("[data-water-sat]").click();
   await page.locator("text=/Anteprima: .* tratti di fiume/").first().waitFor({ timeout: 400000 });
@@ -53,7 +55,7 @@ try {
   console.log("messaggio:", msg);
   ok(/tratti di fiume/.test(msg), `Anteprima pronta in ${tDet.toFixed(0)} s`);
   await page.screenshot({ path: path.join(SH, "w1_anteprima.png") });
-  await page.locator('button:has-text("Conferma")').first().click(); await page.waitForTimeout(1500);
+  await page.locator('[data-water-confirm]').click(); await page.waitForTimeout(1500);
   const tbl = page.locator("[data-water-table]").first();
   await tbl.waitFor({ timeout: 10000 });
   const txt = await tbl.innerText();
@@ -152,7 +154,7 @@ try {
   await goFonte();
   await page.locator("[data-water-sat]").click();
   await page.locator("text=/Anteprima: .* tratti di fiume/").first().waitFor({ timeout: 400000 });
-  await page.locator('button:has-text("Conferma")').first().click(); await page.waitForTimeout(1500);
+  await page.locator('[data-water-confirm]').click(); await page.waitForTimeout(1500);
   const t3 = page.locator("[data-water-table]").first();
   const am = await t3.locator("tbody tr").evaluateAll((trs) => trs.map((tr) => ({ reg: tr.children[2].textContent, len: tr.children[3].textContent, w: tr.querySelector("input")?.value })));
   const beds = am.filter((r) => /alveo/.test(r.reg || "")).map((r) => ({ ...r, L: Number(String(r.len).replace(/[^\d,]/g, "").replace(",", ".")) })).sort((a, b) => b.L - a.L);
@@ -196,7 +198,7 @@ try {
   ok(bv0 > 10 && bv1 === 0 && allHidden === 0 && bv2 === bv0, `Anteprima: fiumi nascosti e rimostrati senza confermare (${bv0} → ${bv1} → ${bv2}; tutto nascosto: ${allHidden})`);
   await page.screenshot({ path: path.join(SH, "w5b_anteprima_osm.png") });
   // confermo subito: le misure dal satellite arrivano dopo, sui corsi già confermati
-  await page.locator('button:has-text("Conferma")').first().click(); await page.waitForTimeout(1500);
+  await page.locator('[data-water-confirm]').click(); await page.waitForTimeout(1500);
   await page.locator("[data-water-sat]").click();
   await page.locator("text=/Analisi satellitare pronta in \\d+ s: \\d+ corsi misurati/").first().waitFor({ timeout: 600000 });
   const mm = await page.locator("text=/Analisi satellitare pronta in/").first().innerText();

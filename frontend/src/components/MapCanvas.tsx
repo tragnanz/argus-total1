@@ -82,6 +82,7 @@ export type MapHandle = {
   mPerPx: () => number;
   clearAll: () => void;
   fitAll: () => void;
+  fitCoords: (coords: number[][]) => void;
   flyTo: (lat: number, lon: number, zoom?: number) => void;
   showOverlay: (key: OverlayKey, url: string, bounds: [[number, number], [number, number]]) => void;
   clearOverlay: (key: OverlayKey) => void;
@@ -1179,6 +1180,11 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           if (gb.isValid()) b = b ? b.extend(gb) : L.latLngBounds(gb.getSouthWest(), gb.getNorthEast());
         }
         if (b && b.isValid()) map.fitBounds(b, { padding: [40, 40] });
+      },
+      fitCoords(coords) {
+        const map = mapRef.current; if (!map || !coords.length) return;
+        const b = L.latLngBounds(coords.map((p) => [p[1], p[0]] as [number, number]));
+        if (b.isValid()) map.fitBounds(b, { padding: [50, 50] });
       },
       clearMacroareas() { macroRef.current?.clearLayers(); },
       showWater(items, cbs) {

@@ -336,6 +336,8 @@ class LayoutIn(BaseModel):
     # pieno (100 = disattivato). Sotto 100 aggiunge pivot ridotti sui contorni.
     min_pivot_pct: float = Field(default=100.0, ge=30, le=100)
     fill_full: bool = False                                     # riempie i vuoti anche con pivot interi fuori griglia
+    pivot_slope_max_pct: float = Field(default=0.0, ge=0, le=100)   # pendenza massima sotto il pivot (%), 0 = spento
+    pivot_slope_tol_pct: float = Field(default=5.0, ge=0, le=100)   # quota del cerchio ammessa oltre il limite (%)
     # Modello del terreno e levigatura della pendenza (il Copernicus DEM è una
     # superficie con alberi ed edifici: la pendenza si calcola su base ampia).
     dem: Literal["COPERNICUS_30", "COPERNICUS_90"] = "COPERNICUS_30"

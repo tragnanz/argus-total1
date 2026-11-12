@@ -153,6 +153,31 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     if dem_instance not in ("COPERNICUS_30", "COPERNICUS_90"):
         dem_instance = "COPERNICUS_30"
     g = _dem_grid(client, geom, smooth_m=max(0.0, min(500.0, float(params.get("dem_smooth_m", 100.0)))), dem_instance=dem_instance)
+    # SCARPATE: pendenza massima sotto il pivot (non solo al centro). Si conta la quota della superficie del
+    # cerchio sopra il limite; oltre la tolleranza il pivot non si posa. 0 = controllo spento.
+    piv_slope_max = float(params.get("pivot_slope_max_pct") or 0.0)
+    piv_slope_tol = max(0.0, min(1.0, float(params.get("pivot_slope_tol_pct", 5.0)) / 100.0))
+    _steep_cache: dict[int, np.ndarray] = {}
+
+    def _steep_ok(x: float, y: float, r: float) -> bool:
+        if piv_slope_max <= 0:
+            return True
+        key = max(1, int(round(r / 10.0)) * 10)
+        fr = _steep_cache.get(key)
+        if fr is None:
+            from scipy.signal import fftconvolve
+            sl = g["slope"]
+            steep = (np.nan_to_num(sl, nan=0.0) > piv_slope_max).astype("float64")
+            rp = max(1.0, key / g["res"])
+            n = int(np.ceil(rp))
+            yy, xx = np.mgrid[-n:n + 1, -n:n + 1]
+            disk = ((xx * xx + yy * yy) <= rp * rp).astype("float64")
+            fr = fftconvolve(steep, disk / disk.sum(), mode="same")
+            _steep_cache[key] = fr
+        col = int((x - g["minx"]) / g["res"]); row = int((g["top"] - y) / g["res"])
+        if not (0 <= row < fr.shape[0] and 0 <= col < fr.shape[1]):
+            return True
+        return float(fr[row, col]) <= piv_slope_tol + 1e-9
     epsg, res = g["epsg"], g["res"]
     to_utm = pyproj.Transformer.from_crs(4326, epsg, always_xy=True)
     to_wgs = g["to_wgs"]
@@ -315,7 +340,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
                 pts = off + np.array([rx, ry])
                 if path_rot.contains_point((rx, ry)) and path_rot.contains_points(pts).all():
                     x, y = unrot(rx, ry)
-                    ok = _slope_at(g, x, y) <= slope_max
+                    ok = _slope_at(g, x, y) <= slope_max and _steep_ok(x, y, R)
                     if ok and transport == "canal":
                         # gravità: il pivot dev'essere a valle del canale (quota ≤ canale)
                         e_p = _elev_at(g, x, y)
@@ -383,7 +408,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
                             if np.any(d2 < (r + pr + gap) ** 2 - 1.0):
                                 continue
                         xu, yu = unrot(cx, cy)
-                        if _slope_at(g, xu, yu) > slope_max:
+                        if _slope_at(g, xu, yu) > slope_max or not _steep_ok(xu, yu, r):
                             continue
                         if dist_obs is not None:
                             col = int((xu - g["minx"]) / g["res"]); row = int((g["top"] - yu) / g["res"])

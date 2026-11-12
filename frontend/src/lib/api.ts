@@ -110,6 +110,7 @@ export type LayoutParams = {
   fill_full?: boolean;      // riempie i vuoti anche con pivot interi fuori griglia
   dem?: "COPERNICUS_30" | "COPERNICUS_90";   // modello del terreno
   dem_smooth_m?: number;    // base di levigatura della pendenza (m)
+  pivot_slope_max_pct?: number; pivot_slope_tol_pct?: number;   // scarpate: pendenza massima sotto il pivot (0 = spento)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   roads?: any[] | null; clear_road_m?: number;
 };

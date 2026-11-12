@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.267";
+const REV = "v0.6.269";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -126,7 +126,7 @@ type Field = {
 // Wrapper front-end con visibilità per-oggetto e proprietario (campo) per il
 // pannello Livelli stile Photoshop: owner = id del campo a cui l'oggetto appartiene.
 type CanalL = Canal & { hidden?: boolean; uid?: number; owner?: number; exist?: boolean };   // exist: canale esistente (non entra nel computo)
-type WaterL = Watercourse & { hidden?: boolean; uid?: number; owner?: number; folder?: string;
+type WaterL = Watercourse & { hidden?: boolean; uid?: number; owner?: number; folder?: string; pending?: boolean;
   // come era registrato (OpenStreetMap / rilevamento) prima che l'utente forzasse nome o tipo
   name_orig?: string | null; kind_orig?: string;
   // idraulica per la stima della portata (Manning): profondità a larghezza tipica, pendenza del fondo,
@@ -1315,6 +1315,22 @@ export default function Page() {
   const [waterFolderOpen, setWaterFolderOpen] = useState<Record<string, boolean>>({});
   useEffect(() => { setWaterCheck(new Set()); }, [watercourses.length]);   // gli indici cambiano: selezione azzerata
   useEffect(() => { wcRef.current = watercourses; }, [watercourses]);
+  const waterBackup = useRef<WaterL[] | null>(null);   // elenco prima dell'anteprima: «Annulla» lo ripristina
+  // ANTEPRIMA: i corsi importati entrano subito nell'elenco (pending) e si selezionano, modificano ed
+  // eliminano come gli altri; «Conferma» toglie il segno, «Annulla» torna all'elenco di prima
+  function startWaterPreview(items: WaterL[]) {
+    if (!waterPreviewOn.current) waterBackup.current = wcRef.current;
+    const base = (waterBackup.current ?? []).filter((w) => !(w.source === "osm" && !w.edited) || !items.some((x) => x.source === "osm"));
+    // lunghezza ricalcolata come per le modifiche a mano, così resta coerente dopo un ritocco annullato
+    const arr = [...base, ...items.map((f) => ({ ...f, pending: true, ...(f.geojson.type === "LineString" ? { length_m: Math.round(lineLenKm(f.geojson.coordinates as number[][]) * 10000) / 10 } : {}) }))];
+    if (!layerVis.water) toggleLayer("water");
+    stopEditWater();
+    waterSelRef.current = { kind: null, idx: null }; setWaterSel(waterSelRef.current); setWaterOpen(null);
+    mapApi.current?.previewWater([]);                      // anteprima vuota: serve solo per disegnare elementi nuovi (prima: svuota il livello)
+    setWatercourses(arr); wcRef.current = arr; renderWater(arr);
+    mapApi.current?.fitCoords(items.flatMap((w) => waterLineOf(w)));
+    waterPreviewOn.current = true; setWaterPreview(true); setWaterRemoveOn(false);
+  }
   const waterPending = useRef<{ surface: { type: "Polygon"; coordinates: unknown }[]; dates: string[]; res_m: number } | null>(null);
   const [waterRemoveOn, setWaterRemoveOn] = useState(false);
   // barra strumenti in alto: annulla/ripristina, misura, menu livelli
@@ -1438,6 +1454,8 @@ export default function Page() {
   // regole di disegno per i corsi d'acqua esistenti: i pivot li evitano (con una fascia di rispetto) o ci passano sopra
   const [waterRules, setWaterRules] = useState<Record<WaterCat, { over: boolean; buf: number }>>(WATER_RULES0);
   const waterRulesRef = useRef(waterRules); waterRulesRef.current = waterRules;
+  // SCARPATE: pendenza massima sotto tutto il cerchio del pivot (non solo al centro) e quota tollerata
+  const [pivSlope, setPivSlope] = useState({ on: true, max: 12, tol: 5 });
   const [pivotR, setPivotR] = useState(400);    // raggio pivot (parametro proprio della scheda Pivot)
   const [minPivotPct, setMinPivotPct] = useState(100);   // dimensione minima pivot di riempimento bordi (% del raggio); 100 = disattivato
   const [fillFull, setFillFull] = useState(false);       // riempie i vuoti con pivot interi fuori griglia
@@ -2406,9 +2424,7 @@ export default function Page() {
       const q = await api.fetchOsmCourses(activeGeom);
       if (!q.features.length) { setMsg(t("Importazione topografica: nessun corso d'acqua cartografato in quest'area. Prova l'analisi satellitare.")); return 0; }
       waterPending.current = null;
-      const codes = waterCodes(q.features);
-      mapApi.current?.previewWater(q.features.map((f, i) => ({ geom: f.geojson, kind: f.kind, props: f, label: waterLabel(f, codes[i]) })));
-      setWaterPreview(true); setWaterRemoveOn(false);
+      startWaterPreview(q.features as WaterL[]);
       const km = q.features.reduce((a, f) => a + (f.length_m ?? 0), 0) / 1000;
       setMsg(t("Importazione topografica in {s} s: {r} fiumi, {c} canali, {d} dreni ({km}). Conferma, poi l'analisi satellitare aggiunge larghezze, regime e portate.",
         { s: fmt((Date.now() - t0) / 1000, { maximumFractionDigits: 0 }), r: q.n_river, c: q.n_canal, d: q.n_drain, km: uKm(km, 1) }));
@@ -2428,13 +2444,11 @@ export default function Page() {
       const w = await api.fetchWatercourses(activeGeom, date || null, waterSens, 12, true, p.dem_channel_ha, p.dem_depth_m, p.min_area_ha);
       if (id !== waterReq.current) return;
       const secs = fmt((Date.now() - t0) / 1000, { maximumFractionDigits: 0 });
-      if (!waterPreviewOn.current && wcRef.current.some((x) => x.source === "osm" || x.source === "osm+s2")) { mergeWaterMeasures(w, secs); return; }
+      if (wcRef.current.some((x) => x.source === "osm" || x.source === "osm+s2")) { mergeWaterMeasures(w, secs); return; }
       if (!w.features.length) { setMsg(t("Nessun corso d'acqua rilevato: prova ad alzare la sensibilità.")); return; }
       waterPending.current = { surface: w.surface ?? [], dates: w.dates ?? [], res_m: w.res_m ?? 10 };
       // ANTEPRIMA modificabile a mano: conferma o annulla (le misure viaggiano con ogni elemento)
-      const codes = waterCodes(w.features);
-      mapApi.current?.previewWater(w.features.map((f, i) => ({ geom: f.geojson, kind: f.kind, props: f, label: waterLabel(f, codes[i]) })));
-      setWaterPreview(true); setWaterRemoveOn(false);
+      startWaterPreview(w.features as WaterL[]);
       const km = w.features.filter((f) => f.kind === "river" || f.kind === "canal").reduce((a, f) => a + (f.length_m ?? 0), 0) / 1000;
       setMsg(t("Analisi satellitare pronta in {s} s.", { s: secs }) + " "
         + t("Anteprima: {r} tratti di fiume e {c} di canale ({km}), {d} impluvi (DEM), {b} bacini. Modifica a mano, poi Conferma.",
@@ -2494,22 +2508,20 @@ export default function Page() {
   function confirmWaterUI(): WaterL[] {
     stopEditWater();
     waterPreviewOn.current = false;
+    // elementi disegnati a mano durante l'anteprima
     const raw = mapApi.current?.confirmWater() || [];
-    const feats: WaterL[] = raw.map((c) => {
+    const drawn: WaterL[] = raw.map((c) => {
       const p = (c.props ?? {}) as Partial<Watercourse>;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const w: WaterL = { ...p, geojson: c.geom as any, kind: c.kind, area_ha: p.area_ha ?? 0, source: p.source ?? "manual" };
-      if (c.geom.type === "LineString") {
-        w.length_m = Math.round(lineLenKm(c.geom.coordinates as number[][]) * 10000) / 10;   // ricalcolata sulla geometria
-        if (c.edited) { w.edited = true; w.profile = undefined; }
-      } else if (!w.area_ha) {
-        w.area_ha = Math.round(ringAreaHa(c.geom.coordinates as number[][][]) * 100) / 100;
-      }
+      if (c.geom.type === "LineString") w.length_m = Math.round(lineLenKm(c.geom.coordinates as number[][]) * 10000) / 10;
+      else if (!w.area_ha) w.area_ha = Math.round(ringAreaHa(c.geom.coordinates as number[][][]) * 100) / 100;
       return w;
     });
+    const feats: WaterL[] = [...wcRef.current.map((w) => { if (!w.pending) return w; const o = { ...w }; delete o.pending; return o; }), ...drawn];
+    waterBackup.current = null;
     setWatercourses(feats); wcRef.current = feats;
-    waterSelRef.current = { kind: null, idx: null }; setWaterSel(waterSelRef.current); setWaterOpen(null);
-    renderWater(feats);
+    renderWater(feats, waterSelRef.current);
     if (waterPending.current) {
       setWaterSurface(waterPending.current.surface as typeof waterSurface);
       setWaterMeta({ dates: waterPending.current.dates, res_m: waterPending.current.res_m });
@@ -2961,7 +2973,14 @@ export default function Page() {
     if (!layerVis.water) toggleLayer("water");
     renderWater(wcRef.current);
   }
-  function cancelWaterPreview() { mapApi.current?.cancelWater(); setWaterPreview(false); setWaterRemoveOn(false); setMsg(""); }
+  function cancelWaterPreview() {
+    mapApi.current?.cancelWater(); stopEditWater();
+    const back = waterBackup.current ?? wcRef.current.filter((w) => !w.pending);
+    waterBackup.current = null; waterPreviewOn.current = false; waterPending.current = null;
+    waterSelRef.current = { kind: null, idx: null }; setWaterSel(waterSelRef.current); setWaterOpen(null);
+    setWatercourses(back); wcRef.current = back; renderWater(back);
+    setWaterPreview(false); setWaterRemoveOn(false); setMsg("");
+  }
   function toggleWaterRemove() { const v = !waterRemoveOn; setWaterRemoveOn(v); mapApi.current?.waterRemoveMode(v); }
   function clearWater() { stopEditWater(); waterReq.current++; setWaterSatBusy(false); setWatercourses([]); setWaterSurface([]); setWaterMeta(null); setWaterPreview(false); mapApi.current?.clearWater(); mapApi.current?.cancelWater(); }
 
@@ -3051,6 +3070,7 @@ export default function Page() {
   // entrambi la stessa lista di aree "vecchie", creavano ciascuno la propria
   // copia dei poligoni e cancellavano solo quella vecchia comune: risultato, i
   // poligoni raddoppiati che comparivano dopo un aggiornamento.
+  const [manualSaving, setManualSaving] = useState(false);
   function saveAll(silent = false): Promise<boolean> {
     const run = saveChainRef.current.then(() => saveAllInner(silent), () => saveAllInner(silent));
     saveChainRef.current = run.then(() => undefined, () => undefined);
@@ -3756,6 +3776,7 @@ export default function Page() {
       overhang_pct: s.overhang, n_phases: s.nPhases, phase_order: s.phaseOrder,
       kc_peak: s.kc, efficiency: s.eff, hours_per_day: s.hours,
       dem: demModel, dem_smooth_m: demSmooth,
+      pivot_slope_max_pct: pivSlope.on ? pivSlope.max : 0, pivot_slope_tol_pct: pivSlope.tol,
     };
   }
   async function genLayout() {
@@ -8897,7 +8918,9 @@ export default function Page() {
       setGround(Array.isArray(tr.ground) ? tr.ground.filter((L) => L && L.b64 && L.w && L.h) : []); }
     { const wr = (st as { water_rules?: Partial<Record<WaterCat, { over?: boolean; buf?: number }>> }).water_rules ?? {};
       const R = Object.fromEntries((Object.keys(WATER_RULES0) as WaterCat[]).map((k) => [k, { over: typeof wr[k]?.over === "boolean" ? !!wr[k]!.over : WATER_RULES0[k].over, buf: num(wr[k]?.buf, 0) }])) as Record<WaterCat, { over: boolean; buf: number }>;
-      setWaterRules(R); setCanalPolicyS(R.canal.over ? "spiana" : "lascia"); }
+      setWaterRules(R); setCanalPolicyS(R.canal.over ? "spiana" : "lascia");
+      const ps = (st as { pivot_slope?: { on?: boolean; max?: number; tol?: number } }).pivot_slope;
+      setPivSlope({ on: typeof ps?.on === "boolean" ? ps.on : true, max: num(ps?.max, 12) || 12, tol: num(ps?.tol, 5) }); }
     const sy = (st as { systems?: Record<string, SysDesign> }).systems;
     setSysDesigns(sy && typeof sy === "object" ? sy : {});
     projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
@@ -8907,7 +8930,7 @@ export default function Page() {
   }, [projectId, projects]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId) return;
-    const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, water_rules: waterRules, fonte: fonteState(), terra: { mounds: mounds.map((m) => [m.lon, m.lat, m.d, m.man ? 1 : 0]), cfg: termCfg, meta: termMeta, track: trackRes, ground: ground.map(({ flags: _f, ...L }) => L) }, terrain: { dem: demModel, smooth: demSmooth },
+    const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, water_rules: waterRules, pivot_slope: pivSlope, fonte: fonteState(), terra: { mounds: mounds.map((m) => [m.lon, m.lat, m.d, m.man ? 1 : 0]), cfg: termCfg, meta: termMeta, track: trackRes, ground: ground.map(({ flags: _f, ...L }) => L) }, terrain: { dem: demModel, smooth: demSmooth },
       crops: { base: farmCrops, fields: fieldCrops }, solar_pv: solarCfg, canal_design: { lin: canalLin, q: canalQ, fb: canalFb }, cu_model: cuModel, fert, ndvi, drain: { on: drainOn, c: drainC, s: drainS, b: drainB, prof: drainProf }, soil_sat: soilSat, irr_prog: { root: rootDepth, p: rawP, v100 },
       systems: Object.fromEntries(Object.entries(sysDesigns).filter(([k]) => k.startsWith("a"))) };
     const js = JSON.stringify(payload);
@@ -8920,7 +8943,7 @@ export default function Page() {
     }, 900);
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, pivotBrand, waterRules, mounds, termCfg, termMeta, trackRes, ground, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
+  }, [projectId, pivotBrand, waterRules, pivSlope, mounds, termCfg, termMeta, trackRes, ground, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
     resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, fert, ndvi, drainOn, drainC, drainS, drainB, drainProf, soilSat, rootDepth, rawP, v100, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId || (!pivots.length && !fields.length)) return;
@@ -11091,7 +11114,11 @@ export default function Page() {
             {projectId && (
               <div className="mt-3 flex items-center gap-2 text-[11px] text-sage-dark">
                 <span className={"inline-block w-2 h-2 rounded-full " + (autosave === "saving" ? "bg-amber animate-pulse" : autosave === "error" ? "bg-danger" : "bg-brand")} />
-                {autosave === "saving" ? t("Salvataggio automatico…") : autosave === "error" ? t("Salvataggio non riuscito (riprovo alla prossima modifica)") : t("Salvataggio automatico attivo — le modifiche vengono salvate da sole")}
+                <span className="flex-1">{autosave === "saving" ? t("Salvataggio automatico…") : autosave === "error" ? t("Salvataggio non riuscito (riprovo alla prossima modifica)") : t("Salvataggio automatico attivo — le modifiche vengono salvate da sole")}</span>
+                <button className="btn-primary text-xs px-3 py-1 shrink-0 disabled:opacity-50" disabled={manualSaving} data-save-now
+                  title={t("Salva adesso il progetto")}
+                  onClick={async () => { setManualSaving(true); try { if (await saveAll(false)) setMsg(t("Progetto salvato ✓")); } finally { setManualSaving(false); } }}>
+                  {manualSaving ? t("Salvo…") : t("Salva")}</button>
               </div>
             )}
             <div className="mt-3" data-mapview>
@@ -11989,6 +12016,21 @@ export default function Page() {
                 </div>
               </div>
             </div>
+            <div className="bg-panel rounded-lg p-2 mt-2" data-piv-slope>
+              <label className="flex items-center gap-1.5 text-[11px] font-semibold text-sage-dark">
+                <input type="checkbox" checked={pivSlope.on} onChange={(e) => setPivSlope((p) => ({ ...p, on: e.target.checked }))} data-piv-slope-on />
+                {t("Niente pivot sulle scarpate")}
+              </label>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                <label className="text-[10px] text-sage-dark leading-tight">{t("Pendenza massima sotto il pivot (%)")}
+                  <input type="number" min={2} max={60} step={1} value={pivSlope.max} disabled={!pivSlope.on} data-piv-slope-max
+                    onChange={(e) => setPivSlope((p) => ({ ...p, max: Math.max(1, Number(e.target.value) || 0) }))} className="field-input px-1.5 py-1 text-sm mt-0.5 disabled:opacity-40" /></label>
+                <label className="text-[10px] text-sage-dark leading-tight">{t("Superficie tollerata oltre il limite (%)")}
+                  <input type="number" min={0} max={50} step={1} value={pivSlope.tol} disabled={!pivSlope.on}
+                    onChange={(e) => setPivSlope((p) => ({ ...p, tol: Math.max(0, Number(e.target.value) || 0) }))} className="field-input px-1.5 py-1 text-sm mt-0.5 disabled:opacity-40" /></label>
+              </div>
+              <div className="text-[10px] text-sage-dark mt-1 leading-snug">{t("La pendenza si misura su tutto il cerchio del pivot dal modello del terreno: se la parte oltre il limite supera la superficie tollerata, il pivot non si posa. Vale alla prossima posa dei pivot.")}</div>
+            </div>
             {renderWaterRules()}
 
             {renderMeshParams()}
@@ -12305,20 +12347,22 @@ export default function Page() {
               </div>
             ) : (
               <div className="mt-1 bg-brand/5 rounded-lg p-2">
-                <p className="hint mb-1">{t("Anteprima modificabile: trascina i vertici, aggiungi o elimina elementi, poi Conferma.")}</p>
+                <p className="hint mb-1">{t("Anteprima: i corsi sono già nell'elenco a sinistra e qui sotto; selezionali, cambia tipo o nome, dividili o eliminali, poi Conferma.")}</p>
                 <div className="flex gap-2 flex-wrap">
                   <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("river")}>+ {t("Fiume")}</button>
                   <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("canal")}>+ {t("Canale")}</button>
                   <button className="btn-ghost text-xs px-2 py-1" onClick={() => mapApi.current?.waterDraw("basin")}>+ {t("Bacino")}</button>
-                  <button className={"text-xs px-2 py-1 rounded-lg " + (waterRemoveOn ? "bg-danger text-white" : "btn-ghost")} onClick={toggleWaterRemove}>{t("Elimina elemento")}</button>
+                  <button className="btn-ghost text-xs px-2 py-1 text-danger disabled:opacity-40" disabled={waterSel.idx == null && !waterCheck.size}
+                    title={t("Elimina il corso selezionato sulla mappa o quelli spuntati nell'elenco (anche col tasto Canc)")}
+                    onClick={() => { if (waterCheck.size) waterBulkRemove([...waterCheck]); else if (waterSel.idx != null) removeWater(waterSel.idx); }} data-water-del-sel>{t("Elimina selezionati")}</button>
                 </div>
                 <div className="flex gap-2 mt-2">
-                  <button className="btn-primary flex-1 basis-0" onClick={confirmWaterUI}>{t("Conferma")}</button>
-                  <button className="btn-ghost flex-1 basis-0" onClick={cancelWaterPreview}>{t("Annulla")}</button>
+                  <button className="btn-primary flex-1 basis-0" onClick={confirmWaterUI} data-water-confirm>{t("Conferma")}</button>
+                  <button className="btn-ghost flex-1 basis-0" onClick={cancelWaterPreview} data-water-cancel>{t("Annulla")}</button>
                 </div>
               </div>
             )}
-            {!waterPreview && !!watercourses.length && (() => {
+            {!!watercourses.length && (() => {
               const codes = waterCodes(watercourses);
               const allLines = watercourses.map((w, i) => ({ w, i })).filter(({ w }) => w.geojson.type === "LineString");
               const lines = waterSel.kind ? allLines.filter(({ w }) => w.kind === waterSel.kind) : allLines;
@@ -12361,7 +12405,7 @@ export default function Page() {
                   {!!lines.length && (
                     <div className="mt-1 max-h-64 overflow-auto">
                       <table className="w-full text-[11px]">
-                        <thead><tr className="text-left opacity-70"><th className="font-normal">#</th><th className="font-normal">{t("Tipo")}</th><th className="font-normal">{t("Regime")}</th><th className="font-normal text-right">{t("Lunghezza")}</th><th className="font-normal text-right">{t("Larghezza")} ({imperial ? "ft" : "m"})</th><th className="font-normal text-center" title={t("Spostabile: i pivot possono coprirlo e il tratto si devia")}>⇄</th><th /></tr></thead>
+                        <thead><tr className="text-left opacity-70"><th className="font-normal">#</th><th className="font-normal">{t("Tipo")}</th><th className="font-normal">{t("Regime")}</th><th className="font-normal text-right">{t("Lungh.")}</th><th className="font-normal text-right" title={t("Larghezza")}>↔ {imperial ? "ft" : "m"}</th><th className="font-normal text-center" title={t("Spostabile: i pivot possono coprirlo e il tratto si devia")}>⇄</th><th /></tr></thead>
                         <tbody>
                           {lines.map(({ w, i }) => (<Fragment key={i}>
                             <tr data-water-row={i} className={(w.hidden ? "opacity-40 " : "") + (waterSel.idx === i ? "bg-amber-100" : "")}
@@ -12370,22 +12414,22 @@ export default function Page() {
                                 <button className="text-brand-mid mr-0.5" title={t("Scheda del corso")} onClick={() => selectWater(waterSel.idx === i ? { kind: w.kind, idx: null } : { kind: w.kind, idx: i })}>{waterSel.idx === i ? "▾" : "▸"}</button><span title={w.name || undefined}>{codes[i]}</span>
                                 {w.name ? <div className="text-[10px] opacity-70 max-w-[7rem] truncate" title={w.name}>{w.name}</div> : null}
                               </td>
-                              <td>
-                                <span className="inline-block w-2.5 h-0.5 align-middle mr-1" style={{ background: WATER_COL[w.kind] ?? "#0369a1" }} />
-                                <select className="bg-transparent text-[11px] p-0" value={w.kind} onChange={(e) => retypeWater(i, e.target.value)}>
+                              <td className="whitespace-nowrap">
+                                <span className="inline-block w-2 h-2 rounded-sm align-middle mr-1" style={{ background: WATER_COL[w.kind] ?? "#0369a1" }} />
+                                <select className="bg-transparent text-[11px] p-0 w-[4.4rem] align-middle" value={w.kind} onChange={(e) => retypeWater(i, e.target.value)}>
                                   <option value="river">{t("Fiume")}</option><option value="canal">{t("Canale")}</option><option value="drain">{t("Dreno / fosso")}</option><option value="drainage">{t("Impluvio (DEM)")}</option>
                                 </select>
                                 {waterUnderPivots.get(i) ? <div className="text-[10px] text-amber-700" title={t("Tratto sotto i pivot: da deviare")}>↯ {uM(waterUnderPivots.get(i)!)} · {fmt(Math.round(waterFillM3.get(i) ?? 0))} m³</div> : null}
                               </td>
-                              <td className="whitespace-nowrap" title={waterMonthsTxt(w) || undefined}>
+                              <td className="whitespace-nowrap" title={[waterMonthsTxt(w), w.months_seen?.length ? `${w.months_wet?.length ?? 0}/${w.months_seen.length}` : ""].filter(Boolean).join(" · ") || undefined}>
                                 {!w.regime && (w.source === "osm") ? <span className="opacity-60" title={t("Corso della cartografia topografica non visibile dal satellite: regime e larghezza da verificare")}>{t("non visibile")}</span> : null}
                                 {w.regime ? <span className={"px-1 rounded " + (w.regime === "perennial" ? "bg-sky-100 text-sky-800" : w.regime === "seasonal" ? "bg-amber-100 text-amber-800" : "bg-orange-200 text-orange-900")}>
-                                  {waterRegimeName(w.regime)}{w.months_seen?.length ? ` ${w.months_wet?.length ?? 0}/${w.months_seen.length}` : ""}</span> : "–"}
+                                  {waterRegimeName(w.regime)}</span> : w.source === "osm" ? null : "–"}
                                 {w.bed ? <span className="ml-1 opacity-80">{t("alveo")}</span> : null}
                               </td>
                               <td className="text-right whitespace-nowrap">{w.length_m != null ? uM(w.length_m) : "–"}</td>
                               <td className="text-right whitespace-nowrap" title={w.width_min_m != null ? `${t("min – max")}: ${uM(w.width_min_m, 1)} – ${uM(w.width_max_m ?? 0, 1)}${w.width_wet_m ? ` · ${t("stato bagnato")}: ${uM(w.width_wet_m, 1)}` : ""}` : undefined}>
-                                <input type="number" min={0} step={0.5} className="w-14 text-right bg-transparent border-b border-black/10"
+                                <input type="number" min={0} step={0.5} className="w-11 text-right bg-transparent border-b border-black/10"
                                   value={w.mean_width_m != null ? Math.round((imperial ? w.mean_width_m * 3.28084 : w.mean_width_m) * 10) / 10 : ""}
                                   onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0) setWaterAt(i, { mean_width_m: imperial ? v / 3.28084 : v }); }} />
                                 {w.below_pixel ? <span title={t("larghezza sotto i 10 m del pixel: stima, da verificare")}> *</span> : null}

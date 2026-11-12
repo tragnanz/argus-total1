@@ -32,6 +32,9 @@ try {
   await page.locator('li:has-text("Senza campo · 2 pivot") button[title="Rimuovi"]').click(); await page.waitForTimeout(800);
   const body2 = await page.locator("body").innerText();
   ok(!/Senza campo · 2 pivot/.test(body2) && /Pivot · 3/.test(body2), "✕ sul gruppo senza campo: eliminati, restano i 3 del poligono");
+  await page.locator("[data-save-now]").click();
+  await page.locator("text=/Progetto salvato/").first().waitFor({ timeout: 30000 }).catch(() => {});
+  ok(/Progetto salvato/.test(await page.locator("body").innerText()), "Pulsante Salva: progetto salvato");
   ok(errors.length === 0, `Nessun errore JavaScript${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; }
 await browser.close();
