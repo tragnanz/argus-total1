@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.266";
+const REV = "v0.6.267";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -8397,18 +8397,18 @@ export default function Page() {
     const btn = "px-1.5 py-0.5 rounded border border-black/10 bg-white hover:bg-black/5 disabled:opacity-40";
     return (
       <div className="space-y-0.5" data-water-list={ctx}>
-        <div className="flex items-center gap-1 flex-wrap text-[10px] text-sage-dark py-0.5">
-          <input type="checkbox" className="w-3 h-3" checked={sel.length > 0 && sel.length === ids.length} title={t("Seleziona tutti")}
+        <div className="flex items-center gap-1 flex-nowrap whitespace-nowrap text-[10px] text-sage-dark py-0.5" data-wl-bar={ctx}>
+          <input type="checkbox" className="w-3 h-3 shrink-0" checked={sel.length > 0 && sel.length === ids.length} title={t("Seleziona tutti")}
             onChange={(e) => { const n = new Set(waterCheck); ids.forEach((k) => (e.target.checked ? n.add(k) : n.delete(k))); setWaterChecked(n); }} data-wl-all={ctx} />
-          <span className="mr-1">{sel.length ? t("{n} selezionati", { n: sel.length }) : t("{n} corsi d'acqua", { n: ids.length })}</span>
-          <button className={btn} disabled={!sel.length} onClick={() => waterBulkHide(sel, !sel.every((k) => watercourses[k]?.hidden))}>{t("Mostra/Nascondi")}</button>
-          <button className={btn} disabled={!sel.length} onClick={() => waterBulkFolder(sel)} data-wl-folder>{t("Cartella…")}</button>
-          <button className={btn} disabled={sel.length < 2} onClick={() => waterBulkMerge(sel)} data-wl-merge>{t("Unisci")}</button>
-          <select className={btn + " !py-0"} disabled={!sel.length} value="" onChange={(e) => { if (e.target.value) bulkKind(e.target.value); }} data-wl-bulkkind>
+          <span className="flex-1 min-w-0 truncate">{sel.length ? t("{n} selezionati", { n: sel.length }) : t("{n} corsi d'acqua", { n: ids.length })}</span>
+          <button className={btn + " w-6 text-center"} disabled={!sel.length} title={t("Mostra/Nascondi")} onClick={() => waterBulkHide(sel, !sel.every((k) => watercourses[k]?.hidden))}>◉</button>
+          <button className={btn + " w-6 text-center"} disabled={!sel.length} title={t("Cartella…")} onClick={() => waterBulkFolder(sel)} data-wl-folder>📁</button>
+          <button className={btn + " w-6 text-center"} disabled={sel.length < 2} title={t("Unisci")} onClick={() => waterBulkMerge(sel)} data-wl-merge>⛓</button>
+          <select className={btn + " !py-0 w-[4.6rem] shrink-0"} disabled={!sel.length} value="" title={t("Tipo…")} onChange={(e) => { if (e.target.value) bulkKind(e.target.value); }} data-wl-bulkkind>
             <option value="">{t("Tipo…")}</option>
             {["river", "canal", "drain", "drainage"].map((k) => <option key={k} value={k}>{waterKindName(k)}</option>)}
           </select>
-          <button className={btn + " text-danger"} disabled={!sel.length} onClick={() => waterBulkRemove(sel)} data-wl-del>{t("Elimina")}</button>
+          <button className={btn + " w-6 text-center text-danger"} disabled={!sel.length} title={t("Elimina")} onClick={() => waterBulkRemove(sel)} data-wl-del>🗑</button>
         </div>
         {folders.map((fo) => {
           const its = items.filter((x) => x.w.folder === fo), fids = its.map((x) => x.i), open = waterFolderOpen[fo] ?? false;
