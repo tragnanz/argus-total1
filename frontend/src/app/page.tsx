@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.272";
+const REV = "v0.6.273";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -67,18 +67,18 @@ const PIVOT_WET_W = 40;   // larghezza bagnata del pacchetto irriguo (m), assunz
 // "Analisi" raggruppa satellite + idoneità + macro-aree in un'unica finestra.
 const TABS: { key: string; label: string }[] = [
   { key: "analisi", label: "Analisi" },
-  { key: "fonte", label: "Fonte d'acqua" },
   { key: "rilievo", label: "Rilievo" },
+  { key: "irrigazione", label: "Irrigazione" },
+  { key: "fonte", label: "Fonte d'acqua" },
+  { key: "terra", label: "Terraforming" },
   { key: "drenaggio", label: "Drenaggio" },
   { key: "impianti", label: "Impianti" },
-  { key: "terra", label: "Terraforming" },
-  { key: "accessori", label: "Tubazioni" },
   { key: "pompaggio", label: "Pompaggio" },
-  { key: "solare", label: "Pivot solari" },
+  { key: "accessori", label: "Tubazioni" },
+  { key: "solare", label: "PV" },
   { key: "strade", label: "Strade" },
-  { key: "irrigazione", label: "Irrigazione" },
-  { key: "export", label: "Esporta" },
   { key: "informazioni", label: "Informazioni" },
+  { key: "export", label: "Esporta" },
 ];
 
 // Impostazioni tecniche di un campo (idoneità + layout). Possono essere globali

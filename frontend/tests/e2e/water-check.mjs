@@ -305,8 +305,8 @@ try {
   if (c6) { await page.mouse.click(c6.x, c6.y); await page.waitForTimeout(900); }
   const srcW2 = await page.locator("[data-src-water]").first().innerText().catch(() => "");
   const pm = await page.locator("text=/nel punto cliccato/").first().innerText().catch(() => "");
-  const tab2 = await page.evaluate(() => [...document.querySelectorAll("button[title]")].map((b) => b.getAttribute("title")).filter((x) => ["Analisi", "Fonte d'acqua", "Rilievo"].includes(x)).join(" > "));
-  ok(/Presa sul corso F\d+/.test(srcW2) && /nel punto cliccato/.test(pm) && /^Analisi > Fonte d'acqua > Rilievo/.test(tab2),
+  const tab2 = await page.evaluate(() => [...document.querySelectorAll("button[title]")].map((b) => b.getAttribute("title")).filter((x) => ["Analisi", "Rilievo", "Irrigazione", "Fonte d'acqua", "Terraforming"].includes(x)).join(" > "));
+  ok(/Presa sul corso F\d+/.test(srcW2) && /nel punto cliccato/.test(pm) && /^Analisi > Rilievo > Irrigazione > Fonte d'acqua > Terraforming/.test(tab2),
     `Clic sul fiume come fonte: ${srcW2.replace(/\n/g, " ").slice(0, 90)} · pagine: ${tab2}`);
   ok(/Dreni e fossi \(\d+\)/.test(kml3) && /<Data name="spostabile"><value>0<\/value>/.test(kml3) && /<Data name="spostabile"><value>1<\/value>/.test(kml3), "KMZ Gorgol: cartella dei dreni e campo «spostabile»");
   ok(!errors.length, `Nessun errore JS (${errors.slice(0, 3).join(" | ")})`);

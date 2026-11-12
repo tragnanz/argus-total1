@@ -261,7 +261,7 @@ try {
     } else ok(false, "Tracciato: tubazione non trovata sulla mappa");
   }
   // Pivot solari: scheda a destra, P1 a pannelli → moduli sulla mappa, niente cavo per P1, campo FV nel computo
-  await page.locator('button[title="Pivot solari"]').first().click(); await page.waitForTimeout(800);
+  await page.locator('button[title="PV"]').first().click(); await page.waitForTimeout(800);
   await page.locator('section:not([hidden]) label:has-text("P1") input[type="checkbox"]').first().check(); await page.waitForTimeout(1500);
   const solTxt = await section();
   const mods = await page.locator('path[fill="#1e3a8a"]').count();
