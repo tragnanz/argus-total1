@@ -72,6 +72,18 @@ try {
   await click(page.locator('[data-quick-step="pivot"]'));
   await page.locator("text=/pivot su \\d+ aree/").first().waitFor({ timeout: 180000 }); await page.waitForTimeout(800);
   ok((await nPiv()) === np1, `Di nuovo «spiana»: ${await nPiv()} pivot`);
+  // regole sui fiumi (pagina Impianti): passa sopra → più pivot; fascia di rispetto 150 m → meno pivot
+  const rePiv = async () => { await page.locator('[data-quick-step="pivot"]').click(); await page.locator("text=/pivot su \\d+ aree/").first().waitFor({ timeout: 180000 }); await page.waitForTimeout(800); return nPiv(); };
+  await page.locator('button[title="Impianti"]').first().click(); await page.waitForTimeout(600);
+  ok(await page.locator("[data-water-rules]").isVisible(), `Regole corsi d'acqua: ${(await page.locator("[data-water-rules]").innerText()).split("\n").slice(0, 8).join(" ")}`);
+  await page.locator('[data-water-rule-btn="river-on"]').click(); await page.waitForTimeout(300);
+  const npOver = await rePiv();
+  await page.locator('[data-water-rule-btn="river-off"]').click();
+  await page.locator('[data-water-rule-buf="river"]').fill("150"); await page.waitForTimeout(300);
+  const npBuf = await rePiv();
+  ok(npOver > np1 && npBuf < np1, `Fiumi: evitati ${np1} pivot · passa sopra ${npOver} · fascia 150 m ${npBuf}`);
+  await page.locator('[data-water-rule-buf="river"]').fill("0"); await page.waitForTimeout(300);
+  ok((await rePiv()) === np1, "Di nuovo fiumi evitati senza fascia");
   // 3 · fonte: clic su un fiume
   await click(page.locator('[data-quick-step="fonte"]'));
   await page.waitForTimeout(2500);

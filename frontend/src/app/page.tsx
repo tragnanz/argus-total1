@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.259";
+const REV = "v0.6.260";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -424,6 +424,10 @@ function pointInPolygon(p: number[], rings: number[][][]): boolean {
 }
 // chiave di un pivot (stesso formato di pKey nel componente, ma usabile ovunque)
 const pivKey = (p: { lat: number; lng: number }) => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`;
+// corsi d'acqua esistenti per regola di disegno: fiumi (e impluvi), canali e fossi, laghi/invasi/paludi
+type WaterCat = "river" | "canal" | "basin";
+const waterCat = (k: string): WaterCat => (k === "canal" || k === "drain" ? "canal" : k === "basin" || k === "wetland" ? "basin" : "river");
+const WATER_RULES0: Record<WaterCat, { over: boolean; buf: number }> = { river: { over: false, buf: 0 }, canal: { over: true, buf: 0 }, basin: { over: false, buf: 0 } };
 // problemi del terreno per origine dalle immagini Sentinel-2 (bit nella griglia del backend)
 const GROUND_CLS = [
   { k: "salt", bit: 1, label: "Aree saline", short: "Sale", rgb: [217, 70, 239] },
@@ -1425,7 +1429,10 @@ export default function Page() {
   const [fillEmpty, setFillEmpty] = useState(true);
   const [safetyM, setSafetyM] = useState(20);   // distanza di rispetto fra i bordi dei pivot (m)
   const [pivClearRoad, setPivClearRoad] = useState(0);   // franco pivot da strade/canali segnati (m)
-  const [pivClearWater, setPivClearWater] = useState(0); // franco pivot da acqua/invasi (m)
+  const [pivClearWater, setPivClearWater] = useState(0); // franco pivot dal canale di progetto (m)
+  // regole di disegno per i corsi d'acqua esistenti: i pivot li evitano (con una fascia di rispetto) o ci passano sopra
+  const [waterRules, setWaterRules] = useState<Record<WaterCat, { over: boolean; buf: number }>>(WATER_RULES0);
+  const waterRulesRef = useRef(waterRules); waterRulesRef.current = waterRules;
   const [pivotR, setPivotR] = useState(400);    // raggio pivot (parametro proprio della scheda Pivot)
   const [minPivotPct, setMinPivotPct] = useState(100);   // dimensione minima pivot di riempimento bordi (% del raggio); 100 = disattivato
   const [fillFull, setFillFull] = useState(false);       // riempie i vuoti con pivot interi fuori griglia
@@ -2271,6 +2278,11 @@ export default function Page() {
   const WATER_CODE: Record<string, string> = { river: "F", canal: "C", drain: "D", drainage: "I", basin: "B", wetland: "P" };
   // spostabile: canali e dreni sì (si deviano), fiumi, impluvi e bacini no; si cambia a mano
   const waterMovable = (w: Watercourse) => w.movable ?? (w.kind === "canal" || w.kind === "drain");
+  // il pivot evita il corso? canali e fossi: se non spostabili; fiumi e invasi: secondo la regola (o la scelta sul tratto)
+  const waterAvoided = (w: Watercourse) => {
+    const c = waterCat(w.kind);
+    return c === "canal" ? !waterMovable(w) : !(w.movable ?? waterRulesRef.current[c].over);
+  };
   function waterCodes(list: Watercourse[]): string[] {
     const n: Record<string, number> = {};
     return list.map((w) => { const k = WATER_CODE[w.kind] ?? "W"; n[k] = (n[k] ?? 0) + 1; return `${k}${n[k]}`; });
@@ -3576,15 +3588,55 @@ export default function Page() {
   // Ostacoli lineari preesistenti passati ai solutori: ognuno porta il PROPRIO
   // franco (clear_m), così le strade usano «Da strade» e i canali «Da canali/invasi».
   // I pivot ne evitano il footprint reale (spessore) più il franco.
+  function setWaterRule(c: WaterCat, patch: Partial<{ over: boolean; buf: number }>) {
+    if (c === "canal" && patch.over != null) setCanalPolicy(patch.over ? "spiana" : "lascia");
+    setWaterRules((r) => ({ ...r, [c]: { ...r[c], ...patch } }));
+    if (patch.over != null && c !== "canal") {
+      // la regola vale per tutti i tratti del tipo: si toglie la scelta fatta sul singolo tratto
+      setWatercourses((ws) => { const arr = ws.map((w) => (waterCat(w.kind) === c && w.movable != null ? { ...w, movable: undefined } : w)); renderWater(arr); return arr; });
+    }
+  }
+  function renderWaterRules() {
+    const rows: { c: WaterCat; label: string; off: string; on: string }[] = [
+      { c: "river", label: t("Fiumi e impluvi"), off: t("Evita"), on: t("Passa sopra") },
+      { c: "canal", label: t("Canali e fossi"), off: t("Evita"), on: t("Spiana") },
+      { c: "basin", label: t("Laghi, invasi e paludi"), off: t("Evita"), on: t("Passa sopra") },
+    ];
+    const n = (c: WaterCat) => watercourses.filter((w) => !w.hidden && waterCat(w.kind) === c).length;
+    return (
+      <div className="bg-panel rounded-lg p-2 mt-2" data-water-rules>
+        <div className="text-[11px] font-semibold text-sage-dark mb-1">{t("Corsi d'acqua e invasi esistenti")}</div>
+        <div className="grid grid-cols-[1fr_auto_4.2rem] gap-x-2 gap-y-1 items-center text-[11px]">
+          <span /><span className="text-sage-dark text-[10px]">{t("Pivot")}</span><span className="text-sage-dark text-[10px] leading-tight">{t("Fascia di rispetto (m)")}</span>
+          {rows.map((r) => {
+            const R = waterRules[r.c];
+            return (
+              <Fragment key={r.c}>
+                <span data-water-rule={r.c}>{r.label} <span className="opacity-60">({n(r.c)})</span></span>
+                <span className="inline-flex rounded-md overflow-hidden border border-black/10">
+                  <button className={"px-2 py-0.5 " + (!R.over ? "bg-brand text-white" : "bg-white")} onClick={() => setWaterRule(r.c, { over: false })} data-water-rule-btn={`${r.c}-off`}>{r.off}</button>
+                  <button className={"px-2 py-0.5 " + (R.over ? "bg-brand text-white" : "bg-white")} onClick={() => setWaterRule(r.c, { over: true })} data-water-rule-btn={`${r.c}-on`}>{r.on}</button>
+                </span>
+                <input type="number" min={0} max={500} step={5} value={R.buf} disabled={R.over} data-water-rule-buf={r.c}
+                  onChange={(e) => setWaterRule(r.c, { buf: Math.max(0, Number(e.target.value) || 0) })} className="field-input px-1.5 py-1 text-sm disabled:opacity-40" />
+              </Fragment>
+            );
+          })}
+        </div>
+        <div className="text-[10px] text-sage-dark mt-1 leading-snug">{t("Evita: i pivot restano fuori dall'alveo più la fascia di rispetto. Passa sopra: i pivot possono coprirli (attraversamento delle torri). Spiana: i canali sotto i pivot si deviano e si calcola la terra da spostare (pagina Terraforming). Vale alla prossima posa dei pivot.")}</div>
+      </div>
+    );
+  }
   function obstacleLines(wcList: WaterL[] = watercourses) {
     // Corsi d'acqua rilevati (fiumi/alvei da DEM, canali esistenti, invasi/paludi):
     // l'alveo si evita con la SUA larghezza reale (mean_width_m) più il franco «Da canali/invasi».
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     // i corsi SPOSTABILI (canali, dreni) non vincolano i pivot: si deviano dopo
-    const waterItems = wcList.filter((w) => !w.hidden && !waterMovable(w)).map((w: any) => (
+    const R = waterRulesRef.current;
+    const waterItems = wcList.filter((w) => !w.hidden && waterAvoided(w)).map((w: any) => (
       w.geojson.type === "LineString"
-        ? { geojson: { type: "LineString", coordinates: w.geojson.coordinates }, width_m: (w.mean_width_m && w.mean_width_m > 0 ? w.mean_width_m : canalWidth), clear_m: pivClearWater }
-        : { geojson: { type: "Polygon", coordinates: w.geojson.coordinates }, width_m: 0, clear_m: pivClearWater }
+        ? { geojson: { type: "LineString", coordinates: w.geojson.coordinates }, width_m: (w.mean_width_m && w.mean_width_m > 0 ? w.mean_width_m : canalWidth), clear_m: R[waterCat(w.kind)].buf }
+        : { geojson: { type: "Polygon", coordinates: w.geojson.coordinates }, width_m: 0, clear_m: R[waterCat(w.kind)].buf }
     ));
     const items = [
       ...roads.filter((r) => r.kind !== "service" && !r.hidden).map((r) => ({ geojson: { type: "LineString", coordinates: r.coords }, width_m: r.width_m, clear_m: pivClearRoad })),
@@ -3603,7 +3655,7 @@ export default function Page() {
         safety_m: safetyM, clear_road_m: pivClearRoad, clear_water_m: pivClearWater,
         per_side: perSide, conn_max_permille: 5, fill: fillEmpty,
         date: date || null, exclude_water: excludeWater,
-        avoid: watercourses.some((w) => !waterMovable(w)) ? watercourses.filter((w) => !waterMovable(w)).map((w) => ({ kind: w.kind, geojson: w.geojson })) : null,
+        avoid: watercourses.some((w) => !w.hidden && waterAvoided(w)) ? watercourses.filter((w) => !w.hidden && waterAvoided(w)).map((w) => ({ kind: w.kind, geojson: w.geojson })) : null,
         roads: obstacleLines(),
       });
       setGuided(g);
@@ -3752,6 +3804,7 @@ export default function Page() {
   const [canalPolicy, setCanalPolicyS] = useState<"spiana" | "lascia">("spiana");
   function setCanalPolicy(v: "spiana" | "lascia") {
     setCanalPolicyS(v);
+    setWaterRules((r) => ({ ...r, canal: { ...r.canal, over: v === "spiana" } }));
     setWaterKindMovable("canal", v === "spiana"); setWaterKindMovable("drain", v === "spiana");
     const what = v === "spiana" ? t("si spianano dove passano i pivot") : t("si lasciano, i pivot li evitano");
     setMsg(t("Canali e fossi esistenti: {s}.", { s: what }) + (pivots.length ? " " + t("Clicca «Pivot» per ridisporre i pivot con questa scelta.") : ""));
@@ -3795,9 +3848,9 @@ export default function Page() {
       const netHa = accP.reduce((a, x) => a + pvAreaM2(x) / 10000, 0);
       setGuided({ geojson: fcFromModel(accP, pivotLines), meta: { n_pivots: accP.length, radius_m: pivotR, net_ha: Math.round(netHa * 10) / 10, safety_m: safetyM } });
       refreshUsage();
-      const nFix = wc.filter((w) => !w.hidden && !waterMovable(w) && w.kind !== "drainage").length;
+      const nFix = wc.filter((w) => !w.hidden && waterAvoided(w) && w.kind !== "drainage").length;
       setMsg(t("{n} pivot su {a} aree, {ha} irrigati ✓ Ritocchi nella pagina Impianti; poi scegli la fonte idrica.", { n: accP.length, a: todo.length, ha: uHa(Math.round(netHa)) })
-        + (nFix ? " " + t("Evitati {n} fiumi cartografati; canali e dreni restano spostabili.", { n: nFix }) : ""));
+        + (nFix ? " " + t("Evitati {n} corsi d'acqua e invasi cartografati (regole nella pagina Impianti).", { n: nFix }) : ""));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   // 3 · fonte: corsi d'acqua cartografati (se mancano) e clic sul fiume o sul canale
@@ -8609,6 +8662,9 @@ export default function Page() {
       setTermCfg({ h: num(c2.h, 2.5), dig: num(c2.dig, 1), sens: num(c2.sens, 3), trackMax: num(c2.trackMax, 10), trackW: num(c2.trackW, 4), buf: num(c2.buf, 0) });
       setTermMeta(tr.meta ?? null); setTrackRes(tr.track ?? null);
       setGround(Array.isArray(tr.ground) ? tr.ground.filter((L) => L && L.b64 && L.w && L.h) : []); }
+    { const wr = (st as { water_rules?: Partial<Record<WaterCat, { over?: boolean; buf?: number }>> }).water_rules ?? {};
+      const R = Object.fromEntries((Object.keys(WATER_RULES0) as WaterCat[]).map((k) => [k, { over: typeof wr[k]?.over === "boolean" ? !!wr[k]!.over : WATER_RULES0[k].over, buf: num(wr[k]?.buf, 0) }])) as Record<WaterCat, { over: boolean; buf: number }>;
+      setWaterRules(R); setCanalPolicyS(R.canal.over ? "spiana" : "lascia"); }
     const sy = (st as { systems?: Record<string, SysDesign> }).systems;
     setSysDesigns(sy && typeof sy === "object" ? sy : {});
     projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
@@ -8618,7 +8674,7 @@ export default function Page() {
   }, [projectId, projects]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId) return;
-    const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, fonte: fonteState(), terra: { mounds: mounds.map((m) => [m.lon, m.lat, m.d, m.man ? 1 : 0]), cfg: termCfg, meta: termMeta, track: trackRes, ground: ground.map(({ flags: _f, ...L }) => L) }, terrain: { dem: demModel, smooth: demSmooth },
+    const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, water_rules: waterRules, fonte: fonteState(), terra: { mounds: mounds.map((m) => [m.lon, m.lat, m.d, m.man ? 1 : 0]), cfg: termCfg, meta: termMeta, track: trackRes, ground: ground.map(({ flags: _f, ...L }) => L) }, terrain: { dem: demModel, smooth: demSmooth },
       crops: { base: farmCrops, fields: fieldCrops }, solar_pv: solarCfg, canal_design: { lin: canalLin, q: canalQ, fb: canalFb }, cu_model: cuModel, fert, ndvi, drain: { on: drainOn, c: drainC, s: drainS, b: drainB, prof: drainProf }, soil_sat: soilSat, irr_prog: { root: rootDepth, p: rawP, v100 },
       systems: Object.fromEntries(Object.entries(sysDesigns).filter(([k]) => k.startsWith("a"))) };
     const js = JSON.stringify(payload);
@@ -8631,7 +8687,7 @@ export default function Page() {
     }, 900);
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, pivotBrand, mounds, termCfg, termMeta, trackRes, ground, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
+  }, [projectId, pivotBrand, waterRules, mounds, termCfg, termMeta, trackRes, ground, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
     resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, fert, ndvi, drainOn, drainC, drainS, drainB, drainProf, soilSat, rootDepth, rawP, v100, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId || (!pivots.length && !fields.length)) return;
@@ -11692,12 +11748,13 @@ export default function Page() {
                     onChange={(e) => setPivClearRoad(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Da canali/invasi")}>{t("Da canali/invasi")}</div>
+                  <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Dal canale di progetto")}>{t("Dal canale di progetto")}</div>
                   <input type="number" min={0} max={500} step={5} value={pivClearWater}
                     onChange={(e) => setPivClearWater(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
                 </div>
               </div>
             </div>
+            {renderWaterRules()}
 
             {renderMeshParams()}
 
