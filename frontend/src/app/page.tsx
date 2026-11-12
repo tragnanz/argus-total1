@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.264";
+const REV = "v0.6.265";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -2026,12 +2026,29 @@ export default function Page() {
     mapApi.current?.setExcluded(fcs as GeoJSONFC[]);
   }, [fields]);
   function removePivotsOfField(fid: number) {
-    const mp = pivots.filter((p) => p.field !== fid);
-    const ml = pivotLines.filter((l) => l.field !== fid);
+    const mp = pivots.filter((p) => (p.field ?? -1) !== fid);          // -1 = pivot senza campo
+    const ml = pivotLines.filter((l) => (l.field ?? -1) !== fid);
     setPivots(mp); setPivotLines(ml); setPivotSel({ mode: "none", idx: -1 });
     setGuided(mp.length ? { geojson: fcFromModel(mp, ml), meta: { n_pivots: mp.length, radius_m: pivotR, net_ha: Math.round(mp.reduce((s, x) => s + pvAreaM2(x) / 10000, 0) * 10) / 10, safety_m: safetyM } } : null);
     setFields((fs) => fs.map((f) => f.id === fid ? { ...f, lay: null, layGeo: null } : f));
   }
+  // pivot e tubazioni senza campo (o con un campo che non c'è più): vanno al campo che contiene il centro
+  // (o il primo punto della linea); se più campi lo contengono, al più piccolo
+  useEffect(() => {
+    if (!fields.length) return;
+    const ids = new Set(fields.map((f) => f.id));
+    const orphanP = pivots.some((p) => p.field == null || !ids.has(p.field));
+    const orphanL = pivotLines.some((l) => l.field == null || !ids.has(l.field));
+    if (!orphanP && !orphanL) return;
+    const cand = fields.filter((f) => f.geom?.coordinates?.length).map((f) => ({ id: f.id, rings: f.geom.coordinates as number[][][], a: ringAreaHa(f.geom.coordinates as number[][][]) }))
+      .sort((x, y) => x.a - y.a);
+    const owner = (lon: number, lat: number) => cand.find((c) => pointInPolygon([lon, lat], c.rings))?.id;
+    let changed = false;
+    const np = pivots.map((p) => { if (p.field != null && ids.has(p.field)) return p; const o = owner(p.lng, p.lat); if (o == null) return p; changed = true; return { ...p, field: o }; });
+    const nl = pivotLines.map((l) => { if (l.field != null && ids.has(l.field)) return l; const q = l.coords?.[0]; const o = q ? owner(q[0], q[1]) : undefined; if (o == null) return l; changed = true; return { ...l, field: o }; });
+    if (changed) { setPivots(np); setPivotLines(nl); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pivots, pivotLines, fields]);
   // Mostra/Nascondi un intero tipo di livello (occhio sulla cartella).
   function setAllCanalsHidden(h: boolean) { setCanals((cs) => { const arr = cs.map((c) => ({ ...c, hidden: h })); renderCanals(arr); return arr; }); }
   function setAllWaterHidden(h: boolean) { setWatercourses((ws) => { const arr = ws.map((w) => ({ ...w, hidden: h })); renderWater(arr); return arr; }); }
