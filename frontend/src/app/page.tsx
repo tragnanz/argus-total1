@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.270";
+const REV = "v0.6.271";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -11019,8 +11019,16 @@ export default function Page() {
         <div className="pointer-events-auto w-full max-h-[calc(52vh/var(--ui-scale))] shrink-0 widget flex flex-col overflow-hidden">
           <div className="flex items-center justify-between px-3 pt-2 shrink-0">
             <span className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Progetto")}</span>
-            <button onClick={() => setLeftMin(true)} title={t("Riduci a icona")}
-              className="text-sage-dark hover:text-brand p-1 rounded hover:bg-black/5"><IcoMinimize /></button>
+            <span className="flex items-center gap-1.5">
+              {projectId && (
+                <button className="btn-primary text-xs px-3 py-1 disabled:opacity-50" disabled={manualSaving} data-save-now
+                  title={t("Salva adesso il progetto")}
+                  onClick={async () => { setManualSaving(true); try { if (await saveAll(false)) setMsg(t("Progetto salvato ✓")); } finally { setManualSaving(false); } }}>
+                  💾 {manualSaving ? t("Salvo…") : t("Salva")}</button>
+              )}
+              <button onClick={() => setLeftMin(true)} title={t("Riduci a icona")}
+                className="text-sage-dark hover:text-brand p-1 rounded hover:bg-black/5"><IcoMinimize /></button>
+            </span>
           </div>
           <div className="overflow-auto scroll-soft p-4 pt-2 space-y-4">
           <section>
@@ -11119,10 +11127,6 @@ export default function Page() {
               <div className="mt-3 flex items-center gap-2 text-[11px] text-sage-dark">
                 <span className={"inline-block w-2 h-2 rounded-full " + (autosave === "saving" ? "bg-amber animate-pulse" : autosave === "error" ? "bg-danger" : "bg-brand")} />
                 <span className="flex-1">{autosave === "saving" ? t("Salvataggio automatico…") : autosave === "error" ? t("Salvataggio non riuscito (riprovo alla prossima modifica)") : t("Salvataggio automatico attivo — le modifiche vengono salvate da sole")}</span>
-                <button className="btn-primary text-xs px-3 py-1 shrink-0 disabled:opacity-50" disabled={manualSaving} data-save-now
-                  title={t("Salva adesso il progetto")}
-                  onClick={async () => { setManualSaving(true); try { if (await saveAll(false)) setMsg(t("Progetto salvato ✓")); } finally { setManualSaving(false); } }}>
-                  {manualSaving ? t("Salvo…") : t("Salva")}</button>
               </div>
             )}
             <div className="mt-3" data-mapview>
