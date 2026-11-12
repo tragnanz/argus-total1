@@ -444,7 +444,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         fill = _fill_gaps(
             centers=centers, R=R, min_r=min_pct * R, gap=gap, overhang=overhang, fill_full=fill_full,
             ring_rot=ring_rot, path_rot=path_rot, bbox_rot=(rminx, rmaxx, rminy, rmaxy), unrot=unrot,
-            g=g, slope_max=slope_max, obs_dist=(_obs_dist if dist_obs is not None else None), steep_ok=_steep_ok, steep_grid=_steep_grid, steep_tol=piv_slope_tol, r_step=max(1.0, float(params.get("radius_step_m", 6.0))),
+            g=g, slope_max=slope_max, obs_dist=(_obs_dist if dist_obs is not None else None), steep_ok=_steep_ok, steep_grid=_steep_grid, steep_tol=piv_slope_tol, r_step=max(0.1, float(params.get("radius_step_m", 0.1))),
             suit_ok=(lambda xu, yu: (lambda sc: sc == sc and sc >= min_suit)(sample_grid(suit[0], suit[1], xu, yu)))
             if (only_suitable and suit is not None) else None)
         if free:
@@ -760,11 +760,12 @@ def _fill_gaps(*, centers, R, min_r, gap, overhang, fill_full, ring_rot, path_ro
     for (cx, cy, cr, _) in piv:
         np.minimum(dpv, np.hypot(qx - cx, qy - cy) - cr - gap, out=dpv)
 
-    # i raggi vanno a passi di r_step (6 m) sotto il raggio pieno: R, R-6, R-12, … fino al minimo
+    # i raggi vanno a passi di r_step (0,1 m: raggio libero al decimetro) sotto il raggio pieno: R, R-6, R-12, … fino al minimo
     def rq(r):
         return R - r_step * math.ceil((R - r) / r_step - 1e-9)
 
     min_r = R - r_step * math.floor((R - min_r) / r_step + 1e-9)
+    lv_step = max(r_step, 6.0)                              # livelli di posa (ordine dei raggi), 6 m
 
     def grow(k, r_lo, cap_k):
         """Raggio più grande (≤ cap_k, a passi di r_step) che passa il controllo scarpate, almeno r_lo."""
@@ -773,15 +774,17 @@ def _fill_gaps(*, centers, R, min_r, gap, overhang, fill_full, ring_rot, path_ro
         while r > r_lo + 1e-6:
             if steep_ok(x_, y_, r):
                 return r
-            r = max(r_lo, r - r_step)
+            r = max(r_lo, rq(r - lv_step))
         return r_lo
 
     def place_levels():
         nonlocal dpv
         top = R if fill_full else rq(0.9 * R)
         levels = [top]
-        while levels[-1] - r_step > min_r - 1e-6:
-            levels.append(levels[-1] - r_step)
+        while levels[-1] - lv_step > min_r - 1e-6:
+            levels.append(rq(levels[-1] - lv_step))
+        if levels[-1] > min_r + 1e-6:
+            levels.append(min_r)
         cap = np.minimum(cap0, dpv + 1.0)
         for lv in levels:
             alive = (cap >= lv - 1e-6) & steep_mask(lv)
