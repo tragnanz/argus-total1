@@ -188,6 +188,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     # evitare. Costruisco la distanza (m) dall'ostacolo più vicino sulla griglia DEM.
     obs_roads = params.get("roads")
     dist_obs = None
+    obs_mask = None
     if obs_roads:
         try:
             from rasterio.features import rasterize as _rz
@@ -217,6 +218,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
                 om |= rm
             if om.any():
                 dist_obs = _edt(~om) * res0
+                obs_mask = om
         except Exception:  # noqa: BLE001
             dist_obs = None
 
@@ -646,6 +648,15 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     # pivot. Restituite come poligoni (kind "excluded") da tratteggiare in mappa.
     excl_feats, excluded_ha = _excluded_slope(g, ring_utm, slope_max, to_wgs)
     features.extend(excl_feats)
+    # ...e le fasce dei corsi d'acqua da evitare (spessore + fascia di rispetto): lì un pivot non passa
+    excluded_steep_ha = 0.0
+    if 0 < piv_slope_max < slope_max:
+        # scarpate: pendenza oltre il limite sotto il pivot (più basso di quello del centro)
+        sl_ = np.nan_to_num(g["slope"], nan=0.0)
+        st_feats, excluded_steep_ha = _excluded_mask(g, ring_utm, (sl_ > piv_slope_max) & (sl_ <= slope_max), to_wgs, "steep")
+        features.extend(st_feats)
+    water_feats, excluded_water_ha = _excluded_mask(g, ring_utm, obs_mask, to_wgs, "water")
+    features.extend(water_feats)
 
     minx, miny, maxx, maxy = g["minx"], g["miny"], g["maxx"], g["maxy"]
     corners = [(minx, miny), (maxx, miny), (maxx, maxy), (minx, maxy)]
@@ -664,7 +675,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         "n_pivots": n + len(fill), "n_pivots_full": n, "n_pivots_fill": len(fill), "min_pivot_pct": round(min_pct * 100), "fill_full": fill_full,
         "grid_shift_m": [round(grid_shift[0], 1), round(grid_shift[1], 1)], "n_pumps": n_pumps,
         "net_ha": net_ha, "field_ha": field_ha, "coverage_pct": coverage,
-        "excluded_slope_ha": excluded_ha,
+        "excluded_slope_ha": excluded_ha, "excluded_water_ha": excluded_water_ha, "excluded_steep_ha": excluded_steep_ha,
         "gross_block_ha": gross_block_ha, "packing_pct": packing_pct,
         "pivot_ha": round(pivot_ha, 1),
         "pipe_total_m": pipe_total, "pipe_max_m": pipe_max,
@@ -699,13 +710,27 @@ def _excluded_slope(g, ring_utm, slope_max, to_wgs, min_px: int = 4):
         from scipy import ndimage
     except Exception:  # noqa: BLE001  (dipendenze opzionali: niente tratteggio)
         return [], 0.0
+    slope = np.nan_to_num(g["slope"], nan=0.0)
+    return _excluded_mask(g, ring_utm, slope > slope_max, to_wgs, "slope", min_px)
+
+
+def _excluded_mask(g, ring_utm, mask, to_wgs, reason: str, min_px: int = 4):
+    """Poligoni (WGS84, kind "excluded") dei pixel di `mask` dentro il campo e loro superficie in ha."""
+    from matplotlib.path import Path
+    if mask is None:
+        return [], 0.0
+    try:
+        from rasterio.features import shapes
+        from rasterio.transform import Affine
+        from scipy import ndimage
+    except Exception:  # noqa: BLE001
+        return [], 0.0
     hp, wp, res = g["hp"], g["wp"], g["res"]
     ys, xs = np.mgrid[0:hp, 0:wp]
     X = g["minx"] + (xs + 0.5) * res
     Y = g["top"] - (ys + 0.5) * res
     inside = Path(ring_utm).contains_points(np.c_[X.ravel(), Y.ravel()]).reshape(hp, wp)
-    slope = np.nan_to_num(g["slope"], nan=0.0)
-    bad = inside & (slope > slope_max)
+    bad = inside & mask
     excluded_ha = round(float(bad.sum()) * res * res / 10000.0, 1)
     if not bad.any():
         return [], 0.0
@@ -718,7 +743,7 @@ def _excluded_slope(g, ring_utm, slope_max, to_wgs, min_px: int = 4):
         if val != 1:
             continue
         rings = [[list(to_wgs.transform(x, y)) for x, y in r] for r in geom["coordinates"]]
-        feats.append({"type": "Feature", "properties": {"kind": "excluded", "reason": "slope"},
+        feats.append({"type": "Feature", "properties": {"kind": "excluded", "reason": reason},
                       "geometry": {"type": "Polygon", "coordinates": rings}})
     return feats, excluded_ha
 

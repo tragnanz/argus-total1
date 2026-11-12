@@ -839,7 +839,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         for (const fc of fcs) {
           g.addLayer(L.geoJSON(fc as never, {
             renderer: rnd, interactive: false, pane: "argusExcluded",
-            style: () => ({ color: "#d92d20", weight: 0.8, opacity: 0.55, fillColor: "url(#argus-hatch-red)", fillOpacity: 1 }),
+            style: () => ({ color: "#d92d20", weight: 1.2, opacity: 0.85, dashArray: "5 4", fillColor: "url(#argus-hatch-red)", fillOpacity: 1 }),
           } as L.GeoJSONOptions));
         }
         // Il contenitore SVG del renderer esiste solo dopo il primo poligono:
@@ -853,10 +853,10 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           pat.setAttribute("id", "argus-hatch-red"); pat.setAttribute("patternUnits", "userSpaceOnUse");
           pat.setAttribute("width", "7"); pat.setAttribute("height", "7"); pat.setAttribute("patternTransform", "rotate(45)");
           const bg = document.createElementNS(NS, "rect");
-          bg.setAttribute("width", "7"); bg.setAttribute("height", "7"); bg.setAttribute("fill", "#d92d20"); bg.setAttribute("fill-opacity", "0.08");
+          bg.setAttribute("width", "7"); bg.setAttribute("height", "7"); bg.setAttribute("fill", "#d92d20"); bg.setAttribute("fill-opacity", "0.14");
           const ln = document.createElementNS(NS, "line");
           ln.setAttribute("x1", "0"); ln.setAttribute("y1", "0"); ln.setAttribute("x2", "0"); ln.setAttribute("y2", "7");
-          ln.setAttribute("stroke", "#d92d20"); ln.setAttribute("stroke-width", "1.6"); ln.setAttribute("stroke-opacity", "0.5");
+          ln.setAttribute("stroke", "#d92d20"); ln.setAttribute("stroke-width", "1.8"); ln.setAttribute("stroke-opacity", "0.75");
           pat.appendChild(bg); pat.appendChild(ln); defs.appendChild(pat); svg.insertBefore(defs, svg.firstChild);
         }
       },

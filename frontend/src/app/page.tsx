@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.274";
+const REV = "v0.6.275";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -2038,15 +2038,6 @@ export default function Page() {
     const first = pivotLines.find((l) => l.kind === "pipe" && (l.field ?? -1) === fid);
     if (first?.coords?.length) zoomToCoords(first.coords);
   }
-  // Zone escluse per pendenza (tratteggio rosso) dei campi visibili con layout.
-  useEffect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const fcs = fields.filter((f) => !f.hidden && f.layGeo).map((f) => ({ type: "FeatureCollection" as const,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      features: ((f.layGeo as any).features || []).filter((ft: any) => ft?.properties?.kind === "excluded") }))
-      .filter((fc) => fc.features.length);
-    mapApi.current?.setExcluded(fcs as GeoJSONFC[]);
-  }, [fields]);
   function removePivotsOfField(fid: number) {
     const mp = pivots.filter((p) => (p.field ?? -1) !== fid);          // -1 = pivot senza campo
     const ml = pivotLines.filter((l) => (l.field ?? -1) !== fid);
@@ -4207,6 +4198,45 @@ export default function Page() {
     });
     mapApi.current?.showGround(imgs);
   }, [ground, groundHide, tab]);
+  // Zone dove i pivot non possono stare (tratteggio rosso): pendenza, scarpate e fasce dei corsi d'acqua
+  // dal layout dei campi visibili, più ristagni e specchi d'acqua rilevati nel Terraforming.
+  const wetZones = useMemo(() => {
+    const ready = ground.filter((L) => L.flags);
+    const vis = fields.filter((f) => !f.hidden && f.geom?.coordinates?.length).map((f) => f.geom.coordinates as number[][][]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const feats: any[] = []; let m2 = 0;
+    if (!ready.length || !vis.length) return { feats, ha: 0 };
+    for (const L of ready) {
+      const [w0, , e0, n0] = L.bbox, dw = (e0 - w0) / L.w, dh = (L.bbox[3] - L.bbox[1]) / L.h;
+      const kx = 111320 * Math.cos(((L.bbox[1] + n0) / 2) * Math.PI / 180), cellM2 = dw * kx * dh * 110540;
+      let prev = new Map<string, number[][]>();
+      for (let r = 0; r < L.h; r++) {
+        const cur = new Map<string, number[][]>();
+        let c = 0;
+        while (c < L.w) {
+          const ok = (cc: number) => { const f = L.flags![r * L.w + cc]; if (!(f & 10)) return false; const lon = w0 + (cc + 0.5) * dw, lat = n0 - (r + 0.5) * dh; return vis.some((rg) => pointInPolygon([lon, lat], rg)); };
+          if (!ok(c)) { c++; continue; }
+          let c1 = c; while (c1 + 1 < L.w && ok(c1 + 1)) c1++;
+          m2 += (c1 - c + 1) * cellM2;
+          const k = `${c}:${c1}`, top = n0 - r * dh, bot = n0 - (r + 1) * dh, lw = w0 + c * dw, le = w0 + (c1 + 1) * dw;
+          const pr = prev.get(k);
+          if (pr) { pr[2][1] = bot; pr[3][1] = bot; cur.set(k, pr); }
+          else { const ring = [[lw, top], [le, top], [le, bot], [lw, bot], [lw, top]]; feats.push({ type: "Feature", properties: { kind: "excluded", reason: "wet" }, geometry: { type: "Polygon", coordinates: [ring] } }); cur.set(k, ring); }
+          c = c1 + 1;
+        }
+        prev = cur;
+      }
+    }
+    return { feats, ha: m2 / 10000 };
+  }, [ground, fields]);
+  useEffect(() => {
+    const fcs = fields.filter((f) => !f.hidden && f.layGeo).map((f) => ({ type: "FeatureCollection" as const,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      features: ((f.layGeo as any).features || []).filter((ft: any) => ft?.properties?.kind === "excluded") }))
+      .filter((fc) => fc.features.length);
+    if (wetZones.feats.length) fcs.push({ type: "FeatureCollection" as const, features: wetZones.feats });
+    mapApi.current?.setExcluded(fcs as GeoJSONFC[]);
+  }, [fields, wetZones]);
   // termitai sulla mappa: nella pagina Terraforming (o se ce ne sono) — rossi quelli sotto un pivot
   useEffect(() => {
     if (!mounds.length && tab !== "terra") { mapApi.current?.showMounds(null); return; }
@@ -12152,14 +12182,25 @@ export default function Page() {
                   {t("Rete totale")}: <b>{uKm(agg.pipe / 1000, 1)}</b>
                 </div>
                 {(() => {
-                  const lf = fields.filter((f) => f.lay && Number((f.lay as { excluded_slope_ha?: number }).excluded_slope_ha) > 0);
-                  if (!lf.length) return null;
-                  const ha = lf.reduce((s, f) => s + Number((f.lay as { excluded_slope_ha?: number }).excluded_slope_ha), 0);
-                  const pm = Math.round(Number(lf[0].lay!.slope_max_pct) * 10);
+                  type Ex = { excluded_slope_ha?: number; excluded_steep_ha?: number; excluded_water_ha?: number };
+                  const lf = fields.filter((f) => !f.hidden && f.lay);
+                  const sum = (k: keyof Ex) => lf.reduce((s, f) => s + (Number((f.lay as Ex)[k]) || 0), 0);
+                  const rows: [string, number][] = [];
+                  if (lf.length) {
+                    rows.push([t("Pendenza oltre {p}% al centro del pivot", { p: fmt(Number(lf[0].lay!.slope_max_pct), { maximumFractionDigits: 1 }) }), sum("excluded_slope_ha")]);
+                    rows.push([t("Scarpate oltre {p}% sotto il pivot", { p: fmt(pivSlope.max, { maximumFractionDigits: 1 }) }), sum("excluded_steep_ha")]);
+                    rows.push([t("Corsi d'acqua da evitare e fasce di rispetto"), sum("excluded_water_ha")]);
+                  }
+                  rows.push([t("Ristagni e specchi d'acqua (Terraforming)"), wetZones.ha]);
+                  const shown = rows.filter((r) => r[1] > 0.05);
+                  if (!shown.length) return null;
                   return (
-                    <div className="text-xs rounded-lg p-2 leading-relaxed flex items-center gap-2 border border-danger/30 text-danger"
+                    <div data-excluded-box className="text-xs rounded-lg p-2 leading-relaxed border border-danger/40 border-dashed text-danger"
                       style={{ background: "repeating-linear-gradient(45deg, rgba(217,45,32,.10) 0 2px, transparent 2px 6px)" }}>
-                      <span>{t("Zone escluse per pendenza oltre {p}‰: {a}", { p: pm, a: uHa(ha) })}</span>
+                      <div className="font-semibold">{t("Zone dove i pivot non possono stare (tratteggio rosso)")}</div>
+                      {shown.map(([l, ha]) => (
+                        <div key={l} className="flex justify-between gap-2"><span>{l}</span><b className="whitespace-nowrap">{uHa(ha, ha < 10 ? 1 : 0)}</b></div>
+                      ))}
                     </div>
                   );
                 })()}

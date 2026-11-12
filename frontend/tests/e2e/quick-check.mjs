@@ -82,6 +82,11 @@ try {
   await page.locator('[data-water-rule-buf="river"]').fill("150"); await page.waitForTimeout(300);
   const npBuf = await rePiv();
   ok(npOver > np1 && npBuf < np1, `Fiumi: evitati ${np1} pivot · passa sopra ${npOver} · fascia 150 m ${npBuf}`);
+  // con la fascia di 150 m: zone escluse tratteggiate in rosso, con la superficie per motivo
+  const exBox = (await page.locator("[data-excluded-box]").innerText().catch(() => "")).replace(/\n/g, " ");
+  const exN = await page.locator(".leaflet-argusExcluded-pane path").count();
+  ok(/Corsi d'acqua da evitare/.test(exBox) && exN > 0, `Zone escluse: ${exBox} · ${exN} poligoni tratteggiati`);
+  await page.screenshot({ path: path.join(SH, "q_escluse.png") });
   await page.locator('[data-water-rule-buf="river"]').fill("0"); await page.waitForTimeout(300);
   ok((await rePiv()) === np1, "Di nuovo fiumi evitati senza fascia");
   // 3 · fonte: clic su un fiume

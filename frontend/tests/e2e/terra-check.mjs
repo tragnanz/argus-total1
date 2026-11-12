@@ -53,6 +53,9 @@ try {
   await page.locator('[data-terra-origin="wood"] button').click(); await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(SH, "t1c_senza_alberi.png") });
   await page.locator('[data-terra-origin="wood"] button').click(); await page.waitForTimeout(400);
+  // ristagni e specchi d'acqua: tratteggio rosso dove i pivot non possono stare
+  const exN = await page.locator(".leaflet-argusExcluded-pane path").count();
+  console.log(`  zone escluse tratteggiate: ${exN} · ${(await txt("[data-excluded-box]")).replace(/\n/g, " ")}`);
   // a mano: aggiungi e togli
   await page.locator("[data-terra-add]").click(); await page.waitForTimeout(300);
   await page.mouse.click(900, 500); await page.waitForTimeout(500);
