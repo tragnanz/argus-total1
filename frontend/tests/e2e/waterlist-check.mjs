@@ -31,6 +31,9 @@ try {
   await page.locator(`select:has(option:text-is("${CN}"))`).selectOption({ label: CN }); await page.waitForTimeout(1200);
   await page.locator(`select:has(option:text-is("${PN}"))`).selectOption({ label: PN }); await page.waitForTimeout(4000);
   await page.locator('li:has-text("Area 1") button').filter({ hasText: "Area 1" }).first().click().catch(() => {});
+  // regola «Evita» per i canali PRIMA dell'importazione: i corsi importati dopo la devono seguire
+  await page.locator('button[title="Impianti"]').first().click(); await page.waitForTimeout(600);
+  await page.locator('[data-water-rule-btn="canal-off"]').click(); await page.waitForTimeout(300);
   await page.locator('button[title="Fonte d\'acqua"]').first().click(); await page.waitForTimeout(600);
   await page.locator("[data-water-topo]").click();
   await page.locator("text=/Importazione topografica in \\d+ s/").first().waitFor({ timeout: 60000 });
@@ -41,8 +44,17 @@ try {
   ok((await rows()) === nPre - 1, `Eliminato in anteprima dal pannello a destra: ${nPre} → ${await rows()}`);
   await page.locator('button[title="Impianti"]').first().click(); await page.waitForTimeout(600);
   await page.locator('button:has-text("Inserisci su «")').first().click();
-  await page.locator("text=/Impianti inseriti|pivot/i").first().waitFor({ timeout: 180000 }); await page.waitForTimeout(1500);
+  await page.locator("text=/Impianti inseriti su/").first().waitFor({ timeout: 180000 }); await page.waitForTimeout(1500);
   const nRules = await page.locator('[data-water-rule="river"]').innerText();
+  // pivot sopra canali o fiumi (dal progetto salvato)
+  await page.locator("[data-save-now]").click(); await page.locator("text=/Progetto salvato/").first().waitFor({ timeout: 30000 }).catch(() => {});
+  const lays = await (await fetch(`${API}/projects/${p.id}/layers`, { headers: { Authorization: `Bearer ${tok}` } })).json();
+  const its = lays.find((l) => l.kind === "waters")?.data?.items ?? [];
+  const pvs = (lays.find((l) => l.kind === "pivots")?.data?.geojson?.features ?? []).filter((f) => f.properties?.kind === "pivot");
+  const segD = (q, a, b) => { const kx = 111320 * Math.cos(q[1] * Math.PI / 180), ky = 110540; const ax = (a[0] - q[0]) * kx, ay = (a[1] - q[1]) * ky, bx = (b[0] - q[0]) * kx, by = (b[1] - q[1]) * ky, vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy; const tt = L2 > 0 ? Math.max(0, Math.min(1, -(ax * vx + ay * vy) / L2)) : 0; return Math.hypot(ax + tt * vx, ay + tt * vy); };
+  let over = 0;
+  for (const f of pvs) { const c = f.properties.center, r = f.properties.r; if (its.some((w) => w.geojson.type === "LineString" && ["river", "canal", "drain"].includes(w.kind) && w.geojson.coordinates.some((q, k, cs) => k > 0 && segD(c, cs[k - 1], q) < r - 5))) over++; }
+  ok(pvs.length > 0 && over === 0, `Canali «Evita» scelti prima dell'importazione: ${pvs.length} pivot, ${over} sopra canali o fiumi`);
   const n0 = await rows();
   ok(n0 === nPre - 1 && /\(\d+\)/.test(nRules) && !/\(0\)/.test(nRules), `Posa dei pivot: anteprima confermata da sola · ${n0} corsi nell'elenco · regole: ${nRules}`);
   // clic su un fiume sulla mappa → riga evidenziata a sinistra con tipo e nome modificabili; Canc lo elimina

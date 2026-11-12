@@ -19,7 +19,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.271";
+const REV = "v0.6.272";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -2329,7 +2329,9 @@ export default function Page() {
   // prima di progettare canali e pivot, che li evitano automaticamente. ----
   const WATER_CODE: Record<string, string> = { river: "F", canal: "C", drain: "D", drainage: "I", basin: "B", wetland: "P" };
   // spostabile: canali e dreni sì (si deviano), fiumi, impluvi e bacini no; si cambia a mano
-  const waterMovable = (w: Watercourse) => w.movable ?? (w.kind === "canal" || w.kind === "drain");
+  // spostabile (i pivot lo coprono e si devia): scelta sul singolo tratto, altrimenti la regola di disegno di Impianti
+  // (canali e fossi: «Spiana» / «Evita»); i corsi importati dopo aver scelto la regola la seguono
+  const waterMovable = (w: Watercourse) => w.movable ?? ((w.kind === "canal" || w.kind === "drain") && waterRulesRef.current.canal.over);
   // il pivot evita il corso? canali e fossi: se non spostabili; fiumi e invasi: secondo la regola (o la scelta sul tratto)
   const waterAvoided = (w: Watercourse) => {
     const c = waterCat(w.kind);
@@ -3903,7 +3905,9 @@ export default function Page() {
   // funzioni delle pagine e resta ritoccabile lì.
   // 2 · pivot su tutte le aree che non li hanno ancora (parametri della pagina Impianti)
   // canali e fossi esistenti: «spiana» = i pivot ci passano sopra (terra da spostare), «lascia» = i pivot li evitano
-  const [canalPolicy, setCanalPolicyS] = useState<"spiana" | "lascia">("spiana");
+  // scelta per i canali esistenti: una sola fonte, la regola di disegno (pagina Impianti e barra rapida)
+  const canalPolicy: "spiana" | "lascia" = waterRules.canal.over ? "spiana" : "lascia";
+  const setCanalPolicyS = (_v: "spiana" | "lascia") => { /* derivata da waterRules */ };
   function setCanalPolicy(v: "spiana" | "lascia") {
     setCanalPolicyS(v);
     setWaterRules((r) => ({ ...r, canal: { ...r.canal, over: v === "spiana" } }));
@@ -10906,7 +10910,7 @@ export default function Page() {
                     {i > 0 && <span className="self-center text-sage-dark opacity-50">›</span>}
                     {st.k === "fonte" && (() => {
                       const cs = watercourses.filter((w) => w.kind === "canal" || w.kind === "drain");
-                      const pol = cs.length ? (cs.every((w) => !waterMovable(w)) ? "lascia" : "spiana") : canalPolicy;
+                      const pol = canalPolicy;
                       const vTot = [...waterFillM3.values()].reduce((x, y) => x + y, 0);
                       return (
                         <div className="flex flex-col justify-center gap-0.5 text-[10px] text-sage-dark shrink-0" data-quick-canals
