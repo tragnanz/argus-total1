@@ -114,7 +114,7 @@ export type MapHandle = {
   pickPoint: (cb: ((lat: number, lng: number) => void) | null) => void;
   setCommentPins: (pins: { lat: number; lng: number; n: number; text: string; done?: boolean }[]) => void;
   // Fonte d'acqua e schema d'impianto (presa, adduttrice, vasca): solo disegno.
-  setSourceScheme: (d: { src: number[] | null; line?: number[][] | null; lineKind?: "pipe" | "canal";
+  setSourceScheme: (d: { src: number[] | null; line?: number[][] | null; lineKind?: "pipe" | "canal"; branches?: { coords: number[][]; kind: "pipe" | "canal"; label?: string }[];
     reservoir?: { center: number[]; r: number } | null; points?: { pt: number[]; label: string; tip?: string }[]; labels?: { src: string; res: string; line: string };
     onPick?: () => void; picked?: boolean } | null) => void;
   setDesign: (d: { polys: { ring: number[][]; color: string; label?: string; dashed?: boolean }[];
@@ -1052,6 +1052,12 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             g.addLayer(hit);
           }
           g.addLayer(ln);
+        }
+        for (const b of d.branches ?? []) {
+          const ll = b.coords.map((p) => [p[1], p[0]] as [number, number]);
+          g.addLayer(L.polyline(ll, { color: "#ffffff", weight: 6, opacity: 0.8, interactive: false }));
+          g.addLayer(L.polyline(ll, b.kind === "canal" ? { color: "#0284c7", weight: 3.5, dashArray: "8,5" } : { color: "#1d4ed8", weight: 3.5 })
+            .bindTooltip(b.label ?? "", { sticky: true }));
         }
         if (d.reservoir) {
           g.addLayer(L.circle([d.reservoir.center[1], d.reservoir.center[0]], { radius: d.reservoir.r,

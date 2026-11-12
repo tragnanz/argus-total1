@@ -24,6 +24,8 @@ body {
 .map-root { position: fixed; inset: 0; z-index: 0; }
 .overlay-layer { position: fixed; inset: 0; z-index: 400; pointer-events: none; }
 .overlay-layer > * { pointer-events: auto; }
+.pe-pass { pointer-events: none; }
+.pe-pass > * { pointer-events: auto; }
 
 @layer components {
   .widget {

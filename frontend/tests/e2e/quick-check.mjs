@@ -122,6 +122,16 @@ try {
   const s4 = await stepInfo("rete");
   ok(/✓/.test(s4) && !/da collegare/.test(s4), `Passo 4 rete in ${((Date.now() - t4) / 1000).toFixed(0)} s: ${m4.slice(0, 200)} · ${s4.replace(/\n/g, " ")}`);
   await page.screenshot({ path: path.join(SH, "q4_rete.png") });
+  // settori di pompaggio: stazioni nel loro posto, rete principale e distribuzione
+  if (!(await page.locator("[data-sectors-note]").first().isVisible().catch(() => false))) { await page.locator('button[title="Fonte d\'acqua"]').first().click(); await page.waitForTimeout(1200); }
+  const secNote = (await page.locator("[data-sectors-note]").first().innerText().catch(() => "")).replace(/\n/g, " ");
+  const tree = (await page.locator("[data-main-tree]").first().innerText().catch(() => "")).replace(/\n/g, " ");
+  ok(/settori/.test(secNote) && /principali/.test(tree), `Settori: ${secNote.slice(0, 120)} · ${tree}`);
+  await page.locator("[data-sectors-note]").first().scrollIntoViewIfNeeded().catch(() => {});
+  await page.screenshot({ path: path.join(SH, "q5_settori.png") });
+  const schemes = await page.locator("text=/^[ABCD] · /").allInnerTexts().catch(() => []);
+  console.log("  schemi:", schemes.join(" | "));
+  for (const k of ["A", "B", "C", "D"]) console.log("  " + (await page.locator(`div.rounded-lg:has(> div > b:text-matches("^${k} · "))`).first().innerText().catch(() => "-")).replace(/\n/g, " ¦ ").slice(0, 600));
   // computo
   await click(page.locator('[data-quick-step="computo"]'));
   await page.waitForTimeout(1500);

@@ -13,13 +13,14 @@ import { Dxf, toUtm, utmZone } from "@/lib/dxf";
 import { designCanal, canalEarthworks, LININGS, lining, pivotUniformity, cuGrade, SPRINKLERS, solarMonths, solarDesignWorstMonth, pvPerf, riverBalance, type LiningId, type CanalSection, type CuResult } from "@/lib/hydro";
 import type { LL, RGB, TvSheet, TvCommon, TvPivot, TvLine, TvPoint, TvColItem, TvTrenchItem, TvDraw, TvTech } from "@/lib/tavole";
 import { linearLayout, reelLayout, dripLayout, type LL as SysLL } from "@/lib/systems";
+import { localFrame, capSectors, stationSpot, sectorNet, primTree, treeFlows, type SPivot } from "@/lib/sectors";
 import type {
   Area, Client, Polygon, Project, Scene, ColorScale, SuitMeta, SuitWeights,
   LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea, Canal, GuidedResult, ProjectLayer, Watercourse, ElevationResult,
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.278";
+const REV = "v0.6.279";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1548,6 +1549,7 @@ export default function Page() {
   const [srcRoute, setSrcRoute] = useState<number[][] | null>(null);   // tracciato disegnato presa → vasca ([lng, lat])
   const [srcMonthly, setSrcMonthly] = useState<number[] | null>(null); // livello minimo mese per mese (m sotto il punto di presa)
   const [srcSectors, setSrcSectors] = useState(0);                   // settori di rilancio (0 = automatico)
+  const [stQmax, setStQmax] = useState(1000);                        // portata massima di una stazione di pompaggio (l/s)
   // Portata del fiume alla presa (GloFAS + bacino dal DEM) e quota da lasciare al fiume
   // meas: portate misurate dall'ente (pick = -2): medie e magre mensili in m³/s, con la fonte del dato
   type RiverMeas = { mean: number[]; low: number[]; q347?: number; days?: number; years?: string[]; note?: string };
@@ -3961,6 +3963,8 @@ export default function Page() {
   }
   // 4 · rete: macchina a stati guidata dai render, così ogni fase vede lo stato aggiornato
   const [quickNet, setQuickNet] = useState<"" | "start" | "route" | "pipes" | "hydra">("");
+  const [quickTick, setQuickTick] = useState(0);
+  const quickWait = useRef(0);
   function quickNetwork() {
     if (!pivots.length) { setMsg(t("Prima disegna i pivot (passo 2).")); return; }
     if (!srcPt) { setMsg(t("Prima scegli la fonte idrica (passo 3).")); return; }
@@ -4003,9 +4007,26 @@ export default function Page() {
       return;
     }
     if (quickNet === "pipes") {
+      // le quote del nuovo tracciato decidono lo schema (canale o tubo): si aspettano, al massimo 30 s
+      const E = srcPt && srcElev && srcElev.key === elevKey(srcPt);
+      if (!E && srcPt) {
+        if (!quickWait.current) { quickWait.current = Date.now(); setTimeout(() => setQuickTick((x) => x + 1), 30000); }
+        if (Date.now() - quickWait.current < 30000) return;
+      }
+      quickWait.current = 0;
       const ln = srcPt ? srcLine(srcPt) : null;
       const root = ln ? ln[ln.length - 1] : srcPt!;
-      const add = treeToPivots(root);
+      // rete per settori: dalla consegna alle stazioni (condotte principali, se lo schema è in tubo)
+      // e da ogni stazione ai suoi pivot; con pivot già collegati si completa la rete esistente
+      const S = sourceSchemes();
+      const sc = S ? (S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? null) : null;
+      let add: { kind: string; coords: number[][]; field?: number }[];
+      if (S && sc && !pivotLines.some((l) => l.kind === "pipe")) {
+        const G = sectorGeo(S.secKMin);
+        add = [];
+        for (const g of G.secs) for (const l of g.lines) add.push({ kind: "pipe", coords: l.coords, field: pivots[g.idx[0]]?.field });
+        if (sc.main?.kind === "pipe") for (const b of sc.main.tree ?? []) add.push({ kind: "pipe", coords: b.coords });
+      } else add = treeToPivots(root);
       const next = [...pivotLines, ...add];
       setPivotLines(next);
       setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, next) } : gp));
@@ -4023,7 +4044,7 @@ export default function Page() {
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quickNet, srcElev, busy, pivotLines]);
+  }, [quickNet, srcElev, busy, pivotLines, quickTick]);
   // ==== TERRAFORMING: movimenti di terra prima di montare i pivot ===============
   // termitai (Sentinel-2 stagione secca, o a mano), carreggiate delle torri troppo ripide
   // (DEM) e canali o fossi da spianare sotto i pivot. Volumi per pivot e totali, nel computo.
@@ -4545,8 +4566,23 @@ export default function Page() {
       let tt = ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / l2; tt = Math.max(0, Math.min(1, tt));
       return Math.hypot(p[0] - (a[0] + vx * tt), p[1] - (a[1] + vy * tt));
     };
+    // Con la fonte d'acqua scelta, le prese della rete sono quelle dello schema: la consegna (fine
+    // dell'adduttrice) per la rete in tubo, la stazione di ogni settore con i canali principali.
+    // Senza fonte: i nodi che stanno sull'acqua (canali e corsi d'acqua).
     const sources: string[] = [];
-    for (const [k, q] of posOf) {
+    const nearest = (pt: number[], maxM: number) => {
+      let bk = "", bd = Infinity;
+      for (const [k, q] of posOf) { const d = Math.hypot((q[0] - pt[0]) * mLng, (q[1] - pt[1]) * mLat); if (d < bd) { bd = d; bk = k; } }
+      return bk && bd <= maxM ? bk : "";
+    };
+    {
+      const S = srcPt && pivots.length ? sourceSchemes() : null;
+      const sc = S ? (S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? null) : null;
+      if (S && sc?.main?.kind === "canal" && sc.stages.some((st) => st.pt)) {
+        for (const st of sc.stages) if (st.pt) { const k = nearest(st.pt, 5); if (k && !sources.includes(k)) sources.push(k); }
+      } else if (S && sc) { const k = nearest(S.R, 5); if (k) sources.push(k); }
+    }
+    if (!sources.length) for (const [k, q] of posOf) {
       const m2: [number, number] = [q[0] * mLng, q[1] * mLat];
       let on = false;
       for (const w of W) { for (let i = 0; i < w.length - 1; i++) if (dSeg(m2, w[i], w[i + 1]) < 15) { on = true; break; } if (on) break; }
@@ -5667,6 +5703,7 @@ export default function Page() {
       }
       if (sc.main?.kind === "pipe") R.push({ cat: cF, item: tx("Adduttrice DN {d}", { d: sc.main.dn ?? 0 }), qty: Math.round(sc.main.L * (sc.main.n ?? 1)), unit: "m", note: (sc.main.n ?? 1) > 1 ? `${sc.main.n} ${tx("linee in parallelo")}` : undefined });
       if (sc.main?.kind === "canal") R.push({ cat: cF, item: tx("Canale a gravità"), qty: Math.round(sc.main.L), unit: "m", note: `${tx("scavo massimo")} ${fx(sc.main.cutMax ?? 0, { maximumFractionDigits: 1 })} m` });
+      if (sc.main?.kind === "canal" && sc.main.treeL) R.push({ cat: cF, item: tx("Canali principali alle stazioni"), qty: Math.round(sc.main.treeL), unit: "m", note: `${(sc.main.tree ?? []).length} ${tx("tratti")}` });
       if (sc.res) {
         R.push({ cat: cF, item: tx("Vasca di accumulo"), qty: Math.round(sc.res.vol), unit: "m³", note: `${fx(sc.res.ha, { maximumFractionDigits: 2 })} ha · ${tx("profondità")} ${fx(resDepth)} m` });
         R.push({ cat: cF, item: tx("Scavo della vasca (volume utile + franco 0,5 m)"), qty: Math.round(sc.res.vol * (1 + 0.5 / Math.max(1, resDepth))), unit: "m³" });
@@ -7197,7 +7234,7 @@ export default function Page() {
         const well = intake && srcType === "pozzo";
         const pick = pickPump(st.qLs, st.head, well);
         const kW = pick ? pick.motor * pick.n : (STD_KW.find((k) => k >= st.kW * 1.1) ?? Math.ceil(st.kW));
-        out.push({ name: st.name, qLs: st.qLs, head: st.head, kW, nTot: pick?.n ?? 1, nDuty: pick?.n ?? 1, pt: intake ? srcPt : resPt, well, pick });
+        out.push({ name: st.name, qLs: st.qLs, head: st.head, kW, nTot: pick?.n ?? 1, nDuty: pick?.n ?? 1, pt: st.pt ?? (intake ? srcPt : resPt), well, pick });
       });
     } else if (pivots.length) {
       const P = pumpStation();
@@ -7685,6 +7722,7 @@ export default function Page() {
       stations.forEach((st, i) => { R.push({ codice: "PT-PUMP", quantita: 1, unita: "pz", descrizione: stationDesc(st) }, ...dieselRows(st));
         const dn = i === 0 && sc.key !== "C" && sc.main?.kind === "pipe" && sc.main.dn ? sc.main.dn : netMaxDn; if (dn) R.push(checkRow(dn)); });
       if (sc.main?.kind === "pipe" && sc.main.dn) R.push(...pipeRows(sc.main.dn, sc.main.L * (sc.main.n ?? 1), "adduttrice"));
+      if (sc.main?.kind === "canal" && sc.main.treeL) R.push({ codice: "ARGUS-CANALE-STAZIONI", quantita: Math.round(sc.main.treeL), unita: "m", descrizione: `Canali principali dalla vasca alle stazioni di settore, ${(sc.main.tree ?? []).length} tratti, ${lining(canalLin).label.toLowerCase()}` });
       if (sc.main?.kind === "canal") R.push({ codice: "ARGUS-CANALE-GRAVITA", quantita: Math.round(sc.main.L), unita: "m", descrizione: `Canale a gravità, scavo massimo ${it(sc.main.cutMax ?? 0, 1)} m${sc.main.sec ? `, sezione trapezia b ${it(sc.main.sec.b, 2)} m, tirante ${it(sc.main.sec.y, 2)} m, franco ${it(sc.main.sec.fb, 2)} m, ${lining(canalLin).label.toLowerCase()}` : ""}` });
       if (sc.res) {
         R.push({ codice: "PT-TANK", quantita: 1, unita: "pz", descrizione: `Vasca di accumulo ${it(sc.res.vol)} m³, profondità utile ${it(resDepth, 1)} m` });
@@ -8816,7 +8854,7 @@ export default function Page() {
     setSrcEnergy((["rete", "fv-gen", "fv-batt"].includes(fo.energy as string) ? fo.energy : "rete") as "rete" | "fv-gen" | "fv-batt");
     setPumpDrive(fo.drive === "diesel" ? "diesel" : "el");
     setSrcMonthly(Array.isArray(fo.monthly) && (fo.monthly as unknown[]).length === 12 ? (fo.monthly as number[]) : null);
-    setSrcSectors(num(fo.sectors, 0)); setResDepth(num(fo.resDepth, 4)); setResDays(num(fo.resDays, 3)); setResEvapK(num(fo.resEvapK, 1.1));
+    setSrcSectors(num(fo.sectors, 0)); setStQmax(num(fo.stQmax, 1000) || 1000); setResDepth(num(fo.resDepth, 4)); setResDays(num(fo.resDays, 3)); setResEvapK(num(fo.resEvapK, 1.1));
     setWtwEta(num(fo.eta, 75)); setCanalSlope(num(fo.canalSlope, 0.3)); setBankSlope(num(fo.bankSlope, 2));
     { const rv = fo.river as RiverSt | null | undefined; setRiver(rv && rv.data && Array.isArray(rv.data.glofas?.cells) ? { data: rv.data, pick: num(rv.pick, -1), dmv: num(rv.dmv, 10), c: num(rv.c, 0.2), meas: rv.meas && Array.isArray(rv.meas.mean) ? rv.meas : null } : null); }
     setSettleMm(num(fo.settleMm, 0.1)); setFilterCap(num(fo.filterCap, 400)); setWellQ(num(fo.wellQ, 30));
@@ -8831,7 +8869,7 @@ export default function Page() {
   const projLoaded = useRef<number | null>(null);
   const projSaved = useRef<string>("");
   const fonteState = () => ({ pt: srcPt, route: srcRoute, type: srcType, name: srcLabel.name, nameAuto: srcLabel.auto, qmax: srcQmax, hours: srcHours, range: srcRange,
-    sed: srcSediment, energy: srcEnergy, drive: pumpDrive, monthly: srcMonthly, sectors: srcSectors, resDepth, resDays, resEvapK, eta: wtwEta,
+    sed: srcSediment, energy: srcEnergy, drive: pumpDrive, monthly: srcMonthly, sectors: srcSectors, stQmax, resDepth, resDays, resEvapK, eta: wtwEta,
     canalSlope, bankSlope, settleMm, filterCap, wellQ, shown: srcShown, cableM, river: river ? { ...river, data: { ...river.data, basin: river.data.basin ? { ...river.data.basin, ring: (river.data.basin.ring ?? []).filter((_, i) => i % 2 === 0) } : undefined } } : null, costs: { kwh: costKwh, diesel: costDiesel, lkwh: dieselLkWh, gen: genShare, mkw: costMaintKw, pvom: costPvOm, batt: costBattKwh, blife: battLife } });
   // ---- Cronologia Annulla/Ripristina UNIFICATA ----
   // Uno snapshot copre tutte le mosse del progetto: campi, pivot e tubazioni, strade,
@@ -8983,7 +9021,7 @@ export default function Page() {
     }, 900);
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, pivotBrand, waterRules, pivSlope, freeLayout, mounds, termCfg, termMeta, trackRes, ground, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors,
+  }, [projectId, pivotBrand, waterRules, pivSlope, freeLayout, mounds, termCfg, termMeta, trackRes, ground, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors, stQmax,
     resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, fert, ndvi, drainOn, drainC, drainS, drainB, drainProf, soilSat, rootDepth, rawP, v100, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId || (!pivots.length && !fields.length)) return;
@@ -9137,28 +9175,43 @@ export default function Page() {
     return { dn, n, hf };
   }
   // Settori di rilancio: k-medie sulle posizioni dei pivot (settori contigui).
-  function sectorize(k: number): number[] {
-    const n = pivots.length; if (k <= 1 || n <= 1) return pivots.map(() => 0);
-    const P2 = pivots.map((p) => [p.lng * Math.cos((p.lat * Math.PI) / 180), p.lat]);
-    // semi: il primo è il pivot più a ovest, poi il più lontano dai semi già scelti
-    const seeds = [P2.reduce((a, p, i) => (p[0] < P2[a][0] ? i : a), 0)];
-    while (seeds.length < Math.min(k, n)) {
-      let bi = 0, bd = -1;
-      P2.forEach((p, i) => { const d = Math.min(...seeds.map((s2) => Math.hypot(p[0] - P2[s2][0], p[1] - P2[s2][1]))); if (d > bd) { bd = d; bi = i; } });
-      seeds.push(bi);
+  // Settori di pompaggio (con cache: il calcolo dei posti delle stazioni non si ripete a ogni render).
+  // kMin = numero minimo di settori; la portata massima per stazione ne impone comunque abbastanza.
+  const sectorMemo = useRef(new Map<string, SecGeo>());
+  type SecGeo = { lab: number[]; secs: { idx: number[]; st: number[]; distL: number; hfTo: number[]; lines: { coords: number[][]; dn: number; q: number }[] }[] };
+  function sectorGeo(kMin: number): SecGeo {
+    const sig = `${kMin}|${stQmax}|${vMax}|${hwC}|${fields.map((f) => f.id).join(",")}|` + pivots.map((p) => `${p.lng.toFixed(5)},${p.lat.toFixed(5)},${Math.round(p.r)},${pivotFlow(p).toFixed(1)},${p.field ?? -1}`).join(";");
+    const hit = sectorMemo.current.get(sig); if (hit) return hit;
+    const lat0 = pivots.reduce((a, p) => a + p.lat, 0) / Math.max(1, pivots.length), lon0 = pivots.reduce((a, p) => a + p.lng, 0) / Math.max(1, pivots.length);
+    const F = localFrame(lon0, lat0);
+    const P: SPivot[] = pivots.map((p) => ({ ...F.to(p.lng, p.lat), q: pivotFlow(p), r: p.r, f: p.field ?? -1 }));
+    const lab = capSectors(P, stQmax, 4000, kMin);
+    const rings = fields.filter((f) => f.geom?.coordinates?.length).map((f) => f.geom.coordinates as number[][][]);
+    const inField = rings.length ? (q: { x: number; y: number }) => { const ll = F.from(q); return rings.some((r) => pointInPolygon([ll[0], ll[1]], r)); } : undefined;
+    const kk = lab.length ? Math.max(...lab) + 1 : 0;
+    const secs: SecGeo["secs"] = [];
+    for (let j = 0; j < kk; j++) {
+      const idx = pivots.map((_, i) => i).filter((i) => lab[i] === j); if (!idx.length) continue;
+      const sp = idx.map((i) => P[i]);
+      const st = stationSpot(sp, P, inField);
+      const net = sectorNet(st, sp, DN_LIST, vMax, hwC);
+      secs.push({ idx, st: F.from(st), distL: net.L, hfTo: net.hfTo,
+        lines: net.edges.map((e) => ({ coords: [F.from(net.nodes[e.a]), F.from(net.nodes[e.b])], dn: e.dn, q: e.q })) });
     }
-    let C = seeds.map((s2) => P2[s2].slice());
-    let lab = pivots.map(() => 0);
-    for (let it = 0; it < 30; it++) {
-      lab = P2.map((p) => C.reduce((a, c, j) => (Math.hypot(p[0] - c[0], p[1] - c[1]) < Math.hypot(p[0] - C[a][0], p[1] - C[a][1]) ? j : a), 0));
-      C = C.map((c, j) => { const m = P2.filter((_, i) => lab[i] === j); return m.length ? [m.reduce((a, p) => a + p[0], 0) / m.length, m.reduce((a, p) => a + p[1], 0) / m.length] : c; });
-    }
-    return lab;
+    const out = { lab, secs };
+    if (sectorMemo.current.size > 40) sectorMemo.current.clear();
+    sectorMemo.current.set(sig, out);
+    return out;
   }
-  type Stage = { name: string; qLs: number; head: number; kW: number; hours: number; hAvg?: number; share?: number };
-  type Sector = { i: number; n: number; qLs: number; head: number; kW: number; zTop: number | null; center: number[] };
-  type Scheme = { key: "A" | "B" | "C"; name: string; ok: boolean; why?: string; stages: Stage[];
-    main?: { kind: "pipe" | "canal"; L: number; dn?: number; n?: number; hf?: number; hiPt?: number; cutMax?: number; fillMax?: number; sec?: CanalSection | null };
+  type Stage = { name: string; qLs: number; head: number; kW: number; hours: number; hAvg?: number; share?: number; pt?: number[] };
+  // settore: stazione (center) nel punto libero che rende minima portata × distanza dai suoi pivot;
+  // hd = prevalenza della sua rete di distribuzione (pressione al pivot + perdite), pathL = rete principale fino a lì
+  type Sector = { i: number; n: number; qLs: number; head: number; kW: number; zTop: number | null; center: number[];
+    hd: number; distL: number; pathL: number; hfPath: number; hC: number };
+  type MainBranch = { coords: number[][]; q: number; L: number; dn?: number; n?: number; sec?: CanalSection | null };
+  type Scheme = { key: "A" | "B" | "C" | "D"; name: string; ok: boolean; why?: string; stages: Stage[];
+    main?: { kind: "pipe" | "canal"; L: number; dn?: number; n?: number; hf?: number; hiPt?: number; cutMax?: number; fillMax?: number; sec?: CanalSection | null;
+      tree?: MainBranch[]; treeL?: number };
     res?: { vol: number; ha: number; r: number; evap: number; days: number }; sectors?: Sector[];
     mwh: number; kWabs: number; pvKwp: number; battKwh: number; solarPct: number; nStations: number };
   function sourceSchemes() {
@@ -9227,37 +9280,60 @@ export default function Page() {
     };
     // Rilancio dalla vasca diviso in k settori: ognuno spinge fino al proprio pivot più alto.
     const zPiv = E?.zPiv ?? null;
-    const sectorsFor = (k: number): Sector[] => {
-      const lab = sectorize(k), kk = Math.max(...lab) + 1;
-      const out2: Sector[] = [];
-      for (let j = 0; j < kk; j++) {
-        const idx = pivots.map((_, i) => i).filter((i) => lab[i] === j); if (!idx.length) continue;
-        const flow = idx.reduce((a, i) => a + pivotFlow(pivots[i]), 0);
-        const qLs = (Qd * flow) / Math.max(1e-9, P.qDes);                 // quota del fabbisogno di punta
+    const sS = Math.max(0.05, canalSlope) / 1000;
+    const sectorsFor = (kMin: number): Sector[] => {
+      const G = sectorGeo(kMin);
+      // rete principale dalla consegna (vasca o fine adduttrice) alle stazioni: albero di Prim
+      const FR = localFrame(R[0], R[1]);
+      const nodes = [FR.to(R[0], R[1]), ...G.secs.map((g) => FR.to(g.st[0], g.st[1]))];
+      const par = primTree(nodes);
+      const qOf = G.secs.map((g) => (Qd * g.idx.reduce((a, i) => a + pivotFlow(pivots[i]), 0)) / Math.max(1e-9, P.qDes));
+      const qE = treeFlows(par, [0, ...qOf]);
+      const pathL = nodes.map(() => 0), hfPath = nodes.map(() => 0);
+      const order = nodes.map((_, i) => i).sort((a, b) => { const dp = (x: number) => { let d = 0, k = x; while (par[k] >= 0 && d < 999) { k = par[k]; d++; } return d; }; return dp(a) - dp(b); });
+      for (const i of order) if (par[i] >= 0) {
+        const L = Math.hypot(nodes[i].x - nodes[par[i]].x, nodes[i].y - nodes[par[i]].y);
+        pathL[i] = pathL[par[i]] + L; hfPath[i] = hfPath[par[i]] + sizeMain(qE[i], L).hf;
+      }
+      return G.secs.map((g, j) => {
+        const idx = g.idx, qLs = qOf[j];
         const zs = zPiv ? idx.map((i) => zPiv[i]).filter((v): v is number => v != null) : [];
         const zTop = zs.length ? Math.max(...zs) : zP;
-        const head = Hd + (zTop != null && zR != null ? Math.max(0, zTop - zR) : 0);
-        out2.push({ i: out2.length + 1, n: idx.length, qLs, head, kW: kWof(qLs, head), zTop,
-          center: [idx.reduce((a, i) => a + pivots[i].lng, 0) / idx.length, idx.reduce((a, i) => a + pivots[i].lat, 0) / idx.length] });
-      }
-      return out2;
+        // prevalenza della distribuzione: pressione al pivot + perdite fino a lì + quota sopra il più alto, + 3 m di filtri e pezzi speciali
+        const hd = Math.max(...idx.map((i, t) => pivotPressure(pivots[i]) * 10.2 + g.hfTo[t] + (zPiv && zPiv[i] != null && zTop != null ? (zPiv[i] as number) - zTop : 0))) + 3;
+        const up = zTop != null && zR != null ? zTop - zR : 0;
+        const head = Math.max(1, hd + hfPath[j + 1] + Math.max(0, up));                 // rilancio dalla rete in tubo (vasca → stazione)
+        const hC = Math.max(1, hd + up + sS * pathL[j + 1]);                          // rilancio dal canale (pelo libero che scende lungo il canale)
+        return { i: j + 1, n: idx.length, qLs, head, kW: kWof(qLs, head), zTop, center: g.st, hd, distL: g.distL, pathL: pathL[j + 1], hfPath: hfPath[j + 1], hC };
+      });
     };
-    const kMax = Math.min(6, pivots.length);
-    const sectorOpts = Array.from({ length: kMax }, (_, i) => sectorsFor(i + 1));
+    // rami della rete principale (per la mappa, il computo e i canali)
+    const mainTree = (secs2: Sector[], kind: "pipe" | "canal"): MainBranch[] => {
+      if (!secs2.length) return [];
+      const FR = localFrame(R[0], R[1]);
+      const pts = [R, ...secs2.map((x) => x.center)];
+      const nodes = pts.map((q) => FR.to(q[0], q[1]));
+      const par = primTree(nodes);
+      const qE = treeFlows(par, [0, ...secs2.map((x) => x.qLs)]);
+      return nodes.map((_, i) => i).filter((i) => par[i] >= 0).map((i) => {
+        const L = Math.hypot(nodes[i].x - nodes[par[i]].x, nodes[i].y - nodes[par[i]].y);
+        const base = { coords: [pts[par[i]], pts[i]], q: qE[i], L };
+        if (kind === "canal") return { ...base, sec: designCanal(qE[i], Math.max(0.05, canalSlope), canalLin, { fb: canalFb }) };
+        const m = sizeMain(qE[i], L); return { ...base, dn: m.dn, n: m.n };
+      }).filter((b) => b.L > 1);
+    };
+    // settori: quanti ne impone la portata massima per stazione (automatico), o di più se scelti a mano
+    const kCap = pivots.length ? sectorGeo(0).secs.length : 1;
     const sEnergy = (ss: Sector[]) => ss.reduce((a, x) => a + x.qLs * x.head, 0);
-    // Automatico: il numero minimo di settori che dà almeno il 90% del risparmio
-    // massimo, purché il risparmio rispetto a un solo settore superi il 5%.
-    let kAuto = 1;
-    if (sectorOpts.length > 1) {
-      const e1 = sEnergy(sectorOpts[0]), eMin = Math.min(...sectorOpts.map(sEnergy));
-      if (e1 > 0 && (e1 - eMin) / e1 > 0.05) kAuto = sectorOpts.findIndex((ss) => e1 - sEnergy(ss) >= 0.9 * (e1 - eMin)) + 1;
-    }
-    const kUse = srcSectors > 0 ? Math.min(srcSectors, kMax) : kAuto;
-    const secs = sectorOpts[kUse - 1] ?? sectorsFor(1);
-    const secSave = sectorOpts.length ? 1 - sEnergy(secs) / Math.max(1e-9, sEnergy(sectorOpts[0])) : 0;
-    const boosterStages = (): Stage[] => secs.length > 1
-      ? secs.map((x) => ({ name: tx("Rilancio settore {i} ({n} pivot)", { i: x.i, n: x.n }), qLs: x.qLs, head: x.head, kW: x.kW, hours: hd, share: x.qLs / Math.max(1e-9, Qd) }))
-      : [{ name: tx("Rilancio dalla vasca ai pivot"), qLs: Qd, head: secs[0]?.head ?? Hd, kW: kWof(Qd, secs[0]?.head ?? Hd), hours: hd }];
+    const kAuto = kCap;
+    const kUse = srcSectors > 0 ? Math.max(kCap, srcSectors) : kAuto;
+    const secKMin = kUse > kCap ? kUse : 0;
+    const secs = sectorsFor(secKMin);
+    const secSave = kUse > kCap ? 1 - sEnergy(secs) / Math.max(1e-9, sEnergy(sectorsFor(0))) : 0;
+    // stazioni di rilancio, una per settore nel suo posto (dalla rete in tubo o dal canale)
+    const boosterStages = (canal = false): Stage[] => secs.length > 1
+      ? secs.map((x) => { const h = canal ? x.hC : x.head; return { name: tx("Stazione settore {i} ({n} pivot)", { i: x.i, n: x.n }), qLs: x.qLs, head: h, kW: kWof(x.qLs, h), hours: hd, share: x.qLs / Math.max(1e-9, Qd), pt: x.center }; })
+      : [{ name: tx("Rilancio dalla vasca ai pivot"), qLs: Qd, head: (canal ? secs[0]?.hC : secs[0]?.head) ?? Hd, kW: kWof(Qd, (canal ? secs[0]?.hC : secs[0]?.head) ?? Hd), hours: hd, pt: secs[0]?.center }];
     // energia: quota diurna (copribile dal FV) e notturna
     const finish = (sc: Omit<Scheme, "mwh" | "kWabs" | "pvKwp" | "battKwh" | "solarPct">): Scheme => {
       let mwh = 0, kWabs = 0, kWday = 0, eDayKwh = 0, eSunKwh = 0;
@@ -9283,11 +9359,14 @@ export default function Page() {
       return { ...sc, mwh, kWabs, pvKwp, battKwh, solarPct };
     };
     const out: Scheme[] = [];
+    const treeP = mainTree(secs, "pipe"), treeC = mainTree(secs, "canal");
     // A — pompaggio diretto
     {
       const hours = hd;
       const m = sizeMain(Qd, L);
-      const ph = pipeHead(m.hf, zP, Hd + 2);
+      // la stazione di presa spinge fino al pivot più sfavorito: rete principale + distribuzione del suo settore
+      const hEnd = secs.length ? Math.max(...secs.map((x) => x.hd + x.hfPath + (x.zTop != null && zR != null ? x.zTop - zR : 0))) : Hd + 2;
+      const ph = secs.length && zR != null ? pipeHead(m.hf, zR, Math.max(2, hEnd)) : pipeHead(m.hf, zP, Hd + 2);
       const H = ph.H;
       let ok = true, why: string | undefined;
       if (srcHours < hd) { ok = false; why = tx("La fonte è disponibile {a} h al giorno, i pivot lavorano {b} h: serve un accumulo.", { a: fx(srcHours), b: fx(hd) }); }
@@ -9295,7 +9374,7 @@ export default function Page() {
       else if (srcEnergy === "fv-gen" && hd > sunH) { why = tx("Di notte le pompe vanno a generatore: senza accumulo il sole copre solo le ore diurne."); }
       out.push(finish({ key: "A", name: tx("Pompaggio diretto in pressione"), ok, why, nStations: 1,
         stages: [{ name: tx("Stazione di presa e spinta"), qLs: Qd, head: H, kW: kWof(Qd, H), hours, hAvg: H - (drop - dropAvg) }],
-        main: { kind: "pipe", L, dn: m.dn, n: m.n, hf: m.hf, hiPt: ph.hiPt } }));
+        main: { kind: "pipe", L, dn: m.dn, n: m.n, hf: m.hf, hiPt: ph.hiPt, tree: treeP, treeL: treeP.reduce((a, b) => a + b.L, 0) } }));
     }
     // B — sollevamento + vasca + rilancio
     {
@@ -9314,7 +9393,7 @@ export default function Page() {
       const bst = boosterStages();
       out.push(finish({ key: "B", name: tx("Sollevamento, vasca di accumulo e rilancio"), ok, why, nStations: 1 + bst.length,
         stages: [{ name: tx("Presa e sollevamento alla vasca"), qLs: q1, head: H1, kW: kWof(q1, H1), hours: h1, hAvg: H1 - (drop - dropAvg) }, ...bst],
-        main: { kind: "pipe", L, dn: m.dn, n: m.n, hf: m.hf, hiPt: ph.hiPt }, res: rB, sectors: secs.length > 1 ? secs : undefined }));
+        main: { kind: "pipe", L, dn: m.dn, n: m.n, hf: m.hf, hiPt: ph.hiPt, tree: treeP, treeL: treeP.reduce((a, b) => a + b.L, 0) }, res: rB, sectors: secs.length ? secs : undefined }));
     }
     // C — canale a gravità + vasca + rilancio
     {
@@ -9338,9 +9417,41 @@ export default function Page() {
       const rC = res(hIn);
       const qc = (Vday + rC.evap) / 3.6 / Math.max(1, hIn);
       if (ok && !qMaxOk(qc)) { ok = false; why = tx("Servono {q} l/s, la fonte ne dà {m}.", { q: fx(Math.round(qc)), m: fx(srcQmax) }); }
-      const bst = boosterStages();
+      const bst = boosterStages(true);
       out.push(finish({ key: "C", name: tx("Canale a gravità, vasca e rilancio"), ok, why, nStations: bst.length,
-        stages: bst, main: { kind: "canal", L, cutMax, fillMax, sec: designCanal(qc, Math.max(0.05, canalSlope), canalLin, { fb: canalFb }) }, res: rC, sectors: secs.length > 1 ? secs : undefined }));
+        stages: bst, main: { kind: "canal", L, cutMax, fillMax, sec: designCanal(qc, Math.max(0.05, canalSlope), canalLin, { fb: canalFb }), tree: treeC, treeL: treeC.reduce((a, b) => a + b.L, 0) }, res: rC, sectors: secs.length ? secs : undefined }));
+    }
+    // D — sollevamento alla testa del canale, canali alle stazioni, stazioni di settore
+    //     (terreno piano o presa più bassa dei campi: niente gravità, niente vasca, niente condotte grandi)
+    if (srcType !== "pozzo") {
+      const tr = treeC;
+      const secD = designCanal(Qd, Math.max(0.05, canalSlope), canalLin, { fb: canalFb });
+      const y = secD?.y ?? 1, cutLim = 3;
+      // livello alla testa: il pelo libero scende di s per metro; dove il terreno è alto il canale va in
+      // scavo fino a cutLim, oltre si alza il livello alla presa (più sollevamento)
+      let wl0 = zLow != null ? zLow + 0.5 : 0;
+      if (prof && zLow != null) {
+        const Lp = prof.d[prof.d.length - 1] || 1;
+        prof.z.forEach((z, i) => { if (z != null) wl0 = Math.max(wl0, z - cutLim + y + sS * (prof.d[i] * L) / Lp); });
+      }
+      if (zLow != null) for (const x of secs) {
+        if (x.zTop != null) wl0 = Math.max(wl0, x.zTop - 2 - cutLim + y + sS * (L + x.pathL));   // stazione ~2 m sotto il pivot più alto
+      }
+      const lift = zLow != null ? Math.max(0.5, wl0 - zLow) + 0.5 : Math.max(1, psLift);
+      const st0: Stage = { name: tx("Sollevamento alla testa del canale"), qLs: Qd, head: lift, kW: kWof(Qd, lift), hours: hd, hAvg: lift - (drop - dropAvg) };
+      const stS: Stage[] = secs.map((x) => {
+        const wl = wl0 - sS * (L + x.pathL);
+        const h = Math.max(1, x.hd + (x.zTop != null && zLow != null ? x.zTop - wl : 0));
+        return { name: tx("Stazione settore {i} ({n} pivot)", { i: x.i, n: x.n }), qLs: x.qLs, head: h, kW: kWof(x.qLs, h), hours: hd, share: x.qLs / Math.max(1e-9, Qd), pt: x.center };
+      });
+      let ok = zLow != null, why: string | undefined;
+      if (!ok) why = tx("Quote non disponibili: indica di nuovo la fonte.");
+      else if (!qMaxOk(Qd)) { ok = false; why = tx("Servono {q} l/s, la fonte ne dà {m}.", { q: fx(Math.round(Qd)), m: fx(srcQmax) }); }
+      else if (srcHours < hd) { ok = false; why = tx("La fonte è disponibile {a} h al giorno, i pivot lavorano {b} h: serve un accumulo.", { a: fx(srcHours), b: fx(hd) }); }
+      out.push(finish({ key: "D", name: tx("Sollevamento in canale e stazioni di settore"), ok, why, nStations: 1 + stS.length,
+        stages: [st0, ...stS],
+        main: { kind: "canal", L, cutMax: cutLim, fillMax: 0, sec: secD, tree: tr, treeL: tr.reduce((a, b) => a + b.L, 0) },
+        sectors: secs.length ? secs.map((x, j) => ({ ...x, hC: stS[j].head })) : undefined }));
     }
     // Consigliato — rete: minor energia; FV + generatore: minor energia da
     // generatore; in entrambi entro il 3% vince lo schema con meno stazioni.
@@ -9359,7 +9470,7 @@ export default function Page() {
         best = band.reduce((a, x) => (x.nStations < a.nStations || (x.nStations === a.nStations && score(x) < score(a)) ? x : a));
       }
     }
-    return { schemes: out, best, Qd, Vday, irrHa: P.irrHa, eRes, Hd, L, zS, zR, zP, zLow, R, ln, hasElev: !!E, psh, sunH,
+    return { schemes: out, best, Qd, Vday, irrHa: P.irrHa, eRes, Hd, L, zS, zR, zP, zLow, R, ln, hasElev: !!E, psh, sunH, kCap, secKMin,
       drop, dropAvg, months: !!months, kAuto, kUse, secSave, prof, netMm };
   }
   // Montaggio della presa e trattamento dell'acqua, dimensionati sulla portata di presa.
@@ -9434,8 +9545,12 @@ export default function Page() {
       src: srcPt,
       line: sc && S ? S.ln : null,
       lineKind: (sc?.main?.kind ?? "pipe") as "pipe" | "canal",
+      branches: (sc?.main?.tree ?? []).map((b) => ({ coords: b.coords, kind: sc!.main!.kind,
+        label: sc!.main!.kind === "canal"
+          ? `${tx("Canale principale")} · ${fx(Math.round(b.q))} l/s · ${fx(Math.round(b.L))} m${b.sec ? ` · b ${fx(b.sec.b, { maximumFractionDigits: 1 })} m` : ""}`
+          : `${tx("Condotta principale")} · ${b.n && b.n > 1 ? `${b.n}× ` : ""}DN ${b.dn} · ${fx(Math.round(b.q))} l/s · ${fx(Math.round(b.L))} m` })),
       reservoir: sc?.res && R ? { center: R, r: sc.res.r } : null,
-      points: (sc?.sectors ?? []).map((x) => ({ pt: x.center, label: `S${x.i}`, tip: `${tx("Settore")} ${x.i} · ${x.n} pivot · ${fx(Math.round(x.qLs))} l/s · ${fx(Math.round(x.head))} m` })),
+      points: (sc?.sectors ?? []).map((x) => ({ pt: x.center, label: `S${x.i}`, tip: `${tx("Stazione settore {i} ({n} pivot)", { i: x.i, n: x.n })} · ${fx(Math.round(x.qLs))} l/s · ${fx(Math.round(sc?.key === "C" || sc?.key === "D" ? x.hC : sc?.key === "A" ? 0 : x.head))} m` })),
       labels: { src: `${tx("Fonte d'acqua")} · ${tx(srcType)}${srcLabel.name.trim() ? ` «${srcLabel.name.trim()}»` : ""}`, res: sc?.res ? `${tx("Vasca di accumulo")} · ${fx(Math.round(sc.res.vol))} m³` : "",
         line: sc?.main ? (sc.main.kind === "canal" ? `${tx("Canale a gravità")} · ${km(sc.main.L)}` : `${tx("Adduttrice")} · ${sc.main.n && sc.main.n > 1 ? `${sc.main.n}×` : ""}DN ${sc.main.dn} · ${km(sc.main.L)}`) : "" },
     };
@@ -9481,7 +9596,7 @@ export default function Page() {
       setSrcPicked(true); setFieldPicked(false); setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 });
     } } : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srcPicked, srcPt, srcRoute, srcShown, srcElev, srcType, srcEnergy, srcHours, srcQmax, srcRange, srcMonthly, srcSectors, pivots, mmDes, hoursDay, resDepth, resDays, resEvapK, et0Peak, wtwEta, canalSlope, lang]);
+  }, [srcPicked, srcPt, srcRoute, srcShown, srcElev, srcType, srcEnergy, srcHours, srcQmax, srcRange, srcMonthly, srcSectors, stQmax, pivots, mmDes, hoursDay, resDepth, resDays, resEvapK, et0Peak, wtwEta, canalSlope, lang]);
   // Profilo del tracciato (SVG): terreno, e linea dei carichi o pelo libero del canale.
   function renderProfile(S: NonNullable<ReturnType<typeof sourceSchemes>>, sc: Scheme | undefined) {
     const pr = S.prof; if (!pr || pr.d.length < 2 || !sc?.main) return null;
@@ -9830,14 +9945,17 @@ export default function Page() {
           <div className="text-xs font-semibold text-brand-darker">{t("3 · Schemi d'impianto")}</div>
           {pivots.length > 1 && (
             <div className="flex items-center gap-2 text-[11px] text-sage-dark">
-              <label className="flex-1">{t("Settori di rilancio")}
-                <select className="field-input mt-0.5 py-1 text-sm" value={srcSectors} onChange={(e) => setSrcSectors(Number(e.target.value))}>
+              <label className="w-24">{t("Portata max per stazione (l/s)")}
+                <input type="number" min={50} step={50} value={stQmax} data-st-qmax
+                  onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && x > 0) setStQmax(Math.max(50, x)); }} className="field-input mt-0.5 py-1 text-sm" /></label>
+              <label className="w-28">{t("Settori di pompaggio")}
+                <select className="field-input mt-0.5 py-1 text-sm" value={srcSectors} data-sectors onChange={(e) => setSrcSectors(Number(e.target.value))}>
                   <option value={0}>{t("Automatico ({n})", { n: S.kAuto })}</option>
-                  {Array.from({ length: Math.min(6, pivots.length) }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+                  {Array.from({ length: Math.max(0, Math.min(pivots.length, S.kCap + 5) - S.kCap + 1) }, (_, i) => S.kCap + i).map((k) => <option key={k} value={k}>{k}</option>)}
                 </select></label>
-              <span className="flex-1 leading-snug">{S.kUse > 1
-                ? t("{k} settori: il rilancio spinge ogni settore solo fino al suo pivot più alto ({p}% di energia di rilancio in meno).", { k: S.kUse, p: fmt(Math.round(S.secSave * 100)) })
-                : t("Un solo settore: le quote dei pivot sono simili, dividere non fa risparmiare.")}</span>
+              <span className="flex-1 leading-snug" data-sectors-note>{S.kUse > 1
+                ? t("{k} settori, uno per stazione: al massimo {q} l/s per stazione; ogni stazione sta nel punto libero tra i suoi pivot che rende più corta la rete e spinge solo fino al suo pivot più alto ({p}% di energia di rilancio in meno rispetto al minimo dei settori).", { k: S.kUse, q: fmt(stQmax), p: fmt(Math.round(S.secSave * 100)) })
+                : t("Un solo settore: tutti i pivot da una stazione.")}</span>
             </div>
           )}
           {S.schemes.map((sc) => {
@@ -9859,6 +9977,10 @@ export default function Page() {
                       ? <div>• {t("Canale a gravità")}: {uKm(sc.main.L / 1000, 1)} · {t("pendenza")} {fmt(canalSlope, { maximumFractionDigits: 2 })}‰{S.prof && <> · {t("scavo massimo")} {fmt(sc.main.cutMax ?? 0, { maximumFractionDigits: 1 })} m · {t("rilevato massimo")} {fmt(sc.main.fillMax ?? 0, { maximumFractionDigits: 1 })} m</>}
                         {sc.main.sec && <> · {t("sezione")} b {fmt(sc.main.sec.b, { maximumFractionDigits: 2 })} m, y {fmt(sc.main.sec.y, { maximumFractionDigits: 2 })} m, {t("ciglio")} {fmt(sc.main.sec.topW, { maximumFractionDigits: 2 })} m, v {fmt(sc.main.sec.v, { maximumFractionDigits: 2 })} m/s ({t(lining(canalLin).label).toLowerCase()})</>}</div>
                       : <div>• {t("Adduttrice")}: {sc.main.n && sc.main.n > 1 ? `${sc.main.n} × ` : ""}DN {sc.main.dn} · {uKm(sc.main.L / 1000, 1)} · {t("perdite")} {fmt(Math.round(sc.main.hf ?? 0))} m{!!sc.main.hiPt && <> · {t("prevalenza decisa dal colmo a {z} m", { z: fmt(Math.round(sc.main.hiPt)) })}</>}</div>)}
+                    {!!sc.main?.treeL && <div data-main-tree>• {sc.main.kind === "canal" ? t("Canali principali alle stazioni") : t("Condotte principali alle stazioni")}: {uKm(sc.main.treeL / 1000, 1)}
+                      {sc.main.kind === "pipe" && sc.main.tree?.length ? <> · DN {Math.min(...sc.main.tree.map((b) => b.dn ?? 0))}–{Math.max(...sc.main.tree.map((b) => b.dn ?? 0))}</> : null}
+                      {sc.main.kind === "canal" && sc.main.tree?.length ? <> · {t("fondo")} {fmt(Math.min(...sc.main.tree.map((b) => b.sec?.b ?? 0)), { maximumFractionDigits: 1 })}–{fmt(Math.max(...sc.main.tree.map((b) => b.sec?.b ?? 0)), { maximumFractionDigits: 1 })} m</> : null}
+                      {sc.sectors?.length ? <> · {t("distribuzione")} {uKm(sc.sectors.reduce((a, x) => a + x.distL, 0) / 1000, 1)}</> : null}</div>}
                     {sc.res && <div>• {t("Vasca di accumulo")}: <b>{fmt(Math.round(sc.res.vol))} m³</b> · {uHa(sc.res.ha, 1)} · {t("profondità")} {fmt(resDepth)} m · {t("scorta")} {fmt(sc.res.days)} {t("giorni")} · {t("evaporazione")} {fmt(Math.round(sc.res.evap))} m³/{t("giorno")}</div>}
                     <div className="mt-0.5 text-brand-darker">{t("Potenza assorbita")} <b>{fmt(Math.round(sc.kWabs))} kW</b> · {t("Energia")} <b>{mwh(sc.mwh)} MWh/{t("anno")}</b>
                       {srcEnergy !== "rete" && <> · FV <b>{fmt(Math.round(sc.pvKwp))} kWp</b> ({fmt(Math.round(sc.solarPct))}% {t("dal sole")}){sc.battKwh > 0 && <> · {t("Batterie")} <b>{fmt(Math.round(sc.battKwh))} kWh</b></>}</>}
@@ -10779,7 +10901,7 @@ export default function Page() {
         {/* Header "famiglia Argus": cluster flottanti sopra la mappa, non una
             barra piena. Il contenitore lascia passare i click alla mappa negli
             spazi vuoti; ogni cluster è un'isola con ombra propria. */}
-        <div className="absolute top-3 left-3 right-3 grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 z-[1500] font-brand">
+        <div className="absolute top-3 left-3 right-3 grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 z-[1500] font-brand pe-pass">
 
           {/* colonna sinistra */}
           <div className="flex items-center gap-3 flex-wrap justify-self-start">
