@@ -444,7 +444,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         fill = _fill_gaps(
             centers=centers, R=R, min_r=min_pct * R, gap=gap, overhang=overhang, fill_full=fill_full,
             ring_rot=ring_rot, path_rot=path_rot, bbox_rot=(rminx, rmaxx, rminy, rmaxy), unrot=unrot,
-            g=g, slope_max=slope_max, obs_dist=(_obs_dist if dist_obs is not None else None), steep_ok=_steep_ok, steep_grid=_steep_grid, steep_tol=piv_slope_tol,
+            g=g, slope_max=slope_max, obs_dist=(_obs_dist if dist_obs is not None else None), steep_ok=_steep_ok, steep_grid=_steep_grid, steep_tol=piv_slope_tol, r_step=max(1.0, float(params.get("radius_step_m", 6.0))),
             suit_ok=(lambda xu, yu: (lambda sc: sc == sc and sc >= min_suit)(sample_grid(suit[0], suit[1], xu, yu)))
             if (only_suitable and suit is not None) else None)
         if free:
@@ -696,7 +696,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
 
 
 def _fill_gaps(*, centers, R, min_r, gap, overhang, fill_full, ring_rot, path_rot, bbox_rot, unrot,
-               g, slope_max, obs_dist, steep_ok, steep_grid, steep_tol=0.05, suit_ok=None):
+               g, slope_max, obs_dist, steep_ok, steep_grid, steep_tol=0.05, suit_ok=None, r_step=6.0):
     """Riempie i vuoti lasciati dalla maglia dei pivot pieni con pivot di raggio variabile (da min_r a R).
 
     Su una griglia fine di posizioni (frame ruotato) si calcola per ognuna il raggio massimo che ci sta:
@@ -760,23 +760,28 @@ def _fill_gaps(*, centers, R, min_r, gap, overhang, fill_full, ring_rot, path_ro
     for (cx, cy, cr, _) in piv:
         np.minimum(dpv, np.hypot(qx - cx, qy - cy) - cr - gap, out=dpv)
 
+    # i raggi vanno a passi di r_step (6 m) sotto il raggio pieno: R, R-6, R-12, … fino al minimo
+    def rq(r):
+        return R - r_step * math.ceil((R - r) / r_step - 1e-9)
+
+    min_r = R - r_step * math.floor((R - min_r) / r_step + 1e-9)
+
     def grow(k, r_lo, cap_k):
-        """Raggio più grande (≤ cap_k) che passa il controllo scarpate, partendo dall'alto, almeno r_lo."""
-        r = min(cap_k, R)
+        """Raggio più grande (≤ cap_k, a passi di r_step) che passa il controllo scarpate, almeno r_lo."""
+        r = rq(min(cap_k, R))
         x_, y_ = float(xu[k]), float(yu[k])
         while r > r_lo + 1e-6:
             if steep_ok(x_, y_, r):
                 return r
-            r = max(r_lo, r - 0.025 * R)
+            r = max(r_lo, r - r_step)
         return r_lo
 
     def place_levels():
         nonlocal dpv
-        top = R if fill_full else 0.9 * R
+        top = R if fill_full else rq(0.9 * R)
         levels = [top]
-        while levels[-1] - 0.025 * R > min_r + 1e-6:
-            levels.append(levels[-1] - 0.025 * R)
-        levels.append(min_r)
+        while levels[-1] - r_step > min_r - 1e-6:
+            levels.append(levels[-1] - r_step)
         cap = np.minimum(cap0, dpv + 1.0)
         for lv in levels:
             alive = (cap >= lv - 1e-6) & steep_mask(lv)
