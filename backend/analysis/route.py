@@ -159,3 +159,102 @@ def auto_route(client, src_ll: list, dst_ll: list, mode: str = "pipe", roads: li
     return {"coords": line, "length_m": round(length, 1), "profile": prof,
             "z_max": round(max(zs), 1) if zs else None, "z_min": round(min(zs), 1) if zs else None,
             "cut_max_m": round(cut, 2), "fill_max_m": round(fill, 2), "res_m": round(res, 1)}
+
+
+def canal_network(client, head_ll: list, stations_ll: list, circles: list | None = None,
+                  target_permille: float = 0.3, head_m: float | None = None,
+                  climb_m: float = 60.0, dev_w: float = 20.0, circle_pen: float = 25.0) -> dict:
+    """Rete di canali dalla testa (vasca o fine dell'adduttrice) alle stazioni di settore.
+
+    Ogni ramo segue il terreno: costo = lunghezza + `climb_m` metri per ogni metro di risalita
+    (la risalita è scavo) + scarto quadratico dalla discesa voluta (pendenza del canale), con i
+    cerchi dei pivot molto penalizzati (un canale aperto non passa sotto il pivot). Il pelo libero non
+    può stare sotto il terreno oltre il carico in testa (`head_m`, o la quota del terreno in testa).
+    I rami si aggiungono uno alla volta: ogni stazione si collega alla rete già tracciata nel punto
+    più conveniente (Dijkstra con sorgenti = tutte le celle della rete), dalla stazione più facile."""
+    pts = [head_ll] + list(stations_ll)
+    geom = _bbox_geom(pts, 600.0)
+    dem, mask, ctx = _dem_and_grid(client, geom, max_dim=300)
+    res, hp, wp = ctx["res"], ctx["hp"], ctx["wp"]
+    to_utm = pyproj.Transformer.from_crs(4326, ctx["epsg"], always_xy=True)
+    to_wgs = ctx["to_wgs"]
+    valid = mask & np.isfinite(dem)
+    demS = _smooth(dem)
+    pen = np.ones((hp, wp))
+    if circles:
+        pen[_burn_circles((hp, wp), ctx, to_utm, circles)] = 1.0 + circle_pen
+    h_rc = _snap_cell(ctx, valid, to_utm, head_ll[0], head_ll[1])
+    head = float(head_m) if head_m is not None else float(demS[h_rc])
+    cap = head + 1.0
+    grad = max(1e-5, target_permille / 1000.0)
+    st_rc = [_snap_cell(ctx, valid, to_utm, p[0], p[1]) for p in stations_ll]
+
+    net_cells: dict = {h_rc: (-1, 0.0)}        # cella → (ramo, distanza lungo il ramo)
+    branches: list = []
+    left = list(range(len(stations_ll)))
+    INF = float("inf")
+    while left:
+        dist = np.full((hp, wp), INF)
+        prev = np.full((hp, wp, 2), -1, dtype=np.int32)
+        pq = []
+        for rc in net_cells:
+            dist[rc] = 0.0; pq.append((0.0, rc[0], rc[1]))
+        heapq.heapify(pq)
+        targets = {st_rc[i]: i for i in left}
+        found = 0
+        while pq and found < len(targets):
+            d0, r, c = heapq.heappop(pq)
+            if d0 > dist[r, c]:
+                continue
+            if (r, c) in targets:
+                found += 1
+            er = demS[r, c]
+            for dr, dc in _NB:
+                nr, nc = r + dr, c + dc
+                if not (0 <= nr < hp and 0 <= nc < wp) or not valid[nr, nc]:
+                    continue
+                en = demS[nr, nc]
+                if en > cap:
+                    continue
+                dd = res * (1.41421356 if (dr and dc) else 1.0)
+                actual = er - en
+                nd = (d0 + dd * 0.5 * (pen[r, c] + pen[nr, nc]) + climb_m * max(0.0, -actual)
+                      + dev_w * (actual - grad * dd) ** 2)
+                if nd < dist[nr, nc]:
+                    dist[nr, nc] = nd; prev[nr, nc] = (r, c)
+                    heapq.heappush(pq, (nd, nr, nc))
+        reach = [(dist[st_rc[i]], i) for i in left if np.isfinite(dist[st_rc[i]])]
+        if not reach:
+            break                                  # le altre stazioni sono più in alto del carico
+        _, i = min(reach)
+        path, rc = [], st_rc[i]
+        while rc not in net_cells:
+            path.append(rc)
+            pr, pc = int(prev[rc][0]), int(prev[rc][1])
+            if (pr, pc) == (-1, -1):
+                break
+            rc = (pr, pc)
+        attach = rc
+        path.append(attach)
+        path.reverse()                             # dall'attacco alla stazione
+        xy = [(ctx["minx"] + (c + 0.5) * res, ctx["top"] - (r + 0.5) * res) for r, c in path]
+        prof, length = _profile(dem, ctx, xy, path)
+        par, par_d = net_cells.get(attach, (-1, 0.0))
+        bi = len(branches)
+        for k, cell in enumerate(path[1:], start=1):
+            if cell not in net_cells:
+                net_cells[cell] = (bi, prof[k][0])
+        xy_s = _rdp([(float(x), float(y)) for x, y in xy], res * 0.8)
+        line = [list(to_wgs.transform(x, y)) for x, y in xy_s]
+        line[-1] = [float(stations_ll[i][0]), float(stations_ll[i][1])]
+        if par < 0 and len(branches) == 0:
+            line[0] = [float(head_ll[0]), float(head_ll[1])]
+        circ = float(np.mean([pen[p] > 1.0 for p in path])) if path else 0.0
+        if len(prof) > 60:
+            stp = len(prof) / 60.0
+            prof = [prof[int(j * stp)] for j in range(60)] + [prof[-1]]
+        branches.append({"station": i, "parent": par, "attach_m": round(par_d, 1), "coords": line,
+                         "length_m": round(length, 1), "profile": prof, "in_circles": round(circ, 3)})
+        left.remove(i)
+    return {"head_m": round(head, 2), "res_m": round(res, 1), "branches": branches,
+            "unreached": left}

@@ -25,6 +25,7 @@ const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1700, height: 950 }, acceptDownloads: true });
 const page = await ctx.newPage();
 const errors = []; page.on("pageerror", (e) => errors.push(e.message)); page.on("dialog", (d) => d.accept());
+if (process.env.DEBUG_CANAL) page.on("response", async (r) => { if (r.url().includes("/canal/network") && r.request().method() === "POST") { const fs = await import("node:fs"); fs.writeFileSync(process.env.DEBUG_CANAL, JSON.stringify({ req: JSON.parse(r.request().postData() || "{}"), res: await r.json().catch(() => null) })); } });
 const msgText = () => page.locator(".pill-dark").first().innerText().catch(() => "");
 const stepInfo = (k) => page.locator(`[data-quick-step="${k}"]`).innerText().catch(() => "");
 let clicks = 0;
@@ -131,7 +132,7 @@ try {
   await page.screenshot({ path: path.join(SH, "q5_settori.png") });
   const schemes = await page.locator("text=/^[ABCD] · /").allInnerTexts().catch(() => []);
   console.log("  schemi:", schemes.join(" | "));
-  for (const k of ["A", "B", "C", "D"]) console.log("  " + (await page.locator(`div.rounded-lg:has(> div > b:text-matches("^${k} · "))`).first().innerText().catch(() => "-")).replace(/\n/g, " ¦ ").slice(0, 600));
+  for (const k of ["A", "B", "C", "D"]) console.log("  " + (await page.locator(`div.rounded-lg:has(> div > b:text-matches("^${k} · "))`).first().innerText().catch(() => "-")).replace(/\n/g, " ¦ ").slice(0, 1400));
   // computo
   await click(page.locator('[data-quick-step="computo"]'));
   await page.waitForTimeout(1500);

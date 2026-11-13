@@ -71,3 +71,24 @@ def auto_route_ep(body: RouteIn, client=Depends(get_client)):
                           circles=body.circles, target_permille=body.target_permille, climb_m=body.climb_m)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Errore tracciato automatico: {e}")
+
+
+class CanalNetIn(BaseModel):
+    head: list[float]                                  # [lon, lat] testa della rete (vasca / fine adduttrice)
+    stations: list[list[float]]                        # [lon, lat] delle stazioni di settore
+    circles: list[list[float]] | None = None           # [lon, lat, r] dei pivot
+    target_permille: float = 0.3
+    head_m: float | None = None                        # livello dell'acqua in testa (m s.l.m.)
+
+
+@router.post("/network")
+def canal_network_ep(body: CanalNetIn, client=Depends(get_client)):
+    """Rete dei canali principali dalla testa alle stazioni di settore, lungo il terreno e fuori dai pivot."""
+    from analysis.route import canal_network
+    if len(body.head) != 2 or not body.stations:
+        raise HTTPException(400, "Testa o stazioni non valide.")
+    try:
+        return canal_network(client, body.head, body.stations, circles=body.circles,
+                             target_permille=body.target_permille, head_m=body.head_m)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Errore tracciato dei canali: {e}")

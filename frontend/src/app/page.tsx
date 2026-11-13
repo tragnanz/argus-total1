@@ -20,7 +20,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.279";
+const REV = "v0.6.280";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1549,7 +1549,10 @@ export default function Page() {
   const [srcRoute, setSrcRoute] = useState<number[][] | null>(null);   // tracciato disegnato presa → vasca ([lng, lat])
   const [srcMonthly, setSrcMonthly] = useState<number[] | null>(null); // livello minimo mese per mese (m sotto il punto di presa)
   const [srcSectors, setSrcSectors] = useState(0);                   // settori di rilancio (0 = automatico)
-  const [stQmax, setStQmax] = useState(1000);                        // portata massima di una stazione di pompaggio (l/s)
+  const [stQmax, setStQmax] = useState(1000);
+  // canali principali tracciati sul terreno (vasca → stazioni), per la firma testa+stazioni
+  const [canalNet, setCanalNet] = useState<{ sig: string; net: api.CanalNet } | null>(null);
+  const [canalNetBusy, setCanalNetBusy] = useState(false);                        // portata massima di una stazione di pompaggio (l/s)
   // Portata del fiume alla presa (GloFAS + bacino dal DEM) e quota da lasciare al fiume
   // meas: portate misurate dall'ente (pick = -2): medie e magre mensili in m³/s, con la fonte del dato
   type RiverMeas = { mean: number[]; low: number[]; q347?: number; days?: number; years?: string[]; note?: string };
@@ -9076,6 +9079,29 @@ export default function Page() {
     return { pts, d };
   }
   const elevKey = (src: number[]) => JSON.stringify([src, srcRoute, pivots.map((p) => `${p.lng.toFixed(5)},${p.lat.toFixed(5)}`).join(";")]);
+  // Canali principali sul terreno: per gli schemi a canale si tracciano dalla testa alle stazioni,
+  // seguendo il dislivello e passando tra i pivot (una richiesta per ogni nuova disposizione)
+  const canalNetFail = useRef("");
+  useEffect(() => {
+    if (!srcPt || !pivots.length || srcType === "pozzo") return;
+    const S = sourceSchemes(); if (!S) return;
+    const sc = S.schemes.find((x) => x.key === "D") ?? S.schemes.find((x) => x.key === "C");
+    const secs = sc?.sectors; if (!secs?.length) return;
+    const sig = canalSig(S.R, secs);
+    if (canalNet?.sig === sig || canalNetFail.current === sig) return;
+    const zs = (srcElev?.zPiv ?? []).filter((v): v is number => v != null);
+    const t = setTimeout(async () => {
+      setCanalNetBusy(true);
+      try {
+        const net = await api.canalNetwork({ head: S.R, stations: secs.map((x) => x.center), circles: pivots.map((p) => [p.lng, p.lat, p.r]),
+          target_permille: Math.max(0.05, canalSlope), head_m: zs.length ? Math.max(...zs) + 2 : undefined });
+        setCanalNet({ sig, net });
+      } catch { canalNetFail.current = sig; }
+      finally { setCanalNetBusy(false); }
+    }, 900);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcPt, srcRoute, pivots, stQmax, srcSectors, canalSlope, srcElev, srcType, fields]);
   function startPickSource() {
     // corsi d'acqua ancora in anteprima: si confermano, così il clic sul fiume li trova
     if (waterPreviewOn.current) confirmWaterUI();
@@ -9208,10 +9234,11 @@ export default function Page() {
   // hd = prevalenza della sua rete di distribuzione (pressione al pivot + perdite), pathL = rete principale fino a lì
   type Sector = { i: number; n: number; qLs: number; head: number; kW: number; zTop: number | null; center: number[];
     hd: number; distL: number; pathL: number; hfPath: number; hC: number };
-  type MainBranch = { coords: number[][]; q: number; L: number; dn?: number; n?: number; sec?: CanalSection | null };
+  type MainBranch = { coords: number[][]; q: number; L: number; dn?: number; n?: number; sec?: CanalSection | null; routed?: boolean; profile?: number[][]; pipeFrom?: number };
+  const canalSig = (R: number[], secs2: { center: number[] }[]) => JSON.stringify([R, ...secs2.map((x) => x.center)].map((q) => [+q[0].toFixed(5), +q[1].toFixed(5)]));
   type Scheme = { key: "A" | "B" | "C" | "D"; name: string; ok: boolean; why?: string; stages: Stage[];
     main?: { kind: "pipe" | "canal"; L: number; dn?: number; n?: number; hf?: number; hiPt?: number; cutMax?: number; fillMax?: number; sec?: CanalSection | null;
-      tree?: MainBranch[]; treeL?: number };
+      tree?: MainBranch[]; treeL?: number; treeCut?: number; treeFill?: number; drops?: number; dropM?: number; tailL?: number };
     res?: { vol: number; ha: number; r: number; evap: number; days: number }; sectors?: Sector[];
     mwh: number; kWabs: number; pvKwp: number; battKwh: number; solarPct: number; nStations: number };
   function sourceSchemes() {
@@ -9310,6 +9337,15 @@ export default function Page() {
     // rami della rete principale (per la mappa, il computo e i canali)
     const mainTree = (secs2: Sector[], kind: "pipe" | "canal"): MainBranch[] => {
       if (!secs2.length) return [];
+      if (kind === "canal" && canalNet && canalNet.sig === canalSig(R, secs2)) {
+        // rami tracciati sul terreno: portata del ramo = la sua stazione + i rami attaccati a valle
+        const B = canalNet.net.branches;
+        const flow = (bi: number): number => secs2[B[bi].station].qLs + B.reduce((a, b, j) => a + (b.parent === bi ? flow(j) : 0), 0);
+        return B.map((b, bi) => {
+          const q = flow(bi);
+          return { coords: b.coords, q, L: b.length_m, sec: designCanal(q, Math.max(0.05, canalSlope), canalLin, { fb: canalFb }), routed: true, profile: b.profile };
+        });
+      }
       const FR = localFrame(R[0], R[1]);
       const pts = [R, ...secs2.map((x) => x.center)];
       const nodes = pts.map((q) => FR.to(q[0], q[1]));
@@ -9360,6 +9396,79 @@ export default function Page() {
     };
     const out: Scheme[] = [];
     const treeP = mainTree(secs, "pipe"), treeC = mainTree(secs, "canal");
+    // Pelo libero lungo i canali tracciati: scende con la pendenza del canale e, dove il terreno scende di
+    // più, con un SALTO (manufatto di caduta) così il canale non resta pensile: il pelo sta al massimo
+    // DROP_H sopra il terreno. Si resta più alti solo quanto serve a non scavare oltre CUT_LIM più a valle,
+    // e comunque mai oltre FILL_MAX sopra il terreno (oltre conviene scavare). Da qui scavo e rilevato
+    // massimi, salti e livello d'acqua a ogni stazione.
+    const DROP_H = 0.5, CUT_LIM = 3, FILL_MAX = 2;
+    // livello minimo del pelo in ogni punto perché più a valle (anche nei rami figli) lo scavo resti
+    // entro CUT_LIM: non si salta più giù di così
+    const canalReq = (tree: MainBranch[]) => {
+      const B = canalNet!.net.branches;
+      const reqStart: number[] = [], reqPts: { d: number; r: number }[][] = [];
+      for (let bi = tree.length - 1; bi >= 0; bi--) {
+        const b = tree[bi], y = b.sec?.y ?? 1;
+        const cons: { d: number; v: number }[] = (b.profile ?? []).map(([d, z]) => ({ d, v: z - CUT_LIM + y }));
+        B.forEach((c, ci) => { if (c.parent === bi && reqStart[ci] != null) cons.push({ d: c.attach_m, v: reqStart[ci] }); });
+        cons.sort((a, b2) => b2.d - a.d);
+        let best = -Infinity, dLast = cons.length ? cons[0].d : 0;
+        const pts: { d: number; r: number }[] = [];
+        for (const k of cons) { best += sS * (dLast - k.d); dLast = k.d; best = Math.max(best, k.v); pts.push({ d: k.d, r: best }); }
+        reqStart[bi] = best + sS * dLast;
+        reqPts[bi] = pts.reverse();
+      }
+      return { reqStart, reqPts, reqHead: Math.max(-Infinity, ...B.map((b, bi) => (b.parent < 0 ? reqStart[bi] : -Infinity))) };
+    };
+    const canalLevels = (tree: MainBranch[], wlHead: number | null) => {
+      if (wlHead == null || !canalNet || canalNet.sig !== canalSig(R, secs) || !tree.length) return null;
+      const B = canalNet.net.branches;
+      const RQ = canalReq(tree);
+      const wlAt: { d: number; wl: number }[][] = [];
+      const wlSt = new Map<number, number>(), tailSt = new Map<number, number>();
+      let cut = 0, fill = 0, drops = 0, dropM = 0, tailL = 0;
+      tree.forEach((b, bi) => {
+        const y = b.sec?.y ?? 1, fb = canalFb;
+        let wl = wlHead;
+        const par = B[bi]?.parent ?? -1;
+        if (par >= 0 && wlAt[par]?.length) {
+          const pa = wlAt[par], am = B[bi].attach_m;
+          // livello nel punto d'attacco, prima di eventuali salti più a valle sul ramo padre
+          let w = pa[0].wl; for (const q of pa) { if (q.d > am + 1e-6) break; w = q.wl; }
+          wl = w;
+        }
+        const arr: { d: number; wl: number }[] = [];
+        let dPrev = 0, dEnd = -1, wlEnd = wl;
+        for (const [d, z] of b.profile ?? []) {
+          wl -= sS * (d - dPrev); dPrev = d;
+          const rq = (RQ.reqPts[bi].find((q) => q.d >= d) ?? { r: -Infinity }).r;
+          const lo = Math.max(z + DROP_H, Math.min(rq, z + FILL_MAX));   // mai pensile oltre FILL_MAX
+          if (wl > lo) { const dz = wl - lo; if (dz > 0.3 && dEnd < 0) { drops++; dropM += dz; } wl = lo; }
+          // dove il terreno sale oltre lo scavo massimo il canale finisce: da lì alla stazione una
+          // condotta (la stazione aspira dal canale e spinge nel tubo)
+          if (dEnd < 0 && z - (wl - y) > CUT_LIM + 1e-6) { dEnd = arr.length ? arr[arr.length - 1].d : 0; }
+          if (dEnd < 0) { cut = Math.max(cut, z - (wl - y)); fill = Math.max(fill, wl + fb - z); wlEnd = wl; }
+          arr.push({ d, wl });
+        }
+        wlAt[bi] = arr;
+        const tail = dEnd >= 0 ? Math.max(0, b.L - dEnd) : 0;
+        b.pipeFrom = dEnd >= 0 ? dEnd : undefined;
+        tailL += tail;
+        if (B[bi]) { wlSt.set(B[bi].station, wlEnd); tailSt.set(B[bi].station, tail); }
+      });
+      return { wlSt, tailSt, cut, fill, drops, dropM, tailL };
+    };
+    // con i canali tracciati sul terreno, la distanza lungo il canale fino a ogni stazione è quella vera
+    if (canalNet && canalNet.sig === canalSig(R, secs)) {
+      const B = canalNet.net.branches;
+      const start = (bi: number): number => (B[bi].parent < 0 ? 0 : start(B[bi].parent) + B[bi].attach_m);
+      B.forEach((b, bi) => {
+        const x = secs[b.station]; if (!x) return;
+        x.pathL = start(bi) + b.length_m;
+        const up = x.zTop != null && zR != null ? x.zTop - zR : 0;
+        x.hC = Math.max(1, x.hd + up + sS * x.pathL);
+      });
+    }
     // A — pompaggio diretto
     {
       const hours = hd;
@@ -9417,14 +9526,18 @@ export default function Page() {
       const rC = res(hIn);
       const qc = (Vday + rC.evap) / 3.6 / Math.max(1, hIn);
       if (ok && !qMaxOk(qc)) { ok = false; why = tx("Servono {q} l/s, la fonte ne dà {m}.", { q: fx(Math.round(qc)), m: fx(srcQmax) }); }
+      const lvC = canalLevels(treeC, zR);
+      if (lvC) secs.forEach((x, j) => { const w = lvC.wlSt.get(j); const tl = lvC.tailSt.get(j) ?? 0;
+        if (w != null && x.zTop != null) x.hC = Math.max(1, x.hd + x.zTop - w + (tl > 0 ? sizeMain(x.qLs, tl).hf : 0)); });
       const bst = boosterStages(true);
       out.push(finish({ key: "C", name: tx("Canale a gravità, vasca e rilancio"), ok, why, nStations: bst.length,
-        stages: bst, main: { kind: "canal", L, cutMax, fillMax, sec: designCanal(qc, Math.max(0.05, canalSlope), canalLin, { fb: canalFb }), tree: treeC, treeL: treeC.reduce((a, b) => a + b.L, 0) }, res: rC, sectors: secs.length ? secs : undefined }));
+        stages: bst, main: { kind: "canal", L, cutMax, fillMax, sec: designCanal(qc, Math.max(0.05, canalSlope), canalLin, { fb: canalFb }), tree: treeC, treeL: treeC.reduce((a, b) => a + b.L, 0),
+          treeCut: lvC?.cut, treeFill: lvC?.fill, drops: lvC?.drops, dropM: lvC?.dropM, tailL: lvC?.tailL }, res: rC, sectors: secs.length ? secs : undefined }));
     }
     // D — sollevamento alla testa del canale, canali alle stazioni, stazioni di settore
     //     (terreno piano o presa più bassa dei campi: niente gravità, niente vasca, niente condotte grandi)
     if (srcType !== "pozzo") {
-      const tr = treeC;
+      const tr = treeC.map((b) => ({ ...b }));
       const secD = designCanal(Qd, Math.max(0.05, canalSlope), canalLin, { fb: canalFb });
       const y = secD?.y ?? 1, cutLim = 3;
       // livello alla testa: il pelo libero scende di s per metro; dove il terreno è alto il canale va in
@@ -9437,11 +9550,18 @@ export default function Page() {
       if (zLow != null) for (const x of secs) {
         if (x.zTop != null) wl0 = Math.max(wl0, x.zTop - 2 - cutLim + y + sS * (L + x.pathL));   // stazione ~2 m sotto il pivot più alto
       }
+      if (zLow != null && canalNet && canalNet.sig === canalSig(R, secs) && tr.length && tr[0].routed) {
+        const rh = canalReq(tr).reqHead;
+        const top = zR != null ? zR + FILL_MAX + sS * L : Infinity;      // pelo in testa al massimo FILL_MAX sopra la vasca
+        if (Number.isFinite(rh)) wl0 = Math.max(zLow + 0.5, Math.min(rh + sS * L, top), ...(prof ? prof.z.filter((z): z is number => z != null).map((z) => z - cutLim + y) : []));
+      }
       const lift = zLow != null ? Math.max(0.5, wl0 - zLow) + 0.5 : Math.max(1, psLift);
       const st0: Stage = { name: tx("Sollevamento alla testa del canale"), qLs: Qd, head: lift, kW: kWof(Qd, lift), hours: hd, hAvg: lift - (drop - dropAvg) };
-      const stS: Stage[] = secs.map((x) => {
-        const wl = wl0 - sS * (L + x.pathL);
-        const h = Math.max(1, x.hd + (x.zTop != null && zLow != null ? x.zTop - wl : 0));
+      const lvD = canalLevels(tr, zLow != null ? wl0 - sS * L : null);
+      const stS: Stage[] = secs.map((x, j) => {
+        const wl = lvD?.wlSt.get(j) ?? wl0 - sS * (L + x.pathL);
+        const tl = lvD?.tailSt.get(j) ?? 0;
+        const h = Math.max(1, x.hd + (x.zTop != null && zLow != null ? x.zTop - wl : 0) + (tl > 0 ? sizeMain(x.qLs, tl).hf : 0));
         return { name: tx("Stazione settore {i} ({n} pivot)", { i: x.i, n: x.n }), qLs: x.qLs, head: h, kW: kWof(x.qLs, h), hours: hd, share: x.qLs / Math.max(1e-9, Qd), pt: x.center };
       });
       let ok = zLow != null, why: string | undefined;
@@ -9450,7 +9570,8 @@ export default function Page() {
       else if (srcHours < hd) { ok = false; why = tx("La fonte è disponibile {a} h al giorno, i pivot lavorano {b} h: serve un accumulo.", { a: fx(srcHours), b: fx(hd) }); }
       out.push(finish({ key: "D", name: tx("Sollevamento in canale e stazioni di settore"), ok, why, nStations: 1 + stS.length,
         stages: [st0, ...stS],
-        main: { kind: "canal", L, cutMax: cutLim, fillMax: 0, sec: secD, tree: tr, treeL: tr.reduce((a, b) => a + b.L, 0) },
+        main: { kind: "canal", L, cutMax: cutLim, fillMax: 0, sec: secD, tree: tr, treeL: tr.reduce((a, b) => a + b.L, 0),
+          treeCut: lvD?.cut, treeFill: lvD?.fill, drops: lvD?.drops, dropM: lvD?.dropM, tailL: lvD?.tailL },
         sectors: secs.length ? secs.map((x, j) => ({ ...x, hC: stS[j].head })) : undefined }));
     }
     // Consigliato — rete: minor energia; FV + generatore: minor energia da
@@ -9545,8 +9666,22 @@ export default function Page() {
       src: srcPt,
       line: sc && S ? S.ln : null,
       lineKind: (sc?.main?.kind ?? "pipe") as "pipe" | "canal",
-      branches: (sc?.main?.tree ?? []).map((b) => ({ coords: b.coords, kind: sc!.main!.kind,
-        label: sc!.main!.kind === "canal"
+      branches: (sc?.main?.tree ?? []).flatMap((b) => {
+        if (b.pipeFrom == null || sc!.main!.kind !== "canal") return [b];
+        // spezza il ramo alla distanza pipeFrom: prima canale, poi condotta
+        const c = b.coords, kx = 111320 * Math.cos((c[0][1] * Math.PI) / 180);
+        let acc = 0; const a: number[][] = [c[0]];
+        for (let i = 1; i < c.length; i++) {
+          const L = Math.hypot((c[i][0] - c[i - 1][0]) * kx, (c[i][1] - c[i - 1][1]) * 110540);
+          if (acc + L >= b.pipeFrom) { const t = L > 0 ? (b.pipeFrom - acc) / L : 0; const m = [c[i - 1][0] + (c[i][0] - c[i - 1][0]) * t, c[i - 1][1] + (c[i][1] - c[i - 1][1]) * t];
+            return [{ ...b, coords: [...a, m], L: b.pipeFrom }, { ...b, coords: [m, ...c.slice(i)], L: b.L - b.pipeFrom, tailPipe: true }]; }
+          acc += L; a.push(c[i]);
+        }
+        return [b];
+      }).map((b) => ({ coords: b.coords, kind: ("tailPipe" in b && b.tailPipe ? "pipe" : sc!.main!.kind) as "pipe" | "canal",
+        label: "tailPipe" in b && b.tailPipe
+          ? `${tx("Condotta principale")} · DN ${sizeMain(b.q, b.L).dn} · ${fx(Math.round(b.q))} l/s · ${fx(Math.round(b.L))} m`
+          : sc!.main!.kind === "canal"
           ? `${tx("Canale principale")} · ${fx(Math.round(b.q))} l/s · ${fx(Math.round(b.L))} m${b.sec ? ` · b ${fx(b.sec.b, { maximumFractionDigits: 1 })} m` : ""}`
           : `${tx("Condotta principale")} · ${b.n && b.n > 1 ? `${b.n}× ` : ""}DN ${b.dn} · ${fx(Math.round(b.q))} l/s · ${fx(Math.round(b.L))} m` })),
       reservoir: sc?.res && R ? { center: R, r: sc.res.r } : null,
@@ -9979,6 +10114,8 @@ export default function Page() {
                       : <div>• {t("Adduttrice")}: {sc.main.n && sc.main.n > 1 ? `${sc.main.n} × ` : ""}DN {sc.main.dn} · {uKm(sc.main.L / 1000, 1)} · {t("perdite")} {fmt(Math.round(sc.main.hf ?? 0))} m{!!sc.main.hiPt && <> · {t("prevalenza decisa dal colmo a {z} m", { z: fmt(Math.round(sc.main.hiPt)) })}</>}</div>)}
                     {!!sc.main?.treeL && <div data-main-tree>• {sc.main.kind === "canal" ? t("Canali principali alle stazioni") : t("Condotte principali alle stazioni")}: {uKm(sc.main.treeL / 1000, 1)}
                       {sc.main.kind === "pipe" && sc.main.tree?.length ? <> · DN {Math.min(...sc.main.tree.map((b) => b.dn ?? 0))}–{Math.max(...sc.main.tree.map((b) => b.dn ?? 0))}</> : null}
+                      {sc.main.kind === "canal" && sc.main.tree?.length ? <> · {sc.main.tree[0].routed ? t("tracciati sul terreno, tra i pivot") : canalNetBusy ? t("tracciamento sul terreno…") : t("in linea retta")}</> : null}
+                      {sc.main.treeCut != null ? <> · {t("scavo massimo")} {fmt(Math.max(0, sc.main.treeCut), { maximumFractionDigits: 1 })} m · {t("rilevato massimo")} {fmt(Math.max(0, sc.main.treeFill ?? 0), { maximumFractionDigits: 1 })} m{sc.main.drops ? <> · {t("{n} salti ({m} m in tutto)", { n: sc.main.drops, m: fmt(sc.main.dropM ?? 0, { maximumFractionDigits: 1 }) })}</> : null}{sc.main.tailL ? <> · {t("ultimi {l} in tubo fino alle stazioni sul rialzo", { l: uKm(sc.main.tailL / 1000, 1) })}</> : null}</> : null}
                       {sc.main.kind === "canal" && sc.main.tree?.length ? <> · {t("fondo")} {fmt(Math.min(...sc.main.tree.map((b) => b.sec?.b ?? 0)), { maximumFractionDigits: 1 })}–{fmt(Math.max(...sc.main.tree.map((b) => b.sec?.b ?? 0)), { maximumFractionDigits: 1 })} m</> : null}
                       {sc.sectors?.length ? <> · {t("distribuzione")} {uKm(sc.sectors.reduce((a, x) => a + x.distL, 0) / 1000, 1)}</> : null}</div>}
                     {sc.res && <div>• {t("Vasca di accumulo")}: <b>{fmt(Math.round(sc.res.vol))} m³</b> · {uHa(sc.res.ha, 1)} · {t("profondità")} {fmt(resDepth)} m · {t("scorta")} {fmt(sc.res.days)} {t("giorni")} · {t("evaporazione")} {fmt(Math.round(sc.res.evap))} m³/{t("giorno")}</div>}

@@ -189,6 +189,10 @@ export const createProject = (body: {
 // Tracciato automatico presa → vasca (condotta o canale a gravità).
 export type AutoRoute = { coords: number[][]; length_m: number; profile: number[][]; z_max: number | null; z_min: number | null;
   cut_max_m: number; fill_max_m: number; res_m: number };
+export type CanalNet = { head_m: number; res_m: number; unreached: number[];
+  branches: { station: number; parent: number; attach_m: number; coords: number[][]; length_m: number; profile: number[][]; in_circles: number }[] };
+export const canalNetwork = (body: { head: number[]; stations: number[][]; circles?: number[][]; target_permille?: number; head_m?: number }) =>
+  req<CanalNet>("/api/canal/network", { method: "POST", body: JSON.stringify(body) });
 export const autoRoute = (body: { src: number[]; dst: number[]; mode: "pipe" | "canal"; roads?: number[][][]; edges?: number[][][];
   circles?: number[][]; target_permille?: number }) =>
   req<AutoRoute>("/api/canal/route", { method: "POST", body: JSON.stringify(body) });
