@@ -109,6 +109,8 @@ export type LayoutParams = {
   min_pivot_pct?: number;   // dimensione minima dei pivot di riempimento bordi (% del raggio)
   fill_full?: boolean;      // riempie i vuoti anche con pivot interi fuori griglia
   free_layout?: boolean;    // disposizione libera (niente maglia fissa)
+  canal_rows?: number;      // canali: file di pivot per lato (0 = solo il canale sul bordo)
+  canal_corridor_m?: number;
   dem?: "COPERNICUS_30" | "COPERNICUS_90";   // modello del terreno
   dem_smooth_m?: number;    // base di levigatura della pendenza (m)
   pivot_slope_max_pct?: number; pivot_slope_tol_pct?: number;   // scarpate: pendenza massima sotto il pivot (0 = spento)

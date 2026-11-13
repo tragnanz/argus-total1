@@ -20,7 +20,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.280";
+const REV = "v0.6.281";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -88,10 +88,13 @@ type Settings = {
   weights: SuitWeights; slopeIdeal: number; slopeMax: number;
   layoutCfg: LayoutConfig; radius: number; gap: number; transport: Transport;
   orientMode: "auto" | "manual"; azimuth: number; canalFlip: boolean;
+  canalRows: number;                      // canali: file di pivot per lato (2 o 3 → un canale ogni 4 o 6 pivot)
   onlySuitable: boolean; minSuit: number; overhang: number;
   nPhases: number; phaseOrder: PhaseOrder; kc: number; eff: number; hours: number;
 };
 // Pendenza ideale/massima predefinita per tipo di trasporto, in ‰ (per mille).
+// larghezza del corridoio libero per un canale tra i gruppi di file (canale + argini + pista)
+const CANAL_CORRIDOR_M = 30;
 const SLOPE_PM: Record<Transport, { ideal: number; max: number }> = {
   canal: { ideal: 2, max: 5 },
   buried: { ideal: 5, max: 70 },
@@ -100,7 +103,7 @@ const DEFAULTS: Settings = {
   weights: { slope: 0.45, vigor: 0.25, moisture: 0.15, climate: 0.15 },
   slopeIdeal: SLOPE_PM.buried.ideal, slopeMax: SLOPE_PM.buried.max,   // ‰
   layoutCfg: "staggered", radius: 400, gap: 0, transport: "buried",
-  orientMode: "auto", azimuth: 0, canalFlip: false,
+  orientMode: "auto", azimuth: 0, canalFlip: false, canalRows: 2,
   onlySuitable: false, minSuit: 60, overhang: 0,
   nPhases: 1, phaseOrder: "canal_distance", kc: DEFAULT_KC, eff: 0.85, hours: 20,
 };
@@ -1404,6 +1407,14 @@ export default function Page() {
     setFields((fs) => fs.map((f) => f.id === activeId ? { ...f, settings: { ...(f.settings ?? gset), ...p } } : f));
   }
   const setW = (k: keyof SuitWeights, v: number) => patch({ weights: { ...cur.weights, [k]: v } });
+  // pivot disegnati che non rispettano i corridoi dei canali (alimentazione a canali scelta dopo la posa)
+  function canalMismatch(f: Field): boolean {
+    if (!f.lay || !pivots.some((p) => p.field === f.id)) return false;
+    const st = f.settings ?? gset;
+    if (st.transport !== "canal") return false;
+    const m = f.lay as { transport?: string; canal_rows?: number };
+    return m.transport !== "canal" || (m.canal_rows ?? 0) !== (st.canalRows ?? 2);
+  }
 
   // ---- viste satellitari (campo attivo) ----
   const [index, setIndex] = useState("ndvi");
@@ -3775,6 +3786,7 @@ export default function Page() {
       auto_orient: s.orientMode === "auto",
       canal_azimuth_deg: s.orientMode === "manual" ? s.azimuth : null,
       canal_flip: s.canalFlip,
+      canal_rows: s.transport === "canal" ? (s.canalRows ?? 2) : 0, canal_corridor_m: CANAL_CORRIDOR_M,
       only_suitable: s.onlySuitable, min_suitability: s.minSuit, date: date || null,
       overhang_pct: s.overhang, n_phases: s.nPhases, phase_order: s.phaseOrder,
       kc_peak: s.kc, efficiency: s.eff, hours_per_day: s.hours,
@@ -3838,7 +3850,13 @@ export default function Page() {
     const taggedP = np.map((x) => ({ ...x, field: fid }));
     const mergedP = [...pivots.filter((x) => x.field !== fid), ...taggedP];
     showPivotField(fid);                                  // pivot appena posati: sempre visibili
-    const mergedL = pivotLines.filter((x) => x.field !== fid);
+    // canali nei corridoi tra i gruppi di file (alimentazione a canali): restano come linee del campo
+    const corrL: PipeLine[] = (r.geojson.features || [])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .filter((ft: any) => ft.properties?.kind === "canal" && ft.properties?.role === "corridor" && ft.geometry?.type === "LineString")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((ft: any) => ({ kind: "canal", coords: ft.geometry.coordinates as number[][], field: fid }));
+    const mergedL = [...pivotLines.filter((x) => x.field !== fid), ...corrL];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const layGeoNoLines = { type: "FeatureCollection" as const, features: (r.geojson.features || []).filter((ft: any) => ft.geometry?.type !== "LineString") };
     setFields((fs) => fs.map((f) => f.id === fid ? { ...f, lay: r.meta, layGeo: layGeoNoLines } : f));
@@ -4866,6 +4884,16 @@ export default function Page() {
             ? t("Con i canali il vincolo di pendenza è severo (max {p}‰): serve terreno pianeggiante.", { p: 5 })
             : t("Con tubazioni in pressione la pendenza tollerata è maggiore (max {p}‰).", { p: 70 })}
         </p>
+        {cur.transport === "canal" && (<>
+          <label className="text-xs text-sage-dark mt-2 block">{t("Pivot in fila per lato del canale")}</label>
+          <div className="seg mt-1" data-canal-rows>
+            {[2, 3].map((n) => (
+              <div key={n} className="seg-item" data-active={(cur.canalRows ?? 2) === n} onClick={() => patch({ canalRows: n })}>
+                {t("{n} per lato · un canale ogni {m} pivot", { n, m: 2 * n })}</div>
+            ))}
+          </div>
+          <p className="text-[11px] text-sage-dark mt-1">{t("Tra un gruppo di file e l'altro resta un corridoio libero di {w} m per il canale, gli argini e la pista: nessun pivot ci passa sopra.", { w: CANAL_CORRIDOR_M })}</p>
+        </>)}
 
         <div className="text-xs text-sage-dark mt-2 flex items-center gap-1.5">
           {t("Orientamento reticolo")}
@@ -10078,6 +10106,24 @@ export default function Page() {
 
           {/* 4 — schemi */}
           <div className="text-xs font-semibold text-brand-darker">{t("3 · Schemi d'impianto")}</div>
+          {(() => {
+            // schema a canali scelto (o consigliato) ma pivot posati senza i corridoi dei canali
+            const scK = S.schemes.find((x) => x.key === (srcShown ?? S.best?.key));
+            if (scK?.main?.kind !== "canal") return null;
+            const bad = fields.filter((f) => f.lay && pivots.some((p) => p.field === f.id)
+              && ((f.lay as { transport?: string }).transport !== "canal"));
+            if (!bad.length) return null;
+            return (
+              <div data-canal-src-warning className="text-xs rounded-lg p-2 leading-relaxed border border-amber-400 bg-amber-50 text-amber-900">
+                {t("Lo schema scelto porta l'acqua con i canali, ma i pivot di {n} campi sono disegnati senza i corridoi dei canali: i canali ci passerebbero sotto. Vanno spostati riposandoli con l'alimentazione a canali.", { n: bad.length })}
+                <button className="btn-ghost w-full mt-1 py-1 text-xs" data-canal-switch onClick={() => {
+                  if (sameRules) setGset((g) => ({ ...g, transport: "canal", slopeIdeal: SLOPE_PM.canal.ideal, slopeMax: SLOPE_PM.canal.max }));
+                  else setFields((fs) => fs.map((f) => bad.some((b) => b.id === f.id) ? { ...f, settings: { ...(f.settings ?? gset), transport: "canal", slopeIdeal: SLOPE_PM.canal.ideal, slopeMax: SLOPE_PM.canal.max } } : f));
+                  setActiveId(bad[0].id); setTab("impianti");
+                }}>{t("Passa ai canali e apri Impianti")}</button>
+              </div>
+            );
+          })()}
           {pivots.length > 1 && (
             <div className="flex items-center gap-2 text-[11px] text-sage-dark">
               <label className="w-24">{t("Portata max per stazione (l/s)")}
@@ -12272,7 +12318,9 @@ export default function Page() {
               <div className="seg-item" data-active={!freeLayout && cur.layoutCfg === "staggered"} onClick={() => { setFreeLayout(false); patch({ layoutCfg: "staggered" }); }}>{t("A triangolo")}</div>
             </div>
             <p className="text-[10px] text-sage-dark mb-1 leading-snug">
-              {freeLayout
+              {cur.transport === "canal"
+                ? t("Con l'alimentazione a canali i pivot si dispongono in file tra i canali (la disposizione libera non si usa).")
+                : freeLayout
                 ? t("Libera: i pivot si posano dove ci stanno, dal più grande, aderenti a bordi, corsi d'acqua e pivot vicini, per coprire più superficie possibile. Restano fuori solo le zone tratteggiate in rosso.")
                 : t("Reticolo fisso: pivot pieni allineati in file (dorsali dritte), poi i vuoti si riempiono con pivot più piccoli.")}
             </p>
@@ -12401,6 +12449,11 @@ export default function Page() {
             ) : (
               <div className="text-xs text-sage-dark bg-panel rounded-lg p-2 mt-2 leading-relaxed">
                 {t("Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.", { min: Math.min(advMinR, advMaxR), max: Math.max(advMinR, advMaxR) })}
+              </div>
+            )}
+            {active && canalMismatch(active) && (
+              <div data-canal-warning className="text-xs rounded-lg p-2 mt-2 leading-relaxed border border-amber-400 bg-amber-50 text-amber-900">
+                {t("Alimentazione a canali: i pivot di «{name}» sono disegnati senza i corridoi dei canali e ci passerebbero sopra. Premi «Inserisci» per spostarli: si riposano in file da {n} per lato, con un canale ogni {m} pivot.", { name: active.name, n: cur.canalRows ?? 2, m: 2 * (cur.canalRows ?? 2) })}
               </div>
             )}
             <div className="flex gap-2 mt-2">

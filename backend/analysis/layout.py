@@ -379,11 +379,23 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     def depth_of(ry):
         return (rmaxy - ry) if top else (ry - rminy)
 
+    # Canali tra le file: con l'alimentazione a canali ogni canale serve `canal_rows` file di pivot per
+    # lato (2 o 3 → un canale ogni 4 o 6 pivot); tra un gruppo e l'altro resta un CORRIDOIO libero largo
+    # `canal_corridor_m` (canale + argini + pista) dove non passa nessun pivot.
+    n_side = int(params.get("canal_rows", 0) or 0) if transport == "canal" else 0
+    corr_w = max(0.0, float(params.get("canal_corridor_m", 30.0))) if n_side > 0 else 0.0
+
+    def corridors_before(j):                       # corridoi prima della fila j (file 0..)
+        if n_side <= 0 or j < n_side:
+            return 0
+        return (j - n_side) // (2 * n_side) + 1
+
     def _grid(ox, oy):
         """Centri del reticolo con origine spostata di (ox, oy) dall'angolo del bbox."""
         out = []                # (rx, ry, x, y) — ruotate + UTM
         j = 0
-        ry = (rmaxy - R - oy) if top else (rminy + R + oy)
+        ry0 = (rmaxy - R - oy) if top else (rminy + R + oy)
+        ry = ry0
         while (ry >= rminy + R - 1e-6) if top else (ry <= rmaxy - R + 1e-6):
             rx = rminx + R + ox + (dx / 2 if (cfg == "staggered" and j % 2 == 1) else 0.0)
             while rx <= rmaxx - R + 1e-6:
@@ -405,8 +417,23 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
                     if ok:
                         out.append((rx, ry, x, y))
                 rx += dx
-            ry += (-dy if top else dy)
             j += 1
+            ry = ry0 + (-1 if top else 1) * (j * dy + corridors_before(j) * corr_w)
+        return out
+
+    def corridor_lines(oy):
+        """Quote (frame ruotato) degli assi dei corridoi dei canali per l'origine oy del reticolo."""
+        if n_side <= 0:
+            return []
+        ry0 = (rmaxy - R - oy) if top else (rminy + R + oy)
+        out, k = [], 0
+        while True:
+            j_last = n_side - 1 + 2 * n_side * k                 # ultima fila prima del corridoio k
+            y_last = ry0 + (-1 if top else 1) * (j_last * dy + k * corr_w)
+            yc = y_last + (-1 if top else 1) * (R + (dy - 2 * R) / 2 + corr_w / 2)
+            if (yc < rminy) if top else (yc > rmaxy):
+                break
+            out.append(yc); k += 1
         return out
 
     # Ricerca dell'origine: il reticolo resta regolare (dorsali dritte), ma se
@@ -424,6 +451,18 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
             key = (len(cand), -mean_depth)
             if best_key is None or key > best_key:
                 best_key, centers, grid_shift = key, cand, (ox, oy)
+
+    corr_ys = corridor_lines(grid_shift[1])
+    _obs_base = _obs_dist if dist_obs is not None else None
+    if corr_ys:
+        def _obs_fill(xs, ys):
+            xs = np.atleast_1d(np.asarray(xs, float)); ys = np.atleast_1d(np.asarray(ys, float))
+            _, ryv = rot(xs, ys)
+            dc = np.min(np.abs(ryv[:, None] - np.array(corr_ys)[None, :]), axis=1) - corr_w / 2 - gap
+            dc = np.maximum(dc, 0.0)
+            return dc if _obs_base is None else np.minimum(dc, _obs_base(xs, ys))
+    else:
+        _obs_fill = _obs_base
 
     # --- RIEMPIMENTO DEI BORDI con pivot più piccoli (fino a min_pivot_pct % del
     # raggio): la maglia principale copre il grosso del campo con pivot pieni,
@@ -444,7 +483,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         fill = _fill_gaps(
             centers=centers, R=R, min_r=min_pct * R, gap=gap, overhang=overhang, fill_full=fill_full,
             ring_rot=ring_rot, path_rot=path_rot, bbox_rot=(rminx, rmaxx, rminy, rmaxy), unrot=unrot,
-            g=g, slope_max=slope_max, obs_dist=(_obs_dist if dist_obs is not None else None), steep_ok=_steep_ok, steep_grid=_steep_grid, steep_tol=piv_slope_tol, r_step=max(0.1, float(params.get("radius_step_m", 0.1))),
+            g=g, slope_max=slope_max, obs_dist=_obs_fill, steep_ok=_steep_ok, steep_grid=_steep_grid, steep_tol=piv_slope_tol, r_step=max(0.1, float(params.get("radius_step_m", 0.1))),
             suit_ok=(lambda xu, yu: (lambda sc: sc == sc and sc >= min_suit)(sample_grid(suit[0], suit[1], xu, yu)))
             if (only_suitable and suit is not None) else None)
         if free:
@@ -586,6 +625,12 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     for (plon, plat) in pumps:
         features.append({"type": "Feature", "properties": {"kind": "pump"},
                          "geometry": {"type": "Point", "coordinates": [plon, plat]}})
+    # canali nei corridoi tra i gruppi di file (tratti dentro il poligono)
+    for yc in corr_ys:
+        for (rx0, rx1) in _inside_runs(yc):
+            seg = [list(to_wgs.transform(*unrot(rx0, yc))), list(to_wgs.transform(*unrot(rx1, yc)))]
+            features.append({"type": "Feature", "properties": {"kind": "canal", "role": "corridor"},
+                             "geometry": {"type": "LineString", "coordinates": seg}})
     # linea del canale sul collettore interno (tratti dentro il poligono)
     for (rx0, rx1) in canal_runs:
         seg = [list(to_wgs.transform(*unrot(rx0, canal_disp_ry))),
@@ -665,6 +710,7 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
         "slope_max_pct": slope_max,
         "orientation_deg": round(math.degrees(theta), 1),
         "auto_orient": (az is None and auto_orient), "canal_flip": canal_flip,
+        "canal_rows": n_side, "canal_corridor_m": corr_w, "n_canals": len(corr_ys),
         "only_suitable": only_suitable, "min_suitability": min_suit if only_suitable else None,
         "overhang_pct": round(overhang * 100, 1),
         "n_phases": n_phases, "phase_order": phase_order, "phases": phases_out,

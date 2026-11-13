@@ -35,3 +35,32 @@ def test_fasce_corsi_acqua_tratteggiate():
     w = [f for f in r["geojson"]["features"] if f["properties"].get("reason") == "water"]
     # fascia ~110 m × 3,3 km ≈ 36 ha
     assert w and 20 < r["meta"]["excluded_water_ha"] < 60
+
+
+class Flat:
+    def fetch_dem(self, bbox, epsg, wp, hp, dem_instance=None):
+        return np.full((hp, wp), 50.0)
+
+
+def test_corridoi_dei_canali():
+    geom = {"type": "Polygon", "coordinates": [[[10.0, 45.0], [10.08, 45.0], [10.08, 45.07], [10.0, 45.07], [10.0, 45.0]]]}
+    L._DEM_CACHE.clear()
+    r = L.compute_layout(Flat(), geom, dict(radius_m=300, gap_m=10, transport="canal", config="square", slope_max_pct=60,
+                                             dem_smooth_m=0, canal_rows=2, canal_corridor_m=40, min_pivot_pct=70))
+    m = r["meta"]
+    assert m["n_canals"] >= 2
+    cors = [f for f in r["geojson"]["features"] if f["properties"].get("role") == "corridor"]
+    piv = [f for f in r["geojson"]["features"] if f["properties"].get("kind") == "pivot"]
+    import pyproj
+    T = pyproj.Transformer.from_crs(4326, 32632, always_xy=True)
+    def seg_d(p, a, b):
+        ax, ay = a; bx, by = b; vx, vy = bx - ax, by - ay
+        t = max(0, min(1, ((p[0] - ax) * vx + (p[1] - ay) * vy) / (vx * vx + vy * vy)))
+        return ((p[0] - ax - t * vx) ** 2 + (p[1] - ay - t * vy) ** 2) ** 0.5
+    for f in piv:
+        cs = [T.transform(*q) for q in f["geometry"]["coordinates"][0][:-1]]
+        c = (sum(q[0] for q in cs) / len(cs), sum(q[1] for q in cs) / len(cs))
+        rr = sum(((q[0] - c[0]) ** 2 + (q[1] - c[1]) ** 2) ** 0.5 for q in cs) / len(cs)
+        for k in cors:
+            a, b = (T.transform(*q) for q in k["geometry"]["coordinates"])
+            assert seg_d(c, a, b) >= rr + 19, "pivot sopra il corridoio del canale"

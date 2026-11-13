@@ -29,7 +29,7 @@ def layout(body: LayoutIn, client=Depends(get_client), user: User = Depends(get_
         "kc_peak": body.kc_peak, "efficiency": body.efficiency,
         "hours_per_day": body.hours_per_day,
         "roads": body.roads, "clear_road_m": body.clear_road_m,
-        "min_pivot_pct": body.min_pivot_pct, "fill_full": body.fill_full, "free_layout": body.free_layout,
+        "min_pivot_pct": body.min_pivot_pct, "fill_full": body.fill_full, "free_layout": body.free_layout, "canal_rows": body.canal_rows, "canal_corridor_m": body.canal_corridor_m,
         "pivot_slope_max_pct": body.pivot_slope_max_pct, "pivot_slope_tol_pct": body.pivot_slope_tol_pct,
         "dem": body.dem, "dem_smooth_m": body.dem_smooth_m,
     }
