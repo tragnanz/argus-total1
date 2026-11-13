@@ -628,8 +628,20 @@ def compute_layout(client, geom: dict, params: dict) -> dict:
     # canali nei corridoi tra i gruppi di file (tratti dentro il poligono)
     for yc in corr_ys:
         for (rx0, rx1) in _inside_runs(yc):
+            # quote lungo il canale: l'acqua entra dal capo più alto (testa) e scende verso l'altro
+            zs = [_elev_at(g, *unrot(rx0 + (rx1 - rx0) * k / 20.0, yc)) for k in range(21)]
+            zs = [z for z in zs if z == z]
+            za = _elev_at(g, *unrot(rx0, yc)); zb = _elev_at(g, *unrot(rx1, yc))
+            if za == za and zb == zb and zb > za:
+                rx0, rx1, za, zb = rx1, rx0, zb, za
+            Lc = abs(rx1 - rx0)
             seg = [list(to_wgs.transform(*unrot(rx0, yc))), list(to_wgs.transform(*unrot(rx1, yc)))]
-            features.append({"type": "Feature", "properties": {"kind": "canal", "role": "corridor"},
+            props = {"kind": "canal", "role": "corridor", "length_m": round(Lc, 1)}
+            if za == za and zb == zb and Lc > 0:
+                props.update({"z_head": round(float(za), 2), "z_tail": round(float(zb), 2),
+                              "terrain_permille": round(float((za - zb) / Lc * 1000.0), 3),
+                              "z_max": round(float(max(zs)), 2) if zs else None, "z_min": round(float(min(zs)), 2) if zs else None})
+            features.append({"type": "Feature", "properties": props,
                              "geometry": {"type": "LineString", "coordinates": seg}})
     # linea del canale sul collettore interno (tratti dentro il poligono)
     for (rx0, rx1) in canal_runs:

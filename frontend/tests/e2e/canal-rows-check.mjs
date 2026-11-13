@@ -42,7 +42,16 @@ try {
   await page.locator("[data-canal-warning]").waitFor({ state: "detached", timeout: 300000 }).catch(() => {});
   ok(!(await page.locator("[data-canal-warning]").count()), "Dopo «Inserisci» l'avviso sparisce (pivot riposati fuori dai canali)");
   await page.waitForTimeout(1500);
+  const tab = (await page.locator("[data-canal-table]").innerText().catch(() => "")).replace(/\n/g, " ");
+  ok(/dimensionamento/.test(tab) && /DN \d+/.test(tab), `Canali dimensionati: ${tab.slice(0, 260)}`);
   await page.screenshot({ path: path.join(SH, "c2_corridoi.png") });
+  // strade: a fianco dei canali e raccordi ortogonali fino ai centri dei pivot
+  await page.locator('button[title="Strade"]').first().click(); await page.waitForTimeout(800);
+  const nR = Number(((await page.locator("text=/^Strade · \\d+/").first().innerText().catch(() => "")).match(/(\d+)/) || [])[1] || 0);
+  await page.locator('button:has-text("Genera strade di servizio")').click(); await page.waitForTimeout(800);
+  const rmsg = await page.locator("text=/Strade lungo \\d+ canali/").first().innerText().catch(() => "");
+  ok(nR > 10 && /raccordi ortogonali/.test(rmsg), `Strade dopo la posa: ${nR} · ${rmsg}`);
+  await page.screenshot({ path: path.join(SH, "c3_strade.png") });
   console.log("  tracciati sulla mappa prima/dopo:", n0, await page.locator(".leaflet-overlay-pane path").count());
   ok(errors.length === 0, `Nessun errore JavaScript${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; await page.screenshot({ path: path.join(SH, "c_err.png") }).catch(() => {}); }

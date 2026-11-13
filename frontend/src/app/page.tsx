@@ -13,14 +13,14 @@ import { Dxf, toUtm, utmZone } from "@/lib/dxf";
 import { designCanal, canalEarthworks, LININGS, lining, pivotUniformity, cuGrade, SPRINKLERS, solarMonths, solarDesignWorstMonth, pvPerf, riverBalance, type LiningId, type CanalSection, type CuResult } from "@/lib/hydro";
 import type { LL, RGB, TvSheet, TvCommon, TvPivot, TvLine, TvPoint, TvColItem, TvTrenchItem, TvDraw, TvTech } from "@/lib/tavole";
 import { linearLayout, reelLayout, dripLayout, type LL as SysLL } from "@/lib/systems";
-import { localFrame, capSectors, stationSpot, sectorNet, primTree, treeFlows, type SPivot } from "@/lib/sectors";
+import { localFrame, capSectors, stationSpot, sectorNet, primTree, treeFlows, pipeSize as pipeSizeLib, type SPivot } from "@/lib/sectors";
 import type {
   Area, Client, Polygon, Project, Scene, ColorScale, SuitMeta, SuitWeights,
   LayoutMeta, LayoutConfig, Transport, PhaseOrder, LayoutParams, GeoJSONFC, MacroArea, Canal, GuidedResult, ProjectLayer, Watercourse, ElevationResult,
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.281";
+const REV = "v0.6.282";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -531,7 +531,8 @@ function circleRing(lat: number, lng: number, r: number, n = 32): number[][] {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 // Una tubazione: tracciato + (dopo il calcolo idraulico) diametro e portata di
 // ogni tratto.
-type PipeLine = { kind: string; coords: number[][]; field?: number; dn?: number[]; qs?: number[] };
+type PipeLine = { kind: string; coords: number[][]; field?: number; dn?: number[]; qs?: number[];
+  cz?: { zH?: number; zT?: number; tp?: number; zMax?: number; zMin?: number } };   // canali tra le file: quote e pendenza del terreno
 function pivotsFromFC(fc: any, defR: number): { pivots: PivotItem[]; lines: PipeLine[] } {
   const pivots: PivotItem[] = [];
   const lines: PipeLine[] = [];
@@ -3644,10 +3645,107 @@ export default function Page() {
       setMsg(add.length ? t("Importate {n} strade da file.", { n: add.length }) : t("Nessuna linea trovata nei file (KMZ/KML/GeoJSON)."));
     } catch (e) { showErr(e); }
   }
+  // Strade con l'alimentazione a canali: una strada di servizio corre a fianco di ogni canale (dentro il
+  // corridoio), poi da lì un raccordo ortogonale al canale entra nel campo e taglia i pivot fino al
+  // centro (la piramide) di ogni pivot. Ogni pivot si serve dal canale più vicino; se il suo raccordo
+  // passa dall'altra parte del canale serve un attraversamento (tombino).
+  function canalRoads(fid: number, pv: PivotItem[], lines: PipeLine[], w: number) {
+    const can = lines.map((l, i) => ({ l, i })).filter((x) => x.l.kind === "canal" && x.l.field === fid && x.l.coords.length >= 2);
+    const ctr = pv.filter((p) => p.field === fid);
+    if (!can.length || !ctr.length) return null;
+    const F = localFrame(ctr[0].lng, ctr[0].lat);
+    const off = Math.max(w / 2 + 2, Math.min(10, CANAL_CORRIDOR_M / 2 - w / 2 - 1));   // asse strada dall'asse canale
+    type Sg = { li: number; a: { x: number; y: number }; ux: number; uy: number; nx: number; ny: number; L: number; ra: { x: number; y: number }; rb: { x: number; y: number }; q: number; n: number };
+    const segs: Sg[] = [];
+    for (const { l, i } of can) {
+      const a = F.to(l.coords[0][0], l.coords[0][1]), b = F.to(l.coords[l.coords.length - 1][0], l.coords[l.coords.length - 1][1]);
+      const L = Math.hypot(b.x - a.x, b.y - a.y); if (L < 1) continue;
+      const ux = (b.x - a.x) / L, uy = (b.y - a.y) / L, nx = -uy, ny = ux;
+      segs.push({ li: i, a, ux, uy, nx, ny, L, ra: { x: a.x + nx * off, y: a.y + ny * off }, rb: { x: b.x + nx * off, y: b.y + ny * off }, q: 0, n: 0 });
+    }
+    if (!segs.length) return null;
+    // ogni pivot al canale più vicino; i raccordi della stessa colonna (stessa ascissa lungo il canale,
+    // stesso lato) diventano una sola strada fino al pivot più lontano
+    type Lk = { g: Sg; t: number; side: number; d: number; p: PivotItem };
+    const links: Lk[] = [];
+    for (const p of ctr) {
+      const q = F.to(p.lng, p.lat);
+      let best: Lk | null = null;
+      for (const g of segs) {
+        const t = Math.max(0, Math.min(g.L, (q.x - g.a.x) * g.ux + (q.y - g.a.y) * g.uy));
+        const side = (q.x - g.a.x) * g.nx + (q.y - g.a.y) * g.ny;
+        const d = Math.hypot(q.x - (g.a.x + g.ux * t), q.y - (g.a.y + g.uy * t));
+        if (!best || d < best.d) best = { g, t, side, d, p };
+      }
+      if (best) { links.push(best); best.g.q += pivotFlow(p); best.g.n++; }
+    }
+    const roadsOut: number[][][] = segs.map((g) => [F.from(g.ra), F.from(g.rb)]);
+    const cols = new Map<string, Lk>();
+    for (const k of links) {
+      const key = `${segs.indexOf(k.g)}|${k.side >= 0 ? 1 : -1}|${Math.round(k.t / 60)}`;
+      const c = cols.get(key); if (!c || k.d > c.d) cols.set(key, k);
+    }
+    let cross = 0;
+    for (const k of cols.values()) {
+      const s0 = { x: k.g.ra.x + k.g.ux * k.t, y: k.g.ra.y + k.g.uy * k.t };
+      roadsOut.push([F.from(s0), [k.p.lng, k.p.lat]]);
+      if (k.side < off) cross++;                       // il raccordo attraversa il canale (tombino)
+    }
+    // tubazioni lungo i raccordi: per ogni colonna una condotta dal canale (presa della pompa) al pivot più
+    // vicino e da lì ai successivi; ogni tratto porta la portata dei pivot a valle ed è dimensionato (DN)
+    const pipes: PipeLine[] = [];
+    const groups = new Map<string, Lk[]>();
+    for (const k of links) {
+      const key = `${segs.indexOf(k.g)}|${k.side >= 0 ? 1 : -1}|${Math.round(k.t / 60)}`;
+      const arr = groups.get(key) ?? []; arr.push(k); groups.set(key, arr);
+    }
+    for (const arr of groups.values()) {
+      arr.sort((x, y) => x.d - y.d);
+      const g = arr[0].g, sg = Math.sign(arr[0].side || 1);
+      let prev = F.from({ x: g.a.x + g.ux * arr[0].t + g.nx * sg * 4, y: g.a.y + g.uy * arr[0].t + g.ny * sg * 4 });
+      arr.forEach((k, i) => {
+        const q = arr.slice(i).reduce((a2, x) => a2 + pivotFlow(x.p), 0);
+        const to = [k.p.lng, k.p.lat];
+        const L = Math.max(1, lineLenKm([prev, to]) * 1000);
+        const ps = pipeSizeLib(q, L, DN_LIST, vMax, hwC);
+        pipes.push({ kind: "pipe", coords: [prev, to], field: fid, dn: [ps.dn], qs: [q] });
+        prev = to;
+      });
+    }
+    return { segs: roadsOut, nRoad: segs.length, cross, pipes, flows: segs.map((g) => ({ li: g.li, q: g.q, n: g.n, L: g.L })) };
+  }
+  // Dimensionamento dei canali tra le file: portata = pivot serviti; pendenza = quella del terreno lungo il
+  // canale (tra 0,1 e 1‰; in piano o in salita quella di progetto, con lo scavo che cresce verso valle;
+  // se il terreno scende di più, salti); sezione con Manning (base, tirante, franco, ciglio, velocità).
+  function corridorSizing(fid: number) {
+    const cr = canalRoads(fid, pivots, pivotLines, roadWidth);
+    if (!cr) return null;
+    const rows = cr.flows.map((fl, k) => {
+      const l = pivotLines[fl.li], tp = l.cz?.tp;
+      const S = tp != null && tp >= 0.1 ? Math.min(tp, 1.0) : Math.max(0.05, canalSlope);
+      const sec = designCanal(fl.q, S, canalLin, { fb: canalFb });
+      const extra = Math.max(0, (S - Math.max(0, tp ?? S)) * fl.L / 1000);           // scavo in più a valle
+      const dropM = tp != null && tp > S ? (tp - S) * fl.L / 1000 : 0;
+      return { k: k + 1, li: fl.li, q: fl.q, n: fl.n, L: fl.L, tp, S, sec, depth: sec ? sec.y + sec.fb + extra : null, drops: dropM > 0.3 ? Math.ceil(dropM / 1.0) : 0 };
+    });
+    const pp = cr.pipes;
+    const dns = pp.map((x) => x.dn?.[0] ?? 0).filter((d) => d > 0);
+    const pipeL = pp.reduce((a, x) => a + lineLenKm(x.coords) * 1000, 0);
+    return { rows, nPipes: pp.length, dnMin: dns.length ? Math.min(...dns) : 0, dnMax: dns.length ? Math.max(...dns) : 0, pipeL };
+  }
   // Viabilità di servizio per i pivot del campo attivo (rigenera quella precedente).
   function genServiceRoads() {
     if (!active) return needField();
     const fid = active.id;
+    const cr = canalRoads(fid, pivots, pivotLines, roadWidth);
+    if (cr) {
+      const stamp = Date.now();
+      const add: RoadL[] = cr.segs.map((sg, i) => ({ id: `svc${stamp}_${i}`, coords: sg, width_m: roadWidth, owner: fid, kind: "service" }));
+      setRoads((rs) => [...rs.filter((r) => !(r.kind === "service" && r.owner === fid)), ...add]);
+      const km = add.reduce((sum, r) => sum + lineLenKm(r.coords), 0);
+      setMsg(t("Strade lungo {c} canali e {n} raccordi ortogonali ai pivot: {km}, {x} attraversamenti dei canali.", { c: cr.nRoad, n: add.length - cr.nRoad, km: uKm(km), x: cr.cross }));
+      return;
+    }
     const ctr = pivots.filter((p) => p.field === fid).map((p) => [p.lng, p.lat]);
     if (!ctr.length) { setMsg(t("Posa prima i pivot sul campo attivo.")); return; }
     const ext = roads.filter((r) => r.kind !== "service" && !r.hidden && r.coords.length >= 2).map((r) => r.coords);
@@ -3855,12 +3953,22 @@ export default function Page() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .filter((ft: any) => ft.properties?.kind === "canal" && ft.properties?.role === "corridor" && ft.geometry?.type === "LineString")
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map((ft: any) => ({ kind: "canal", coords: ft.geometry.coordinates as number[][], field: fid }));
-    const mergedL = [...pivotLines.filter((x) => x.field !== fid), ...corrL];
+      .map((ft: any) => ({ kind: "canal", coords: ft.geometry.coordinates as number[][], field: fid,
+        cz: { zH: ft.properties.z_head, zT: ft.properties.z_tail, tp: ft.properties.terrain_permille, zMax: ft.properties.z_max, zMin: ft.properties.z_min } }));
+    let mergedL = [...pivotLines.filter((x) => x.field !== fid), ...corrL];
+    // con i canali: tubazioni dal canale a ogni pivot già dimensionate (DN per portata e velocità)
+    const cr = corrL.length ? canalRoads(fid, mergedP, mergedL, roadWidth) : null;
+    if (cr) mergedL = [...mergedL, ...cr.pipes];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const layGeoNoLines = { type: "FeatureCollection" as const, features: (r.geojson.features || []).filter((ft: any) => ft.geometry?.type !== "LineString") };
     setFields((fs) => fs.map((f) => f.id === fid ? { ...f, lay: r.meta, layGeo: layGeoNoLines } : f));
     setPivots(mergedP); setPivotLines(mergedL); setPivotSel({ mode: "none", idx: -1 });
+    // con i canali le strade di servizio seguono i canali e raggiungono ogni pivot (si rigenerano)
+    if (cr) {
+      { const stamp = Date.now();
+        setRoads((rs) => [...rs.filter((x) => !(x.kind === "service" && x.owner === fid)),
+          ...cr.segs.map((sg, i) => ({ id: `svc${stamp}_${i}`, coords: sg, width_m: roadWidth, owner: fid, kind: "service" as const }))]); }
+    }
     const netHa = mergedP.reduce((s, x) => s + pvAreaM2(x) / 10000, 0);
     setGuided({ geojson: fcFromModel(mergedP, mergedL), meta: { n_pivots: mergedP.length, radius_m: radiusM, net_ha: Math.round(netHa * 10) / 10, safety_m: safetyM } });
     refreshUsage();
@@ -5723,6 +5831,13 @@ export default function Page() {
     }
     const mRoad = roads.filter((r) => r.kind === "service" && !r.hidden).reduce((a, r) => a + lenOf(r.coords), 0);
     if (mRoad > 0) R.push({ cat: tx("Strade"), item: tx("Strade di servizio"), qty: Math.round(mRoad), unit: "m" });
+    // canali tra le file (alimentazione a canali), uno per riga con la sua sezione
+    for (const f of fields) {
+      const cs = corridorSizing(f.id); if (!cs) continue;
+      for (const r of cs.rows) if (r.sec) R.push({ cat: tx("Canali tra le file"), key: "corr",
+        item: tx("Canale {k} ({f}): base {b} m, tirante {y} m, ciglio {w} m, pendenza {s}‰", { k: r.k, f: f.name, b: fx(r.sec.b, { maximumFractionDigits: 1 }), y: fx(r.sec.y, { maximumFractionDigits: 2 }), w: fx(r.sec.topW, { maximumFractionDigits: 1 }), s: fx(r.S, { maximumFractionDigits: 2 }) }),
+        qty: Math.round(r.L), unit: "m", note: `${fx(Math.round(r.q))} l/s · ${tx("scavo massimo")} ${fx(r.depth ?? 0, { maximumFractionDigits: 1 })} m${r.drops ? ` · ${tx("{n} salti", { n: r.drops })}` : ""}` });
+    }
     // Fonte d'acqua (schema scelto) oppure stazione di pompaggio
     const S = srcPt ? sourceSchemes() : null;
     const sc = S ? (S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? null) : null;
@@ -12451,6 +12566,28 @@ export default function Page() {
                 {t("Cerco il raggio unico (uguale per tutti i pivot) che copre più superficie tra {min} e {max} m, evitando strade, canali e fiumi e rispettando i franchi.", { min: Math.min(advMinR, advMaxR), max: Math.max(advMinR, advMaxR) })}
               </div>
             )}
+            {active && !canalMismatch(active) && (() => {
+              const cs = corridorSizing(active.id);
+              if (!cs || !cs.rows.length) return null;
+              return (
+                <div data-canal-table className="text-[11px] rounded-lg p-2 mt-2 bg-panel">
+                  <div className="font-semibold text-sage-dark mb-1">{t("Canali tra le file · dimensionamento")}</div>
+                  <table className="w-full tabular-nums">
+                    <thead><tr className="text-sage-dark text-left">
+                      <th>#</th><th>{t("Pivot")}</th><th>l/s</th><th>{t("Lunghezza")}</th><th>{t("Pendenza")}</th><th>{t("Base")}</th><th>{t("Tirante")}</th><th>{t("Scavo")}</th><th>{t("Ciglio")}</th><th>v</th>
+                    </tr></thead>
+                    <tbody>{cs.rows.map((r) => (
+                      <tr key={r.k} title={r.tp != null ? t("Terreno lungo il canale: {p}‰", { p: fmt(r.tp, { maximumFractionDigits: 2 }) }) + (r.drops ? ` · ${t("{n} salti", { n: r.drops })}` : "") : ""}>
+                        <td>{r.k}</td><td>{r.n}</td><td>{fmt(Math.round(r.q))}</td><td>{uKm(r.L / 1000, 1)}</td><td>{fmt(r.S, { maximumFractionDigits: 2 })}‰</td>
+                        <td>{r.sec ? fmt(r.sec.b, { maximumFractionDigits: 1 }) : "–"} m</td><td>{r.sec ? fmt(r.sec.y, { maximumFractionDigits: 2 }) : "–"} m</td>
+                        <td>{r.depth != null ? fmt(r.depth, { maximumFractionDigits: 1 }) : "–"} m</td><td>{r.sec ? fmt(r.sec.topW, { maximumFractionDigits: 1 }) : "–"} m</td>
+                        <td>{r.sec ? fmt(r.sec.v, { maximumFractionDigits: 2 }) : "–"}</td>
+                      </tr>))}</tbody>
+                  </table>
+                  <div className="mt-1 text-sage-dark">{t("Tubazioni dal canale ai pivot: {n} tratti, {km}, DN {a}–{b}.", { n: cs.nPipes, km: uKm(cs.pipeL / 1000, 1), a: cs.dnMin, b: cs.dnMax })}</div>
+                </div>
+              );
+            })()}
             {active && canalMismatch(active) && (
               <div data-canal-warning className="text-xs rounded-lg p-2 mt-2 leading-relaxed border border-amber-400 bg-amber-50 text-amber-900">
                 {t("Alimentazione a canali: i pivot di «{name}» sono disegnati senza i corridoi dei canali e ci passerebbero sopra. Premi «Inserisci» per spostarli: si riposano in file da {n} per lato, con un canale ogni {m} pivot.", { name: active.name, n: cur.canalRows ?? 2, m: 2 * (cur.canalRows ?? 2) })}
