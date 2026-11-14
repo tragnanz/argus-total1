@@ -32,7 +32,7 @@ function sectorLatLngs(lat: number, lng: number, r: number, deg = 360, az = 0): 
   }
   return out;
 }
-export type PivotModel = { pivots: PivotItem[]; lines: { kind: string; coords: number[][]; dn?: number[]; qs?: number[] }[] };
+export type PivotModel = { pivots: PivotItem[]; lines: { kind: string; coords: number[][]; dn?: number[]; qs?: number[]; tip?: string }[] };
 export type PivotSel = { mode: "none" | "group" | "single"; idx: number };
 // Stato dello strumento «cerchi»: cerchi fissati (n, ettari totali) e cerchio in corso (r, ha).
 export type CircleInfo = { n: number; totHa: number; r: number | null; ha: number | null };
@@ -41,6 +41,7 @@ export type PivotCbs = {
   onMove: (idx: number, lat: number, lng: number) => void;
   onBackground: () => void;
   onLineClick?: (idx: number) => void;   // clic su una tubazione (per modificarla)
+  onCanalClick?: (idx: number) => void;  // clic su un canale (scheda del componente)
 };
 // colori dei corsi d'acqua per tipo
 // colori per tipo: fiumi blu, canali verdi, dreni viola (lib/water.ts)
@@ -94,6 +95,7 @@ export type MapHandle = {
     labels?: { pivot: string; canal: string; free: string }) => void;
   endPipeEdit: () => void;
   clearPivots: () => void;
+  showDrops?: (pts: { ll: number[]; label: string }[]) => void;      // salti di quota dei canali
   showRoads: (roads: { coords: number[][]; width_m?: number; kind?: string }[], onRemove?: (i: number) => void) => void;
   drawRoadManual: (cb: (coords: number[][]) => void) => void;
   clearRoads: () => void;
@@ -262,6 +264,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const waterPreviewRef = useRef<L.FeatureGroup | null>(null);
   const drawModeRef = useRef<"river" | "canal" | "basin" | "canal-manual" | "road-manual" | "pipe-manual" | null>(null);
   const roadsRef = useRef<L.LayerGroup | null>(null);
+  const dropsRef = useRef<L.LayerGroup | null>(null);
   const hydroRef = useRef<L.LayerGroup | null>(null);
   const roadManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
   const waterRemoveRef = useRef(false);
@@ -957,6 +960,12 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             if (!fedPipe.has(li)) pl.setStyle({ dashArray: "8,6" });
           } else {
             g.addLayer(L.polyline(latlngs, { ...st, interactive: false }));
+            if (ln.kind === "canal" && cbs.onCanalClick) {
+              const hit = L.polyline(latlngs, { color: "#000", weight: 16, opacity: 0, interactive: true });
+              hit.on("click", (e) => { L.DomEvent.stop(e); cbs.onCanalClick?.(li); });
+              hit.bindTooltip(ln.tip ?? tRef.current("Canale"), { direction: "top", sticky: true });
+              g.addLayer(hit);
+            }
           }
         });
         const groupSel = sel.mode === "group" || sel.mode === "single";
@@ -1140,6 +1149,15 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         try { (map as any).pm.enableDraw("Line", { allowSelfIntersection: true }); } catch { /* */ }
       },
       clearRoads() { roadsRef.current?.clearLayers(); },
+      showDrops(pts) {
+        const map = mapRef.current; if (!map) return;
+        if (!dropsRef.current) dropsRef.current = L.layerGroup().addTo(map);
+        const g = dropsRef.current; g.clearLayers();
+        for (const p of pts) g.addLayer(L.marker([p.ll[1], p.ll[0]], { zIndexOffset: 800,
+          icon: L.divIcon({ className: "", iconSize: [12, 12], iconAnchor: [6, 6],
+            html: '<div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:10px solid #dc2626;filter:drop-shadow(0 0 1px #fff)"></div>' }) })
+          .bindTooltip(p.label, { direction: "top" }));
+      },
       setHydro(d) {
         const g = hydroRef.current; if (!g) return;
         g.clearLayers();

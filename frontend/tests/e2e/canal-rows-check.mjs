@@ -45,6 +45,29 @@ try {
   const tab = (await page.locator("[data-canal-table]").innerText().catch(() => "")).replace(/\n/g, " ");
   ok(/dimensionamento/.test(tab) && /DN \d+/.test(tab), `Canali dimensionati: ${tab.slice(0, 260)}`);
   await page.screenshot({ path: path.join(SH, "c2_corridoi.png") });
+  // clic sul canale: scheda con dimensioni modificabili, profilo con i salti e tavola PDF
+  const hitBox = await page.evaluate(() => { const el = [...document.querySelectorAll("path.leaflet-interactive")].find((p) => p.getAttribute("stroke-width") === "16");
+    if (!el) return null; const b = el.getBoundingClientRect(); return { x: b.x + b.width * 0.3, y: b.y + b.height / 2 }; });
+  ok(!!hitBox, "Canale cliccabile sulla mappa");
+  if (hitBox) {
+    await page.mouse.click(hitBox.x, hitBox.y); await page.waitForTimeout(800);
+    ok(await page.locator("[data-comp-card]").isVisible(), "Scheda del canale aperta");
+    await page.locator("[data-comp-info]").filter({ hasText: /salt/ }).waitFor({ timeout: 120000 }).catch(() => {});
+    const info0 = (await page.locator("[data-comp-info]").innerText()).replace(/\n/g, " ");
+    await page.locator('[data-comp-in="b"]').fill("2"); await page.waitForTimeout(800);
+    const info1 = (await page.locator("[data-comp-info]").innerText()).replace(/\n/g, " ");
+    ok(info0 !== info1 && /tirante/.test(info1), `Base a mano 2 m: ${info0.slice(0, 120)} → ${info1.slice(0, 120)}`);
+    await page.locator("[data-comp-info]").filter({ hasText: /salt/ }).waitFor({ timeout: 120000 }).catch(() => {});
+    console.log("  profilo:", (await page.locator("[data-comp-info]").innerText()).replace(/\n/g, " ").slice(0, 200));
+    await page.screenshot({ path: path.join(SH, "c4_scheda.png") });
+    const pair = page.locator("[data-comp-pdf-pair]");
+    const btn = (await pair.count()) ? pair : page.locator("[data-comp-pdf]");
+    const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 180000 }), btn.click()]);
+    const fp = path.join(SH, "tavola_canale.pdf"); await dl.saveAs(fp);
+    const fs = await import("node:fs"); const sz = fs.statSync(fp).size;
+    ok(sz > 20000, `Tavola PDF scaricata (${Math.round(sz / 1024)} kB, ${(await pair.count()) ? "canale + strada" : "canale"})`);
+    await page.keyboard.press("Escape");
+  }
   // strade: a fianco dei canali e raccordi ortogonali fino ai centri dei pivot
   await page.locator('button[title="Strade"]').first().click(); await page.waitForTimeout(800);
   const nR = Number(((await page.locator("text=/^Strade · \\d+/").first().innerText().catch(() => "")).match(/(\d+)/) || [])[1] || 0);

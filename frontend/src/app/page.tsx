@@ -20,7 +20,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.282";
+const REV = "v0.6.283";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -139,7 +139,8 @@ type WaterL = Watercourse & { hidden?: boolean; uid?: number; owner?: number; fo
 // kind: assente/"existing" = strada preesistente tracciata o importata; "osm" = da
 // OpenStreetMap (preesistente); "service" = viabilità di servizio generata per i
 // pivot (NON è un ostacolo per il layout).
-type RoadL = { id: string; coords: number[][]; width_m: number; hidden?: boolean; owner?: number; kind?: "existing" | "osm" | "service" };
+type RoadL = { id: string; coords: number[][]; width_m: number; hidden?: boolean; owner?: number; kind?: "existing" | "osm" | "service";
+  shoulder_m?: number; layer_cm?: number; fill_m?: number };   // dimensioni a mano: banchine, massicciata, rilevato
 
 // Larghezza indicativa (m) delle strade OSM per categoria «highway».
 const OSM_ROAD_W: Record<string, number> = { motorway: 24, trunk: 20, primary: 12, secondary: 10, tertiary: 8,
@@ -532,7 +533,9 @@ function circleRing(lat: number, lng: number, r: number, n = 32): number[][] {
 // Una tubazione: tracciato + (dopo il calcolo idraulico) diametro e portata di
 // ogni tratto.
 type PipeLine = { kind: string; coords: number[][]; field?: number; dn?: number[]; qs?: number[];
-  cz?: { zH?: number; zT?: number; tp?: number; zMax?: number; zMin?: number } };   // canali tra le file: quote e pendenza del terreno
+  cz?: { zH?: number; zT?: number; tp?: number; zMax?: number; zMin?: number };   // canali tra le file: quote e pendenza del terreno
+  ov?: { b?: number; S?: number; m?: number; fb?: number; dropMax?: number };      // dimensioni del canale impostate a mano
+  des?: import("@/lib/api").CanalDesign; desKey?: string };                       // profilo con i salti (dal terreno)
 function pivotsFromFC(fc: any, defR: number): { pivots: PivotItem[]; lines: PipeLine[] } {
   const pivots: PivotItem[] = [];
   const lines: PipeLine[] = [];
@@ -1633,6 +1636,10 @@ export default function Page() {
   // Livello Strade (linee, con spessore) disegnabile/importabile: i pivot le rispettano.
   const [roads, setRoads] = useState<RoadL[]>([]);
   const [roadSel, setRoadSelState] = useState<string | null>(null);   // strada in modifica
+  // componente cliccato (canale tra le file) e componenti messi nella tavola di disegno
+  const [compSel, setCompSel] = useState<{ kind: "canal"; li: number } | null>(null);
+  type SheetItem = { kind: "canal" | "road" | "pipe"; sig: string };
+  const [sheetItems, setSheetItems] = useState<SheetItem[]>([]);
   const roadSelRef = useRef<string | null>(null);
   const setRoadSel = (v: string | null) => { roadSelRef.current = v; setRoadSelState(v); };
   const [roadWidth, setRoadWidth] = useState(8);      // spessore strada di default (m)
@@ -3520,7 +3527,7 @@ export default function Page() {
     let selForShow = pivotSel;
     if (pivotSel.mode === "single") { const vpos = visIdx.indexOf(pivotSel.idx); selForShow = vpos >= 0 ? { mode: "single", idx: vpos } : { mode: "none", idx: -1 }; }
     const pipeSelForShow = pipeSel;
-    api2.showPivots?.({ pivots: visP, lines: visL }, selForShow, {
+    api2.showPivots?.({ pivots: visP, lines: visL.map((l) => (l.kind === "canal" ? { ...l, tip: t("Canale · clic per dimensioni e tavola di disegno") } : l)) }, selForShow, {
       onClick: (i) => {
         const real = visIdx[i];
         // lavorare sui pivot chiude la modifica di una tubazione
@@ -3530,9 +3537,16 @@ export default function Page() {
       },
       onMove: (i, lat, lng) => { const real = visIdx[i]; commitPivots(pivots.map((p, k) => (k === real ? { ...p, lat, lng } : p))); },
       onBackground: () => {
-        endRoadEdit();
+        endRoadEdit(); setCompSel(null);
         setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false); setSrcPicked(false);
         if (editPipeRef.current != null) { editPipeRef.current = null; api2.endPipeEdit?.(); setMsg(""); }
+      },
+      // Clic su un canale tra le file: scheda con dimensioni modificabili e tavola di disegno
+      onCanalClick: (li) => {
+        const target = pivotLines.indexOf(visL[li]); if (target < 0) return;
+        endRoadEdit(); setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false); setSrcPicked(false);
+        if (editPipeRef.current != null) { editPipeRef.current = null; api2.endPipeEdit?.(); }
+        setCompSel({ kind: "canal", li: target });
       },
       // Clic su una tubazione: la rende modificabile (maniglie sui vertici).
       onLineClick: (li) => {
@@ -3566,6 +3580,78 @@ export default function Page() {
     commitPivots(pivots.filter((_, k) => k !== pivotSel.idx));
     setPivotSel({ mode: "group", idx: -1 });
   }
+  // ---- Componente selezionato (canale, strada, tubazione): dimensioni e tavola di disegno
+  const sigOf = (c: number[][]) => `${c[0][0].toFixed(6)},${c[0][1].toFixed(6)},${c[c.length - 1][0].toFixed(6)},${c[c.length - 1][1].toFixed(6)}`;
+  function canalRow(li: number) {
+    const l = pivotLines[li]; if (!l || l.kind !== "canal") return null;
+    const cs = corridorSizing(l.field ?? -1);
+    return cs?.rows.find((r) => r.li === li) ?? null;
+  }
+  // distanza media (m) dei vertici di b dalla linea a
+  function lineGap(a: number[][], b: number[][]) {
+    const F = localFrame(a[0][0], a[0][1]); const A = a.map((p) => F.to(p[0], p[1]));
+    const ds = b.map((p) => { const q = F.to(p[0], p[1]); let best = Infinity;
+      for (let i = 0; i < A.length - 1; i++) { const vx = A[i + 1].x - A[i].x, vy = A[i + 1].y - A[i].y, L2 = vx * vx + vy * vy || 1;
+        const tt = Math.max(0, Math.min(1, ((q.x - A[i].x) * vx + (q.y - A[i].y) * vy) / L2));
+        best = Math.min(best, Math.hypot(q.x - A[i].x - tt * vx, q.y - A[i].y - tt * vy)); }
+      return best; });
+    return ds.reduce((x, y) => x + y, 0) / Math.max(1, ds.length);
+  }
+  const roadNextTo = (c: number[][]) => roads.filter((r) => !r.hidden && r.coords.length >= 2).map((r) => ({ r, g: lineGap(c, r.coords) })).filter((x) => x.g < CANAL_CORRIDOR_M).sort((x, y) => x.g - y.g)[0]?.r ?? null;
+  const canalNextTo = (c: number[][]) => pivotLines.map((l, i) => ({ l, i })).filter((x) => x.l.kind === "canal").map((x) => ({ ...x, g: lineGap(x.l.coords, c) })).filter((x) => x.g < CANAL_CORRIDOR_M).sort((x, y) => x.g - y.g)[0]?.i ?? -1;
+  function setCanalOv(li: number, ov: PipeLine["ov"] | null) {
+    setPivotLines((ls) => ls.map((l, i) => (i === li ? { ...l, ov: ov ? { ...(l.ov ?? {}), ...ov } : undefined } : l)));
+  }
+  function setRoadDims(id: string, patch: Partial<RoadL>) { setRoads((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r))); }
+  // documento della tavola: componenti con le loro dimensioni + pivot e campo attorno
+  function sheetComponent(it: SheetItem, canalAxis?: number[][]) {
+    if (it.kind === "canal") {
+      const li = pivotLines.findIndex((l) => l.kind === "canal" && sigOf(l.coords) === it.sig); const r = li >= 0 ? canalRow(li) : null;
+      if (!r || !r.sec) return null;
+      return { type: "canal", name: String(r.k), coords: pivotLines[li].coords, q: Math.round(r.q), b: r.sec.b, y: r.sec.y, fb: r.sec.fb, m: r.sec.m, S: r.S, v: r.sec.v, drop_max: r.dropMax };
+    }
+    if (it.kind === "road") {
+      const rd = roads.find((x) => sigOf(x.coords) === it.sig); if (!rd) return null;
+      return { type: "road", name: String(roads.indexOf(rd) + 1), coords: rd.coords, width: rd.width_m, shoulder: rd.shoulder_m ?? 0.5, layer_cm: rd.layer_cm ?? 30, fill_m: rd.fill_m ?? 0.3,
+        offset: canalAxis ? Math.round(lineGap(canalAxis, rd.coords) * 10) / 10 : 10 };
+    }
+    const pl = pivotLines.find((l) => l.kind === "pipe" && sigOf(l.coords) === it.sig); if (!pl) return null;
+    return { type: "pipe", name: String(pivotLines.indexOf(pl) + 1), coords: pl.coords, dn: Math.max(0, ...(pl.dn ?? [0])), q: Math.max(0, ...(pl.qs ?? [0])), cover: 1.0 };
+  }
+  async function downloadSheet(items: SheetItem[]) {
+    if (!items.length) return;
+    const canalIt = items.find((x) => x.kind === "canal");
+    const canalAxis = canalIt ? pivotLines.find((l) => l.kind === "canal" && sigOf(l.coords) === canalIt.sig)?.coords : undefined;
+    const comps = items.map((x) => sheetComponent(x, canalAxis)).filter(Boolean) as Record<string, unknown>[];
+    if (!comps.length) return;
+    const fl = pivotLines.find((l) => sigOf(l.coords) === items[0].sig)?.field ?? roads.find((r) => sigOf(r.coords) === items[0].sig)?.owner ?? activeId;
+    const fd = fields.find((f) => f.id === fl);
+    const pname = projects.find((x) => x.id === projectId)?.name || "progetto";
+    const tx = t;
+    setBusy("sheet");
+    try {
+      const doc = { lang, project: pname, client: clients.find((c) => c.id === clientId)?.name || "", field: fd?.name || "",
+        sheet: `C-${String(items.length).padStart(2, "0")}`, components: comps,
+        context: { pivots: pivots.filter((p) => fd ? p.field === fd.id : true).map((p) => [p.lng, p.lat, p.r]), field_ring: fd?.geom?.coordinates?.[0] ?? null },
+        labels: {
+          kicker: tx("TAVOLA DI PROGETTO"), plan: tx("PIANTA"), section: tx("SEZIONE TIPO"), profile: tx("PROFILO LONGITUDINALE"), data: tx("DATI DI PROGETTO"),
+          canal: tx("Canale"), road: tx("Strada"), pipe: tx("Tubazione"),
+          terrain: tx("terreno"), bed: tx("fondo canale"), water: tx("pelo libero"), bank: tx("sommità argini"), grade: tx("piano stradale"), invert: tx("scorrimento tubo"),
+          drops: tx("{n} salti di quota, {h} m in tutto (max {m} m l'uno)"), noDrops: tx("nessun salto necessario"),
+          kFlow: tx("Portata"), kLen: tx("Lunghezza"), kSlope: tx("Pendenza di progetto"), kTerr: tx("Pendenza del terreno"), kSec: tx("Sezione"),
+          vSec: tx("base {b} m · tirante {y} m · franco {fb} m · scarpe 1:{m} · larghezza in sommità {B} m"), kVel: tx("Velocità"), kCut: tx("Scavo"),
+          vCut: tx("{v} m³ (max {h} m)"), kFill: tx("Rilevato"), kDrops: tx("Salti di quota"), kRoad: tx("Piattaforma"),
+          vRoad: tx("carreggiata {w} m · banchine {s} m · massicciata {l} cm · rilevato {f} m · pendenza trasversale 2,5%"),
+          kPipe: tx("Condotta"), vPipe: tx("DN {dn} · ricoprimento {c} m · trincea {t} m"),
+          proj: tx("Progetto"), client: tx("Cliente"), field: tx("Campo"), scale: tx("Scala"), date: tx("Data"), sheet: tx("Tavola"),
+          vexag: tx("scala verticale esagerata ×{k}"), km: tx("progressiva (m)"), elev: tx("quota (m s.l.m.)"),
+          foot: tx("Argus Total · by Nabu · Agrostar Group — disegno di progetto da verificare con il rilievo topografico di dettaglio."),
+        } };
+      const nm = comps.map((c) => `${c.type}${c.name}`).join("+");
+      saveBlob(await api.componentSheet(doc), `${safe(pname)}_tavola_${safe(nm)}.pdf`);
+      setMsg(t("Tavola scaricata ✓"));
+    } catch (e) { showErr(e); } finally { setBusy(""); }
+  }
   // Elemento selezionato che ⌫ può eliminare (nome per la barretta in alto)
   const delTarget: { name: string; del: () => void } | null =
     roadSel === "__src" ? null
@@ -3578,8 +3664,8 @@ export default function Page() {
       } }
     : null;
   const clearSel = () => {
-    const any = pivotSel.mode !== "none" || pipeSel.mode !== "none" || fieldPicked || srcPicked || roadSel != null;
-    endRoadEdit();
+    const any = pivotSel.mode !== "none" || pipeSel.mode !== "none" || fieldPicked || srcPicked || roadSel != null || compSel != null;
+    endRoadEdit(); setCompSel(null);
     setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false); setSrcPicked(false);
     if (editPipeRef.current != null) { editPipeRef.current = null; mapApi.current?.endPipeEdit?.(); }
     return any;
@@ -3714,6 +3800,10 @@ export default function Page() {
     }
     return { segs: roadsOut, nRoad: segs.length, cross, pipes, flows: segs.map((g) => ({ li: g.li, q: g.q, n: g.n, L: g.L })) };
   }
+  // chiave del profilo di un canale: cambia se cambiano tracciato, sezione, pendenza o salto massimo
+  function canalDesKey(l: PipeLine, sec: CanalSection | null, S: number, dropMax: number) {
+    return sec ? JSON.stringify([l.coords[0], l.coords[l.coords.length - 1], +sec.b.toFixed(2), +sec.y.toFixed(2), +sec.fb.toFixed(2), sec.m, +S.toFixed(3), dropMax]) : "";
+  }
   // Dimensionamento dei canali tra le file: portata = pivot serviti; pendenza = quella del terreno lungo il
   // canale (tra 0,1 e 1‰; in piano o in salita quella di progetto, con lo scavo che cresce verso valle;
   // se il terreno scende di più, salti); sezione con Manning (base, tirante, franco, ciglio, velocità).
@@ -3721,18 +3811,60 @@ export default function Page() {
     const cr = canalRoads(fid, pivots, pivotLines, roadWidth);
     if (!cr) return null;
     const rows = cr.flows.map((fl, k) => {
-      const l = pivotLines[fl.li], tp = l.cz?.tp;
-      const S = tp != null && tp >= 0.1 ? Math.min(tp, 1.0) : Math.max(0.05, canalSlope);
-      const sec = designCanal(fl.q, S, canalLin, { fb: canalFb });
+      const l = pivotLines[fl.li], tp = l.cz?.tp, ov = l.ov ?? {};
+      const S = ov.S ?? (tp != null && tp >= 0.1 ? Math.min(tp, 1.0) : Math.max(0.05, canalSlope));
+      const sec = designCanal(fl.q, S, canalLin, { fb: ov.fb ?? canalFb, ...(ov.m ? { m: ov.m } : {}), ...(ov.b ? { b: ov.b } : {}) });
       const extra = Math.max(0, (S - Math.max(0, tp ?? S)) * fl.L / 1000);           // scavo in più a valle
       const dropM = tp != null && tp > S ? (tp - S) * fl.L / 1000 : 0;
-      return { k: k + 1, li: fl.li, q: fl.q, n: fl.n, L: fl.L, tp, S, sec, depth: sec ? sec.y + sec.fb + extra : null, drops: dropM > 0.3 ? Math.ceil(dropM / 1.0) : 0 };
+      const dropMax = ov.dropMax ?? 1.0;
+      const des = l.des && l.desKey === canalDesKey(l, sec, S, dropMax) ? l.des : undefined;
+      return { k: k + 1, li: fl.li, q: fl.q, n: fl.n, L: fl.L, tp, S, sec, dropMax, des, manual: !!(ov.b || ov.S || ov.m || ov.fb || ov.dropMax),
+        depth: des ? des.cut_max_m : sec ? sec.y + sec.fb + extra : null,
+        drops: des ? des.n_drops : dropM > 0.3 ? Math.ceil(dropM / dropMax) : 0 };
     });
     const pp = cr.pipes;
     const dns = pp.map((x) => x.dn?.[0] ?? 0).filter((d) => d > 0);
     const pipeL = pp.reduce((a, x) => a + lineLenKm(x.coords) * 1000, 0);
     return { rows, nPipes: pp.length, dnMin: dns.length ? Math.min(...dns) : 0, dnMax: dns.length ? Math.max(...dns) : 0, pipeL };
   }
+  // Profilo dei canali tra le file sul terreno, con i SALTI di quota dove servono: si ricalcola da solo
+  // quando cambiano tracciato, sezione, pendenza o salto massimo (anche quelli impostati a mano).
+  const canalDesBusy = useRef(new Set<string>());
+  const [canalDesTick, setCanalDesTick] = useState(0);
+  useEffect(() => {
+    const todo: { li: number; key: string; body: Parameters<typeof api.canalDesign>[0] }[] = [];
+    for (const f of fields) {
+      const cs = corridorSizing(f.id); if (!cs) continue;
+      for (const r of cs.rows) {
+        const l = pivotLines[r.li]; if (!r.sec || !l) continue;
+        const key = canalDesKey(l, r.sec, r.S, r.dropMax);
+        if (l.desKey === key || canalDesBusy.current.has(key)) continue;
+        todo.push({ li: r.li, key, body: { coords: l.coords, b: r.sec.b, y: r.sec.y, fb: r.sec.fb, m: r.sec.m, slope_permille: r.S, drop_max: r.dropMax } });
+      }
+    }
+    if (!todo.length) return;
+    const tm = setTimeout(async () => {
+      for (const job of todo) {
+        canalDesBusy.current.add(job.key);
+        try {
+          const des = await api.canalDesign(job.body);
+          setPivotLines((ls) => ls.map((l) => (sameLL(l.coords, job.body.coords) && l.kind === "canal" ? { ...l, des, desKey: job.key } : l)));
+        } catch { /* resta la stima senza profilo */ }
+        finally { canalDesBusy.current.delete(job.key); setCanalDesTick((x) => x + 1); }
+      }
+    }, 600);
+    return () => clearTimeout(tm);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pivotLines, pivots, fields, canalSlope, canalLin, canalFb, roadWidth]);
+  const sameLL = (a: number[][], b: number[][]) => a.length === b.length && a.every((p, i) => Math.abs(p[0] - b[i][0]) < 1e-9 && Math.abs(p[1] - b[i][1]) < 1e-9);
+  // salti di quota sulla mappa
+  useEffect(() => {
+    const pts: { ll: number[]; label: string }[] = [];
+    for (const l of pivotLines) if (l.kind === "canal" && l.des && !hiddenPivotFields.has(l.field ?? -1))
+      l.des.drops.forEach((d, i) => pts.push({ ll: d.ll, label: `${t("Salto")} S${i + 1} · ${fmt(d.h, { maximumFractionDigits: 2 })} m · ${t("progressiva")} ${fmt(Math.round(d.d))} m` }));
+    mapApi.current?.showDrops?.(pts);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pivotLines, hiddenPivotFields, canalDesTick]);
   // Viabilità di servizio per i pivot del campo attivo (rigenera quella precedente).
   function genServiceRoads() {
     if (!active) return needField();
@@ -11185,6 +11317,73 @@ export default function Page() {
           </button>
         </div>
       )}
+      {/* Scheda del componente cliccato: dimensioni a mano e tavola di disegno (singolo o insieme) */}
+      {!drawing && (() => {
+        const road = roadSel && roadSel !== "__src" ? roads.find((r) => r.id === roadSel) : null;
+        const pli = pipeSel.mode === "single" && editPipeRef.current != null ? editPipeRef.current : -1;
+        const pl = pli >= 0 ? pivotLines[pli] : null;
+        const cr = compSel?.kind === "canal" ? canalRow(compSel.li) : null;
+        const cl = compSel?.kind === "canal" ? pivotLines[compSel.li] : null;
+        if (!(cr && cl) && !road && !(pl && pl.kind === "pipe")) return null;
+        const me: SheetItem = cr && cl ? { kind: "canal", sig: sigOf(cl.coords) } : road ? { kind: "road", sig: sigOf(road.coords) } : { kind: "pipe", sig: sigOf(pl!.coords) };
+        const inSheet = sheetItems.some((x) => x.kind === me.kind && x.sig === me.sig);
+        const mate: SheetItem | null = cr && cl ? (() => { const r = roadNextTo(cl.coords); return r ? { kind: "road" as const, sig: sigOf(r.coords) } : null; })()
+          : road ? (() => { const i = canalNextTo(road.coords); return i >= 0 ? { kind: "canal" as const, sig: sigOf(pivotLines[i].coords) } : null; })() : null;
+        const num = (v: number | undefined, d = 2) => (v == null ? "" : String(Math.round(v * 10 ** d) / 10 ** d));
+        const inp = ({ label, value, ph, step, on, k }: { label: string; value: number | undefined; ph?: string; step: number; on: (x: number | undefined) => void; k: string }) => (
+          <label key={k} className="flex flex-col gap-0.5"><span className="text-sage-dark">{label}</span>
+            <input data-comp-in={k} type="number" step={step} min={0} value={value ?? ""} placeholder={ph} className="field-input py-0.5 w-full"
+              onChange={(e) => { const x = e.target.value === "" ? undefined : Number(e.target.value); on(x != null && Number.isFinite(x) && x > 0 ? x : undefined); }} /></label>);
+        return (
+          <div data-comp-card className="ui-scale fixed bottom-14 left-1/2 -translate-x-1/2 z-[500] widget p-3 w-[460px] max-w-[94vw] pointer-events-auto text-xs">
+            <div className="flex items-center gap-2 mb-2">
+              <b className="text-brand-darker text-sm flex-1">{cr ? `${t("Canale")} ${cr.k}` : road ? `${t("Strada")} ${roads.indexOf(road) + 1}` : `${t("Tubazione")} ${pli + 1}`}</b>
+              {cr?.manual && <button className="btn-ghost py-0.5" data-comp-auto onClick={() => setCanalOv(compSel!.li, null)}>↺ {t("automatico")}</button>}
+              <button className="btn-ghost py-0.5" onClick={clearSel} title={t("Chiudi")}>✕</button>
+            </div>
+            {cr && cl && (<>
+              <div className="grid grid-cols-5 gap-1.5">
+                {inp({ k: "b", label: t("Base (m)"), value: cl.ov?.b, ph: num(cr.sec?.b, 1), step: 0.1, on: (x) => setCanalOv(compSel!.li, { b: x }) })}
+                {inp({ k: "S", label: t("Pendenza (‰)"), value: cl.ov?.S, ph: num(cr.S, 2), step: 0.05, on: (x) => setCanalOv(compSel!.li, { S: x }) })}
+                {inp({ k: "m", label: t("Scarpa 1:m"), value: cl.ov?.m, ph: num(cr.sec?.m, 1), step: 0.25, on: (x) => setCanalOv(compSel!.li, { m: x }) })}
+                {inp({ k: "fb", label: t("Franco (m)"), value: cl.ov?.fb, ph: num(cr.sec?.fb, 2), step: 0.05, on: (x) => setCanalOv(compSel!.li, { fb: x }) })}
+                {inp({ k: "drop", label: t("Salto max (m)"), value: cl.ov?.dropMax, ph: num(cr.dropMax, 1), step: 0.1, on: (x) => setCanalOv(compSel!.li, { dropMax: x }) })}
+              </div>
+              <div className="mt-2 text-sage-dark leading-relaxed" data-comp-info>
+                {fmt(Math.round(cr.q))} l/s · {uKm(cr.L / 1000, 2)} · {t("tirante")} {fmt(cr.sec?.y ?? 0, { maximumFractionDigits: 2 })} m · {t("larghezza in sommità")} {fmt(cr.sec?.topW ?? 0, { maximumFractionDigits: 1 })} m · v {fmt(cr.sec?.v ?? 0, { maximumFractionDigits: 2 })} m/s
+                <br />{cr.des
+                  ? <>{t("Scavo")} {fmt(cr.des.cut_m3)} m³ ({t("max")} {fmt(cr.des.cut_max_m, { maximumFractionDigits: 1 })} m) · {t("Rilevato")} {fmt(cr.des.fill_m3)} m³ · <b className="text-danger">{cr.des.n_drops ? t("{n} salti di quota, {h} m in tutto", { n: cr.des.n_drops, h: fmt(cr.des.drop_total_m, { maximumFractionDigits: 1 }) }) : t("nessun salto necessario")}</b></>
+                  : t("profilo sul terreno in calcolo…")}
+              </div>
+            </>)}
+            {road && (
+              <div className="grid grid-cols-4 gap-1.5">
+                {inp({ k: "w", label: t("Carreggiata (m)"), value: road.width_m, step: 0.5, on: (x) => x && setRoadDims(road.id, { width_m: x }) })}
+                {inp({ k: "sh", label: t("Banchine (m)"), value: road.shoulder_m, ph: "0.5", step: 0.25, on: (x) => setRoadDims(road.id, { shoulder_m: x }) })}
+                {inp({ k: "lay", label: t("Massicciata (cm)"), value: road.layer_cm, ph: "30", step: 5, on: (x) => setRoadDims(road.id, { layer_cm: x }) })}
+                {inp({ k: "fill", label: t("Rilevato (m)"), value: road.fill_m, ph: "0.3", step: 0.1, on: (x) => setRoadDims(road.id, { fill_m: x }) })}
+              </div>
+            )}
+            {pl && !cr && !road && (
+              <div className="text-sage-dark">DN {Math.max(0, ...(pl.dn ?? [0])) || "–"} · {fmt(Math.max(0, ...(pl.qs ?? [0])))} l/s · {uKm(lineLenKm(pl.coords), 2)}</div>
+            )}
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              <button className="btn-primary py-1 flex-1" data-comp-pdf disabled={busy === "sheet"} onClick={() => downloadSheet([me])}>{busy === "sheet" ? "…" : t("Tavola PDF")}</button>
+              {mate && <button className="btn-ghost py-1 flex-1" data-comp-pdf-pair disabled={busy === "sheet"} onClick={() => downloadSheet(me.kind === "canal" ? [me, mate] : [mate, me])}>
+                {me.kind === "canal" ? t("Tavola canale + strada") : t("Tavola strada + canale")}</button>}
+              <button className="btn-ghost py-1" data-comp-add onClick={() => setSheetItems((xs) => inSheet ? xs.filter((x) => !(x.kind === me.kind && x.sig === me.sig)) : [...xs, me])}>
+                {inSheet ? `− ${t("Togli dalla tavola")}` : `+ ${t("Aggiungi alla tavola")}`}</button>
+            </div>
+            {sheetItems.length > 0 && (
+              <div className="flex gap-1.5 mt-1.5 items-center">
+                <span className="text-sage-dark flex-1">{t("Tavola d'insieme: {n} componenti", { n: sheetItems.length })}</span>
+                <button className="btn-ghost py-1" data-comp-pdf-set disabled={busy === "sheet"} onClick={() => downloadSheet([...sheetItems].sort((a, b) => (a.kind === "canal" ? -1 : b.kind === "canal" ? 1 : 0)))}>{t("Scarica la tavola")}</button>
+                <button className="btn-ghost py-1" onClick={() => setSheetItems([])}>{t("Svuota")}</button>
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {/* Pannellino di controllo del disegno/tracciatura (snap ai confini dei poligoni attivo). */}
       {drawing && (
         <div className="ui-scale fixed top-20 left-1/2 -translate-x-1/2 z-[500] widget px-2 py-1.5 flex items-center gap-2 pointer-events-auto">

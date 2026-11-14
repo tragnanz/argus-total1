@@ -92,3 +92,26 @@ def canal_network_ep(body: CanalNetIn, client=Depends(get_client)):
                              target_permille=body.target_permille, head_m=body.head_m)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Errore tracciato dei canali: {e}")
+
+
+class CanalDesignIn(BaseModel):
+    coords: list[list[float]]                          # [lon, lat] dalla testa (capo alto) alla coda
+    b: float
+    y: float
+    fb: float = 0.3
+    m: float = 1.5
+    slope_permille: float = 0.3
+    drop_max: float = 1.0
+
+
+@router.post("/design")
+def canal_design_ep(body: CanalDesignIn, client=Depends(get_client)):
+    """Profilo del canale sul terreno: fondo, pelo libero, argini, salti di quota, scavo e rilevato."""
+    from analysis.canal_design import design_canal, terrain_profile
+    if len(body.coords) < 2 or body.b <= 0 or body.y <= 0:
+        raise HTTPException(400, "Canale non valido.")
+    try:
+        prof = terrain_profile(client, body.coords, step=20.0)
+        return design_canal(prof, body.b, body.y, body.fb, body.m, body.slope_permille, drop_max=max(0.2, body.drop_max))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Errore nel profilo del canale: {e}")

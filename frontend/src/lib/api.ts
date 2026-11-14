@@ -609,6 +609,20 @@ export async function riverExtra(lat: number, lon: number): Promise<RiverExtra> 
   if (!res.ok) throw new ApiError(res.status, res.statusText);
   return res.json();
 }
+export type CanalDesign = { length_m: number; terrain_permille: number; slope_permille: number; n_drops: number; drop_total_m: number;
+  drops: { d: number; h: number; ll: number[] }[]; cut_m3: number; fill_m3: number; cut_max_m: number;
+  profile: { d: number[]; z: number[]; bed: number[]; wl: number[]; bank: number[] } };
+export const canalDesign = (body: { coords: number[][]; b: number; y: number; fb: number; m: number; slope_permille: number; drop_max: number }) =>
+  req<CanalDesign>("/api/canal/design", { method: "POST", body: JSON.stringify(body) });
+// Tavola di disegno di uno o più componenti (canale, strada, tubazione): PDF A3
+export async function componentSheet(doc: Record<string, unknown>): Promise<Blob> {
+  const tok = getToken();
+  const res = await fetch(`${API_BASE}/api/project/component-sheet`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }, body: JSON.stringify({ doc }),
+  });
+  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  return res.blob();
+}
 // Scheda in scala del campo FV di un pivot solare (PDF A3)
 export async function solarSheet(doc: Record<string, unknown>): Promise<Blob> {
   const tok = getToken();

@@ -542,6 +542,25 @@ def solar_sheet(body: SolarSheetIn, user: User = Depends(get_current_user)):
     return Response(pdf, media_type="application/pdf")
 
 
+class ComponentSheetIn(BaseModel):
+    doc: dict[str, Any]
+
+
+@router.post("/component-sheet")
+def component_sheet(body: ComponentSheetIn, client=Depends(get_client), user: User = Depends(get_current_user)):
+    """Tavola di disegno di uno o più componenti (canale, strada, tubazione): PDF A3."""
+    from analysis.component_sheet import build_component_sheet
+    if not _EXPORT_LOCK.acquire(timeout=_EXPORT_WAIT_S):
+        raise HTTPException(503, "Export occupato, riprova fra poco.")
+    try:
+        pdf = build_component_sheet(client, body.doc)
+    except (ValueError, KeyError, TypeError) as e:
+        raise HTTPException(422, str(e))
+    finally:
+        _EXPORT_LOCK.release(); _trim_memory()
+    return Response(pdf, media_type="application/pdf")
+
+
 class RelazioneIn(BaseModel):
     doc: dict[str, Any]
     bbox: list[float] | None = None     # riquadro della foto di copertina (ovest, sud, est, nord)
