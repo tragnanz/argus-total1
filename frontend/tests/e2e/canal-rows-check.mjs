@@ -75,6 +75,22 @@ try {
   const rmsg = await page.locator("text=/Strade lungo \\d+ canali/").first().innerText().catch(() => "");
   ok(nR > 10 && /raccordi ortogonali/.test(rmsg), `Strade dopo la posa: ${nR} · ${rmsg}`);
   await page.screenshot({ path: path.join(SH, "c3_strade.png") });
+  // computo e codici Mercurius: canali, scavi, salti, tombini, strade, massicciata, tubi con DN
+  await page.waitForTimeout(3000);
+  await page.locator('button[title="Esporta"]').first().click(); await page.waitForTimeout(800);
+  const cBtn = page.locator('button:has-text("Computo metrico")').first();
+  if (!/▾/.test(await cBtn.innerText())) await cBtn.click();
+  await page.waitForTimeout(800);
+  const body = await page.locator("body").innerText();
+  ok(/Canali tra le file/.test(body) && /Salti di quota/.test(body) && /Massicciata/.test(body), "Computo a video: canali tra le file, salti di quota, massicciata");
+  const [dlc] = await Promise.all([page.waitForEvent("download", { timeout: 180000 }), page.locator('button:has-text("Esporta per Ceres")').click()]);
+  const fs2 = await import("node:fs"); const cp = path.join(SH, "canali.ceres"); await dlc.saveAs(cp);
+  const ceres = JSON.parse(fs2.readFileSync(cp, "utf8"));
+  const rows = (ceres.sezioni ?? []).flatMap((x) => x.righe), codes = rows.map((r) => r.codice);
+  const has = (re) => codes.some((c) => re.test(c));
+  ok(has(/^ARGUS-CANALE-FILE$/) && has(/^ARGUS-CANALE-FILE-SCAVO$/) && has(/^ARGUS-SALTO-CANALE-\d{3}$/) && has(/^ARGUS-TOMBINO-CANALE$/)
+    && has(/^ARGUS-STRADA-SERVIZIO-\d{3}$/) && has(/^ARGUS-MASSICCIATA$/) && has(/^P-PIPE-/) && rows.every((r) => Number(r.quantita) > 0),
+    `Codici Mercurius: ${codes.filter((c) => /CANALE|SALTO|TOMBINO|STRADA|MASSIC|P-PIPE/.test(c)).join(", ")}`);
   console.log("  tracciati sulla mappa prima/dopo:", n0, await page.locator(".leaflet-overlay-pane path").count());
   ok(errors.length === 0, `Nessun errore JavaScript${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; await page.screenshot({ path: path.join(SH, "c_err.png") }).catch(() => {}); }

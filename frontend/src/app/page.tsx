@@ -20,7 +20,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.283";
+const REV = "v0.6.284";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -3771,11 +3771,11 @@ export default function Page() {
       const key = `${segs.indexOf(k.g)}|${k.side >= 0 ? 1 : -1}|${Math.round(k.t / 60)}`;
       const c = cols.get(key); if (!c || k.d > c.d) cols.set(key, k);
     }
-    let cross = 0;
+    let cross = 0; const crossBy = new Map<number, number>();
     for (const k of cols.values()) {
       const s0 = { x: k.g.ra.x + k.g.ux * k.t, y: k.g.ra.y + k.g.uy * k.t };
       roadsOut.push([F.from(s0), [k.p.lng, k.p.lat]]);
-      if (k.side < off) cross++;                       // il raccordo attraversa il canale (tombino)
+      if (k.side < off) { cross++; crossBy.set(k.g.li, (crossBy.get(k.g.li) ?? 0) + 1); }   // il raccordo attraversa il canale (tombino)
     }
     // tubazioni lungo i raccordi: per ogni colonna una condotta dal canale (presa della pompa) al pivot più
     // vicino e da lì ai successivi; ogni tratto porta la portata dei pivot a valle ed è dimensionato (DN)
@@ -3798,7 +3798,33 @@ export default function Page() {
         prev = to;
       });
     }
-    return { segs: roadsOut, nRoad: segs.length, cross, pipes, flows: segs.map((g) => ({ li: g.li, q: g.q, n: g.n, L: g.L })) };
+    return { segs: roadsOut, nRoad: segs.length, cross, crossBy, pipes, flows: segs.map((g) => ({ li: g.li, q: g.q, n: g.n, L: g.L })) };
+  }
+  // Voci di computo dei canali tra le file, dei salti, dei tombini e delle strade (computo a video e codici)
+  function corridorBoq() {
+    const canals: { f: Field; r: NonNullable<ReturnType<typeof corridorSizing>>["rows"][number]; cross: number }[] = [];
+    const dropCls = new Map<number, number>();            // classe di altezza (0,5 · 1 · 1,5 · 2 m) → n
+    let cut = 0, fill = 0, linedM2 = 0;
+    for (const f of fields) {
+      const cs = corridorSizing(f.id); if (!cs) continue;
+      const cr = canalRoads(f.id, pivots, pivotLines, roadWidth);
+      for (const r of cs.rows) {
+        if (!r.sec) continue;
+        canals.push({ f, r, cross: cr?.crossBy.get(r.li) ?? 0 });
+        if (r.des) { cut += r.des.cut_m3; fill += r.des.fill_m3;
+          for (const d of r.des.drops) { const c = Math.min(2, Math.ceil(d.h / 0.5) * 0.5); dropCls.set(c, (dropCls.get(c) ?? 0) + 1); } }
+        else cut += (r.depth ?? 0) * (r.sec.b + r.sec.m * (r.depth ?? 0)) * r.L;
+        linedM2 += r.L * (r.sec.b + 2 * Math.hypot(1, r.sec.m) * (r.sec.y + r.sec.fb));
+      }
+    }
+    // strade di servizio per tipo (carreggiata, banchine, massicciata)
+    const lenM = (c: number[][]) => lineLenKm(c) * 1000;
+    const rd = new Map<string, { w: number; sh: number; lay: number; fill: number; L: number }>();
+    for (const r of roads) if (r.kind === "service" && !r.hidden) {
+      const w = r.width_m, sh = r.shoulder_m ?? 0.5, lay = r.layer_cm ?? 30, fl = r.fill_m ?? 0.3, k = `${w}|${sh}|${lay}|${fl}`;
+      const e = rd.get(k) ?? { w, sh, lay, fill: fl, L: 0 }; e.L += lenM(r.coords); rd.set(k, e);
+    }
+    return { canals, dropCls: [...dropCls.entries()].sort((a, b) => a[0] - b[0]), cut, fill, linedM2, roads: [...rd.values()] };
   }
   // chiave del profilo di un canale: cambia se cambiano tracciato, sezione, pendenza o salto massimo
   function canalDesKey(l: PipeLine, sec: CanalSection | null, S: number, dropMax: number) {
@@ -5909,7 +5935,10 @@ export default function Page() {
     if (HYc && HYc.byDn.length) {
       for (const [dn, m] of [...HYc.byDn].sort((a, b) => a[0] - b[0])) R.push({ cat: cNet, key: `pipe:${dn}`, item: tx("Tubazione DN {d}", { d: dn }), qty: Math.round(m), unit: "m" });
     } else {
-      const m = pivotLines.filter((l) => l.kind === "pipe").reduce((a, l) => a + lenOf(l.coords), 0);
+      // tubazioni con il DN già scelto (es. dal canale ai pivot) per diametro, le altre senza DN
+      const byDn = new Map<number, number>(); let m = 0;
+      for (const l of pivotLines) if (l.kind === "pipe") { const d = l.dn?.length === 1 ? l.dn[0] : 0; const L = lenOf(l.coords); if (d > 0) byDn.set(d, (byDn.get(d) ?? 0) + L); else m += L; }
+      for (const [dn, L] of [...byDn].sort((x, y) => x[0] - y[0])) R.push({ cat: cNet, key: `pipe:${dn}`, item: tx("Tubazione DN {d}", { d: dn }), qty: Math.round(L), unit: "m" });
       if (m > 0) R.push({ cat: cNet, item: tx("Tubazioni (diametri da calcolare nella pagina Tubazioni)"), qty: Math.round(m), unit: "m" });
     }
     if (common) for (const k of canalCalcs().filter((x) => !x.c.exist)) {
@@ -5961,14 +5990,25 @@ export default function Page() {
       R.push({ cat: cD, key: "drain", item: d.sec ? tx("Fosso di scolo F{n} ({f}): base {b} m, tirante {y} m, scarpe 1:1,5, inerbito", { n: d.n, f: d.f.name, b: fx(d.sec.b, { maximumFractionDigits: 2 }), y: fx(d.sec.y, { maximumFractionDigits: 2 }) }) : `F${d.n}`, qty: Math.round(d.L), unit: "m", note: `${fx(Math.round(d.q))} l/s · ${fx(drainS)}‰` });
       R.push({ cat: cD, key: "drain", item: tx("Fosso di scolo F{n}: scavo", { n: d.n }), qty: Math.round(d.cut), unit: "m³" });
     }
-    const mRoad = roads.filter((r) => r.kind === "service" && !r.hidden).reduce((a, r) => a + lenOf(r.coords), 0);
-    if (mRoad > 0) R.push({ cat: tx("Strade"), item: tx("Strade di servizio"), qty: Math.round(mRoad), unit: "m" });
-    // canali tra le file (alimentazione a canali), uno per riga con la sua sezione
-    for (const f of fields) {
-      const cs = corridorSizing(f.id); if (!cs) continue;
-      for (const r of cs.rows) if (r.sec) R.push({ cat: tx("Canali tra le file"), key: "corr",
-        item: tx("Canale {k} ({f}): base {b} m, tirante {y} m, ciglio {w} m, pendenza {s}‰", { k: r.k, f: f.name, b: fx(r.sec.b, { maximumFractionDigits: 1 }), y: fx(r.sec.y, { maximumFractionDigits: 2 }), w: fx(r.sec.topW, { maximumFractionDigits: 1 }), s: fx(r.S, { maximumFractionDigits: 2 }) }),
-        qty: Math.round(r.L), unit: "m", note: `${fx(Math.round(r.q))} l/s · ${tx("scavo massimo")} ${fx(r.depth ?? 0, { maximumFractionDigits: 1 })} m${r.drops ? ` · ${tx("{n} salti", { n: r.drops })}` : ""}` });
+    const CB = corridorBoq();
+    const cS = tx("Strade");
+    if (CB.roads.length) for (const e of CB.roads) {
+      R.push({ cat: cS, key: "road", item: tx("Strada di servizio: carreggiata {w} m, banchine {s} m, massicciata {l} cm, rilevato {f} m", { w: fx(e.w, { maximumFractionDigits: 1 }), s: fx(e.sh, { maximumFractionDigits: 2 }), l: fx(e.lay), f: fx(e.fill, { maximumFractionDigits: 2 }) }), qty: Math.round(e.L), unit: "m" });
+      R.push({ cat: cS, key: "road", item: tx("Massicciata della strada ({l} cm)", { l: fx(e.lay) }), qty: Math.round(e.L * e.w * e.lay / 100), unit: "m³" });
+    }
+    // canali tra le file (alimentazione a canali), uno per riga con la sua sezione; scavi, salti, tombini
+    if (CB.canals.length) {
+      const cC = tx("Canali tra le file");
+      for (const { f, r, cross } of CB.canals) {
+        R.push({ cat: cC, key: "corr",
+          item: tx("Canale {k} ({f}): base {b} m, tirante {y} m, ciglio {w} m, pendenza {s}‰", { k: r.k, f: f.name, b: fx(r.sec!.b, { maximumFractionDigits: 1 }), y: fx(r.sec!.y, { maximumFractionDigits: 2 }), w: fx(r.sec!.topW, { maximumFractionDigits: 1 }), s: fx(r.S, { maximumFractionDigits: 2 }) }),
+          qty: Math.round(r.L), unit: "m", note: `${fx(Math.round(r.q))} l/s · ${tx("scavo massimo")} ${fx(r.depth ?? 0, { maximumFractionDigits: 1 })} m${r.drops ? ` · ${tx("{n} salti", { n: r.drops })}` : ""}` });
+        if (cross) R.push({ cat: cC, key: "corr", item: tx("Tombini sotto le strade, canale {k} ({q} l/s)", { k: r.k, q: fx(Math.round(r.q)) }), qty: cross, unit: tx("n.") });
+      }
+      R.push({ cat: cC, key: "corr", item: tx("Scavo dei canali tra le file"), qty: Math.round(CB.cut), unit: "m³" });
+      if (CB.fill > 1) R.push({ cat: cC, key: "corr", item: tx("Rilevato degli argini, compattato"), qty: Math.round(CB.fill), unit: "m³" });
+      if (["concr", "liner", "stone"].includes(canalLin)) R.push({ cat: cC, key: "corr", item: `${tx("Rivestimento")} · ${lining(canalLin).label}`, qty: Math.round(CB.linedM2), unit: "m²" });
+      for (const [h, n] of CB.dropCls) R.push({ cat: cC, key: "corr", item: tx("Salti di quota (manufatti di caduta) fino a {h} m", { h: fx(h, { maximumFractionDigits: 1 }) }), qty: n, unit: tx("n.") });
     }
     // Fonte d'acqua (schema scelto) oppure stazione di pompaggio
     const S = srcPt ? sourceSchemes() : null;
@@ -7948,8 +7988,11 @@ export default function Page() {
           : { codice: `ARGUS-${c}`, quantita: n, unita: "pz", descrizione: `Diffusore idrovalvola DN${c.split("-")[1]} → tubo della prima campata` });
       }
       if (!tot) {
-        tot = pivotLines.filter((l) => l.kind === "pipe").reduce((a, l) => a + lenOf(l.coords), 0);
-        R.push({ codice: "ARGUS-TUBAZIONE", quantita: Math.round(tot), unita: "m", descrizione: "Tubazione interrata (diametri da calcolare nella pagina Tubazioni di Argus Total)" });
+        // tubazioni con il DN già scelto (es. dal canale ai pivot): righe per diametro; il resto senza DN
+        const byDn = new Map<number, number>(); let noDn = 0;
+        for (const l of pivotLines) if (l.kind === "pipe") { const d = l.dn?.length === 1 ? l.dn[0] : 0; const m = lenOf(l.coords); if (d > 0) byDn.set(d, (byDn.get(d) ?? 0) + m); else noDn += m; }
+        for (const [dn, m] of [...byDn].sort((a, b) => a[0] - b[0])) { R.push(...pipeRows(dn, m, "tubazioni dal canale ai pivot")); tot += m; }
+        if (noDn > 0) { R.push({ codice: "ARGUS-TUBAZIONE", quantita: Math.round(noDn), unita: "m", descrizione: "Tubazione interrata (diametri da calcolare nella pagina Tubazioni di Argus Total)" }); tot += noDn; }
       }
       if (tot > 0) R.push({ codice: "SCAVO-TRINCEA", quantita: Math.round(tot), unita: "m" });
       for (const k of canalCalcs().filter((x) => !x.c.exist)) {
@@ -7973,8 +8016,22 @@ export default function Page() {
         R.push({ codice: "ARGUS-FOSSO-SCOLO", quantita: Math.round(d.L), unita: "m", descrizione: `Fosso di scolo F${d.n} (${d.f.name}), ${it(d.q)} l/s${d.sec ? `, base ${it(d.sec.b, 2)} m, tirante ${it(d.sec.y, 2)} m, scarpe 1:1,5, inerbito` : ""}` });
         R.push({ codice: "ARGUS-FOSSO-SCAVO", quantita: Math.round(d.cut), unita: "m³", descrizione: `Scavo del fosso di scolo F${d.n}` });
       }
-      const mRoad = roads.filter((r) => r.kind === "service" && !r.hidden).reduce((a, r) => a + lenOf(r.coords), 0);
-      R.push({ codice: "ARGUS-STRADA-SERVIZIO", quantita: Math.round(mRoad), unita: "m", descrizione: "Strada di servizio" });
+      const CB = corridorBoq();
+      for (const { f, r, cross } of CB.canals) {
+        const lab = lining(canalLin).label.toLowerCase();
+        R.push({ codice: "ARGUS-CANALE-FILE", quantita: Math.round(r.L), unita: "m", descrizione: `Canale tra le file ${r.k} (${f.name}): sezione trapezia b ${it(r.sec!.b, 2)} m, tirante ${it(r.sec!.y, 2)} m, franco ${it(r.sec!.fb, 2)} m, scarpe 1:${it(r.sec!.m, 1)}, ${lab}, ${it(Math.round(r.q))} l/s a ${it(r.S, 2)}‰` });
+        if (cross) R.push({ codice: "ARGUS-TOMBINO-CANALE", quantita: cross, unita: "pz", descrizione: `Tombino sotto la strada di servizio, canale ${r.k} (${f.name}), ${it(Math.round(r.q))} l/s` });
+      }
+      if (CB.canals.length) {
+        R.push({ codice: "ARGUS-CANALE-FILE-SCAVO", quantita: Math.round(CB.cut), unita: "m³", descrizione: "Scavo dei canali tra le file" });
+        if (CB.fill > 1) R.push({ codice: "ARGUS-CANALE-FILE-RILEVATO", quantita: Math.round(CB.fill), unita: "m³", descrizione: "Rilevato degli argini dei canali tra le file, compattato" });
+        if (["concr", "liner", "stone"].includes(canalLin)) R.push({ codice: `ARGUS-CANALE-RIVEST-${canalLin.toUpperCase()}`, quantita: Math.round(CB.linedM2), unita: "m²", descrizione: `Rivestimento dei canali tra le file in ${lining(canalLin).label.toLowerCase()}` });
+        for (const [h, n] of CB.dropCls) R.push({ codice: `ARGUS-SALTO-CANALE-${String(Math.round(h * 100)).padStart(3, "0")}`, quantita: n, unita: "pz", descrizione: `Salto di quota (manufatto di caduta) sul canale, altezza fino a ${it(h, 1)} m` });
+      }
+      if (CB.roads.length) for (const e of CB.roads) {
+        R.push({ codice: `ARGUS-STRADA-SERVIZIO-${String(Math.round(e.w * 10)).padStart(3, "0")}`, quantita: Math.round(e.L), unita: "m", descrizione: `Strada di servizio: carreggiata ${it(e.w, 1)} m, banchine ${it(e.sh, 2)} m, massicciata ${it(e.lay)} cm, rilevato ${it(e.fill, 2)} m` });
+        R.push({ codice: "ARGUS-MASSICCIATA", quantita: Math.round(e.L * e.w * e.lay / 100), unita: "m³", descrizione: `Massicciata in misto granulare stabilizzato, spessore ${it(e.lay)} cm` });
+      }
       add("Rete di adduzione", R);
     }
     // Fonte d'acqua / pompaggio / energia
