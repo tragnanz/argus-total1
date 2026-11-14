@@ -20,7 +20,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.284";
+const REV = "v0.6.285";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1243,6 +1243,7 @@ export default function Page() {
   const [nuName, setNuName] = useState("");
   const [nuPass, setNuPass] = useState("");
   const [nuCredits, setNuCredits] = useState<number>(50);
+  const [nuSeparate, setNuSeparate] = useState(false);   // spazio separato (accesso demo)
   const [usersMsg, setUsersMsg] = useState("");
   const refreshUsage = () => { api.fetchUsage().then(setUsage).catch(() => {}); };
   function logout() { api.clearToken(); router.replace("/login"); }
@@ -1253,8 +1254,8 @@ export default function Page() {
   async function createMember() {
     setUsersMsg("");
     try {
-      await api.adminCreateUser({ email: nuEmail.trim(), password: nuPass, full_name: nuName.trim() || undefined, credits: nuCredits });
-      setNuEmail(""); setNuName(""); setNuPass("");
+      await api.adminCreateUser({ email: nuEmail.trim(), password: nuPass, full_name: nuName.trim() || undefined, credits: nuCredits, separate: nuSeparate });
+      setNuEmail(""); setNuName(""); setNuPass(""); setNuSeparate(false);
       setAdminUsers(await api.adminListUsers()); refreshUsage();
     } catch (e) { setUsersMsg(e instanceof Error ? e.message : String(e)); }
   }
@@ -13927,6 +13928,10 @@ export default function Page() {
                     <input className="field-input" type="password" placeholder={t("Password (min 8)")} value={nuPass} onChange={(e) => setNuPass(e.target.value)} />
                     <input className="field-input" type="number" min={0} step={1} placeholder={t("Crediti")} value={nuCredits} onChange={(e) => setNuCredits(Number(e.target.value))} />
                   </div>
+                  <label className="mt-2 flex items-start gap-2 text-xs text-sage-dark cursor-pointer">
+                    <input type="checkbox" className="mt-0.5" checked={nuSeparate} onChange={(e) => setNuSeparate(e.target.checked)} />
+                    <span>{t("Spazio separato (accesso demo): non vede clienti e progetti dell'organizzazione")}</span>
+                  </label>
                   <button className="btn-primary mt-2" onClick={createMember}>{t("Crea utente")}</button>
                 </div>
 
@@ -13938,7 +13943,7 @@ export default function Page() {
                     <div key={u.id} className="bg-panel rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap">
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium text-brand-darker truncate">{u.email}{!u.is_active && <span className="text-danger"> · {t("disattivato")}</span>}</div>
-                        <div className="text-[11px] text-sage-dark">{u.role === "owner" ? t("proprietario") : u.role}{u.full_name ? ` · ${u.full_name}` : ""}</div>
+                        <div className="text-[11px] text-sage-dark">{u.role === "owner" ? t("proprietario") : u.role}{u.full_name ? ` · ${u.full_name}` : ""}{u.workspace ? ` · ${t("spazio separato")}` : ""}</div>
                       </div>
                       {u.role === "owner" ? (
                         <span className="text-[11px] text-sage-dark italic">{t("crediti illimitati")}</span>

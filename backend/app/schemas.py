@@ -453,6 +453,7 @@ class AdminUserOut(BaseModel):
     credits_used: int = 0
     credits_remaining: int | None = None
     created_at: dt.datetime | None = None
+    workspace: str | None = None          # nome dello spazio separato (demo), se l'utente non è nell'organizzazione
 
 
 class AdminUserCreate(BaseModel):
@@ -460,6 +461,7 @@ class AdminUserCreate(BaseModel):
     password: str
     full_name: str | None = None
     credits: int | None = None
+    separate: bool = False                # spazio separato: non vede clienti e progetti dell'organizzazione
 
 
 class AdminUserPatch(BaseModel):

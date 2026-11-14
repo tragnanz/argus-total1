@@ -21,6 +21,8 @@ class Organization(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Spazio separato (es. accesso demo) creato da un'altra organizzazione, che ne gestisce gli utenti.
+    parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
 

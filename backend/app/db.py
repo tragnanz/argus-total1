@@ -61,6 +61,10 @@ def _ensure_columns() -> None:
             stmts.append("ALTER TABLE projects ADD COLUMN organization_id INTEGER")
         if "settings_json" not in pcols:
             stmts.append("ALTER TABLE projects ADD COLUMN settings_json TEXT")
+    if "organizations" in tables:
+        ocols = {c["name"] for c in insp.get_columns("organizations")}
+        if "parent_id" not in ocols:
+            stmts.append("ALTER TABLE organizations ADD COLUMN parent_id INTEGER")
     for s in stmts:
         try:
             with engine.begin() as conn:

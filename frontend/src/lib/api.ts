@@ -157,7 +157,7 @@ export type Usage = {
 };
 export type AdminUser = {
   id: number; email: string; full_name?: string | null; role: string; is_active: boolean;
-  credits: number | null; credits_used: number; credits_remaining: number | null; created_at?: string | null;
+  credits: number | null; credits_used: number; credits_remaining: number | null; created_at?: string | null; workspace?: string | null;
 };
 export const authRegister = (email: string, password: string, organization_name: string, full_name?: string) =>
   req<{ access_token: string }>("/api/auth/register", { method: "POST", body: JSON.stringify({ email, password, organization_name, full_name }) });
@@ -166,7 +166,7 @@ export const authLogin = (email: string, password: string) =>
 export const authMe = () => req<Me>("/api/auth/me");
 export const fetchUsage = () => req<Usage>("/api/usage");
 export const adminListUsers = () => req<AdminUser[]>("/api/admin/users");
-export const adminCreateUser = (body: { email: string; password: string; full_name?: string; credits?: number | null }) =>
+export const adminCreateUser = (body: { email: string; password: string; full_name?: string; credits?: number | null; separate?: boolean }) =>
   req<AdminUser>("/api/admin/users", { method: "POST", body: JSON.stringify(body) });
 export const adminUpdateUser = (id: number, body: { credits?: number | null; reset_used?: boolean; is_active?: boolean; password?: string; full_name?: string }) =>
   req<AdminUser>(`/api/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(body) });
