@@ -139,6 +139,24 @@ try {
   const exp = await page.locator("body").innerText();
   ok(/Esporta|Computo/.test(exp), "Computo: pagina Esporta aperta");
   console.log(`Tempo dal passo 2 alla rete pronta: ${((Date.now() - t0) / 1000).toFixed(0)} s, clic: ${clicks}`);
+  // caselle numeriche: separatore delle migliaia e cancellazione libera (anche sotto il minimo)
+  await page.locator('button[title="Fonte d\'acqua"]').first().click(); await page.waitForTimeout(800);
+  const vals = await page.locator("input[inputmode]").evaluateAll((els) => els.map((e) => e.value));
+  ok(vals.some((v) => /^\d{1,3}(\.\d{3})+$/.test(v)), `Separatore delle migliaia nelle caselle: ${vals.filter((v) => /\d\.\d{3}/.test(v)).slice(0, 4).join(" ")}`);
+  await page.locator('button[title="Tubazioni"]').first().click(); await page.waitForTimeout(800);
+  const opt = await page.locator('section:not([hidden]) select:has(option[value="-1"])').first().locator("option").first().innerText().catch(() => "");
+  ok(/^Fonte idrica: /.test(opt), `Tubazioni: partono da «${opt}»`);
+  const box = page.locator('section:not([hidden]) input[inputmode]').first();
+  await box.click(); await page.keyboard.press("ControlOrMeta+a"); await page.keyboard.press("Backspace");
+  const empty = await box.inputValue();
+  await page.keyboard.type("7"); await page.waitForTimeout(200);
+  const seven = await box.inputValue();
+  ok(empty === "" && seven === "7", `Casella «Pivot per linea»: cancellata → «${empty}», poi 7 → «${seven}»`);
+  await click(page.getByRole("button", { name: /Traccia tubazioni su/ }).first());
+  await page.waitForTimeout(1500);
+  const pm = await page.locator("body").innerText();
+  ok(/rami dalla fonte/.test(pm), `Tubazioni dalla fonte: ${(pm.match(/Tubazioni tracciate[^\n]*/) || ["-"])[0]}`);
+  await page.screenshot({ path: path.join(SH, "q6_tubazioni_fonte.png") });
   ok(errors.length === 0, `Nessun errore JavaScript${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; await page.screenshot({ path: path.join(SH, "q_err.png") }).catch(() => {}); }
 await browser.close();

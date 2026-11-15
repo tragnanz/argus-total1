@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import JSZip from "jszip";
 import type { MapHandle, PivotItem, PivotSel, CircleInfo } from "@/components/MapCanvas";
 import { WATER_COL } from "@/lib/water";
+import NumInput from "@/components/NumInput";
 import { useI18n, LANGS, type Lang, translateError, translatorFor } from "@/lib/i18n";
 import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
@@ -20,7 +21,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.285";
+const REV = "v0.6.286";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1490,7 +1491,7 @@ export default function Page() {
   const [designMode, setDesignMode] = useState<"standard" | "advanced">("standard"); // Systems: standard | avanzata (ottimizza raggio)
   const [advMinR, setAdvMinR] = useState(250);           // avanzata: raggio minimo del range (m)
   const [advMaxR, setAdvMaxR] = useState(450);           // avanzata: raggio massimo del range (m)
-  const [pipeCanalIdx, setPipeCanalIdx] = useState(0);   // Accessori: canale da cui si diramano le tubazioni
+  const [pipeCanalIdx, setPipeCanalIdx] = useState(-1);  // Tubazioni: -1 = fonte idrica scelta, ≥ 0 = canale tracciato
   const [pipeMaxPerLine, setPipeMaxPerLine] = useState(8); // max pivot collegati sulla stessa tubazione
   // Gerarchia pivot: modello modificabile (gruppo → singolo) derivato dal risultato.
   const [pivots, setPivots] = useState<PivotItem[]>([]);
@@ -3983,7 +3984,7 @@ export default function Page() {
                   <button className={"px-2 py-0.5 " + (!R.over ? "bg-brand text-white" : "bg-white")} onClick={() => setWaterRule(r.c, { over: false })} data-water-rule-btn={`${r.c}-off`}>{r.off}</button>
                   <button className={"px-2 py-0.5 " + (R.over ? "bg-brand text-white" : "bg-white")} onClick={() => setWaterRule(r.c, { over: true })} data-water-rule-btn={`${r.c}-on`}>{r.on}</button>
                 </span>
-                <input type="number" min={0} max={500} step={5} value={R.buf} disabled={R.over} data-water-rule-buf={r.c}
+                <NumInput type="number" min={0} max={500} step={5} value={R.buf} disabled={R.over} data-water-rule-buf={r.c}
                   onChange={(e) => setWaterRule(r.c, { buf: Math.max(0, Number(e.target.value) || 0) })} className="field-input px-1.5 py-1 text-sm disabled:opacity-40" />
               </Fragment>
             );
@@ -4559,18 +4560,62 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounds, moundMode, tab, terraPerPivot, termCfg]);
   useEffect(() => { if (tab !== "terra" && moundMode) setMoundMode(""); }, [tab, moundMode]);
+  // Linea da cui partono le tubazioni: la fonte idrica scelta. Se la presa sta su un corso d'acqua (fiume,
+  // canale, invaso) si usa tutto il corso; altrimenti (pozzo, punto libero) un breve tratto nel punto di presa.
+  const feedSrc = useMemo(() => {
+    if (!srcPt) return null;
+    let best = -1, bd = Infinity;
+    if (srcType !== "pozzo") watercourses.forEach((w, i) => {
+      const cs = waterLineOf(w as WaterL); if (cs.length < 2) return;
+      const d = nearestOnLine(srcPt, cs).d; if (d < bd) { bd = d; best = i; }
+    });
+    if (best >= 0 && bd <= 250) {
+      const w = watercourses[best] as WaterL, code = waterCodes(watercourses)[best];
+      return { coords: waterLineOf(w), label: `${code}${w.name ? " · " + w.name : ""}` };
+    }
+    const k = 1e-5;
+    return { coords: [[srcPt[0] - k, srcPt[1]], [srcPt[0] + k, srcPt[1]]], label: srcLabel.name || t("presa") };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcPt, srcType, watercourses, srcLabel, lang]);
   // ---- Accessori: tubazioni di adduzione dal canale ---------------------------
   // Traccia le tubazioni che si diramano dal canale e passano per i centri dei
   // pivot ESISTENTI del poligono, una per fila, tutte nella stessa direzione.
   function generatePipes() {
     if (!active) return needField();
-    if (!canals.length) { setMsg(t("Traccia prima un canale nella pagina Rilievo.")); return; }
+    const fromSrc = pipeCanalIdx < 0 || !canals.length;
+    if (fromSrc && !feedSrc) { setMsg(t("Scegli prima la fonte idrica (pagina Fonte d'acqua): le tubazioni partono da lì.")); return; }
     const fid = active.id;
     const fieldPivs = pivots.filter((p) => p.field === fid);
     if (!fieldPivs.length) { setMsg(t("Nessun pivot su questo poligono: inserisci prima gli impianti.")); return; }
-    const canal = canals[Math.min(pipeCanalIdx, canals.length - 1)];
-    const ring = active.geom?.coordinates?.[0] ?? null;   // le tubazioni restano dentro il campo
-    const pipesLL = feederPipes(canal.geojson.coordinates, fieldPivs.map((p) => ({ lat: p.lat, lng: p.lng, r: p.r })), pipeMaxPerLine, ring);
+    let line: number[][] = fromSrc ? feedSrc!.coords : canals[Math.min(pipeCanalIdx, canals.length - 1)].geojson.coordinates;
+    const ring = (active.geom?.coordinates?.[0] ?? null) as number[][] | null;   // le tubazioni restano dentro il campo
+    // Fonte che non attraversa il campo (fiume corto o lontano, pozzo, presa in un punto): dalla presa parte
+    // una condotta principale che entra nel campo e lo attraversa; le file di pivot si allacciano a quella.
+    let trunk: number[][] | null = null;
+    if (fromSrc && srcPt) {
+      const kx = 111320 * Math.cos((srcPt[1] * Math.PI) / 180);
+      const nn = fieldPivs.map((p) => Math.min(...fieldPivs.filter((q) => q !== p).map((q) => Math.hypot((q.lng - p.lng) * kx, (q.lat - p.lat) * 110540)), Infinity));
+      const pitch = nn.filter(Number.isFinite).sort((a, b) => a - b)[Math.floor(nn.length / 2)] || 800;
+      const reach = Math.max(1, pipeMaxPerLine) * pitch;
+      // un pivot si allaccia al corso se gli sta davanti (piede della perpendicolare dentro il corso, non su
+      // un estremo) entro la lunghezza di una fila; altrimenti serve la condotta principale
+      const a0 = line[0], a1 = line[line.length - 1];
+      const near = fieldPivs.filter((p) => { const e = nearestOnLine([p.lng, p.lat], line); return e.d <= reach && geoDist(e.q, a0) > 5 && geoDist(e.q, a1) > 5; }).length;
+      if (near < fieldPivs.length * 0.7) {
+        const cx = fieldPivs.reduce((a, p) => a + p.lng, 0) / fieldPivs.length, cy = fieldPivs.reduce((a, p) => a + p.lat, 0) / fieldPivs.length;
+        let ux = (cx - srcPt[0]) * kx, uy = (cy - srcPt[1]) * 110540; const L = Math.hypot(ux, uy) || 1; ux /= L; uy /= L;
+        // si prosegue oltre il baricentro fino al bordo opposto del campo
+        let far = [cx, cy];
+        for (let d = 0; d < 60000; d += 50) {
+          const q = [cx + (ux * d) / kx, cy + (uy * d) / 110540];
+          if (ring && !pointInPolygon(q, [ring])) break;
+          far = q;
+        }
+        trunk = [srcPt, far]; line = trunk;
+      }
+    }
+    const feeders = feederPipes(line, fieldPivs.map((p) => ({ lat: p.lat, lng: p.lng, r: p.r })), pipeMaxPerLine, ring);
+    const pipesLL = trunk && feeders.length ? [trunk, ...feeders] : feeders;
     if (!pipesLL.length) { setMsg(t("Nessuna tubazione tracciabile con questi pivot.")); return; }
     const newL = pipesLL.map((coords) => ({ kind: "pipe", coords, field: fid }));
     const mergedL = [...pivotLines.filter((l) => !(l.kind === "pipe" && l.field === fid)), ...newL];
@@ -4587,7 +4632,9 @@ export default function Page() {
       }
       return s + L;
     }, 0) / 1000;
-    setMsg(t("Tubazioni tracciate: {n} rami dal canale · {km} km ✓", { n: pipesLL.length, km: fmt(km, { maximumFractionDigits: 1 }) }));
+    setMsg(fromSrc
+      ? t("Tubazioni tracciate: {n} rami dalla fonte «{s}» · {km} km ✓", { n: pipesLL.length, s: feedSrc!.label, km: fmt(km, { maximumFractionDigits: 1 }) })
+      : t("Tubazioni tracciate: {n} rami dal canale · {km} km ✓", { n: pipesLL.length, km: fmt(km, { maximumFractionDigits: 1 }) }));
   }
   // Linee d'acqua visibili (canali + corsi d'acqua lineari): servono al simbolo
   // della presa e al riaggancio automatico.
@@ -5172,7 +5219,7 @@ export default function Page() {
         </div>
         {cur.orientMode === "manual" && (
           <label className="text-xs text-sage-dark mt-1 block">{t("Azimut canale (°)")}
-            <input type="number" min={-360} max={360} step={1} value={cur.azimuth}
+            <NumInput type="number" min={-360} max={360} step={1} value={cur.azimuth}
               onChange={(e) => patch({ azimuth: Number(e.target.value) })} className="field-input mt-1" /></label>
         )}
         <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
@@ -5541,9 +5588,9 @@ export default function Page() {
                 <option value="mean">{t("Anno medio")}</option>
               </select></label>}
             <label className="text-[11px] text-sage-dark" title={t("Deflusso minimo da lasciare in alveo, in percentuale della portata media (es. 10%): va verificato con l'ente che rilascia la concessione.")}>{t("Da lasciare al fiume (%)")}
-              <input type="number" min={0} max={100} step={1} value={river.dmv} onChange={(e) => setRiver({ ...river, dmv: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
+              <NumInput type="number" min={0} max={100} step={1} value={river.dmv} onChange={(e) => setRiver({ ...river, dmv: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
             {river.pick < 0 && <label className="text-[11px] text-sage-dark" title={t("Quota della pioggia che arriva al fiume: 0,1 terreni permeabili e clima arido, 0,3–0,5 bacini montani e argillosi.")}>{t("Coeff. di deflusso")}
-              <input type="number" min={0.02} max={0.9} step={0.05} value={river.c} onChange={(e) => setRiver({ ...river, c: Math.max(0.02, Math.min(0.9, Number(e.target.value) || 0.2)) })} className="field-input mt-0.5 py-1 text-sm" /></label>}
+              <NumInput type="number" min={0.02} max={0.9} step={0.05} value={river.c} onChange={(e) => setRiver({ ...river, c: Math.max(0.02, Math.min(0.9, Number(e.target.value) || 0.2)) })} className="field-input mt-0.5 py-1 text-sm" /></label>}
           </div>
           {R && (<>
             <div className="text-[11px] text-sage-dark leading-snug">
@@ -8477,7 +8524,7 @@ export default function Page() {
           {([[t("Rete (€/kWh)"), costKwh, setCostKwh, 0.01], [t("Gasolio (€/l)"), costDiesel, setCostDiesel, 0.05], [t("Gasolio (l/kWh)"), dieselLkWh, setDieselLkWh, 0.01], [t("Quota generatore (%)"), genShare, setGenShare, 5],
             [t("Manutenzione (€/kW·anno)"), costMaintKw, setCostMaintKw, 1], [t("FV (€/kWp·anno)"), costPvOm, setCostPvOm, 1], [t("Batterie (€/kWh)"), costBattKwh, setCostBattKwh, 10], [t("Vita batterie (anni)"), battLife, setBattLife, 1]] as [string, number, (x: number) => void, number][]).map(([lab, v, set, st]) => (
             <label key={lab} className="text-[10px] text-sage-dark leading-tight">{lab}
-              <input type="number" min={0} step={st} value={v} onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && x >= 0) set(x); }} className="field-input mt-0.5 py-0.5 text-xs" /></label>
+              <NumInput type="number" min={0} step={st} value={v} onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && x >= 0) set(x); }} className="field-input mt-0.5 py-0.5 text-xs" /></label>
           ))}
         </div>
         <div className="overflow-x-auto">
@@ -9060,7 +9107,7 @@ export default function Page() {
     const key = sysKey(active), saved = sysDesigns[key];
     const num = (label: string, v: number, set: (x: number) => void, step = 1, min = 0, max = 1e9) => (
       <label className="text-[11px] text-sage-dark">{label}
-        <input type="number" min={min} max={max} step={step} value={v}
+        <NumInput type="number" min={min} max={max} step={step} value={v}
           onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) set(Math.max(min, Math.min(max, x))); }} className="field-input mt-0.5 py-1 text-sm" /></label>
     );
     const azCtl = (az: number | null, set: (a: number | null) => void) => (
@@ -9068,7 +9115,7 @@ export default function Page() {
         <label className="flex items-center gap-2 text-[11px] text-sage-dark pb-1.5 flex-1">
           <input type="checkbox" checked={az == null} onChange={(e) => set(e.target.checked ? null : 0)} />{t("Orientamento automatico (lato lungo)")}</label>
         {az != null && <label className="text-[11px] text-sage-dark flex-1">{t("Azimut (°)")}
-          <input type="number" min={0} max={179} step={1} value={az} onChange={(e) => set(((Number(e.target.value) % 180) + 180) % 180)} className="field-input mt-0.5 py-1 text-sm" /></label>}
+          <NumInput type="number" min={0} max={179} step={1} value={az} onChange={(e) => set(((Number(e.target.value) % 180) + 180) % 180)} className="field-input mt-0.5 py-1 text-sm" /></label>}
       </div>
     );
     const box = (rows: [string, string][]) => (
@@ -10222,16 +10269,16 @@ export default function Page() {
             <div className="font-semibold">{t("Portata stimata")} <span className="font-normal opacity-70">({t("formula di Manning, sezione trapezia")})</span></div>
             <div className="grid grid-cols-4 gap-1">
               <label className="opacity-80">{t("Profondità (m)")}
-                <input type="number" min={0.1} step={0.1} className="field-input px-1 py-0.5 text-[11px]" value={Math.round(f.d * 100) / 100}
+                <NumInput type="number" min={0.1} step={0.1} className="field-input px-1 py-0.5 text-[11px]" value={Math.round(f.d * 100) / 100}
                   onChange={(e) => { const v = Number(e.target.value); if (v > 0) patchWater(i, { depth_m: v }); }} data-water-depth /></label>
               <label className="opacity-80">{t("Pendenza (‰)")}
-                <input type="number" min={0} step={0.05} className="field-input px-1 py-0.5 text-[11px]" value={w.slope_pm ?? ""} placeholder={waterSlopeBusy === i ? "…" : "–"}
+                <NumInput type="number" min={0} step={0.05} className="field-input px-1 py-0.5 text-[11px]" value={w.slope_pm ?? ""} placeholder={waterSlopeBusy === i ? "…" : "–"}
                   onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0) patchWater(i, { slope_pm: v, slope_from: "manual" }); }} data-water-slope /></label>
               <label className="opacity-80">{t("Scabrezza n")}
-                <input type="number" min={0.01} max={0.2} step={0.005} className="field-input px-1 py-0.5 text-[11px]" value={f.n}
+                <NumInput type="number" min={0.01} max={0.2} step={0.005} className="field-input px-1 py-0.5 text-[11px]" value={f.n}
                   onChange={(e) => { const v = Number(e.target.value); if (v > 0) patchWater(i, { manning_n: v }); }} /></label>
               <label className="opacity-80">{t("Scarpa 1:")}
-                <input type="number" min={0.2} max={30} step={0.1} className="field-input px-1 py-0.5 text-[11px]" value={f.m}
+                <NumInput type="number" min={0.2} max={30} step={0.1} className="field-input px-1 py-0.5 text-[11px]" value={f.m}
                   onChange={(e) => { const v = Number(e.target.value); if (v > 0) patchWater(i, { bank_m: v, bank_from: "manual" }); }} /></label>
             </div>
             <div className="opacity-70 leading-snug">
@@ -10259,7 +10306,7 @@ export default function Page() {
               </div>
             )}
             <label className="flex items-center gap-1.5">{t("Portata nota (l/s)")}
-              <input type="number" min={0} step={1} className="field-input px-1 py-0.5 text-[11px] w-20" value={w.q_known_ls ?? ""} placeholder="–"
+              <NumInput type="number" min={0} step={1} className="field-input px-1 py-0.5 text-[11px] w-20" value={w.q_known_ls ?? ""} placeholder="–"
                 onChange={(e) => { const v = e.target.value === "" ? undefined : Number(e.target.value); patchWater(i, { q_known_ls: v != null && Number.isFinite(v) && v >= 0 ? v : undefined }); }} data-water-qknown />
               <span className="opacity-70">{t("misurata o concessa: sostituisce la stima")}</span></label>
           </div>
@@ -10287,7 +10334,7 @@ export default function Page() {
                                   {!f && w.width_low_m != null && !w.bed && w.regime === "perennial" && (
                                     <div className="flex items-center gap-1 flex-wrap">
                                       {t("Scarpa delle sponde 1:")}
-                                      <input type="number" min={0.2} max={30} step={0.1} className="w-12 text-right bg-transparent border-b border-black/10"
+                                      <NumInput type="number" min={0.2} max={30} step={0.1} className="w-12 text-right bg-transparent border-b border-black/10"
                                         value={w.bank_m ?? ""} placeholder="–"
                                         onChange={(e) => { const v = Number(e.target.value); if (v > 0) setWaterAt(i, { bank_m: v, bank_from: "manual" }); }} />
                                       <span className="opacity-70">({w.bank_from === "canal" ? t("sezione tipo di un canale in terra") : w.bank_from === "dem" ? t("dal DEM") : w.bank_from === "manual" ? t("inserita a mano") : t("da inserire")})</span>
@@ -10308,7 +10355,7 @@ export default function Page() {
     const S = sourceSchemes();
     const num = (label: string, v: number, set: (x: number) => void, step = 1, min = 0, max = 1e9) => (
       <label className="text-[11px] text-sage-dark">{label}
-        <input type="number" min={min} max={max} step={step} value={v}
+        <NumInput type="number" min={min} max={max} step={step} value={v}
           onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) set(Math.max(min, Math.min(max, x))); }} className="field-input mt-0.5 py-1 text-sm" /></label>
     );
     const mwh = (x: number) => fmt(Math.round(x));
@@ -10380,7 +10427,7 @@ export default function Page() {
             <div className="grid grid-cols-6 gap-1">
               {srcMonthly.map((v, i) => (
                 <label key={i} className="text-[10px] text-sage-dark text-center">{new Date(2000, i, 1).toLocaleString(lang, { month: "short" })}
-                  <input type="number" min={0} max={50} step={0.1} value={v}
+                  <NumInput type="number" min={0} max={50} step={0.1} value={v}
                     onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) setSrcMonthly((m) => m ? m.map((y, k) => (k === i ? Math.max(0, Math.min(50, x)) : y)) : m); }}
                     className="field-input mt-0.5 px-1 py-0.5 text-[11px] text-center" /></label>
               ))}
@@ -10432,7 +10479,7 @@ export default function Page() {
           {pivots.length > 1 && (
             <div className="flex items-center gap-2 text-[11px] text-sage-dark">
               <label className="w-24">{t("Portata max per stazione (l/s)")}
-                <input type="number" min={50} step={50} value={stQmax} data-st-qmax
+                <NumInput type="number" min={50} step={50} value={stQmax} data-st-qmax
                   onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && x > 0) setStQmax(Math.max(50, x)); }} className="field-input mt-0.5 py-1 text-sm" /></label>
               <label className="w-28">{t("Settori di pompaggio")}
                 <select className="field-input mt-0.5 py-1 text-sm" value={srcSectors} data-sectors onChange={(e) => setSrcSectors(Number(e.target.value))}>
@@ -10650,7 +10697,7 @@ export default function Page() {
           </div>
         ))}
         <label className="text-[11px] text-sage-dark block">{t("Distanza dal punto di consegna dell'energia alle pompe (m)")}
-          <input type="number" min={0} max={20000} step={10} value={cableM} onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setCableM(Math.max(0, Math.min(20000, v))); }}
+          <NumInput type="number" min={0} max={20000} step={10} value={cableM} onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setCableM(Math.max(0, Math.min(20000, v))); }}
             className="field-input mt-0.5 py-1 text-sm" /></label>
         {cabs.length > 0 && (
           <table className="w-full text-[11px]"><tbody>
@@ -10802,7 +10849,7 @@ export default function Page() {
     const SZ = pivots.map((p) => solarSize(p)), tot = pivots.reduce((a, p, k) => (p.solar ? { kWp: a.kWp + SZ[k].kWp, n: a.n + SZ[k].n, b: a.b + SZ[k].batt } : a), { kWp: 0, n: 0, b: 0 });
     const num = (label: string, v: number, set: (x: number) => void, step: number, min: number, max: number, hint?: string) => (
       <label className="text-[11px] text-sage-dark" title={hint}>{label}
-        <input type="number" min={min} max={max} step={step} value={v}
+        <NumInput type="number" min={min} max={max} step={step} value={v}
           onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) set(Math.max(min, Math.min(max, x))); }} className="field-input mt-0.5 py-1 text-sm" /></label>
     );
     return (
@@ -10928,7 +10975,7 @@ export default function Page() {
     ];
     const num = (label: string, v: number, set: (x: number) => void, step = 1, min = 0, max = 1e9) => (
       <label className="text-[11px] text-sage-dark">{label}
-        <input type="number" min={min} max={max} step={step} value={v}
+        <NumInput type="number" min={min} max={max} step={step} value={v}
           onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) set(Math.max(min, Math.min(max, x))); }} className="field-input mt-0.5 py-1 text-sm" /></label>
     );
     const B = P.best;
@@ -11076,7 +11123,7 @@ export default function Page() {
     if (!pivots.length) return null;
     const num = (label: string, v: number, set: (x: number) => void, step = 1, min = 0, max = 100000) => (
       <label className="text-[11px] text-sage-dark">{label}
-        <input type="number" min={min} max={max} step={step} value={v}
+        <NumInput type="number" min={min} max={max} step={step} value={v}
           onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) set(x); }} className="field-input mt-0.5 py-1 text-sm" /></label>
     );
     const S = powerMode === "solar" ? solarSizing() : null;
@@ -11122,7 +11169,7 @@ export default function Page() {
           {solarOpen && (
             <div className="grid grid-cols-2 gap-2">
               <label className="text-[11px] text-sage-dark">{t("Irraggiamento (kWh/m²/giorno)")}
-                <input type="number" min={0.5} max={12} step={0.1} value={pvPsh ?? ""} placeholder={fmt(S.psh, { maximumFractionDigits: 1 })}
+                <NumInput type="number" min={0.5} max={12} step={0.1} value={pvPsh ?? ""} placeholder={fmt(S.psh, { maximumFractionDigits: 1 })}
                   onChange={(e) => setPvPsh(e.target.value === "" ? null : Number(e.target.value))} className="field-input mt-0.5 py-1 text-sm" /></label>
               {num(t("Ore di pompaggio col sole"), pvSunH, setPvSunH, 0.5, 1, 14)}
               {num(t("Sollevamento + perdite in rete (m)"), pvHead, setPvHead, 1, 0, 300)}
@@ -11390,7 +11437,7 @@ export default function Page() {
         const num = (v: number | undefined, d = 2) => (v == null ? "" : String(Math.round(v * 10 ** d) / 10 ** d));
         const inp = ({ label, value, ph, step, on, k }: { label: string; value: number | undefined; ph?: string; step: number; on: (x: number | undefined) => void; k: string }) => (
           <label key={k} className="flex flex-col gap-0.5"><span className="text-sage-dark">{label}</span>
-            <input data-comp-in={k} type="number" step={step} min={0} value={value ?? ""} placeholder={ph} className="field-input py-0.5 w-full"
+            <NumInput data-comp-in={k} type="number" step={step} min={0} value={value ?? ""} placeholder={ph} className="field-input py-0.5 w-full"
               onChange={(e) => { const x = e.target.value === "" ? undefined : Number(e.target.value); on(x != null && Number.isFinite(x) && x > 0 ? x : undefined); }} /></label>);
         return (
           <div data-comp-card className="ui-scale fixed bottom-14 left-1/2 -translate-x-1/2 z-[500] widget p-3 w-[460px] max-w-[94vw] pointer-events-auto text-xs">
@@ -11894,7 +11941,7 @@ export default function Page() {
                   <p className="text-[11px] text-sage-dark mb-2">{t("Trascina il pallino giallo sulla mappa per spostarlo.")}</p>
                   <div className="flex gap-2">
                     <label className="text-[11px] text-sage-dark flex-1">{t("Raggio (m)")}
-                      <input type="number" min={30} max={1000} step={5} value={Math.round(selPivot.r)}
+                      <NumInput type="number" min={30} max={1000} step={5} value={Math.round(selPivot.r)}
                         onChange={(e) => updateSelPivot({ r: Number(e.target.value) })} className="field-input mt-1" /></label>
                     <label className="text-[11px] text-sage-dark flex-1">{t("Connessione")}
                       <select className="field-input mt-1" value={selPivot.conn ?? "canal"}
@@ -11905,22 +11952,22 @@ export default function Page() {
                   </div>
                   <div className="flex gap-2 mt-2">
                     <label className="text-[11px] text-sage-dark flex-1">{t("Portata (l/s)")}
-                      <input type="number" min={0} step={1} value={selPivot.q ?? ""} placeholder={String(Math.round(pivotFlow({ r: selPivot.r })))}
+                      <NumInput type="number" min={0} step={1} value={selPivot.q ?? ""} placeholder={String(Math.round(pivotFlow({ r: selPivot.r })))}
                         onChange={(e) => updateSelPivot({ q: e.target.value === "" ? undefined : Math.max(0, Number(e.target.value)) })}
                         className="field-input mt-1" /></label>
                     <label className="text-[11px] text-sage-dark flex-1">{t("Pressione (bar)")}
-                      <input type="number" min={0} step={0.1} value={selPivot.p ?? ""} placeholder={pivotPressure({ r: selPivot.r }).toFixed(1)}
+                      <NumInput type="number" min={0} step={0.1} value={selPivot.p ?? ""} placeholder={pivotPressure({ r: selPivot.r }).toFixed(1)}
                         onChange={(e) => updateSelPivot({ p: e.target.value === "" ? undefined : Math.max(0, Number(e.target.value)) })}
                         className="field-input mt-1" /></label>
                   </div>
                   <div className="text-[10px] text-sage-dark mt-1">{t("Vuoto = calcolato da superficie e fabbisogno.")}</div>
                   <div className="flex gap-2 mt-2">
                     <label className="text-[11px] text-sage-dark flex-1">{t("Settore irrigato (°)")}
-                      <input type="number" min={10} max={360} step={5} value={Math.round(selPivot.deg ?? 360)}
+                      <NumInput type="number" min={10} max={360} step={5} value={Math.round(selPivot.deg ?? 360)}
                         onChange={(e) => { const d = Math.max(10, Math.min(360, Number(e.target.value) || 360)); updateSelPivot(d >= 360 ? { deg: undefined, az: undefined } : { deg: d, az: selPivot.az ?? 0 }); }}
                         className="field-input mt-1" /></label>
                     <label className="text-[11px] text-sage-dark flex-1">{t("Inizio settore (azimut °)")}
-                      <input type="number" min={0} max={359} step={5} value={Math.round(selPivot.az ?? 0)} disabled={(selPivot.deg ?? 360) >= 360}
+                      <NumInput type="number" min={0} max={359} step={5} value={Math.round(selPivot.az ?? 0)} disabled={(selPivot.deg ?? 360) >= 360}
                         onChange={(e) => updateSelPivot({ az: ((Number(e.target.value) % 360) + 360) % 360 })}
                         className="field-input mt-1" /></label>
                   </div>
@@ -11933,7 +11980,7 @@ export default function Page() {
                       <input type="checkbox" checked={!!selPivot.gun} onChange={(e) => updateSelPivot({ gun: e.target.checked ? 25 : undefined })} />
                       {t("Irrigatore finale")}</label>
                     <label className="text-[11px] text-sage-dark flex-1">{t("Gittata (m)")}
-                      <input type="number" min={5} max={60} step={1} value={selPivot.gun ?? 25} disabled={!selPivot.gun}
+                      <NumInput type="number" min={5} max={60} step={1} value={selPivot.gun ?? 25} disabled={!selPivot.gun}
                         onChange={(e) => updateSelPivot({ gun: Math.max(5, Math.min(60, Number(e.target.value) || 25)) })}
                         className="field-input mt-1" /></label>
                   </div>
@@ -12212,12 +12259,12 @@ export default function Page() {
               <div className="w-32 shrink-0 space-y-2">
                 <div>
                   <div className="text-[11px] leading-tight text-sage-dark mb-1">{t("Pend. ideale (‰)")}</div>
-                  <input type="number" min={0} max={100} step={0.5} value={cur.slopeIdeal}
+                  <NumInput type="number" min={0} max={100} step={0.5} value={cur.slopeIdeal}
                     onChange={(e) => patch({ slopeIdeal: Number(e.target.value) })} className="field-input px-2 py-1.5 text-sm w-full" />
                 </div>
                 <div>
                   <div className="text-[11px] leading-tight text-sage-dark mb-1">{t("Pend. max (‰)")}</div>
-                  <input type="number" min={0} max={200} step={0.5} value={cur.slopeMax}
+                  <NumInput type="number" min={0} max={200} step={0.5} value={cur.slopeMax}
                     onChange={(e) => patch({ slopeMax: Number(e.target.value) })} className="field-input px-2 py-1.5 text-sm w-full" />
                 </div>
               </div>
@@ -12284,7 +12331,7 @@ export default function Page() {
                   onChange={(e) => setMacroThr(Number(e.target.value))} className="w-full accent-brand mt-2 mb-1.5" />
               </label>
               <label className="text-xs text-sage-dark w-24">{t("Area minima (ha)")}
-                <input type="number" min={1} max={100000} step={1} value={macroMinHa}
+                <NumInput type="number" min={1} max={100000} step={1} value={macroMinHa}
                   onChange={(e) => setMacroMinHa(Number(e.target.value))} className="field-input mt-1" />
               </label>
             </div>
@@ -12323,11 +12370,11 @@ export default function Page() {
                 </select>
               </label>
               <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Infiltrazione (mm/h)")}
-                <input type="number" min={0.5} max={200} step={0.5} value={infiltration}
+                <NumInput type="number" min={0.5} max={200} step={0.5} value={infiltration}
                   onFocus={() => { infTouched.current = true; }}
                   onChange={(e) => setInfiltration(Number(e.target.value))} className="field-input mt-1 w-full px-2" /></label>
               <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("ET₀ di punta (mm/g)")}
-                <input type="number" min={1} max={20} step={0.5} value={et0Peak}
+                <NumInput type="number" min={1} max={20} step={0.5} value={et0Peak}
                   onChange={(e) => setEt0Peak(Number(e.target.value))} className="field-input mt-1 w-full px-2" />{et0Hint()}</label>
             </div>
             {/* Il valore agronomico proposto resta visibile anche dopo una
@@ -12377,22 +12424,22 @@ export default function Page() {
             <SectionHead title={t("Canali")} help={t("Traccia uno o più canali: automatici a gravità (a pendenza costante, con presa/finale opzionali) oppure a mano. Ogni canale è modificabile ed esportabile in KMZ. Lo spessore è mostrato come banda sulla mappa e viene evitato dai pivot come preesistenza. Se presa e finale non sono impostati: presa nel punto più alto, finale sul bordo più basso.")} />
             <div className="flex gap-2">
               <label className="text-xs text-sage-dark flex-1">{t("Pendenza target (‰)")}
-                <input type="number" min={0.1} max={100} step={0.5} value={canalPermille}
+                <NumInput type="number" min={0.1} max={100} step={0.5} value={canalPermille}
                   onChange={(e) => setCanalPermille(Number(e.target.value))} className="field-input mt-1" />
               </label>
               <label className="text-xs text-sage-dark flex-1">{t("Spessore canale (m)")}
-                <input type="number" min={1} max={200} step={1} value={canalWidth}
+                <NumInput type="number" min={1} max={200} step={1} value={canalWidth}
                   onChange={(e) => setCanalWidth(Number(e.target.value))} className="field-input mt-1" />
               </label>
             </div>
             <div className="grid grid-cols-3 gap-2 mt-2" data-canal-design>
               <label className="text-xs text-sage-dark" title={t("Portata che il canale deve portare in moto uniforme. 0 = portata di progetto dell'impianto")}>{t("Portata (l/s, 0 = progetto)")}
-                <input type="number" min={0} step={10} value={canalQ} onChange={(e) => setCanalQ(Math.max(0, Number(e.target.value) || 0))} className="field-input mt-1" /></label>
+                <NumInput type="number" min={0} step={10} value={canalQ} onChange={(e) => setCanalQ(Math.max(0, Number(e.target.value) || 0))} className="field-input mt-1" /></label>
               <label className="text-xs text-sage-dark">{t("Rivestimento")}
                 <select className="field-input mt-1" value={canalLin} onChange={(e) => setCanalLin(e.target.value as LiningId)}>
                   {LININGS.map((l) => <option key={l.id} value={l.id}>{t(l.label)} · n {l.n}</option>)}</select></label>
               <label className="text-xs text-sage-dark">{t("Franco minimo (m)")}
-                <input type="number" min={0.1} max={2} step={0.05} value={canalFb} onChange={(e) => setCanalFb(Math.max(0.1, Number(e.target.value) || 0.3))} className="field-input mt-1" /></label>
+                <NumInput type="number" min={0.1} max={2} step={0.05} value={canalFb} onChange={(e) => setCanalFb(Math.max(0.1, Number(e.target.value) || 0.3))} className="field-input mt-1" /></label>
             </div>
 
             <div className="bg-panel rounded-lg p-2 mt-2">
@@ -12471,11 +12518,11 @@ export default function Page() {
               {drainOn && (<>
                 <div className="grid grid-cols-3 gap-2 mt-1">
                   <label className="text-[11px] text-sage-dark" title={t("Pioggia da smaltire in 24 ore: 12,96 mm/24h = 1,5 l/s per ettaro")}>{t("Coeff. (mm/24h)")}
-                    <input type="number" min={1} max={100} step={0.5} value={drainC} onChange={(e) => setDrainC(Math.max(1, Number(e.target.value) || 12.96))} className="field-input mt-0.5 py-1 text-sm" /></label>
+                    <NumInput type="number" min={1} max={100} step={0.5} value={drainC} onChange={(e) => setDrainC(Math.max(1, Number(e.target.value) || 12.96))} className="field-input mt-0.5 py-1 text-sm" /></label>
                   <label className="text-[11px] text-sage-dark">{t("Pendenza (‰)")}
-                    <input type="number" min={0.1} max={50} step={0.5} value={drainS} onChange={(e) => setDrainS(Math.max(0.1, Number(e.target.value) || 2))} className="field-input mt-0.5 py-1 text-sm" /></label>
+                    <NumInput type="number" min={0.1} max={50} step={0.5} value={drainS} onChange={(e) => setDrainS(Math.max(0.1, Number(e.target.value) || 2))} className="field-input mt-0.5 py-1 text-sm" /></label>
                   <label className="text-[11px] text-sage-dark">{t("Base (m)")}
-                    <input type="number" min={0.2} max={5} step={0.1} value={drainB} onChange={(e) => setDrainB(Math.max(0.2, Number(e.target.value) || 0.5))} className="field-input mt-0.5 py-1 text-sm" /></label>
+                    <NumInput type="number" min={0.2} max={5} step={0.1} value={drainB} onChange={(e) => setDrainB(Math.max(0.2, Number(e.target.value) || 0.5))} className="field-input mt-0.5 py-1 text-sm" /></label>
                 </div>
                 <button className="btn-ghost w-full text-[11px] mt-1" disabled={busy === "drainDem"} onClick={readDrainDem}
                   title={t("Quote del perimetro di ogni campo dal modello del terreno: sbocco nel punto più basso, pendenza dal terreno e sezione che cresce verso valle.")}>
@@ -12497,7 +12544,7 @@ export default function Page() {
               const vTot = T.vCone + T.vNest + T.vCan + T.vTrack;
               const inp = (label: string, v: number, set: (x: number) => void, step: number, min: number, max: number) => (
                 <label className="text-[11px] text-sage-dark">{label}
-                  <input type="number" className="field-input mt-0.5 py-1 text-sm" value={v} step={step} min={min} max={max}
+                  <NumInput type="number" className="field-input mt-0.5 py-1 text-sm" value={v} step={step} min={min} max={max}
                     onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && x >= min && x <= max) set(x); }} /></label>);
               const G = terraGround;
               const gp = (i: number, k: GroundK) => { const q = G?.piv[i]; return q && q.aP ? (100 * q.a[k]) / q.aP : 0; };
@@ -12680,7 +12727,7 @@ export default function Page() {
               </select>
             </label>
             <label className="text-xs text-sage-dark block mb-1">{t("Velocità massima nei tubi delle campate (m/s)")}
-              <input type="number" min={1} max={5} step={0.1} value={spanVmax}
+              <NumInput type="number" min={1} max={5} step={0.1} value={spanVmax}
                 onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) setSpanVmax(Math.max(1, Math.min(5, x))); }} className="field-input mt-1 text-sm" />
             </label>
             <label className="text-xs text-sage-dark block mb-1">{t("Disposizione")}</label>
@@ -12713,34 +12760,34 @@ export default function Page() {
                 {designMode === "standard" ? (
                   <div className="flex-1 min-w-0">
                     <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Raggio pivot")}>{t("Raggio pivot")}</div>
-                    <input type="number" min={30} max={1000} step={10} value={pivotR}
+                    <NumInput type="number" min={30} max={1000} step={10} value={pivotR}
                       onChange={(e) => setPivotR(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
                   </div>
                 ) : (<>
                   <div className="flex-1 min-w-0">
                     <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Raggio min")}>{t("Raggio min")}</div>
-                    <input type="number" min={30} max={1000} step={10} value={advMinR}
+                    <NumInput type="number" min={30} max={1000} step={10} value={advMinR}
                       onChange={(e) => setAdvMinR(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Raggio max")}>{t("Raggio max")}</div>
-                    <input type="number" min={30} max={1000} step={10} value={advMaxR}
+                    <NumInput type="number" min={30} max={1000} step={10} value={advMaxR}
                       onChange={(e) => setAdvMaxR(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
                   </div>
                 </>)}
                 <div className="flex-1 min-w-0">
                   <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Tra i pivot")}>{t("Tra i pivot")}</div>
-                  <input type="number" min={0} max={500} step={5} value={safetyM}
+                  <NumInput type="number" min={0} max={500} step={5} value={safetyM}
                     onChange={(e) => setSafetyM(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Da strade")}>{t("Da strade")}</div>
-                  <input type="number" min={0} max={500} step={5} value={pivClearRoad}
+                  <NumInput type="number" min={0} max={500} step={5} value={pivClearRoad}
                     onChange={(e) => setPivClearRoad(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate" title={t("Dal canale di progetto")}>{t("Dal canale di progetto")}</div>
-                  <input type="number" min={0} max={500} step={5} value={pivClearWater}
+                  <NumInput type="number" min={0} max={500} step={5} value={pivClearWater}
                     onChange={(e) => setPivClearWater(Number(e.target.value))} className="field-input px-1.5 py-1.5 text-sm" />
                 </div>
               </div>
@@ -12757,7 +12804,7 @@ export default function Page() {
                   <div className="grid grid-cols-2 gap-2 mt-1">
                     <label className="text-[10px] text-sage-dark leading-tight">{t("Pendenza massima sotto il pivot (%)")}
                       <span className="flex items-center gap-1 mt-0.5">
-                        <input type="number" min={1} max={60} step={0.5} value={val} disabled={!pivSlope.on || !pivSlope.manual} data-piv-slope-max
+                        <NumInput type="number" min={1} max={60} step={0.5} value={val} disabled={!pivSlope.on || !pivSlope.manual} data-piv-slope-max
                           onChange={(e) => setPivSlope((p) => ({ ...p, max: Math.max(1, Number(e.target.value) || 0) }))} className="field-input px-1.5 py-1 text-sm flex-1 min-w-0 disabled:opacity-60" />
                         {pivSlope.manual
                           ? <button className="text-[10px] px-1.5 py-1 rounded border border-black/10 bg-white hover:bg-black/5 whitespace-nowrap" disabled={!pivSlope.on}
@@ -12768,7 +12815,7 @@ export default function Page() {
                       <span className={"block mt-0.5 " + (pivSlope.manual ? "text-amber-700" : "")}>
                         {pivSlope.manual ? t("regolata a mano (manuale: {v} %)", { v: fmt(man) }) : t("da manuale ({t})", { t: cur.transport === "canal" ? t("canali a gravità") : t("tubazioni in pressione") })}</span></label>
                     <label className="text-[10px] text-sage-dark leading-tight">{t("Superficie tollerata oltre il limite (%)")}
-                      <input type="number" min={0} max={50} step={1} value={pivSlope.tol} disabled={!pivSlope.on}
+                      <NumInput type="number" min={0} max={50} step={1} value={pivSlope.tol} disabled={!pivSlope.on}
                         onChange={(e) => setPivSlope((p) => ({ ...p, tol: Math.max(0, Number(e.target.value) || 0) }))} className="field-input px-1.5 py-1 text-sm mt-0.5 disabled:opacity-40" /></label>
                   </div>
                 );
@@ -12806,7 +12853,7 @@ export default function Page() {
                       <option value="COPERNICUS_30">Copernicus 30 m</option><option value="COPERNICUS_90">Copernicus 90 m</option>
                     </select></label>
                   <label className="text-[11px] text-sage-dark">{t("Pendenza misurata su (m)")}
-                    <input type="number" min={0} max={500} step={20} value={demSmooth}
+                    <NumInput type="number" min={0} max={500} step={20} value={demSmooth}
                       onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) setDemSmooth(Math.max(0, Math.min(500, x))); }} className="field-input mt-0.5 py-1 text-sm" /></label>
                 </div>
                 <p className="text-[10px] text-sage-dark mt-1 leading-snug">{t("Il Copernicus DEM include alberi, edifici e argini: misurare la pendenza su 100 m o più evita di escludere terreno pianeggiante per falsi ripidi.")}</p>
@@ -12947,7 +12994,7 @@ export default function Page() {
                 onChange={(e) => { importRoads(e.target.files); if (e.target) e.target.value = ""; }} />
               <label className="flex items-center gap-2 text-[11px] text-sage-dark mt-1">
                 {t("Spessore predefinito (m)")}
-                <input type="number" min={1} max={200} step={1} value={roadWidth}
+                <NumInput type="number" min={1} max={200} step={1} value={roadWidth}
                   onChange={(e) => setRoadWidth(Number(e.target.value))} className="field-input w-20 py-0.5" />
               </label>
               {!roads.length
@@ -12967,7 +13014,7 @@ export default function Page() {
                           <div className="flex items-center justify-between gap-2 text-[11px] text-brand-darker bg-panel rounded px-1.5 py-1">
                             <button className="text-sage-dark w-3 text-[10px]" onClick={() => toggleRoadGroup(gk)}>{open ? "▾" : "▸"}</button>
                             <button className="truncate flex-1 text-left font-medium" onClick={() => toggleRoadGroup(gk)}>{label} · {items.length} {t("tratti")} · {uKm(km)}</button>
-                            <input type="number" min={1} max={200} step={1} value={widths.length === 1 ? widths[0] : ""} placeholder="–" title={t("Spessore (m)")}
+                            <NumInput type="number" min={1} max={200} step={1} value={widths.length === 1 ? widths[0] : ""} placeholder="–" title={t("Spessore (m)")}
                               onChange={(e) => { const w = Number(e.target.value); if (w > 0) setRoadsWidthByIds(ids, w); }} className="field-input w-16 py-0.5 shrink-0" />
                             <span className="flex gap-1 shrink-0">
                               <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(label), items.map(({ i, r }) => ({ name: `${t("Strada")} ${i + 1}`, geom: { type: "LineString" as const, coordinates: r.coords } })))}>⤓</button>
@@ -12979,7 +13026,7 @@ export default function Page() {
                               {items.map(({ r, i }) => (
                       <li key={r.id} className="flex items-center justify-between gap-2 text-[11px] text-sage-dark">
                         <span className="truncate flex-1">{t("Strada")} {i + 1} · {uKm(lineLenKm(r.coords))}</span>
-                        <input type="number" min={1} max={200} step={1} value={Math.round(r.width_m)} title={t("Spessore (m)")}
+                        <NumInput type="number" min={1} max={200} step={1} value={Math.round(r.width_m)} title={t("Spessore (m)")}
                           onChange={(e) => setRoadWidthAt(i, Number(e.target.value))} className="field-input w-16 py-0.5 shrink-0" />
                         <span className="flex gap-1 shrink-0">
                           <button className="text-brand-mid" title={t("Esporta KMZ")} onClick={() => exportKmz(safe(`${t("Strada")}_${i + 1}`), [{ name: `${t("Strada")} ${i + 1}`, geom: { type: "LineString", coordinates: r.coords } }])}>⤓</button>
@@ -13001,21 +13048,23 @@ export default function Page() {
             <SectionHead title={t("Tubazioni")} help={t("Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.")} />
 
             <div className="bg-panel rounded-lg p-2">
-              <div className="text-xs font-semibold text-sage-dark mb-1">{t("Tubazioni di adduzione dal canale")}</div>
+              <div className="text-xs font-semibold text-sage-dark mb-1">{t("Tubazioni di adduzione")}</div>
 
-              {canals.length > 1 && (
-                <label className="block mb-2">
-                  <span className="text-[10px] text-sage-dark block mb-1">{t("Canale")}</span>
-                  <select className="field-input px-2 py-1.5 text-sm" value={pipeCanalIdx}
-                    onChange={(e) => setPipeCanalIdx(Number(e.target.value))}>
-                    {canals.map((c, i) => <option key={i} value={i}>{`${t("Canale")} ${i + 1}`}</option>)}
-                  </select>
-                </label>
+              <label className="block mb-2">
+                <span className="text-[10px] text-sage-dark block mb-1">{t("Partono da")}</span>
+                <select className="field-input px-2 py-1.5 text-sm" value={canals.length ? pipeCanalIdx : -1}
+                  onChange={(e) => setPipeCanalIdx(Number(e.target.value))}>
+                  <option value={-1}>{feedSrc ? `${t("Fonte idrica")}: ${feedSrc.label}` : t("Fonte idrica (non ancora scelta)")}</option>
+                  {canals.map((c, i) => <option key={i} value={i}>{`${t("Canale")} ${i + 1}`}</option>)}
+                </select>
+              </label>
+              {(pipeCanalIdx < 0 || !canals.length) && !feedSrc && (
+                <button className="text-[11px] text-brand underline mb-2" onClick={() => setTab("fonte")}>{t("Scegli la fonte idrica →")}</button>
               )}
 
               <div className="max-w-[12rem]">
                 <div className="text-[10px] leading-tight text-sage-dark mb-1 truncate">{t("Pivot per linea (max)")}</div>
-                <input type="number" min={1} max={100} step={1} value={pipeMaxPerLine}
+                <NumInput type="number" min={1} max={100} step={1} value={pipeMaxPerLine}
                   onChange={(e) => setPipeMaxPerLine(Math.max(1, Number(e.target.value)))} className="field-input px-2 py-1.5 text-sm" />
               </div>
 
@@ -13024,7 +13073,7 @@ export default function Page() {
               )}
 
               <div className="flex gap-2 mt-2">
-                <button className="btn-primary flex-1 basis-0" disabled={!active || !canals.length}
+                <button className="btn-primary flex-1 basis-0" disabled={!active || (!canals.length && !feedSrc)}
                   onClick={generatePipes}>
                   {active ? t("Traccia tubazioni su «{name}»", { name: active.name }) : t("Traccia tubazioni")}
                 </button>
@@ -13036,18 +13085,18 @@ export default function Page() {
                   {t("Elimina la tubazione selezionata")}
                 </button>
               </div>
-              {!canals.length && <p className="text-[10px] text-danger mt-1">{t("Traccia prima un canale nella pagina Rilievo.")}</p>}
+              {!canals.length && !feedSrc && <p className="text-[10px] text-danger mt-1">{t("Scegli prima la fonte idrica (pagina Fonte d'acqua): le tubazioni partono da lì.")}</p>}
             </div>
 
             <div className="border-t border-black/5 mt-3 pt-3">
               <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Idraulica")}</div>
               <div className="grid grid-cols-2 gap-2 mt-2">
                 <label className="text-[11px] text-sage-dark">{t("Velocità max (m/s)")}
-                  <input type="number" min={0.3} step={0.1} value={vMax}
+                  <NumInput type="number" min={0.3} step={0.1} value={vMax}
                     onChange={(e) => setVMax(Math.max(0.3, Number(e.target.value)))} className="field-input px-2 py-1.5 text-sm mt-0.5" />
                 </label>
                 <label className="text-[11px] text-sage-dark">{t("Scabrezza (C Hazen-Williams)")}
-                  <input type="number" min={80} max={160} step={5} value={hwC}
+                  <NumInput type="number" min={80} max={160} step={5} value={hwC}
                     onChange={(e) => setHwC(Math.max(80, Math.min(160, Number(e.target.value))))} className="field-input px-2 py-1.5 text-sm mt-0.5" />
                 </label>
               </div>
@@ -13211,7 +13260,7 @@ export default function Page() {
                               </td>
                               <td className="text-right whitespace-nowrap">{w.length_m != null ? uM(w.length_m) : "–"}</td>
                               <td className="text-right whitespace-nowrap" title={w.width_min_m != null ? `${t("min – max")}: ${uM(w.width_min_m, 1)} – ${uM(w.width_max_m ?? 0, 1)}${w.width_wet_m ? ` · ${t("stato bagnato")}: ${uM(w.width_wet_m, 1)}` : ""}` : undefined}>
-                                <input type="number" min={0} step={0.5} className="w-11 text-right bg-transparent border-b border-black/10"
+                                <NumInput type="number" min={0} step={0.5} className="w-11 text-right bg-transparent border-b border-black/10"
                                   value={w.mean_width_m != null ? Math.round((imperial ? w.mean_width_m * 3.28084 : w.mean_width_m) * 10) / 10 : ""}
                                   onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0) setWaterAt(i, { mean_width_m: imperial ? v / 3.28084 : v }); }} />
                                 {w.below_pixel ? <span title={t("larghezza sotto i 10 m del pixel: stima, da verificare")}> *</span> : null}
@@ -13264,22 +13313,22 @@ export default function Page() {
                   {SOILS.map((so) => <option key={so.key} value={so.key}>{t(so.label)}</option>)}
                 </select></label>
               <label className="text-[11px] text-sage-dark">{t("ET₀ di punta (mm/g)")}
-                <input type="number" min={1} step={0.5} value={et0Peak}
+                <NumInput type="number" min={1} step={0.5} value={et0Peak}
                   onChange={(e) => setEt0Peak(Math.max(1, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" />{et0Hint()}</label>
               <label className="text-[11px] text-sage-dark">{t("Piovosità utile (mm/24h)")}
-                <input type="number" min={0} step={0.5} value={rainMm}
+                <NumInput type="number" min={0} step={0.5} value={rainMm}
                   onChange={(e) => setRainMm(Math.max(0, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
               <label className="text-[11px] text-sage-dark">{t("Efficienza impianto (%)")}
-                <input type="number" min={40} max={100} step={1} value={effPct}
+                <NumInput type="number" min={40} max={100} step={1} value={effPct}
                   onChange={(e) => setEffPct(Math.max(40, Math.min(100, Number(e.target.value))))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
               <label className="text-[11px] text-sage-dark">{t("Ore di esercizio al giorno")}
-                <input type="number" min={1} max={24} step={1} value={hoursDay}
+                <NumInput type="number" min={1} max={24} step={1} value={hoursDay}
                   onChange={(e) => setHoursDay(Math.max(1, Math.min(24, Number(e.target.value))))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
             </div>
 
             <div className="flex items-end gap-2 mt-2">
               <label className="text-[11px] text-sage-dark flex-1">{t("Fabbisogno (mm/24h)")}
-                <input type="number" min={0} step={0.5} value={mm24}
+                <NumInput type="number" min={0} step={0.5} value={mm24}
                   onChange={(e) => setMm24(Math.max(0, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
               <button className="btn-ghost whitespace-nowrap" onClick={() => setMm24(Math.round(mm24Suggested * 10) / 10)}>
                 {t("Consigliato")}: {fmt(mm24Suggested, { maximumFractionDigits: 1 })}
@@ -13301,7 +13350,7 @@ export default function Page() {
             </div>
             <div className="grid grid-cols-3 gap-2">
               <label className="text-[11px] text-sage-dark">{t("Assorbimento (mm/h)")}
-                <input type="number" min={0.5} step={0.5} value={infiltration}
+                <NumInput type="number" min={0.5} step={0.5} value={infiltration}
                   onFocus={() => { infTouched.current = true; }}
                   onChange={(e) => setInfiltration(Math.max(0.5, Number(e.target.value)))}
                   className="field-input mt-0.5 px-2 py-1.5 text-sm" />
@@ -13309,10 +13358,10 @@ export default function Page() {
                   {t("tipico")} {soilOf(soilKey).inf} mm/h
                 </span></label>
               <label className="text-[11px] text-sage-dark">{t("Larghezza bagnata (m)")}
-                <input type="number" min={3} step={1} value={wetW}
+                <NumInput type="number" min={3} step={1} value={wetW}
                   onChange={(e) => setWetW(Math.max(3, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
               <label className="text-[11px] text-sage-dark">{t("Giri al giorno")}
-                <input type="number" min={1} step={1} value={turnsDay}
+                <NumInput type="number" min={1} step={1} value={turnsDay}
                   onChange={(e) => setTurnsDay(Math.max(1, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
               <label className="text-[11px] text-sage-dark col-span-2">{t("Profilo di bagnatura")}
                 <select className="field-input mt-0.5 px-2 py-1.5 text-sm" value={pattern} onChange={(e) => setPattern(e.target.value)}>
@@ -13321,20 +13370,20 @@ export default function Page() {
                   <option value="triangolare">{t("Triangolare (×2,00)")}</option>
                 </select></label>
               <label className="text-[11px] text-sage-dark">{t("Invaso superficiale (mm)")}
-                <input type="number" min={0} step={0.5} value={surfStore}
+                <NumInput type="number" min={0} step={0.5} value={surfStore}
                   onChange={(e) => setSurfStore(Math.max(0, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
             </div>
 
             <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2">{t("Pressione del pivot")}</h3>
             <div className="grid grid-cols-2 gap-2">
               <label className="text-[11px] text-sage-dark">{t("Pressione agli irrigatori (bar)")}
-                <input type="number" min={0.5} step={0.1} value={sprinkBar}
+                <NumInput type="number" min={0.5} step={0.1} value={sprinkBar}
                   onChange={(e) => setSprinkBar(Math.max(0.5, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
               <label className="text-[11px] text-sage-dark">{t("Perdite al punto pivot (bar)")}
-                <input type="number" min={0} step={0.05} value={pivotPointBar}
+                <NumInput type="number" min={0} step={0.05} value={pivotPointBar}
                   onChange={(e) => setPivotPointBar(Math.max(0, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
               {!SPAN_LIST[pivotBrand] && <label className="text-[11px] text-sage-dark">{t("Condotta del pivot (mm)")}
-                <input type="number" min={100} step={1} value={latDN}
+                <NumInput type="number" min={100} step={1} value={latDN}
                   onChange={(e) => setLatDN(Math.max(100, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>}
             </div>
             {pivots.length > 0 && (() => {
@@ -13433,10 +13482,10 @@ export default function Page() {
                     <label className="col-span-3">{t("Prodotto")}
                       <select className="field-input mt-0.5 py-1 text-sm" value={fert.k} onChange={(e) => { const f2 = FERTS.find((x) => x.k === e.target.value) ?? FERTS[0]; setFert({ ...fert, k: f2.k, n: f2.n, rho: f2.rho }); }}>
                         {FERTS.map((x) => <option key={x.k} value={x.k}>{t(x.label)}</option>)}</select></label>
-                    <label>{t("N nel prodotto (%)")}<input type="number" min={1} max={46} step={1} value={fert.n} onChange={(e) => setFert({ ...fert, n: Math.max(1, Math.min(46, Number(e.target.value) || 32)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
-                    <label>{t("Densità (kg/l)")}<input type="number" min={0.8} max={1.6} step={0.01} value={fert.rho} onChange={(e) => setFert({ ...fert, rho: Math.max(0.8, Math.min(1.6, Number(e.target.value) || 1.3)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
-                    <label>{t("kg N/ha per intervento")}<input type="number" min={1} max={150} step={1} value={fert.dose} onChange={(e) => setFert({ ...fert, dose: Math.max(1, Math.min(150, Number(e.target.value) || 30)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
-                    <label>{t("Interventi per stagione")}<input type="number" min={1} max={30} step={1} value={fert.times} onChange={(e) => setFert({ ...fert, times: Math.max(1, Math.min(30, Number(e.target.value) || 6)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
+                    <label>{t("N nel prodotto (%)")}<NumInput type="number" min={1} max={46} step={1} value={fert.n} onChange={(e) => setFert({ ...fert, n: Math.max(1, Math.min(46, Number(e.target.value) || 32)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
+                    <label>{t("Densità (kg/l)")}<NumInput type="number" min={0.8} max={1.6} step={0.01} value={fert.rho} onChange={(e) => setFert({ ...fert, rho: Math.max(0.8, Math.min(1.6, Number(e.target.value) || 1.3)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
+                    <label>{t("kg N/ha per intervento")}<NumInput type="number" min={1} max={150} step={1} value={fert.dose} onChange={(e) => setFert({ ...fert, dose: Math.max(1, Math.min(150, Number(e.target.value) || 30)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
+                    <label>{t("Interventi per stagione")}<NumInput type="number" min={1} max={30} step={1} value={fert.times} onChange={(e) => setFert({ ...fert, times: Math.max(1, Math.min(30, Number(e.target.value) || 6)) })} className="field-input mt-0.5 py-1 text-sm" /></label>
                   </div>
                   {FC && (<>
                     <table className="w-full tabular-nums mt-1 text-[10.5px]">
@@ -13453,11 +13502,11 @@ export default function Page() {
             <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2">{t("Programma irriguo")}</h3>
             <div className="grid grid-cols-3 gap-2">
               <label className="text-[11px] text-sage-dark">{t("Radici (m)")}
-                <input type="number" min={0.1} max={3} step={0.1} value={rootDepth} onChange={(e) => setRootDepth(Math.max(0.1, Math.min(3, Number(e.target.value) || 0.8)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+                <NumInput type="number" min={0.1} max={3} step={0.1} value={rootDepth} onChange={(e) => setRootDepth(Math.max(0.1, Math.min(3, Number(e.target.value) || 0.8)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
               <label className="text-[11px] text-sage-dark" title={t("Frazione dell'acqua disponibile che la coltura consuma senza stress (FAO-56: 0,5 per la maggior parte delle colture)")}>{t("Frazione p")}
-                <input type="number" min={0.2} max={0.8} step={0.05} value={rawP} onChange={(e) => setRawP(Math.max(0.2, Math.min(0.8, Number(e.target.value) || 0.5)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+                <NumInput type="number" min={0.2} max={0.8} step={0.05} value={rawP} onChange={(e) => setRawP(Math.max(0.2, Math.min(0.8, Number(e.target.value) || 0.5)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
               <label className="text-[11px] text-sage-dark" title={t("Velocità dell'ultima torre con il timer al 100%")}>{t("Torre al 100% (m/min)")}
-                <input type="number" min={0.5} max={6} step={0.1} value={v100} onChange={(e) => setV100(Math.max(0.5, Math.min(6, Number(e.target.value) || 2.3)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+                <NumInput type="number" min={0.5} max={6} step={0.1} value={v100} onChange={(e) => setV100(Math.max(0.5, Math.min(6, Number(e.target.value) || 2.3)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
             </div>
             {(() => {
               const IP = irrigProgram(); if (!IP) return null;
@@ -13608,7 +13657,7 @@ export default function Page() {
               <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Fasi di realizzazione")}</div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="text-[11px] text-sage-dark">{t("Numero di fasi")}
-                  <input type="number" min={1} max={10} step={1} value={phaseN} onChange={(e) => setPhaseN(Math.max(1, Math.min(10, Number(e.target.value) || 1)))} className="field-input mt-0.5 py-1 text-sm" /></label>
+                  <NumInput type="number" min={1} max={10} step={1} value={phaseN} onChange={(e) => setPhaseN(Math.max(1, Math.min(10, Number(e.target.value) || 1)))} className="field-input mt-0.5 py-1 text-sm" /></label>
                 <label className="text-[11px] text-sage-dark">{t("Ordine")}
                   <select className="field-input mt-0.5 py-1 text-sm" value={phaseOrderBy} onChange={(e) => setPhaseOrderBy(e.target.value as "fonte" | "ovest" | "sud")}>
                     <option value="fonte">{t("dalla fonte d'acqua")}</option><option value="ovest">{t("da ovest a est")}</option><option value="sud">{t("da sud a nord")}</option>
@@ -13926,7 +13975,7 @@ export default function Page() {
                     <input className="field-input" placeholder={t("Email")} value={nuEmail} onChange={(e) => setNuEmail(e.target.value)} />
                     <input className="field-input" placeholder={t("Nome (opzionale)")} value={nuName} onChange={(e) => setNuName(e.target.value)} />
                     <input className="field-input" type="password" placeholder={t("Password (min 8)")} value={nuPass} onChange={(e) => setNuPass(e.target.value)} />
-                    <input className="field-input" type="number" min={0} step={1} placeholder={t("Crediti")} value={nuCredits} onChange={(e) => setNuCredits(Number(e.target.value))} />
+                    <NumInput className="field-input" type="number" min={0} step={1} placeholder={t("Crediti")} value={nuCredits} onChange={(e) => setNuCredits(Number(e.target.value))} />
                   </div>
                   <label className="mt-2 flex items-start gap-2 text-xs text-sage-dark cursor-pointer">
                     <input type="checkbox" className="mt-0.5" checked={nuSeparate} onChange={(e) => setNuSeparate(e.target.checked)} />
@@ -13950,7 +13999,7 @@ export default function Page() {
                       ) : (
                         <div className="flex items-center gap-2">
                           <span className="text-sm tabular-nums text-sage-dark">{u.credits_used} /</span>
-                          <input type="number" min={0} step={1} defaultValue={u.credits ?? 0}
+                          <NumInput type="number" min={0} step={1} defaultValue={u.credits ?? 0}
                             onBlur={(e) => patchMember(u.id, { credits: Number(e.target.value) })}
                             className="field-input w-20 px-2 py-1 text-sm" title={t("Crediti assegnati")} />
                           <button className="btn-ghost px-2 py-1 text-xs" onClick={() => patchMember(u.id, { reset_used: true })} title={t("Azzera i crediti usati")}>{t("Azzera")}</button>
