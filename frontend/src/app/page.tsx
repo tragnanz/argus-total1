@@ -7,6 +7,7 @@ import type { MapHandle, PivotItem, PivotSel, CircleInfo } from "@/components/Ma
 import { WATER_COL } from "@/lib/water";
 import NumInput from "@/components/NumInput";
 import { joinTouchingWater } from "@/lib/waterjoin";
+import { shortestPipes } from "@/lib/ewpipes";
 import { useI18n, LANGS, type Lang, translateError, translatorFor } from "@/lib/i18n";
 import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
@@ -22,7 +23,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.293";
+const REV = "v0.6.294";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -4632,7 +4633,8 @@ export default function Page() {
     if (fromSrc && !feedSrc) { setMsg(t("Scegli prima la fonte idrica (pagina Fonte d'acqua): le tubazioni partono da lì.")); return; }
     const targets = allFields ? fields.filter((f) => f.geom && pivots.some((p) => p.field === f.id)) : [active!];
     if (!allFields && !pivots.some((p) => p.field === active!.id)) { setMsg(t("Nessun pivot su questo poligono: inserisci prima gli impianti.")); return; }
-    let mergedL = pivotLines, canalArr = canals, nPipes = 0, kmAll = 0;
+    // dalla fonte: si tolgono anche le vecchie condotte principali (tubi senza campo, della rete per settori)
+    let mergedL = fromSrc ? pivotLines.filter((l) => !(l.kind === "pipe" && l.field == null)) : pivotLines, canalArr = canals, nPipes = 0, kmAll = 0;
     for (const fld of targets) {
     const fid = fld.id;
     const fieldPivs = pivots.filter((p) => p.field === fid);
@@ -4692,6 +4694,14 @@ export default function Page() {
       feeders = gl.flatMap((cs, k) => (part[k].length ? feederPipes(cs, part[k], pipeMaxPerLine, ring) : []));
       trunk = null;
     } else feeders = feederPipes(line, fieldPivs.map((p) => ({ lat: p.lat, lng: p.lng, r: p.r })), pipeMaxPerLine, ring);
+    // rete più corta: albero minimo con al massimo K pivot per tratta, allacciato al corso (o canale o
+    // condotta principale) nel punto più vicino; si tiene la più corta fra questa e le file
+    {
+      const gates = fromSrc && !mixed && feedSrc?.lines && feedSrc.lines.length > 1 ? feedSrc.lines : [line];
+      const ew = shortestPipes(gates, fieldPivs, pipeMaxPerLine);
+      const lenOf = (ps: number[][][]) => ps.reduce((a, c) => a + lineLenKm(c), 0);
+      if (ew.pipes.length && ew.lengthM / 1000 < lenOf(feeders)) feeders = ew.pipes;
+    }
     const pipesLL = trunk && feeders.length ? [trunk, ...feeders] : feeders;
     if (!pipesLL.length) continue;
     const newL = pipesLL.map((coords) => ({ kind: "pipe", coords, field: fid }));
