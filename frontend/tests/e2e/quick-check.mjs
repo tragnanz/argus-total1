@@ -157,6 +157,16 @@ try {
   const pm = await page.locator("body").innerText();
   ok(/rami dalla fonte/.test(pm), `Tubazioni dalla fonte: ${(pm.match(/Tubazioni tracciate[^\n]*/) || ["-"])[0]}`);
   await page.screenshot({ path: path.join(SH, "q6_tubazioni_fonte.png") });
+  // selezione per famiglia nella lista dei corsi d'acqua
+  const famBtn = page.locator('[data-wl-family="river"]').first();
+  if (await famBtn.count()) {
+    const lbl = await famBtn.innerText();
+    await famBtn.click(); await page.waitForTimeout(300);
+    const bar = await page.locator("[data-wl-bar]").first().innerText();
+    const nf = Number((lbl.match(/\((\d+)\)/) || [])[1]);
+    ok(bar.includes(`${nf} selezionati`), `Famiglie: «${lbl.trim()}» → «${bar.split("\n")[0]}»`);
+    await famBtn.click();
+  } else ok(false, "Famiglie: pulsanti assenti");
   // distribuzione dalla fonte: scelta tubazioni / canali / misto nella pagina Fonte d'acqua
   await page.locator('button[title="Fonte d\'acqua"]').first().click(); await page.waitForTimeout(800);
   ok(await page.locator("[data-dist]").count() > 0, "Fonte: scelta della distribuzione (tubazioni, canali, misto)");

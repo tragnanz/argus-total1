@@ -22,7 +22,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.289";
+const REV = "v0.6.290";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -8915,6 +8915,28 @@ export default function Page() {
           </select>
           <button className={btn + " w-6 text-center text-danger"} disabled={!sel.length} title={t("Elimina")} onClick={() => waterBulkRemove(sel)} data-wl-del>🗑</button>
         </div>
+        {/* selezione per famiglia: tutti i fiumi, tutti i canali, tutti i dreni… (secondo clic: deseleziona) */}
+        {(() => {
+          const fam = (w: WaterL) => (w.geojson.type === "Polygon" ? "basin" : w.kind === "ditch" ? "drain" : w.kind === "stream" ? "river" : w.kind);
+          const groups = (["river", "canal", "drain", "drainage", "basin"] as const)
+            .map((k) => ({ k, ids: items.filter((x) => fam(x.w) === k).map((x) => x.i) })).filter((g) => g.ids.length);
+          if (groups.length < 2) return null;
+          return (
+            <div className="flex flex-wrap gap-1 text-[10px] pb-0.5" data-wl-families={ctx}>
+              <span className="text-sage-dark self-center">{t("Seleziona")}:</span>
+              {groups.map(({ k, ids: gi }) => {
+                const all = gi.every((q) => waterCheck.has(q));
+                return (
+                  <button key={k} className={"px-1.5 py-0.5 rounded border " + (all ? "bg-brand text-white border-brand" : "bg-white border-black/15 hover:bg-black/5")}
+                    style={all ? undefined : { color: k === "basin" ? "#0369a1" : WATER_COL[k] }} data-wl-family={k}
+                    title={all ? t("Deseleziona") : t("Seleziona tutti")}
+                    onClick={() => { const n = new Set(waterCheck); gi.forEach((q) => (all ? n.delete(q) : n.add(q))); setWaterChecked(n); }}>
+                    {all ? "☑" : "☐"} {k === "basin" ? t("Bacini") : k === "drain" ? t("Dreni e fossi") : k === "drainage" ? t("Impluvi (DEM)") : k === "river" ? t("Fiumi") : t("Canali")} ({gi.length})</button>
+                );
+              })}
+            </div>
+          );
+        })()}
         {folders.map((fo) => {
           const its = items.filter((x) => x.w.folder === fo), fids = its.map((x) => x.i), open = waterFolderOpen[fo] ?? false;
           const allHidden = its.every((x) => x.w.hidden);
