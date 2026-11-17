@@ -200,6 +200,31 @@ try {
   await page.waitForFunction(() => /rami dalla fonte «(?!Fiumi)/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
   const al = await page.locator("body").innerText();
   ok(/Tubazioni tracciate: \d+ rami dalla fonte «(?!Fiumi)/.test(al), `Lista → automatico: ${(al.match(/Tubazioni tracciate[^\n]*/) || ["-"])[0]}`);
+  // pivot selezionato: maniglie del raggio, Ctrl+C / Ctrl+V
+  await page.locator('button[title="Impianti"]').first().click(); await page.waitForTimeout(800);
+  // primo clic sul pivot: gruppo; secondo: il singolo (si clicca sull'etichetta, che lascia passare il clic al cerchio)
+  const lab = page.locator(".pivot-label").nth(10);
+  const lb = (await lab.count()) ? await lab.boundingBox() : null;
+  if (lb) {
+    await page.mouse.click(lb.x + lb.width / 2, lb.y - 6); await page.waitForTimeout(500);
+    await page.mouse.click(lb.x + lb.width / 2, lb.y - 6); await page.waitForTimeout(600);
+    const hs = page.locator('div[style*="nwse-resize"]');
+    const nh = await hs.count();
+    const hb = nh ? await hs.first().boundingBox() : null;
+    if (hb) {
+      await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2); await page.mouse.down();
+      await page.mouse.move(hb.x + hb.width / 2, hb.y - 30, { steps: 6 }); await page.mouse.up(); await page.waitForTimeout(500);
+    }
+    const rm = await page.locator("body").innerText();
+    ok(nh === 4 && /Raggio del pivot P\d+: [\d.,]+ m/.test(rm), `Maniglie raggio: ${nh} · ${(rm.match(/Raggio del pivot P[^\n]*/) || ["-"])[0]}`);
+    const box = await page.locator(".leaflet-container").boundingBox();
+    await page.keyboard.press("ControlOrMeta+c"); await page.waitForTimeout(300);
+    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5); await page.waitForTimeout(200);
+    await page.keyboard.press("ControlOrMeta+v"); await page.waitForTimeout(600);
+    const pm2 = await page.locator("body").innerText();
+    ok(/Pivot incollato \(P\d+\)/.test(pm2), `Copia/incolla: ${(pm2.match(/Pivot incollato[^\n]*/) || ["-"])[0].slice(0, 60)}`);
+    await page.screenshot({ path: path.join(SH, "q9_maniglie.png") });
+  } else ok(false, "Etichette dei pivot assenti");
   ok(errors.length === 0, `Nessun errore JavaScript${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; await page.screenshot({ path: path.join(SH, "q_err.png") }).catch(() => {}); }
 await browser.close();

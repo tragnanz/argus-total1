@@ -39,6 +39,7 @@ export type CircleInfo = { n: number; totHa: number; r: number | null; ha: numbe
 export type PivotCbs = {
   onClick: (idx: number) => void;
   onMove: (idx: number, lat: number, lng: number) => void;
+  onResize?: (idx: number, r: number) => void;  // maniglie sul bordo del pivot selezionato
   onBackground: () => void;
   onLineClick?: (idx: number) => void;   // clic su una tubazione (per modificarla)
   onCanalClick?: (idx: number) => void;  // clic su un canale (scheda del componente)
@@ -90,6 +91,7 @@ export type MapHandle = {
   showLayouts: (items: { id: number; fc: GeoJSONFC }[], opts?: { measures?: boolean }) => void;
   clearLayout: () => void;
   setExcluded: (fcs: GeoJSONFC[]) => void;
+  lastMouse?: () => number[] | null;   // ultima posizione del mouse sulla mappa (lon, lat)
   showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs, pipeSel?: PivotSel, waterLines?: number[][][]) => void;
   editPipe: (coords: number[][], cb: (coords: number[][]) => void, snap?: number[][], snapLines?: number[][][],
     labels?: { pivot: string; canal: string; free: string }) => void;
@@ -296,6 +298,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const mcbRef = useRef<((text: string) => void) | null>(null);
   const circlesRef = useRef<L.LayerGroup | null>(null);
   const circlingRef = useRef(false);
+  const lastMouseRef = useRef<number[] | null>(null);
   const ccenterRef = useRef<L.LatLng | null>(null);
   const chovRef = useRef<L.LatLng | null>(null);
   const cdoneRef = useRef<{ c: L.LatLng; r: number }[]>([]);
@@ -497,6 +500,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
 
     // Anteprima del cerchio mentre si cerca il raggio.
     map.on("mousemove", (e: L.LeafletMouseEvent) => {
+      lastMouseRef.current = [e.latlng.lng, e.latlng.lat];
       if (circlingRef.current && ccenterRef.current) { chovRef.current = e.latlng; _redrawCircles(); }
     });
 
@@ -864,6 +868,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         }
       },
       clearLayout() { layoutRef.current?.clearLayers(); pivotsRef.current?.clearLayers(); pivotBgRef.current = null; },
+      lastMouse() { return lastMouseRef.current; },
       showPivots(model, sel, cbs, pipeSel, waterLines) {
         const map = mapRef.current; const g = pivotsRef.current;
         if (!map || !g) return;
@@ -1005,6 +1010,30 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             handle.on("drag", (e) => { const ll = (e.target as L.Marker).getLatLng(); if (c instanceof L.Circle) c.setLatLng(ll); });
             handle.on("dragend", (e) => { const ll = (e.target as L.Marker).getLatLng(); cbs.onMove(i, ll.lat, ll.lng); });
             g.addLayer(handle);
+            // maniglie del raggio: quattro quadratini sul bordo (N, E, S, O); trascinandone uno cambia il raggio
+            if (cbs.onResize) {
+              const kx = 111320 * Math.cos((pv.lat * Math.PI) / 180), ky = 110540;
+              const dirs = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+              const at = (r: number, d: number[]) => L.latLng(pv.lat + (d[1] * r) / ky, pv.lng + (d[0] * r) / kx);
+              const hs: L.Marker[] = [];
+              dirs.forEach((d) => {
+                const h = L.marker(at(pv.r, d), {
+                  draggable: true, zIndexOffset: 1400,
+                  icon: L.divIcon({ className: "", iconSize: [12, 12], iconAnchor: [6, 6],
+                    html: '<div style="width:12px;height:12px;background:#fff;border:2px solid #b23b1e;box-shadow:0 0 0 1px rgba(0,0,0,.25);cursor:nwse-resize"></div>' }),
+                });
+                h.bindTooltip(`r ${Math.round(pv.r)} m`, { direction: "top", offset: [0, -8] });
+                const rOf = (ll: L.LatLng) => Math.max(20, Math.round(Math.hypot((ll.lng - pv.lng) * kx, (ll.lat - pv.lat) * ky) * 10) / 10);
+                h.on("drag", (e) => {
+                  const r = rOf((e.target as L.Marker).getLatLng());
+                  if (c instanceof L.Circle) c.setRadius(r);
+                  hs.forEach((o, k) => { if (o !== h) o.setLatLng(at(r, dirs[k])); });
+                  h.setTooltipContent(`r ${r.toLocaleString(undefined, { maximumFractionDigits: 1 })} m`); h.openTooltip();
+                });
+                h.on("dragend", (e) => { cbs.onResize!(i, rOf((e.target as L.Marker).getLatLng())); });
+                hs.push(h); g.addLayer(h);
+              });
+            }
           }
         });
         pvLabelsRef.current = pvLabels;

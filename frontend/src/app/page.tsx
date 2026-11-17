@@ -23,7 +23,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.294";
+const REV = "v0.6.295";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1750,6 +1750,23 @@ export default function Page() {
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
       const done = e.key === "Escape" ? selKeys.current.esc() : selKeys.current.del();
+      if (done) e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  // Ctrl/⌘+C copia il pivot selezionato, Ctrl/⌘+V ne incolla una copia dove sta il mouse sulla mappa
+  // (o accanto all'originale); la copia resta selezionata, pronta da spostare o ridimensionare.
+  const pivotClip = useRef<PivotItem | null>(null);
+  const clipKeys = useRef<{ copy: () => boolean; paste: () => boolean }>({ copy: () => false, paste: () => false });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      const k = e.key.toLowerCase(); if (k !== "c" && k !== "v") return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
+      if (window.getSelection()?.toString()) return;          // testo selezionato: copia normale
+      const done = k === "c" ? clipKeys.current.copy() : clipKeys.current.paste();
       if (done) e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
@@ -3578,6 +3595,11 @@ export default function Page() {
         setPivotSel((s) => (s.mode === "none" ? { mode: "group", idx: -1 } : { mode: "single", idx: real }));
       },
       onMove: (i, lat, lng) => { const real = visIdx[i]; commitPivots(pivots.map((p, k) => (k === real ? { ...p, lat, lng } : p))); },
+      onResize: (i, r) => {
+        const real = visIdx[i];
+        commitPivots(pivots.map((p, k) => (k === real ? { ...p, r } : p)));
+        setMsg(t("Raggio del pivot P{n}: {r} m", { n: real + 1, r: fmt(r, { maximumFractionDigits: 1 }) }));
+      },
       onBackground: () => {
         endRoadEdit(); setCompSel(null);
         setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false); setSrcPicked(false);
@@ -3617,6 +3639,27 @@ export default function Page() {
     if (pivotSel.mode !== "single") return;
     commitPivots(pivots.map((p, k) => (k === pivotSel.idx ? { ...p, ...patch } : p)));
   }
+  clipKeys.current = {
+    copy: () => {
+      if (pivotSel.mode !== "single" || !pivots[pivotSel.idx]) return false;
+      pivotClip.current = { ...pivots[pivotSel.idx] };
+      setMsg(t("Pivot P{n} copiato: Ctrl+V per incollarlo dove sta il mouse.", { n: pivotSel.idx + 1 }));
+      return true;
+    },
+    paste: () => {
+      const src = pivotClip.current; if (!src) return false;
+      const m = mapApi.current?.lastMouse?.() ?? null;
+      const kx = 111320 * Math.cos((src.lat * Math.PI) / 180);
+      const lng = m ? m[0] : src.lng + (2 * src.r + 20) / kx, lat = m ? m[1] : src.lat;
+      const fld = fields.find((f) => f.geom?.coordinates && pointInPolygon([lng, lat], f.geom.coordinates as number[][][]));
+      const np: PivotItem = { ...src, lat, lng, field: fld ? fld.id : src.field };
+      const next = [...pivots, np];
+      commitPivots(next);
+      setPivotSel({ mode: "single", idx: next.length - 1 });
+      setMsg(t("Pivot incollato (P{n}): trascina il pallino giallo per spostarlo, i quadratini per il raggio.", { n: next.length }));
+      return true;
+    },
+  };
   function deleteSelPivot() {
     if (pivotSel.mode !== "single") return;
     commitPivots(pivots.filter((_, k) => k !== pivotSel.idx));
@@ -12193,7 +12236,7 @@ export default function Page() {
                     <b className="text-brand-darker text-sm">{t("Pivot")} #{pivotSel.idx + 1}</b>
                     <button className="text-[11px] text-brand-mid" onClick={() => setPivotSel({ mode: "group", idx: -1 })}>← {t("Gruppo")}</button>
                   </div>
-                  <p className="text-[11px] text-sage-dark mb-2">{t("Trascina il pallino giallo sulla mappa per spostarlo.")}</p>
+                  <p className="text-[11px] text-sage-dark mb-2">{t("Trascina il pallino giallo sulla mappa per spostarlo e i quadratini sul bordo per cambiare il raggio. Ctrl+C / Ctrl+V per copiarlo.")}</p>
                   <div className="flex gap-2">
                     <label className="text-[11px] text-sage-dark flex-1">{t("Raggio (m)")}
                       <NumInput type="number" min={30} max={1000} step={5} value={Math.round(selPivot.r)}
