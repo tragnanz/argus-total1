@@ -211,14 +211,53 @@ try {
   ok(nRows > 0 && /Pivot serviti/.test(card), `Stazioni sulle prese: ${nRows} in elenco, ${nTaps} sulla mappa · ${card.split("\n").slice(0, 6).join(" | ").slice(0, 160)}`);
   await page.screenshot({ path: path.join(SH, "q10_stazione.png") });
   if (await page.locator("[data-tap-card] button").count()) await page.locator("[data-tap-card] button").first().click();
+  // clic su una tubazione che passa dentro un pivot: si seleziona la tubazione, non il pivot
+  await page.keyboard.press("Escape"); await page.waitForTimeout(300);
+  const ptOnPipe = await page.evaluate(() => {
+    const ps = [...document.querySelectorAll(".leaflet-argusPipeHit-pane path")];
+    for (const p of ps) {
+      const L = p.getTotalLength(); if (L < 60) continue;
+      const q = p.getPointAtLength(L * 0.6), m = p.getScreenCTM(); if (!m) continue;
+      const x = q.x * m.a + q.y * m.c + m.e, y = q.x * m.b + q.y * m.d + m.f;
+      if (x > 420 && x < 1250 && y > 120 && y < 880) return { x, y };
+    }
+    return null;
+  });
+  if (ptOnPipe) { await page.mouse.click(ptOnPipe.x, ptOnPipe.y); await page.waitForTimeout(600); }
+  const selTxt = await page.locator("body").innerText();
+  ok(!!ptOnPipe && /Tubazione · selezionato/.test(selTxt), `Clic sul tubo: ${(selTxt.match(/(Tubazione|Pivot P\d+) · selezionato/) || ["nessuna selezione"])[0]}`);
+  await page.keyboard.press("Escape"); await page.waitForTimeout(300);
   // pivot selezionato: maniglie del raggio, Ctrl+C / Ctrl+V
   await page.locator('button[title="Impianti"]').first().click(); await page.waitForTimeout(800);
   // primo clic sul pivot: gruppo; secondo: il singolo (si clicca sull'etichetta, che lascia passare il clic al cerchio)
   const lab = page.locator(".pivot-label").nth(10);
   const lb = (await lab.count()) ? await lab.boundingBox() : null;
   if (lb) {
-    await page.mouse.click(lb.x + lb.width / 2, lb.y - 6); await page.waitForTimeout(500);
-    await page.mouse.click(lb.x + lb.width / 2, lb.y - 6); await page.waitForTimeout(600);
+    // si clicca dentro il cerchio ma lontano dal centro (dove arrivano le tubazioni): si prova qualche punto
+    const offs = [[28, -28], [-28, -28], [28, 18], [-28, 18], [0, -36], [36, 0], [-36, 0]];
+    let off = offs[0];
+    for (const o of offs) {
+      await page.keyboard.press("Escape"); await page.waitForTimeout(200);
+      await page.mouse.click(lb.x + lb.width / 2 + o[0], lb.y - 6 + o[1]); await page.waitForTimeout(500);
+      if (await page.locator("[data-grp-gun-apply]").count()) { off = o; break; }
+    }
+    // gruppo: irrigatore finale e settore su tutti
+    if (await page.locator("[data-grp-gun-apply]").count()) {
+      await page.locator("[data-grp-gun-apply]").click(); await page.waitForTimeout(400);
+      const gm = await page.locator("body").innerText();
+      ok(/Irrigatore finale applicato a \d+ pivot/.test(gm), `Gruppo: ${(gm.match(/Irrigatore finale applicato[^\n]*/) || ["-"])[0]}`);
+    } else ok(false, "Strumenti di gruppo assenti");
+    await page.mouse.click(lb.x + lb.width / 2 + off[0], lb.y - 6 + off[1]); await page.waitForTimeout(600);
+    // singolo: rendi settoriale → due rombi; triangolo della gittata
+    if (await page.locator("[data-make-sector]").count()) { await page.locator("[data-make-sector]").click(); await page.waitForTimeout(600); }
+    const nS = await page.locator("div[data-sector-h]").count(), gh = page.locator("div[data-gun-h]").first();
+    const gb = (await gh.count()) ? await gh.boundingBox() : null;
+    if (gb) {
+      await page.mouse.move(gb.x + gb.width / 2, gb.y + gb.height / 2); await page.mouse.down();
+      await page.mouse.move(gb.x + gb.width / 2 + 4, gb.y + gb.height / 2 + 4, { steps: 4 }); await page.mouse.up(); await page.waitForTimeout(500);
+    }
+    const sm = await page.locator("body").innerText();
+    ok(nS === 2 && !!gb && /Pivot P\d+: (irrigatore finale|settore)/.test(sm), `Settore e gittata sul singolo: rombi ${nS}, triangolo ${gb ? "sì" : "no"} · ${(sm.match(/Pivot P\d+: (irrigatore|settore)[^\n]*/) || ["-"])[0]}`);
     const hs = page.locator('div[style*="nwse-resize"]');
     const nh = await hs.count();
     const hb = nh ? await hs.first().boundingBox() : null;

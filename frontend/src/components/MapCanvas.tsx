@@ -40,6 +40,8 @@ export type PivotCbs = {
   onClick: (idx: number) => void;
   onMove: (idx: number, lat: number, lng: number) => void;
   onResize?: (idx: number, r: number) => void;  // maniglie sul bordo del pivot selezionato
+  onSector?: (idx: number, az: number, deg: number) => void;   // maniglie dei lati del settore
+  onGun?: (idx: number, gun: number) => void;                  // maniglia della gittata dell'irrigatore finale (0 = tolto)
   onBackground: () => void;
   onLineClick?: (idx: number) => void;   // clic su una tubazione (per modificarla)
   onCanalClick?: (idx: number) => void;  // clic su un canale (scheda del componente)
@@ -441,6 +443,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     pendingRef.current = L.layerGroup().addTo(map);
     // pannello sotto gli overlay (400): il tratteggio sta sotto campi e pivot e
     // non intercetta i clic
+    // fascia di clic delle tubazioni sopra i cerchi dei pivot: passando su un tubo si prende il tubo, non il pivot
+    const pipePane = map.createPane("argusPipeHit"); pipePane.style.zIndex = "450";
     const exclPane = map.createPane("argusExcluded");
     exclPane.style.zIndex = "390"; exclPane.style.pointerEvents = "none";
     exclRendererRef.current = L.svg({ padding: 0.5, pane: "argusExcluded" });
@@ -910,8 +914,11 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             g.addLayer(pl);
             // Fascia di presa INVISIBILE sopra la linea: il tubo è sottile, ma il
             // clic viene raccolto entro ~9 px per lato, così non serve centrarlo.
-            const hit = L.polyline(latlngs, { color: "#000", weight: 18, opacity: 0, interactive: true });
+            const hit = L.polyline(latlngs, { color: "#000", weight: 22, opacity: 0, interactive: true, pane: "argusPipeHit" });
             hit.on("click", (e) => { L.DomEvent.stop(e); cbs.onLineClick?.(li); });
+            // al passaggio il tubo si ingrossa: si vede che il clic andrà a lui
+            hit.on("mouseover", () => { const w = (pl.options.weight ?? 3); pl.setStyle({ weight: w + 3, color: isSinglePipe ? "#f0b429" : "#0e7fb0" }); });
+            hit.on("mouseout", () => { const w = (pl.options.weight ?? 6); pl.setStyle({ weight: Math.max(2, w - 3), color: st.color }); });
             const dnMax = ln.dn && ln.dn.length ? Math.max(...ln.dn.filter((x) => x)) : 0;
             const qMax = ln.qs && ln.qs.length ? Math.max(...ln.qs.filter((x) => x)) : 0;
             hit.bindTooltip(dnMax ? `${li + 1} · DN ${dnMax}${qMax ? ` · ${qMax} l/s` : ""}` : String(li + 1),
@@ -1042,6 +1049,51 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
                 h.on("dragend", (e) => { cbs.onResize!(i, rOf((e.target as L.Marker).getLatLng())); });
                 hs.push(h); g.addLayer(h);
               });
+            }
+            const kx2 = 111320 * Math.cos((pv.lat * Math.PI) / 180), ky2 = 110540;
+            const atAz = (dist: number, azDeg: number) => { const a = (azDeg * Math.PI) / 180; return L.latLng(pv.lat + (Math.cos(a) * dist) / ky2, pv.lng + (Math.sin(a) * dist) / kx2); };
+            const azOf = (ll: L.LatLng) => ((Math.atan2((ll.lng - pv.lng) * kx2, (ll.lat - pv.lat) * ky2) * 180) / Math.PI + 360) % 360;
+            const distOf = (ll: L.LatLng) => Math.hypot((ll.lng - pv.lng) * kx2, (ll.lat - pv.lat) * ky2);
+            // lati del settore: due rombi a 0,6 r, sull'inizio e sulla fine dell'arco irrigato
+            if (cbs.onSector && deg < 359.5) {
+              let a0 = az, a1 = (az + deg) % 360;
+              const dia = (col: string) => L.divIcon({ className: "", iconSize: [14, 14], iconAnchor: [7, 7],
+                html: `<div data-sector-h style="width:11px;height:11px;transform:rotate(45deg);background:${col};border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.35);cursor:grab"></div>` });
+              const mkS = (which: 0 | 1) => {
+                const h = L.marker(atAz(pv.r * 0.6, which ? a1 : a0), { draggable: true, zIndexOffset: 1450, icon: dia(which ? "#b23b1e" : "#0d3b26") });
+                h.bindTooltip(which ? tRef.current("fine settore") : tRef.current("inizio settore"), { direction: "top", offset: [0, -8] });
+                h.on("drag", (e) => {
+                  const a = Math.round(azOf((e.target as L.Marker).getLatLng()));
+                  if (which) a1 = a; else a0 = a;
+                  const d = ((a1 - a0) % 360 + 360) % 360 || 360;
+                  if (c instanceof L.Polygon) c.setLatLngs(sectorLatLngs(pv.lat, pv.lng, pv.r, d, a0));
+                  h.setLatLng(atAz(pv.r * 0.6, a));
+                  h.setTooltipContent(`${Math.round(d)}° · ${Math.round(a0)}°→${Math.round(a1)}°`); h.openTooltip();
+                });
+                h.on("dragend", () => { const d = ((a1 - a0) % 360 + 360) % 360 || 360; cbs.onSector!(i, a0, Math.max(10, d)); });
+                g.addLayer(h);
+              };
+              mkS(0); mkS(1);
+            }
+            // gittata dell'irrigatore finale: triangolo oltre il bordo, a metà dell'arco irrigato
+            if (cbs.onGun) {
+              const mid = deg < 359.5 ? az + deg / 2 : 45;
+              const gun0 = pv.gun ?? 0;
+              const ring = L.circle([pv.lat, pv.lng], { radius: pv.r + Math.max(gun0, 0.01), color: "#b45309", weight: 1.5, dashArray: "3 4", fill: false, interactive: false, opacity: gun0 ? 0.9 : 0 });
+              g.addLayer(ring);
+              const h = L.marker(atAz(pv.r + (gun0 || 18), mid), { draggable: true, zIndexOffset: 1450,
+                icon: L.divIcon({ className: "", iconSize: [16, 16], iconAnchor: [8, 8],
+                  html: `<div data-gun-h style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:13px solid ${gun0 ? "#b45309" : "#d6c7a8"};filter:drop-shadow(0 0 1px #fff);cursor:grab"></div>` }) });
+              h.bindTooltip(gun0 ? `${tRef.current("Irrigatore finale")} ${Math.round(gun0)} m` : `+ ${tRef.current("Irrigatore finale")}`, { direction: "top", offset: [0, -8] });
+              const gunOf = (ll: L.LatLng) => { const x = distOf(ll) - pv.r; return x < 5 ? 0 : Math.min(60, Math.round(x)); };
+              h.on("drag", (e) => {
+                const ll = (e.target as L.Marker).getLatLng(), gv = gunOf(ll);
+                ring.setRadius(pv.r + Math.max(gv, 0.01)); ring.setStyle({ opacity: gv ? 0.9 : 0 });
+                h.setLatLng(atAz(Math.max(pv.r + 2, distOf(ll)), mid));
+                h.setTooltipContent(gv ? `${tRef.current("Irrigatore finale")} ${gv} m` : "—"); h.openTooltip();
+              });
+              h.on("dragend", (e) => cbs.onGun!(i, gunOf((e.target as L.Marker).getLatLng())));
+              g.addLayer(h);
             }
           }
         });

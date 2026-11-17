@@ -23,7 +23,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.297";
+const REV = "v0.6.298";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1561,6 +1561,11 @@ export default function Page() {
   const [tapSel, setTapSel] = useState<number | null>(null);
   const [tapVer, setTapVer] = useState(0);
   const [tapElev, setTapElev] = useState<Record<string, number | null>>({});   // quote dei nodi delle tubazioni
+  // strumenti di gruppo sui pivot (settore e irrigatore finale)
+  const [grpScope, setGrpScope] = useState<"all" | "field">("all");
+  const [grpDeg, setGrpDeg] = useState(180);
+  const [grpAz, setGrpAz] = useState(0);
+  const [grpGun, setGrpGun] = useState(25);
   const tapRef = useRef<{ pt: number[]; piv: number[]; qLs: number; head: number; kW: number }[]>([]);
   // contatore delle scelte dell'utente (fonte, distribuzione, pivot per tratta): fa ricalcolare i tracciati
   const [autoRoute, setAutoRoute] = useState(0);
@@ -3600,6 +3605,16 @@ export default function Page() {
         setPivotSel((s) => (s.mode === "none" ? { mode: "group", idx: -1 } : { mode: "single", idx: real }));
       },
       onMove: (i, lat, lng) => { const real = visIdx[i]; commitPivots(pivots.map((p, k) => (k === real ? { ...p, lat, lng } : p))); },
+      onSector: (i, az, deg) => {
+        const real = visIdx[i];
+        commitPivots(pivots.map((p, k) => (k === real ? (deg >= 359.5 ? { ...p, deg: undefined, az: undefined } : { ...p, deg: Math.round(deg), az: Math.round(az) % 360 }) : p)));
+        setMsg(t("Pivot P{n}: settore di {d}° da {a}°", { n: real + 1, d: Math.round(deg), a: Math.round(az) % 360 }));
+      },
+      onGun: (i, gun) => {
+        const real = visIdx[i];
+        commitPivots(pivots.map((p, k) => (k === real ? { ...p, gun: gun > 0 ? gun : undefined } : p)));
+        setMsg(gun > 0 ? t("Pivot P{n}: irrigatore finale con gittata {g} m", { n: real + 1, g: gun }) : t("Pivot P{n}: irrigatore finale tolto", { n: real + 1 }));
+      },
       onResize: (i, r) => {
         const real = visIdx[i];
         commitPivots(pivots.map((p, k) => (k === real ? { ...p, r } : p)));
@@ -3621,16 +3636,8 @@ export default function Page() {
       onLineClick: (li) => {
         const target = pivotLines.indexOf(visL[li]);   // indice reale nel modello
         if (target < 0) return;
-        setFieldPicked(false); setSrcPicked(false);
-        // PRIMO clic: seleziona il GRUPPO delle tubazioni, senza entrare in modifica.
-        if (pipeSel.mode === "none") {
-          setPivotSel({ mode: "none", idx: -1 });
-          setPipeSel({ mode: "group", idx: -1 });
-          if (editPipeRef.current != null) { editPipeRef.current = null; api2.endPipeEdit?.(); }
-          setMsg(t("Gruppo tubazioni selezionato: clicca una tubazione per modificarla."));
-          return;
-        }
-        // SECONDO clic (o clic su un'altra tubazione): modifica quella singola.
+        setFieldPicked(false); setSrcPicked(false); setPivotSel({ mode: "none", idx: -1 });
+        // un clic seleziona direttamente la tubazione cliccata (il gruppo intero: pulsante nella pagina Tubazioni)
         setPipeSel({ mode: "single", idx: li });
         openPipeEditor(target);
       },
@@ -11819,6 +11826,38 @@ export default function Page() {
     );
   }
 
+  // strumenti di gruppo: settore e irrigatore finale su tutti i pivot o su quelli del poligono selezionato
+  function renderGroupPivotTools() {
+    const inScope = (p: PivotItem) => grpScope === "all" || p.field === active?.id;
+    const n = pivots.filter(inScope).length;
+    const apply = (patch: (p: PivotItem) => PivotItem, what: string) => { commitPivots(pivots.map((p) => (inScope(p) ? patch(p) : p))); setMsg(t("{w} applicato a {n} pivot ✓", { w: what, n })); };
+    return (
+      <div className="mt-2 space-y-2 bg-panel rounded-lg p-2" data-group-tools>
+        <div className="seg">
+          <div className="seg-item" data-active={grpScope === "all"} onClick={() => setGrpScope("all")}>{t("Tutti i pivot")} ({pivots.length})</div>
+          <div className="seg-item" data-active={grpScope === "field"} onClick={() => setGrpScope("field")}>{active ? `«${active.name}»` : t("Poligono selezionato")} ({pivots.filter((p) => p.field === active?.id).length})</div>
+        </div>
+        <div className="text-[11px] font-semibold text-brand-darker">{t("Settore irrigato")}</div>
+        <div className="flex gap-2 items-end">
+          <label className="text-[11px] text-sage-dark flex-1">{t("Gradi")}
+            <NumInput type="number" min={10} max={360} step={5} value={grpDeg} onChange={(e) => setGrpDeg(Math.max(10, Math.min(360, Number(e.target.value) || 360)))} className="field-input mt-1" data-grp-deg /></label>
+          <label className="text-[11px] text-sage-dark flex-1">{t("Inizio (azimut °)")}
+            <NumInput type="number" min={0} max={359} step={5} value={grpAz} onChange={(e) => setGrpAz(((Number(e.target.value) || 0) % 360 + 360) % 360)} className="field-input mt-1" /></label>
+          <button className="btn-ghost text-[12px]" disabled={!n} data-grp-sector
+            onClick={() => apply((p) => (grpDeg >= 360 ? { ...p, deg: undefined, az: undefined } : { ...p, deg: grpDeg, az: grpAz }), t("Settore"))}>{t("Applica")}</button>
+        </div>
+        <button className="btn-ghost w-full text-[11px]" disabled={!n} onClick={() => apply((p) => ({ ...p, deg: undefined, az: undefined }), t("Cerchio intero"))}>{t("Torna a cerchio intero")}</button>
+        <div className="text-[11px] font-semibold text-brand-darker">{t("Irrigatore finale")}</div>
+        <div className="flex gap-2 items-end">
+          <label className="text-[11px] text-sage-dark flex-1">{t("Gittata (m)")}
+            <NumInput type="number" min={5} max={60} step={1} value={grpGun} onChange={(e) => setGrpGun(Math.max(5, Math.min(60, Number(e.target.value) || 25)))} className="field-input mt-1" data-grp-gun /></label>
+          <button className="btn-ghost text-[12px]" disabled={!n} data-grp-gun-apply onClick={() => apply((p) => ({ ...p, gun: grpGun }), t("Irrigatore finale"))}>{t("Applica")}</button>
+          <button className="btn-ghost text-[12px]" disabled={!n} onClick={() => apply((p) => ({ ...p, gun: undefined }), t("Senza irrigatore finale"))}>{t("Togli")}</button>
+        </div>
+        <p className="text-[10px] text-sage-dark">{t("Sul singolo pivot (2° clic): rombi per i lati del settore, triangolo per la gittata dell'irrigatore finale, quadratini per il raggio.")}</p>
+      </div>
+    );
+  }
   // elenco delle stazioni di pompaggio sulle prese (pagine Pompaggio e Tubazioni)
   function renderTapList() {
     if (!tapStations.length) return null;
@@ -12458,7 +12497,7 @@ export default function Page() {
                   </div>
                   <div className="text-[10px] text-sage-dark mt-1">{t("Vuoto = calcolato da superficie e fabbisogno.")}</div>
                   <div className="flex gap-2 mt-2">
-                    <label className="text-[11px] text-sage-dark flex-1">{t("Settore irrigato (°)")}
+                    <label className="text-[11px] text-sage-dark flex-1">{t("Settore irrigato (°)")}{(selPivot.deg ?? 360) >= 360 && <button className="ml-1 text-brand underline" data-make-sector onClick={() => updateSelPivot({ deg: 180, az: 0 })}>{t("rendi settoriale")}</button>}
                       <NumInput type="number" min={10} max={360} step={5} value={Math.round(selPivot.deg ?? 360)}
                         onChange={(e) => { const d = Math.max(10, Math.min(360, Number(e.target.value) || 360)); updateSelPivot(d >= 360 ? { deg: undefined, az: undefined } : { deg: d, az: selPivot.az ?? 0 }); }}
                         className="field-input mt-1" /></label>
@@ -12513,10 +12552,7 @@ export default function Page() {
                   <b className="text-brand-darker text-sm">{t("Gruppo pivot")} · {pivots.length}</b>
                   <p className="text-[11px] text-sage-dark mt-1">{t("Sulla mappa: 2° clic su un pivot per modificarlo singolarmente.")}</p>
                   <button className="btn-ghost w-full mt-2" onClick={applyRadiusToAll}>{t("Applica raggio {r} m a tutti", { r: pivotR })}</button>
-                  <div className="flex gap-2 mt-2">
-                    <button className="btn-ghost flex-1 basis-0 text-[12px]" onClick={() => commitPivots(pivots.map((p) => ({ ...p, gun: 25 })))}>{t("Irrigatore finale su tutti")}</button>
-                    <button className="btn-ghost flex-1 basis-0 text-[12px]" onClick={() => commitPivots(pivots.map((p) => ({ ...p, gun: undefined })))}>{t("Toglilo a tutti")}</button>
-                  </div>
+                  {renderGroupPivotTools()}
                   <label className="flex items-center gap-2 text-xs text-sage-dark mt-2">
                     <input type="checkbox" checked={pivotLabels} onChange={(e) => setPivotLabels(e.target.checked)} />
                     {t("Mostra superficie e portata sulla mappa")}
@@ -13582,6 +13618,13 @@ export default function Page() {
                   {t("Elimina la tubazione selezionata")}
                 </button>
               </div>
+              <div className="flex gap-2 mt-1 text-[11px]">
+                <button className="btn-ghost flex-1 basis-0" data-pipes-all disabled={!pivotLines.some((l) => l.kind === "pipe")}
+                  onClick={() => { setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "group", idx: -1 }); setMsg(t("Tutte le tubazioni selezionate: un clic su una tubazione seleziona solo quella.")); }}>
+                  {t("Seleziona tutte le tubazioni")}</button>
+                <button className="btn-ghost flex-1 basis-0" disabled={pipeSel.mode === "none"} onClick={() => setPipeSel({ mode: "none", idx: -1 })}>{t("Togli la selezione")}</button>
+              </div>
+              <p className="text-[10px] text-sage-dark mt-1">{t("Un clic su una tubazione la seleziona e la apre in modifica.")}</p>
               {!canals.length && !feedSrc && <p className="text-[10px] text-danger mt-1">{t("Scegli prima la fonte idrica (pagina Fonte d'acqua): le tubazioni partono da lì.")}</p>}
             </div>
 
