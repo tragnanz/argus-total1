@@ -23,7 +23,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.299";
+const REV = "v0.6.301";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1639,6 +1639,10 @@ export default function Page() {
   const [pivP, setPivP] = useState(2.5);     // pressione richiesta al pivot (bar) — solo come ripiego
   const [vMax, setVMax] = useState(1.8);     // velocità massima in tubazione (m/s)
   const [hwC, setHwC] = useState(140);       // coefficiente di Hazen-Williams (PE/PVC ≈ 140)
+  // materiale delle tubazioni: PVC-U (a bicchiere, +4% di lunghezza nel computo), PE100, o automatico (PVC fino a DN 630, oltre PE)
+  const [pipeMat, setPipeMat] = useState<"auto" | "pvc" | "pe">("auto");
+  const matOf = (dn: number): "pvc" | "pe" => (pipeMat === "pe" ? "pe" : pipeMat === "pvc" ? "pvc" : dn <= 630 ? "pvc" : "pe");
+  const PVC_SOCKET = 1.04;   // PVC a bicchiere maschio-femmina: la sovrapposizione dei giunti richiede il 4% in più di tubo
   const [dragOverField, setDragOverField] = useState<number | "root" | null>(null);   // evidenzia il bersaglio del trascinamento
   const [hiddenPivotFields, setHiddenPivotFields] = useState<Set<number>>(new Set()); // gruppi pivot (per campo) nascosti
   const [hiddenPipeFields, setHiddenPipeFields] = useState<Set<number>>(new Set());   // gruppi tubazioni (per campo) nascosti
@@ -1758,7 +1762,11 @@ export default function Page() {
       if (e.key !== "Delete" && e.key !== "Backspace" && e.key !== "Escape") return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const el = document.activeElement as HTMLElement | null;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) {
+        // Esc in una casella della scheda: esce dalla casella e toglie anche la selezione
+        if (e.key !== "Escape") return;
+        el.blur();
+      }
       const done = e.key === "Escape" ? selKeys.current.esc() : selKeys.current.del();
       if (done) e.preventDefault();
     };
@@ -3795,8 +3803,8 @@ export default function Page() {
       } }
     : null;
   const clearSel = () => {
-    const any = pivotSel.mode !== "none" || pipeSel.mode !== "none" || fieldPicked || srcPicked || roadSel != null || compSel != null;
-    endRoadEdit(); setCompSel(null);
+    const any = pivotSel.mode !== "none" || pipeSel.mode !== "none" || fieldPicked || srcPicked || roadSel != null || compSel != null || tapSel != null;
+    endRoadEdit(); setCompSel(null); setTapSel(null);
     setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false); setSrcPicked(false);
     if (editPipeRef.current != null) { editPipeRef.current = null; mapApi.current?.endPipeEdit?.(); }
     return any;
@@ -6225,6 +6233,23 @@ export default function Page() {
   type CRow = { cat: string; item: string; qty: number | null; unit: string; note?: string; key?: string };   // key: sigle delle tavole
   // phase: solo le voci di quella fase di realizzazione; le opere comuni (rete,
   // fonte d'acqua, stazioni, fotovoltaico) stanno nella fase 1.
+  // lunghezze di posa delle tubazioni per diametro, tratto per tratto (diametri automatici); senza DN a parte
+  function pipeLenByDn(): { byDn: Map<number, number>; noDn: number } {
+    const byDn = new Map<number, number>(); let noDn = 0;
+    const segL = (a: number[], b: number[]) => Math.hypot((b[0] - a[0]) * 111320 * Math.cos(((a[1] + b[1]) / 2) * Math.PI / 180), (b[1] - a[1]) * 110540);
+    for (const l of pivotLines) if (l.kind === "pipe") {
+      for (let i = 0; i + 1 < l.coords.length; i++) {
+        const d = l.dn && l.dn.length === l.coords.length - 1 ? l.dn[i] : l.dn?.length === 1 ? l.dn[0] : 0;
+        const L = segL(l.coords[i], l.coords[i + 1]);
+        if (d > 0) byDn.set(d, (byDn.get(d) ?? 0) + L); else noDn += L;
+      }
+    }
+    return { byDn, noDn };
+  }
+  // riga del computo per una tubazione: PVC con il 4% in più per i bicchieri
+  const pipeItem = (dn: number, laid: number, tx: (s: string, v?: Record<string, string | number>) => string) => matOf(dn) === "pvc"
+    ? { item: tx("Tubazione PVC-U PN10 DN {d}", { d: dn }), qty: Math.round(laid * PVC_SOCKET), note: tx("posa {l} m + 4% per i bicchieri maschio-femmina", { l: fmt(Math.round(laid)) }) }
+    : { item: tx("Tubazione PE100 PN10 DN {d}", { d: dn }), qty: Math.round(laid), note: undefined as string | undefined };
   function computoRows(phase?: number): CRow[] {
     const R: CRow[] = [];
     const pvs = phase ? pivots.filter((p) => (p.phase ?? 1) === phase) : pivots;
@@ -6305,12 +6330,11 @@ export default function Page() {
     const cNet = tx("Rete di adduzione");
     const HYc = hydraNow();
     if (HYc && HYc.byDn.length) {
-      for (const [dn, m] of [...HYc.byDn].sort((a, b) => a[0] - b[0])) R.push({ cat: cNet, key: `pipe:${dn}`, item: tx("Tubazione DN {d}", { d: dn }), qty: Math.round(m), unit: "m" });
+      for (const [dn, m] of [...HYc.byDn].sort((a, b) => a[0] - b[0])) { const pi = pipeItem(dn, m, tx); R.push({ cat: cNet, key: `pipe:${dn}`, item: pi.item, qty: pi.qty, unit: "m", note: pi.note }); }
     } else {
-      // tubazioni con il DN già scelto (es. dal canale ai pivot) per diametro, le altre senza DN
-      const byDn = new Map<number, number>(); let m = 0;
-      for (const l of pivotLines) if (l.kind === "pipe") { const d = l.dn?.length === 1 ? l.dn[0] : 0; const L = lenOf(l.coords); if (d > 0) byDn.set(d, (byDn.get(d) ?? 0) + L); else m += L; }
-      for (const [dn, L] of [...byDn].sort((x, y) => x[0] - y[0])) R.push({ cat: cNet, key: `pipe:${dn}`, item: tx("Tubazione DN {d}", { d: dn }), qty: Math.round(L), unit: "m" });
+      // tubazioni per diametro, tratto per tratto (diametri automatici dalle portate dei pivot)
+      const { byDn, noDn: m } = pipeLenByDn();
+      for (const [dn, L] of [...byDn].sort((x, y) => x[0] - y[0])) { const pi = pipeItem(dn, L, tx); R.push({ cat: cNet, key: `pipe:${dn}`, item: pi.item, qty: pi.qty, unit: "m", note: pi.note }); }
       if (m > 0) R.push({ cat: cNet, item: tx("Tubazioni (diametri da calcolare nella pagina Tubazioni)"), qty: Math.round(m), unit: "m" });
     }
     if (common) for (const k of canalCalcs().filter((x) => !x.c.exist)) {
@@ -6897,7 +6921,7 @@ export default function Page() {
           cells: cellsBase(tx("Tavola delle tubazioni")),
           tech: [{ title: tx("Tratti delle tubazioni"), blocks: [{ table: { w: [8, 14, 22, 10, 14, 10, 10, 10],
               cols: [{ t: tx("Tratto") }, { t: tx("Tipo") }, { t: tx("Materiale e classe") }, { t: "Ø (mm)", a: "r" }, { t: tx("Lunghezza") + " (m)", a: "r" }, { t: "l/s", a: "r" }, { t: "m/s", a: "r" }, { t: "hf (bar)", a: "r" }],
-              rows: runs.map((r) => [`T${r.n}`, tx("Tubo sotterraneo"), "PE100 PN10 SDR17", r.dn ? String(r.dn) : "—", n0(r.L), r.q ? n1(r.q) : "—", r.q ? n2(vel(r)) : "—", r.hf ? n2(r.hf / 10.2) : "—"]) } }] },
+              rows: runs.map((r) => [`T${r.n}`, tx("Tubo sotterraneo"), r.dn && matOf(r.dn) === "pvc" ? "PVC-U PN10 (bicchiere)" : "PE100 PN10 SDR17", r.dn ? String(r.dn) : "—", n0(r.L), r.q ? n1(r.q) : "—", r.q ? n2(vel(r)) : "—", r.hf ? n2(r.hf / 10.2) : "—"]) } }] },
             ...(nodes.length ? [{ title: tx("Nodi e raccordi"), blocks: [{ table: { w: [8, 22, 20, 26], cols: [{ t: tx("Nodo") }, { t: tx("Tipo") }, { t: "Ø (mm)" }, { t: tx("Coordinate (lat, lng)") }],
               rows: nodes.map((nd) => [`N${nd.n}`, nd.type, nd.dns.join(" × "), coordS(nd.q)]) } }] }] : []),
             { title: tx("Valvole e apparecchiature"), blocks: [{ table: { w: [7, 26, 9, 8, 11, 22, 9], cols: [{ t: tx("Sigla") }, { t: tx("Tipo") }, { t: "DN/Ø" }, { t: tx("Tratto") }, { t: tx("Progressiva (m)"), a: "r" }, { t: tx("Coordinate (lat, lng)") }, { t: tx("Quota (m)"), a: "r" }],
@@ -7608,7 +7632,8 @@ export default function Page() {
         }
         if (HY?.byDn.length) {
           lb.push({ h: tx("Rete di distribuzione") });
-          lb.push({ p: tx("La distribuzione avviene con tubazioni interrate in PE100 PN10. I diametri sono scelti tratto per tratto in modo che la velocità non superi {v} m/s; le perdite di carico sono calcolate con la formula di Hazen-Williams (C = {c}).", { v: n1(vMax), c: fx(hwC) }) });
+          lb.push({ p: tx("La distribuzione avviene con tubazioni interrate in PE100 PN10. I diametri sono scelti tratto per tratto in modo che la velocità non superi {v} m/s; le perdite di carico sono calcolate con la formula di Hazen-Williams (C = {c}).", { v: n1(vMax), c: fx(hwC) })
+            .replace("PE100 PN10", pipeMat === "pe" ? "PE100 PN10" : pipeMat === "pvc" ? "PVC-U PN10" : "PVC-U PN10 (PE100 oltre DN 630)") });
           lb.push({ table: { header: [tx("Diametro"), tx("Lunghezza") + " (m)"], widths: [50, 50], rows: [...HY.byDn].sort((a, b) => a[0] - b[0]).map(([dn, m]) => [`DN ${dn}`, n0(m)]) } });
           lb.push({ p: tx("La rete misura complessivamente {km} km e richiede alla presa una prevalenza di {h} m per garantire la pressione di esercizio al pivot più sfavorito.", { km: n2(HY.byDn.reduce((a, x) => a + x[1], 0) / 1000), h: n0(HY.headMax) }) });
           if (NF) {
@@ -8264,7 +8289,10 @@ export default function Page() {
     const it = (n: number, d = 0) => n.toLocaleString("it-IT", { maximumFractionDigits: d });
     let nSpansTot = 0;
     const pipeRows = (dn: number, m: number, cosa: string): MRow[] => [
-      { codice: `P-PIPE-U-PE-100-PN-10-${dn}`, quantita: Math.round(m), unita: "m", descrizione: `Tubo PE100 PN10 DN ${dn} — ${cosa}`, peso_kg: Math.round(pipeKg(dn) * 100) / 100 },
+      matOf(dn) === "pvc"
+        ? { codice: `P-PIPE-U-PVC-U-PN-10-${dn}`, quantita: Math.round(m * PVC_SOCKET), unita: "m",
+            descrizione: `Tubo PVC-U PN10 DN ${dn} a bicchiere — ${cosa} (posa ${it(Math.round(m))} m + 4% per i bicchieri)`, peso_kg: Math.round(pipeKg(dn) * 100) / 100 }
+        : { codice: `P-PIPE-U-PE-100-PN-10-${dn}`, quantita: Math.round(m), unita: "m", descrizione: `Tubo PE100 PN10 DN ${dn} — ${cosa}`, peso_kg: Math.round(pipeKg(dn) * 100) / 100 },
       { codice: `POSA-TRENCH-${dn}`, quantita: Math.round(m), unita: "m" },
     ];
     // Pivot
@@ -8361,9 +8389,8 @@ export default function Page() {
       }
       if (!tot) {
         // tubazioni con il DN già scelto (es. dal canale ai pivot): righe per diametro; il resto senza DN
-        const byDn = new Map<number, number>(); let noDn = 0;
-        for (const l of pivotLines) if (l.kind === "pipe") { const d = l.dn?.length === 1 ? l.dn[0] : 0; const m = lenOf(l.coords); if (d > 0) byDn.set(d, (byDn.get(d) ?? 0) + m); else noDn += m; }
-        for (const [dn, m] of [...byDn].sort((a, b) => a[0] - b[0])) { R.push(...pipeRows(dn, m, "tubazioni dal canale ai pivot")); tot += m; }
+        const { byDn, noDn } = pipeLenByDn();
+        for (const [dn, m] of [...byDn].sort((a, b) => a[0] - b[0])) { R.push(...pipeRows(dn, m, "tubazioni ai pivot")); tot += m; }
         if (noDn > 0) { R.push({ codice: "ARGUS-TUBAZIONE", quantita: Math.round(noDn), unita: "m", descrizione: "Tubazione interrata (diametri da calcolare nella pagina Tubazioni di Argus Total)" }); tot += noDn; }
       }
       if (tot > 0) R.push({ codice: "SCAVO-TRINCEA", quantita: Math.round(tot), unita: "m" });
@@ -9580,6 +9607,7 @@ export default function Page() {
     setSrcLabel({ name: typeof fo.name === "string" ? fo.name : "", auto: fo.nameAuto !== false });
     setDistMode(fo.dist === "canals" || fo.dist === "mixed" ? fo.dist : "pipes");
     setSrcGroup(typeof fo.group === "string" ? fo.group : null);
+    setPipeMat(fo.pipeMat === "pvc" || fo.pipeMat === "pe" ? fo.pipeMat : "auto");
     setPipeMaxPerLine(Math.max(1, Math.round(num(fo.perLine, 8))));
     setSrcType(ty); setSrcQmax(num(fo.qmax, 0)); setSrcHours(num(fo.hours, 24)); setSrcRange(num(fo.range, SRC_RANGE_DEF[ty]));
     setSrcSediment(typeof fo.sed === "boolean" ? fo.sed : ty === "fiume");
@@ -9600,7 +9628,7 @@ export default function Page() {
   // viaggiano con il progetto: si ritrovano su qualunque computer.
   const projLoaded = useRef<number | null>(null);
   const projSaved = useRef<string>("");
-  const fonteState = () => ({ group: srcGroup, dist: distMode, perLine: pipeMaxPerLine, pt: srcPt, route: srcRoute, type: srcType, name: srcLabel.name, nameAuto: srcLabel.auto, qmax: srcQmax, hours: srcHours, range: srcRange,
+  const fonteState = () => ({ pipeMat, group: srcGroup, dist: distMode, perLine: pipeMaxPerLine, pt: srcPt, route: srcRoute, type: srcType, name: srcLabel.name, nameAuto: srcLabel.auto, qmax: srcQmax, hours: srcHours, range: srcRange,
     sed: srcSediment, energy: srcEnergy, drive: pumpDrive, monthly: srcMonthly, sectors: srcSectors, stQmax, resDepth, resDays, resEvapK, eta: wtwEta,
     canalSlope, bankSlope, settleMm, filterCap, wellQ, shown: srcShown, cableM, river: river ? { ...river, data: { ...river.data, basin: river.data.basin ? { ...river.data.basin, ring: (river.data.basin.ring ?? []).filter((_, i) => i % 2 === 0) } : undefined } } : null, costs: { kwh: costKwh, diesel: costDiesel, lkwh: dieselLkWh, gen: genShare, mkw: costMaintKw, pvom: costPvOm, batt: costBattKwh, blife: battLife } });
   // ---- Cronologia Annulla/Ripristina UNIFICATA ----
@@ -12769,13 +12797,12 @@ export default function Page() {
 
           <section hidden={tab !== "analisi"}>
             <h3 className="text-sm font-semibold text-brand-darker mb-2">{t("Anteprima satellitare")}</h3>
-            <div className="flex gap-2 items-end">
-              <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Indice")}
-                <select className="field-input mt-1 w-full" value={index} onChange={(e) => setIndex(e.target.value)}>
-                  {INDICES.map((i) => <option key={i.id} value={i.id}>{i.id.toUpperCase()} — {t(i.label)}</option>)}
-                </select>
-              </label>
-              <button className="btn-ghost flex-1 basis-0 whitespace-nowrap" disabled={busy === "scenes" || !activeGeom} onClick={searchScenes}>
+            <div className="flex gap-2 items-center">
+              <span className="text-xs text-sage-dark shrink-0">{t("Indice")}</span>
+              <select className="field-input w-full flex-1 min-w-0" value={index} onChange={(e) => setIndex(e.target.value)}>
+                {INDICES.map((i) => <option key={i.id} value={i.id}>{i.id.toUpperCase()} — {t(i.label)}</option>)}
+              </select>
+              <button className="btn-ghost shrink-0 whitespace-nowrap" disabled={busy === "scenes" || !activeGeom} onClick={searchScenes}>
                 {busy === "scenes" ? t("Cerco…") : t("Cerca date")}
               </button>
             </div>
@@ -12806,12 +12833,12 @@ export default function Page() {
           </section>
 
           <section hidden={tab !== "analisi"} className="border-t border-black/5 pt-3">
-            <SectionHead title={t("Quota (DEM)")} help={t("Il rilievo ombreggiato mostra i sensi delle pendenze; le isoipse ravvicinate = terreno più ripido.")} />
-            <div className="flex gap-2">
-              <button className="btn-primary flex-1 basis-0" disabled={busy === "dem" || !activeGeom} onClick={showDem}>
-                {busy === "dem" ? t("Ricompongo…") : t("Mostra DEM")}
+            <div className="flex gap-2 items-center">
+              <div className="shrink-0"><SectionHead mb="mb-0" title={t("Quota (DEM)")} help={t("Il rilievo ombreggiato mostra i sensi delle pendenze; le isoipse ravvicinate = terreno più ripido.")} /></div>
+              <button className="btn-primary flex-1 basis-0 min-w-0 whitespace-nowrap" disabled={busy === "dem" || !activeGeom} onClick={showDem}>
+                {busy === "dem" ? t("Ricompongo…") : t("Mostra")}
               </button>
-              <button className="btn-ghost flex-1 basis-0" onClick={clearDem}>{t("Rimuovi DEM")}</button>
+              <button className="btn-ghost flex-1 basis-0 min-w-0 whitespace-nowrap" onClick={clearDem}>{t("Rimuovi")}</button>
             </div>
             {demInfo && (
               <div className="mt-2">
@@ -13692,6 +13719,13 @@ export default function Page() {
                     onChange={(e) => setHwC(Math.max(80, Math.min(160, Number(e.target.value))))} className="field-input px-2 py-1.5 text-sm mt-0.5" />
                 </label>
               </div>
+              <label className="block text-[11px] text-sage-dark mt-2">{t("Materiale delle tubazioni")}
+                <select className="field-input px-2 py-1.5 text-sm mt-0.5" value={pipeMat} onChange={(e) => setPipeMat(e.target.value as "auto" | "pvc" | "pe")} data-pipe-mat>
+                  <option value="auto">{t("PVC-U fino a DN 630, oltre PE100")}</option>
+                  <option value="pvc">{t("PVC-U a bicchiere")}</option>
+                  <option value="pe">PE100</option>
+                </select></label>
+              <p className="text-[10px] text-sage-dark mt-0.5">{t("Nel computo il PVC a bicchiere maschio-femmina conta il 4% di tubo in più della lunghezza di posa.")}</p>
               <button className="btn-primary w-full mt-2" disabled={!nPipes} onClick={runHydraulics}>
                 {t("Calcola diametri")}
               </button>

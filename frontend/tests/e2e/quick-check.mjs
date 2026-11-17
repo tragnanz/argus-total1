@@ -276,7 +276,21 @@ try {
     const pm2 = await page.locator("body").innerText();
     ok(/Pivot incollato \(P\d+\)/.test(pm2), `Copia/incolla: ${(pm2.match(/Pivot incollato[^\n]*/) || ["-"])[0].slice(0, 60)}`);
     await page.screenshot({ path: path.join(SH, "q9_maniglie.png") });
+    // Esc toglie la selezione, anche con il cursore in una casella della scheda
+    const hBefore = await page.locator('div[style*="nwse-resize"]').count();
+    const inp = page.locator("input:visible").first();
+    if (await inp.count()) await inp.focus().catch(() => {});
+    await page.keyboard.press("Escape"); await page.waitForTimeout(400);
+    const hAfter = await page.locator('div[style*="nwse-resize"]').count();
+    ok(hBefore > 0 && hAfter === 0, `Esc toglie la selezione: maniglie ${hBefore} → ${hAfter}`);
   } else ok(false, "Etichette dei pivot assenti");
+  // computo: tubazioni per diametro dai DN automatici, PVC con +4% per i bicchieri
+  await click(page.locator('[data-quick-step="computo"]')); await page.waitForTimeout(1500);
+  const cBtn = page.getByRole("button", { name: /▸ Computo metrico/ }).first();
+  if (await cBtn.count()) { await cBtn.click(); await page.waitForTimeout(800); }
+  const cmp = await page.locator("body").innerText();
+  const pvcRow = (cmp.match(/Tubazione PVC-U PN10 DN \d+[^\n]*(\n[^\n]*){0,3}/) || [""])[0].replace(/\n/g, " ¦ ");
+  ok(/Tubazione PVC-U PN10 DN \d+/.test(cmp) && /4% per i bicchieri/.test(cmp), `Computo tubazioni: ${pvcRow.slice(0, 140)}`);
   ok(errors.length === 0, `Nessun errore JavaScript${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; await page.screenshot({ path: path.join(SH, "q_err.png") }).catch(() => {}); }
 await browser.close();
