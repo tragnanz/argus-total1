@@ -21,6 +21,15 @@ export default function ViewPage({ params }: { params: { token: string } }) {
   const [data, setData] = useState<api.ShareData | null>(null);
   const [err, setErr] = useState("");
   const [infoOpen, setInfoOpen] = useState(true);   // pannello informazioni richiudibile
+  // Telefono: i due pannelli non stanno affiancati; vanno in un menu a scomparsa con due schede
+  const [mobile, setMobile] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const [mTab, setMTab] = useState<"info" | "comm">("info");
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const on = () => setMobile(mq.matches); on();
+    mq.addEventListener("change", on); return () => mq.removeEventListener("change", on);
+  }, []);
   // relazione tecnica allegata al link: si apre dal pulsante o con #relazione nell'indirizzo
   const [repOpen, setRepOpen] = useState(false);
   useEffect(() => { if (data?.report && typeof window !== "undefined" && /relazione|report/i.test(window.location.hash)) setRepOpen(true); }, [data]);
@@ -56,8 +65,8 @@ export default function ViewPage({ params }: { params: { token: string } }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [picking]);
   function startPick() {
-    setPicking(true);
-    mapApi.current?.pickPoint((lat, lng) => { setCPoint({ lat, lng }); setPicking(false); });
+    setPicking(true); setMenu(false);
+    mapApi.current?.pickPoint((lat, lng) => { setCPoint({ lat, lng }); setPicking(false); setMenu(true); setMTab("comm"); });
   }
   async function sendComment() {
     const body = cBody.trim(); if (!body) return;
@@ -182,40 +191,7 @@ export default function ViewPage({ params }: { params: { token: string } }) {
     </div>
   );
 
-  return (
-    <main>
-      <MapCanvas apiRef={mapApi} />
-
-      <div className="overlay-layer">
-        {/* Header adattivo: marchio compatto + nome progetto troncabile + selettore lingua */}
-        <div className="absolute top-3 left-3 right-3 z-30 flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-2.5 rounded-xl shadow shrink-0" style={{ background: "#123524", height: 44 }}>
-            <span className="text-white font-semibold tracking-tight whitespace-nowrap">Argus&nbsp;Total</span>
-            <span className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-white/15 text-white whitespace-nowrap">{t("Sola lettura")}</span>
-          </div>
-          {data && (
-            <div className="pill-light px-3 h-11 flex items-center text-sm font-medium min-w-0 flex-1">
-              <span className="truncate">{data.project.name}{data.project.crop ? ` · ${data.project.crop}` : ""}</span>
-            </div>
-          )}
-          {data?.report && (
-            <button className="h-11 px-3 rounded-xl shadow text-sm font-semibold text-white shrink-0" style={{ background: "#009FE3" }}
-              onClick={() => setRepOpen(true)} data-open-report>📄 {t("Relazione tecnica")}</button>
-          )}
-          <select className="pill-light h-11 px-2 text-sm shrink-0 max-w-[7.5rem]" value={lang}
-            onChange={(e) => setLang(e.target.value as Lang)} aria-label={t("Lingua")}>
-            {LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
-          </select>
-        </div>
-
-        {/* Pannello informazioni (richiudibile) */}
-        <div className="absolute top-[4.5rem] left-4 w-[360px] max-w-[calc(100vw/var(--ui-scale)_-_2rem)] max-h-[calc(80vh/var(--ui-scale))] widget flex flex-col overflow-hidden z-30">
-          <div className="px-4 py-2.5 flex items-center justify-between border-b border-black/5">
-            <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide truncate">{t("Informazioni progetto")}</div>
-            <button onClick={() => setInfoOpen((o) => !o)} title={infoOpen ? "–" : "+"}
-              className="text-sage-dark hover:text-brand px-2 -mr-2 text-xl leading-none shrink-0">{infoOpen ? "–" : "+"}</button>
-          </div>
-          {infoOpen && (
+  const infoBody = (
             <div className="overflow-auto scroll-soft p-4 space-y-3">
               {err && <p className="text-sm text-danger">{err}</p>}
               {!data && !err && <p className="text-sm text-sage-dark">…</p>}
@@ -252,17 +228,8 @@ export default function ViewPage({ params }: { params: { token: string } }) {
                 </>
               )}
             </div>
-          )}
-        </div>
-
-        {/* Pannello commenti del cliente (destra) */}
-        {data && (
-          <div className="absolute top-[4.5rem] right-4 w-[340px] max-w-[calc(100vw/var(--ui-scale)_-_2rem)] max-h-[calc(80vh/var(--ui-scale))] widget flex flex-col overflow-hidden z-30">
-            <div className="px-4 py-2.5 flex items-center justify-between border-b border-black/5">
-              <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide truncate">{t("Commenti")} · {comments.length}</div>
-              <button onClick={() => setCOpen((o) => !o)} className="text-sage-dark hover:text-brand px-2 -mr-2 text-xl leading-none shrink-0">{cOpen ? "–" : "+"}</button>
-            </div>
-            {cOpen && (
+  );
+  const commBody = (
               <div className="overflow-auto scroll-soft p-4 space-y-3">
                 {comments.length === 0 && <p className="text-[12px] text-sage-dark">{t("Nessun commento. Scrivi qui osservazioni o richieste: le riceverà chi ha preparato il progetto.")}</p>}
                 <ul className="space-y-2">
@@ -298,8 +265,89 @@ export default function ViewPage({ params }: { params: { token: string } }) {
                   {cMsg && <p className="text-[11px] text-sage-dark">{cMsg}</p>}
                 </div>
               </div>
-            )}
+  );
+  const langSel = (cls: string) => (
+    <select className={cls} value={lang} onChange={(e) => setLang(e.target.value as Lang)} aria-label={t("Lingua")}>
+      {LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+    </select>
+  );
+
+  return (
+    <main>
+      <MapCanvas apiRef={mapApi} />
+
+      <div className="overlay-layer">
+        {/* Header adattivo: marchio compatto + nome progetto troncabile + selettore lingua */}
+        <div className="absolute top-3 left-3 right-3 z-30 flex items-center gap-2">
+          <div className="flex items-center gap-1.5 px-2.5 rounded-xl shadow shrink-0" style={{ background: "#123524", height: 44 }}>
+            <span className="text-white font-semibold tracking-tight whitespace-nowrap">Argus&nbsp;Total</span>
+            <span className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-white/15 text-white whitespace-nowrap">{t("Sola lettura")}</span>
           </div>
+          {data && (
+            <div className="pill-light px-3 h-11 flex items-center text-sm font-medium min-w-0 flex-1">
+              <span className="truncate">{data.project.name}{data.project.crop ? ` · ${data.project.crop}` : ""}</span>
+            </div>
+          )}
+          {!mobile && data?.report && (
+            <button className="h-11 px-3 rounded-xl shadow text-sm font-semibold text-white shrink-0" style={{ background: "#009FE3" }}
+              onClick={() => setRepOpen(true)} data-open-report>📄 {t("Relazione tecnica")}</button>
+          )}
+          {!mobile && langSel("pill-light h-11 px-2 text-sm shrink-0 max-w-[7.5rem]")}
+          {mobile && (
+            <button className="pill-light h-11 w-11 shrink-0 flex items-center justify-center text-xl text-brand-darker relative" onClick={() => setMenu(true)}
+              aria-label={t("Menu")} data-view-menu>☰
+              {comments.length > 0 && <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-brand text-white text-[10px] font-semibold flex items-center justify-center">{comments.length}</span>}
+            </button>
+          )}
+        </div>
+
+        {/* Pannello informazioni (richiudibile) */}
+        {!mobile && <div className="absolute top-[4.5rem] left-4 w-[360px] max-w-[calc(100vw/var(--ui-scale)_-_2rem)] max-h-[calc(80vh/var(--ui-scale))] widget flex flex-col overflow-hidden z-30">
+          <div className="px-4 py-2.5 flex items-center justify-between border-b border-black/5">
+            <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide truncate">{t("Informazioni progetto")}</div>
+            <button onClick={() => setInfoOpen((o) => !o)} title={infoOpen ? "–" : "+"}
+              className="text-sage-dark hover:text-brand px-2 -mr-2 text-xl leading-none shrink-0">{infoOpen ? "–" : "+"}</button>
+          </div>
+          {infoOpen && infoBody}
+        </div>}
+
+        {/* Pannello commenti del cliente (destra) */}
+        {!mobile && data && (
+          <div className="absolute top-[4.5rem] right-4 w-[340px] max-w-[calc(100vw/var(--ui-scale)_-_2rem)] max-h-[calc(80vh/var(--ui-scale))] widget flex flex-col overflow-hidden z-30">
+            <div className="px-4 py-2.5 flex items-center justify-between border-b border-black/5">
+              <div className="text-[11px] font-semibold text-sage-dark uppercase tracking-wide truncate">{t("Commenti")} · {comments.length}</div>
+              <button onClick={() => setCOpen((o) => !o)} className="text-sage-dark hover:text-brand px-2 -mr-2 text-xl leading-none shrink-0">{cOpen ? "–" : "+"}</button>
+            </div>
+            {cOpen && commBody}
+          </div>
+        )}
+
+        {/* Telefono: menu a scomparsa da sinistra con Informazioni / Commenti, relazione e lingua */}
+        {mobile && (
+          <>
+            {menu && <div className="absolute inset-0 z-40 bg-black/40" onClick={() => setMenu(false)} />}
+            <aside className={"absolute inset-y-0 left-0 z-50 w-[86%] max-w-[380px] bg-white shadow-2xl flex flex-col transition-transform duration-200 " + (menu ? "translate-x-0" : "-translate-x-full")}
+              data-view-drawer aria-hidden={!menu}>
+              <div className="flex items-center gap-2 px-4 pt-4 pb-3 border-b border-black/5">
+                <span className="font-semibold text-brand-darker flex-1 truncate">{data?.project.name ?? "Argus Total"}</span>
+                <button className="text-2xl leading-none text-sage-dark px-1" onClick={() => setMenu(false)} aria-label={t("Chiudi")}>×</button>
+              </div>
+              <div className="flex gap-1 p-2 border-b border-black/5">
+                {([["info", t("Informazioni progetto")], ["comm", `${t("Commenti")} · ${comments.length}`]] as const).map(([k, l]) => (
+                  <button key={k} onClick={() => setMTab(k)} data-view-tab={k}
+                    className={"flex-1 rounded-lg py-2 text-[12px] font-semibold " + (mTab === k ? "bg-brand text-white" : "bg-panel text-brand-darker")}>{l}</button>
+                ))}
+              </div>
+              <div className="flex-1 min-h-0 flex flex-col">{mTab === "info" ? infoBody : commBody}</div>
+              <div className="border-t border-black/5 p-3 flex gap-2">
+                {data?.report && (
+                  <button className="flex-1 h-10 rounded-xl text-sm font-semibold text-white" style={{ background: "#009FE3" }}
+                    onClick={() => { setMenu(false); setRepOpen(true); }} data-open-report>📄 {t("Relazione tecnica")}</button>
+                )}
+                {langSel("field-input h-10 text-sm " + (data?.report ? "w-[8rem] shrink-0" : "flex-1"))}
+              </div>
+            </aside>
+          </>
         )}
 
         {repOpen && data?.report && <ReportReader token={params.token} info={data.report} onClose={() => setRepOpen(false)} />}
