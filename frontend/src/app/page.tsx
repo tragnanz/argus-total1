@@ -23,7 +23,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.307";
+const REV = "v0.6.308";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -4320,6 +4320,35 @@ export default function Page() {
       setMsg(t("Impianti inseriti su «{name}» ✓", { name: active.name }));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
+  // Simulazione delle tre disposizioni sul campo attivo (libera, a quadrato, a triangolo): pivot e ettari
+  // irrigati per ognuna, con gli stessi parametri del tasto «Inserisci». Si rifà quando cambiano campo o parametri.
+  type LaySim = { k: "free" | "square" | "staggered"; n: number; ha: number } | { k: "free" | "square" | "staggered"; err: string };
+  const [laySim, setLaySim] = useState<{ key: string; rows: LaySim[]; busy: boolean } | null>(null);
+  const laySimLive = useRef("");
+  const simF = active ?? fields.find((f) => !f.hidden && f.parentId == null) ?? null;   // campo attivo, o il primo
+  const laySimKey = simF ? JSON.stringify([simF.id, simF.geom, effSettings(simF), pivotR, safetyM, pivClearRoad, minPivotPct, fillFull, roads.length, canals.length, watercourses.length, waterRules]) : "";
+  useEffect(() => {
+    if (!simF || tab !== "impianti" || !laySimKey || laySim?.key === laySimKey) return;
+    const geom = simF.geom, st = effSettings(simF), key = laySimKey;
+    const h = window.setTimeout(async () => {
+      laySimLive.current = key;
+      setLaySim({ key, rows: [], busy: true });
+      const rows: LaySim[] = [];
+      for (const k of ["free", "square", "staggered"] as const) {
+        if (laySimLive.current !== key) return;                 // parametri cambiati nel frattempo: si lascia
+        try {
+          const p: LayoutParams = { ...paramsFrom({ ...st, layoutCfg: k === "free" ? st.layoutCfg : k }), radius_m: pivotR, gap_m: safetyM, roads: obstacleLines(), clear_road_m: pivClearRoad, min_pivot_pct: minPivotPct, fill_full: fillFull, free_layout: k === "free" };
+          const r = await api.fetchLayout(geom, p);
+          const { pivots: np } = pivotsFromFC(r.geojson, pivotR);
+          rows.push({ k, n: np.length, ha: np.reduce((a, x) => a + pvAreaM2(x) / 10000, 0) });
+        } catch (e) { rows.push({ k, err: e instanceof Error ? e.message : String(e) }); }
+        setLaySim((cur) => (cur && cur.key === key ? { ...cur, rows: [...rows] } : cur));
+      }
+      setLaySim((cur) => (cur && cur.key === key ? { ...cur, busy: false } : cur));
+    }, 1200);
+    return () => window.clearTimeout(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [laySimKey, tab]);
   // AVANZATA: dato un range [min,max], prova più raggi (uguali per tutti i pivot)
   // e tiene quello che copre la MAGGIOR superficie, rispettando ostacoli e franchi.
   async function insertAdvancedActive() {
@@ -13478,28 +13507,57 @@ export default function Page() {
               renderSystems()
             ) : (<>
 
-            <label className="text-xs text-sage-dark block mb-1">{t("Produttore dei pivot")}
-              <select className="field-input mt-1 text-sm" value={pivotBrand} onChange={(e) => setPivotBrand(e.target.value as PivotBrand)}>
-                {(Object.keys(PIVOT_BRANDS) as PivotBrand[]).map((k) => <option key={k} value={k}>{PIVOT_BRANDS[k]}</option>)}
-              </select>
-            </label>
-            <label className="text-xs text-sage-dark block mb-1">{t("Velocità massima nei tubi delle campate (m/s)")}
-              <NumInput type="number" min={1} max={5} step={0.1} value={spanVmax}
-                onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) setSpanVmax(Math.max(1, Math.min(5, x))); }} className="field-input mt-1 text-sm" />
-            </label>
+            <div className="flex gap-2 items-end mb-1">
+              <label className="text-xs text-sage-dark flex-1 min-w-0">{t("Produttore dei pivot")}
+                <select className="field-input mt-1 text-sm w-full" value={pivotBrand} onChange={(e) => setPivotBrand(e.target.value as PivotBrand)}>
+                  {(Object.keys(PIVOT_BRANDS) as PivotBrand[]).map((k) => <option key={k} value={k}>{PIVOT_BRANDS[k]}</option>)}
+                </select>
+              </label>
+              <label className="text-xs text-sage-dark w-[8.5rem] shrink-0" title={t("Velocità massima nei tubi delle campate (m/s)")}>
+                <span className="block truncate">{t("V max campate (m/s)")}</span>
+                <NumInput type="number" min={1} max={5} step={0.1} value={spanVmax}
+                  onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) setSpanVmax(Math.max(1, Math.min(5, x))); }} className="field-input mt-1 text-sm w-full" />
+              </label>
+            </div>
             <label className="text-xs text-sage-dark block mb-1">{t("Disposizione")}</label>
             <div className="seg mb-1">
               <div className="seg-item" data-free-layout data-active={freeLayout} onClick={() => setFreeLayout(true)}>{t("Libera")}</div>
               <div className="seg-item" data-active={!freeLayout && cur.layoutCfg === "square"} onClick={() => { setFreeLayout(false); patch({ layoutCfg: "square" }); }}>{t("A quadrato")}</div>
               <div className="seg-item" data-active={!freeLayout && cur.layoutCfg === "staggered"} onClick={() => { setFreeLayout(false); patch({ layoutCfg: "staggered" }); }}>{t("A triangolo")}</div>
             </div>
-            <p className="text-[10px] text-sage-dark mb-1 leading-snug">
-              {cur.transport === "canal"
-                ? t("Con l'alimentazione a canali i pivot si dispongono in file tra i canali (la disposizione libera non si usa).")
-                : freeLayout
-                ? t("Libera: i pivot si posano dove ci stanno, dal più grande, aderenti a bordi, corsi d'acqua e pivot vicini, per coprire più superficie possibile. Restano fuori solo le zone tratteggiate in rosso.")
-                : t("Reticolo fisso: pivot pieni allineati in file (dorsali dritte), poi i vuoti si riempiono con pivot più piccoli.")}
-            </p>
+            {cur.transport === "canal" && <p className="text-[10px] text-sage-dark mb-1 leading-snug">{t("Con l'alimentazione a canali i pivot si dispongono in file tra i canali (la disposizione libera non si usa).")}</p>}
+            {simF && laySim && laySim.key === laySimKey && (() => {
+              const lab = { free: t("Libera"), square: t("A quadrato"), staggered: t("A triangolo") };
+              const ok = laySim.rows.filter((r): r is Extract<LaySim, { n: number }> => "n" in r);
+              const bestHa = ok.length ? Math.max(...ok.map((r) => r.ha)) : 0;
+              const curK = freeLayout ? "free" : cur.layoutCfg;
+              const fHa = polyAreaM2(simF.geom.coordinates as number[][][]) / 10000;
+              return (
+                <div className="bg-panel rounded-lg p-2 mb-1 text-[11px]" data-lay-sim>
+                  <div className="text-sage-dark mb-1">{t("Simulazione su «{name}»", { name: simF.name })}{laySim.busy ? " · …" : ""}</div>
+                  <table className="w-full tabular-nums">
+                    <tbody>
+                      {(["free", "square", "staggered"] as const).map((k) => {
+                        const r = laySim.rows.find((x) => x.k === k);
+                        return (
+                          <tr key={k} data-lay-sim-row={k} className={"cursor-pointer " + (curK === k ? "font-semibold text-brand-darker" : "text-sage-dark")}
+                            onClick={() => { if (k === "free") setFreeLayout(true); else { setFreeLayout(false); patch({ layoutCfg: k }); } }}>
+                            <td className="py-0.5">{lab[k]}</td>
+                            {!r ? <td colSpan={3} className="text-right">…</td>
+                              : "err" in r ? <td colSpan={3} className="text-right text-danger">{t("non calcolata")}</td>
+                              : <>
+                                <td className="text-right">{fmt(r.n)} pivot</td>
+                                <td className="text-right">{uHa(r.ha)}</td>
+                                <td className="text-right w-14">{fHa ? `${fmt((100 * r.ha) / fHa, { maximumFractionDigits: 0 })}%` : ""}{r.ha === bestHa && ok.length > 1 ? " ★" : ""}</td>
+                              </>}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
             <div className="mb-2" />
 
             <label className="text-xs text-sage-dark block mb-1">{t("Modalità di progettazione")}</label>

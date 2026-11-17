@@ -301,6 +301,13 @@ try {
     const hAfter = await page.locator('div[style*="nwse-resize"]').count();
     ok(hBefore > 0 && hAfter === 0, `Esc toglie la selezione: maniglie ${hBefore} → ${hAfter}`);
   } else ok(false, "Etichette dei pivot assenti");
+  // simulazione delle tre disposizioni nella pagina Impianti: pivot e ettari per ognuna
+  if (!(await page.locator("[data-free-layout]").isVisible())) await page.locator('button[title="Impianti"]').first().click();
+  await page.waitForTimeout(500);
+  if (!(await page.locator("[data-free-layout]").isVisible())) await page.locator('button[title="Impianti"]').first().click();
+  const simOk = await page.waitForFunction(() => { const rs = [...document.querySelectorAll("[data-lay-sim-row]")]; return rs.length === 3 && rs.every((r) => /pivot/.test(r.textContent || "") || /non calcolata/.test(r.textContent || "")); }, null, { timeout: 300000 }).then(() => true).catch(() => false);
+  const simRows = (await page.locator("[data-lay-sim-row]").allInnerTexts()).map((x) => x.replace(/\s+/g, " "));
+  ok(simOk && simRows.every((x) => /\d+ pivot/.test(x)), `Simulazione disposizioni: ${simRows.join(" | ")}`);
   // computo: tubazioni per diametro dai DN automatici, PVC con +4% per i bicchieri
   await click(page.locator('[data-quick-step="computo"]')); await page.waitForTimeout(1500);
   const cBtn = page.getByRole("button", { name: /▸ Computo metrico/ }).first();
