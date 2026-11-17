@@ -6,6 +6,7 @@ import JSZip from "jszip";
 import type { MapHandle, PivotItem, PivotSel, CircleInfo } from "@/components/MapCanvas";
 import { WATER_COL } from "@/lib/water";
 import NumInput from "@/components/NumInput";
+import { joinTouchingWater } from "@/lib/waterjoin";
 import { useI18n, LANGS, type Lang, translateError, translatorFor } from "@/lib/i18n";
 import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
@@ -21,7 +22,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.286";
+const REV = "v0.6.287";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1334,7 +1335,7 @@ export default function Page() {
     if (!waterPreviewOn.current) waterBackup.current = wcRef.current;
     const base = (waterBackup.current ?? []).filter((w) => !(w.source === "osm" && !w.edited) || !items.some((x) => x.source === "osm"));
     // lunghezza ricalcolata come per le modifiche a mano, così resta coerente dopo un ritocco annullato
-    const arr = [...base, ...items.map((f) => ({ ...f, pending: true, ...(f.geojson.type === "LineString" ? { length_m: Math.round(lineLenKm(f.geojson.coordinates as number[][]) * 10000) / 10 } : {}) }))];
+    const arr = [...base, ...joinTouchingWater(items.map((f) => ({ ...f, pending: true, ...(f.geojson.type === "LineString" ? { length_m: Math.round(lineLenKm(f.geojson.coordinates as number[][]) * 10000) / 10 } : {}) }))).list];
     if (!layerVis.water) toggleLayer("water");
     stopEditWater();
     waterSelRef.current = { kind: null, idx: null }; setWaterSel(waterSelRef.current); setWaterOpen(null);
@@ -1887,7 +1888,7 @@ export default function Page() {
 
       const waterItems: WaterL[] = [];
       for (const l of layersList.filter((x) => x.kind === "waters")) for (const it of (l.data?.items ?? [])) waterItems.push({ ...it, owner: mapOwner(it.ownerArea) } as WaterL);
-      if (waterItems.length) { setWatercourses(waterItems); renderWater(waterItems); }
+      if (waterItems.length) { const wj = joinTouchingWater(waterItems).list; setWatercourses(wj); renderWater(wj); }
       const wl = layersList.find((x) => x.kind === "waters");
       setWaterSurface(((wl?.data as { surface?: unknown[] } | undefined)?.surface ?? []) as typeof waterSurface);
       setWaterMeta(((wl?.data as { meta?: { dates: string[]; res_m: number } } | undefined)?.meta) ?? null);
@@ -2523,7 +2524,7 @@ export default function Page() {
         if (fr[k] !== undefined) x[k] = fr[k];
       }
     });
-    const arr = [...merged, ...extra];
+    const arr = joinTouchingWater([...merged, ...extra]).list;
     setWatercourses(arr); renderWater(arr);
     setWaterSurface((w.surface ?? []) as typeof waterSurface);
     setWaterMeta({ dates: w.dates ?? [], res_m: w.res_m ?? 10 });
@@ -2573,8 +2574,11 @@ export default function Page() {
     setWatercourses((ws) => { const arr = ws.map((w, k) => (k !== i ? w : { ...w, name_orig: w.name_orig !== undefined ? w.name_orig : (w.name ?? null), name: name || undefined })); renderWater(arr); return arr; });
   }
   function retypeWater(i: number, kind: string) {
-    setWatercourses((ws) => { const arr = ws.map((w, k) => (k !== i ? w : { ...w, kind_orig: w.kind_orig ?? w.kind, kind, movable: undefined, edited: true })); renderWater(arr); return arr; });
-    if (waterSelRef.current.idx === i) { waterSelRef.current = { kind, idx: i }; setWaterSel(waterSelRef.current); }
+    const before = wcRef.current.length;
+    const arr = joinTouchingWater(wcRef.current.map((w, k) => (k !== i ? w : { ...w, kind_orig: w.kind_orig ?? w.kind, kind, movable: undefined, edited: true }))).list;
+    setWatercourses(arr); wcRef.current = arr; renderWater(arr);
+    if (arr.length !== before) { waterSelRef.current = { kind: null, idx: null }; setWaterSel(waterSelRef.current); setWaterOpen(null); }
+    else if (waterSelRef.current.idx === i) { waterSelRef.current = { kind, idx: i }; setWaterSel(waterSelRef.current); }
   }
   function restoreWaterReg(i: number) {
     setWatercourses((ws) => {
@@ -4216,7 +4220,7 @@ export default function Page() {
         const seen = new Set<string>();
         wc = res.flatMap((r) => r?.features ?? []).filter((f) => { const k = JSON.stringify(f.geojson.coordinates.slice(0, 2)); if (seen.has(k)) return false; seen.add(k); return true; })
           .map((f) => (f.kind === "canal" || f.kind === "drain" ? { ...f, movable: canalPolicy === "spiana" } : f)) as WaterL[];
-        if (wc.length) { setWatercourses(wc); renderWater(wc); }
+        if (wc.length) { wc = joinTouchingWater(wc).list; setWatercourses(wc); renderWater(wc); }
       }
       const obst = obstacleLines(wc);
       let accP = [...pivots];
