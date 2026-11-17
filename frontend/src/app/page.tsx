@@ -22,7 +22,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.291";
+const REV = "v0.6.292";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1556,6 +1556,8 @@ export default function Page() {
   const [srcLabel, setSrcLabel] = useState<{ name: string; auto: boolean }>({ name: "", auto: true });
   // fonte = gruppo di corsi dello stesso tipo (tutti i fiumi, tutti i canali…): le tubazioni si allacciano al più vicino
   const [srcGroup, setSrcGroup] = useState<string | null>(null);
+  // contatore delle scelte dell'utente (fonte, distribuzione, pivot per tratta): fa ricalcolare i tracciati
+  const [autoRoute, setAutoRoute] = useState(0);
   const srcLabelRef = useRef(srcLabel); srcLabelRef.current = srcLabel;
   const [srcQmax, setSrcQmax] = useState(0);                         // portata disponibile (l/s); 0 = non limitata
   const [srcHours, setSrcHours] = useState(24);                      // ore di prelievo consentite al giorno
@@ -2874,8 +2876,12 @@ export default function Page() {
     const best = ref ? idx.reduce((a, b) => (nearestOnLine(ref, waterLineOf(b.w)).d < nearestOnLine(ref, waterLineOf(a.w)).d ? b : a)) : idx[0];
     takeWaterAsSource(best.i);
     setSrcGroup(fam);
+    // portata disponibile: il tratto che ne porta di più (in genere il corso principale)
+    const qs = idx.map(({ w }) => waterQAvailLs(w)).filter((q): q is number => q != null);
+    if (qs.length) setSrcQmax(Math.max(1, Math.max(...qs)));
     const km = idx.reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000;
-    setSrcLabel({ name: `${famName(fam)} (${idx.length})`, auto: false });
+    const names = [...new Set(idx.map(({ w }) => (w.name ?? "").trim()).filter(Boolean))].slice(0, 3);
+    setSrcLabel({ name: names.length ? `${famName(fam)}: ${names.join(", ")}` : `${famName(fam)} (${idx.length})`, auto: false });
     setMsg(t("Fonte idrica: tutti i {g} ({n} tratti, {km}); le tubazioni si allacciano al tratto più vicino. Presa principale sul più vicino ai pivot.", { g: famName(fam).toLowerCase(), n: idx.length, km: uKm(km, 1) }));
   }
   function groupWaterFamily(fam: string) {
@@ -4617,15 +4623,19 @@ export default function Page() {
   // ---- Accessori: tubazioni di adduzione dal canale ---------------------------
   // Traccia le tubazioni che si diramano dal canale e passano per i centri dei
   // pivot ESISTENTI del poligono, una per fila, tutte nella stessa direzione.
-  async function generatePipes(mixed = false) {
-    if (!active) return needField();
+  // allFields: tutti i poligoni con pivot (calcolo automatico dopo la scelta della fonte); altrimenti il selezionato
+  async function generatePipes(mixed = false, allFields = false) {
+    if (!allFields && !active) return needField();
     const fromSrc = mixed || pipeCanalIdx < 0 || !canals.length;
     if (fromSrc && !feedSrc) { setMsg(t("Scegli prima la fonte idrica (pagina Fonte d'acqua): le tubazioni partono da lì.")); return; }
-    const fid = active.id;
+    const targets = allFields ? fields.filter((f) => f.geom && pivots.some((p) => p.field === f.id)) : [active!];
+    if (!allFields && !pivots.some((p) => p.field === active!.id)) { setMsg(t("Nessun pivot su questo poligono: inserisci prima gli impianti.")); return; }
+    let mergedL = pivotLines, canalArr = canals, nPipes = 0, kmAll = 0;
+    for (const fld of targets) {
+    const fid = fld.id;
     const fieldPivs = pivots.filter((p) => p.field === fid);
-    if (!fieldPivs.length) { setMsg(t("Nessun pivot su questo poligono: inserisci prima gli impianti.")); return; }
     let line: number[][] = fromSrc ? feedSrc!.coords : canals[Math.min(pipeCanalIdx, canals.length - 1)].geojson.coordinates;
-    const ring = (active.geom?.coordinates?.[0] ?? null) as number[][] | null;   // le tubazioni restano dentro il campo
+    const ring = (fld.geom?.coordinates?.[0] ?? null) as number[][] | null;   // le tubazioni restano dentro il campo
     // Fonte che non attraversa il campo (fiume corto o lontano, pozzo, presa in un punto): dalla presa parte
     // una condotta principale che entra nel campo e lo attraversa; le file di pivot si allacciano a quella.
     let trunk: number[][] | null = null;
@@ -4654,15 +4664,14 @@ export default function Page() {
           // pivot si allacciano al canale con tubazioni
           setBusy("pipes");
           let cn: Canal | null = null;
-          try { cn = await api.fetchCanal(active.geom as Polygon, canalSlope, srcPt, far); } catch { cn = null; }
+          try { cn = await api.fetchCanal(fld.geom as Polygon, canalSlope, srcPt, far); } catch { cn = null; }
           setBusy("");
           const cc = cn?.geojson?.coordinates?.length ? cn.geojson.coordinates : trunk;
           const Lm = Math.round(lineLenKm(cc) * 1000);
           const item: CanalL = cn ? { ...cn, owner: fid, srcTrunk: true }
             : { geojson: { type: "LineString", coordinates: cc }, length_m: Lm, drop_m: 0, mean_permille: canalSlope, target_permille: canalSlope,
                 start: cc[0], end: cc[cc.length - 1], elev_start_m: 0, elev_end_m: 0, profile: [], waypoints: [], owner: fid, srcTrunk: true };
-          const arr = [...canals.filter((c) => !(c.srcTrunk && c.owner === fid)), item];
-          setCanals(arr); renderCanals(arr);
+          canalArr = [...canalArr.filter((c) => !(c.srcTrunk && c.owner === fid)), item];
           trunk = null; line = cc;
         }
       }
@@ -4681,13 +4690,12 @@ export default function Page() {
       trunk = null;
     } else feeders = feederPipes(line, fieldPivs.map((p) => ({ lat: p.lat, lng: p.lng, r: p.r })), pipeMaxPerLine, ring);
     const pipesLL = trunk && feeders.length ? [trunk, ...feeders] : feeders;
-    if (!pipesLL.length) { setMsg(t("Nessuna tubazione tracciabile con questi pivot.")); return; }
+    if (!pipesLL.length) continue;
     const newL = pipesLL.map((coords) => ({ kind: "pipe", coords, field: fid }));
-    const mergedL = [...pivotLines.filter((l) => !(l.kind === "pipe" && l.field === fid)), ...newL];
-    setPivotLines(mergedL);
-    if (guided) setGuided({ ...guided, geojson: fcFromModel(pivots, mergedL) });
+    mergedL = [...mergedL.filter((l) => !(l.kind === "pipe" && l.field === fid)), ...newL];
+    nPipes += pipesLL.length;
     // Lunghezza totale della rete tracciata (utile per confrontare le soluzioni).
-    const km = pipesLL.reduce((s, path) => {
+    kmAll += pipesLL.reduce((s, path) => {
       let L = 0;
       for (let i = 0; i < path.length - 1; i++) {
         const la = ((path[i][1] + path[i + 1][1]) / 2) * Math.PI / 180;
@@ -4697,12 +4705,30 @@ export default function Page() {
       }
       return s + L;
     }, 0) / 1000;
+    }
+    if (canalArr !== canals) { setCanals(canalArr); renderCanals(canalArr); }
+    if (!nPipes) { setMsg(t("Nessuna tubazione tracciabile con questi pivot.")); return; }
+    setPivotLines(mergedL);
+    if (guided) setGuided({ ...guided, geojson: fcFromModel(pivots, mergedL) });
+    const pipesLL = { length: nPipes }, km = kmAll;
     setMsg(mixed
       ? t("Misto: canale principale dalla fonte «{s}» e {n} tubazioni con al massimo {m} pivot per tratta · {km} km di tubi ✓", { n: pipesLL.length, s: feedSrc!.label, m: pipeMaxPerLine, km: fmt(km, { maximumFractionDigits: 1 }) })
       : fromSrc
       ? t("Tubazioni tracciate: {n} rami dalla fonte «{s}» · {km} km ✓", { n: pipesLL.length, s: feedSrc!.label, km: fmt(km, { maximumFractionDigits: 1 }) })
       : t("Tubazioni tracciate: {n} rami dal canale · {km} km ✓", { n: pipesLL.length, km: fmt(km, { maximumFractionDigits: 1 }) }));
   }
+  // Calcolo automatico dei tracciati dopo ogni scelta (fonte, distribuzione, pivot per tratta), su tutti i
+  // poligoni con pivot. Con «Canali» i pivot vanno riposati con i corridoi: lo si segnala soltanto.
+  useEffect(() => {
+    if (!autoRoute) return;
+    const h = window.setTimeout(() => {
+      if (!srcPt || !pivots.length) return;
+      if (distMode === "canals") { setMsg(t("Canali: premi «Inserisci» nella pagina Impianti per posare i pivot in file con i corridoi dei canali.")); return; }
+      void generatePipes(distMode === "mixed", true);
+    }, 700);
+    return () => window.clearTimeout(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRoute]);
   // Linee d'acqua visibili (canali + corsi d'acqua lineari): servono al simbolo
   // della presa e al riaggancio automatico.
   function waterLinesLL(): number[][][] {
@@ -9589,6 +9615,7 @@ export default function Page() {
         const d = w.geojson.type === "Polygon" && pointInPolygon(p, w.geojson.coordinates as number[][][]) ? 0 : e.d - (w.mean_width_m ?? 0) / 2;
         if (d <= tol && (!best || d < best.d)) best = { i, q: e.q, d };
       });
+      setAutoRoute((n) => n + 1);
       if (best) { takeWaterAsSource((best as { i: number }).i, (best as { q: number[] }).q); return; }
       if (srcLabelRef.current.auto) setSrcLabel({ name: "", auto: true });
       setSrcGroup(null);
@@ -10405,7 +10432,7 @@ export default function Page() {
           </div>
         )}
         {w.kind !== "drainage" && !w.bed && (
-          <button className="btn-primary w-full text-[12px] py-1" onClick={() => takeWaterAsSource(i)} data-water-use>
+          <button className="btn-primary w-full text-[12px] py-1" onClick={() => { takeWaterAsSource(i); setAutoRoute((n) => n + 1); }} data-water-use>
             📍 {t("Prendi l'acqua da questo corso")}{waterQAvailLs(w) != null ? ` · ${fmt(waterQAvailLs(w)!)} l/s` : ""}</button>
         )}
 
@@ -10458,6 +10485,38 @@ export default function Page() {
         {/* 1 — fonte */}
         <div className="bg-panel rounded-lg p-2 space-y-2">
           <div className="text-xs font-semibold text-brand-darker">{t("1 · Da dove si prende l'acqua")}</div>
+          {watercourses.some((w) => w.kind !== "drainage" && !w.bed) && (() => {
+            const codes = waterCodes(watercourses);
+            const cand = (watercourses as WaterL[]).map((w, i) => ({ w, i })).filter(({ w }) => w.kind !== "drainage" && !w.bed && !w.hidden);
+            const fams = (["river", "canal", "drain"] as const).map((k) => ({ k, n: cand.filter(({ w }) => w.geojson.type === "LineString" && waterFam(w) === k) }))
+              .filter((g) => g.n.length > 1);
+            const order = (w: WaterL) => (w.geojson.type === "Polygon" ? 3 : ({ river: 0, canal: 1, drain: 2 } as Record<string, number>)[waterFam(w)] ?? 4);
+            const lines = cand.slice().sort((a, b) => order(a.w) - order(b.w) || (b.w.length_m ?? 0) - (a.w.length_m ?? 0));
+            const val = srcGroup ? `g:${srcGroup}` : srcOnWater ? `i:${srcOnWater.i}` : "";
+            return (
+              <label className="block text-[11px] text-sage-dark">{t("Scegli dalla lista dei corsi d'acqua")}
+                <select className="field-input mt-0.5 py-1 text-sm" value={val} data-src-list
+                  onChange={(e) => {
+                    const v = e.target.value; if (!v) return;
+                    if (v.startsWith("g:")) takeGroupAsSource(v.slice(2)); else takeWaterAsSource(Number(v.slice(2)));
+                    setAutoRoute((n) => n + 1);
+                  }}>
+                  <option value="">{t("— scegli —")}</option>
+                  {fams.length > 0 && (
+                    <optgroup label={t("Gruppi")}>
+                      {fams.map(({ k, n }) => <option key={k} value={`g:${k}`}>{t("Tutti i {g}", { g: famName(k).toLowerCase() })} ({n.length} · {uKm(n.reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000, 1)})</option>)}
+                    </optgroup>
+                  )}
+                  <optgroup label={t("Singoli tratti")}>
+                    {lines.map(({ w, i }) => {
+                      const q = waterQAvailLs(w);
+                      return <option key={i} value={`i:${i}`}>{codes[i]}{w.name ? ` · ${w.name}` : ""} · {w.geojson.type === "Polygon" ? waterKindName(w.kind) : uKm((w.length_m ?? 0) / 1000, 1)}{q != null ? ` · ${fmt(q)} l/s` : ""}</option>;
+                    })}
+                  </optgroup>
+                </select>
+              </label>
+            );
+          })()}
           <button className="btn-primary w-full" disabled={busy === "fonte"} data-src-pick
             onClick={srcPicking ? () => { mapApi.current?.pickPoint(null); setSrcPicking(false); } : startPickSource}>
             {srcPicking ? t("Clicca sulla mappa… (Esc annulla)") : srcPt ? t("📍 Sposta il punto di presa") : t("📍 Indica la fonte sulla mappa")}
@@ -10537,7 +10596,7 @@ export default function Page() {
               {([["pipes", t("Tubazioni")], ["canals", t("Canali")], ["mixed", t("Misto")]] as const).map(([k, lb]) => (
                 <div key={k} className="seg-item" data-active={distMode === k} data-dist-mode={k}
                   onClick={() => {
-                    setDistMode(k);
+                    setDistMode(k); setAutoRoute((n) => n + 1);
                     const tp: Transport = k === "canals" ? "canal" : "buried";
                     if (cur.transport !== tp) patch({ transport: tp, slopeIdeal: SLOPE_PM[tp].ideal, slopeMax: SLOPE_PM[tp].max });
                   }}>{lb}</div>
@@ -10551,7 +10610,7 @@ export default function Page() {
             {distMode !== "canals" ? (
               <label className="block text-[11px] text-sage-dark">{t("Pivot al massimo sulla stessa tratta")}
                 <NumInput type="number" min={1} max={100} step={1} value={pipeMaxPerLine} data-dist-perline
-                  onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) setPipeMaxPerLine(Math.max(1, Math.min(100, Math.round(x)))); }}
+                  onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && e.target.value !== "") { setPipeMaxPerLine(Math.max(1, Math.min(100, Math.round(x)))); setAutoRoute((n) => n + 1); } }}
                   className="field-input mt-0.5 py-1 text-sm" /></label>
             ) : (
               <div className="seg" data-canal-rows>
@@ -13377,7 +13436,7 @@ export default function Page() {
                       <button className="px-2 py-1 rounded border border-black/15 bg-white hover:bg-black/5 text-[11px]" data-water-family-group
                         onClick={() => groupWaterFamily(waterFam({ kind: waterSel.kind } as WaterL))}>📁 {t("Unisci in un gruppo")}</button>
                       <button className="btn-primary !py-1 !px-2 text-[11px]" data-water-family-source
-                        onClick={() => takeGroupAsSource(waterFam({ kind: waterSel.kind } as WaterL))}>
+                        onClick={() => { takeGroupAsSource(waterFam({ kind: waterSel.kind } as WaterL)); setAutoRoute((n) => n + 1); }}>
                         📍 {t("Usa tutti i {g} come fonte idrica", { g: famName(waterFam({ kind: waterSel.kind } as WaterL)).toLowerCase() })}</button>
                     </div>
                   )}

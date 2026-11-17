@@ -190,6 +190,12 @@ try {
     ok(/rami dalla fonte «Fiumi \(/.test(gp), `Tubazioni dal gruppo: ${(gp.match(/Tubazioni tracciate[^\n]*/) || ["-"])[0]}`);
     await page.screenshot({ path: path.join(SH, "q8_gruppo.png") });
   } else ok(false, "Gruppo fonte: scheda Fiumi assente");
+  // scelta dalla lista: il tracciato si ricalcola da solo
+  await page.locator("[data-src-list]").selectOption({ index: 3 }).catch(() => {});
+  await page.waitForTimeout(400);
+  await page.waitForFunction(() => /rami dalla fonte «(?!Fiumi)/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+  const al = await page.locator("body").innerText();
+  ok(/Tubazioni tracciate: \d+ rami dalla fonte «(?!Fiumi)/.test(al), `Lista → automatico: ${(al.match(/Tubazioni tracciate[^\n]*/) || ["-"])[0]}`);
   ok(errors.length === 0, `Nessun errore JavaScript${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; await page.screenshot({ path: path.join(SH, "q_err.png") }).catch(() => {}); }
 await browser.close();
