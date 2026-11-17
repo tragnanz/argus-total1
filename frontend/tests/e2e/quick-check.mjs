@@ -248,6 +248,8 @@ try {
   await page.keyboard.press("Escape"); await page.waitForTimeout(300);
   // pivot selezionato: maniglie del raggio, Ctrl+C / Ctrl+V
   await page.locator('button[title="Impianti"]').first().click(); await page.waitForTimeout(800);
+  // la simulazione delle disposizioni gira all'apertura della pagina: si aspetta che finisca (carica la macchina)
+  await page.waitForFunction(() => { const e = document.querySelector("[data-lay-sim]"); return !!e && !/…/.test(e.textContent || ""); }, null, { timeout: 240000 }).catch(() => {});
   // primo clic sul pivot: gruppo; secondo: il singolo (si clicca sull'etichetta, che lascia passare il clic al cerchio)
   const lab = page.locator(".pivot-label").nth(10);
   const lb = (await lab.count()) ? await lab.boundingBox() : null;

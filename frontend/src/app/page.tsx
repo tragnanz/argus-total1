@@ -8,6 +8,7 @@ import { WATER_COL } from "@/lib/water";
 import NumInput from "@/components/NumInput";
 import { joinTouchingWater } from "@/lib/waterjoin";
 import { shortestPipes } from "@/lib/ewpipes";
+import { designPower, type PowerNet, type Level as PwLevel } from "@/lib/power";
 import { useI18n, LANGS, type Lang, translateError, translatorFor } from "@/lib/i18n";
 import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
 import * as api from "@/lib/api";
@@ -23,7 +24,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.308";
+const REV = "v0.6.309";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1668,6 +1669,14 @@ export default function Page() {
   const [pivotSel, setPivotSel] = useState<PivotSel>({ mode: "none", idx: -1 });
   // Livello Strade (linee, con spessore) disegnabile/importabile: i pivot le rispettano.
   const [roads, setRoads] = useState<RoadL[]>([]);
+  // Pagina Strade: tracciato a mano, automatico dagli ingressi sul confine, rete elettrica
+  const [roadMode, setRoadMode] = useState<"manual" | "auto" | "power">("manual");
+  const [roadGates, setRoadGates] = useState<number[][]>([]);              // ingressi delle strade sul confine
+  const [powerPts, setPowerPts] = useState<{ pt: number[]; level: PwLevel }[]>([]);   // punti di consegna dell'energia
+  const [powerLevel, setPowerLevel] = useState<PwLevel>("MT");
+  const powerLevelRef = useRef<PwLevel>("MT"); powerLevelRef.current = powerLevel;
+  const [lvMax, setLvMax] = useState(1000);                                 // distanza massima in bassa tensione (m)
+  const [multiPick, setMultiPick] = useState<"" | "gate" | "power">("");
   const [roadSel, setRoadSelState] = useState<string | null>(null);   // strada in modifica
   // componente cliccato (canale tra le file) e componenti messi nella tavola di disegno
   const [compSel, setCompSel] = useState<{ kind: "canal"; li: number } | null>(null);
@@ -4069,6 +4078,82 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pivotLines, hiddenPivotFields, canalDesTick]);
   // Viabilità di servizio per i pivot del campo attivo (rigenera quella precedente).
+  // ---- Ingressi sul confine e rete elettrica: clic multipli sulla mappa (Esc o il tasto per finire) ----
+  function snapToBoundary(p: number[]): number[] {
+    let best: number[] = p, bd = Infinity;
+    const kx = 111320 * Math.cos((p[1] * Math.PI) / 180), ky = 110540;
+    for (const f of fields) if (!f.hidden && f.parentId == null) for (const ring of f.geom.coordinates as number[][][]) for (let i = 0; i + 1 < ring.length; i++) {
+      const A = ring[i], B = ring[i + 1], vx = (B[0] - A[0]) * kx, vy = (B[1] - A[1]) * ky, l2 = vx * vx + vy * vy || 1e-9;
+      const tt = Math.max(0, Math.min(1, (((p[0] - A[0]) * kx) * vx + ((p[1] - A[1]) * ky) * vy) / l2));
+      const q = [A[0] + (B[0] - A[0]) * tt, A[1] + (B[1] - A[1]) * tt], d = Math.hypot((q[0] - p[0]) * kx, (q[1] - p[1]) * ky);
+      if (d < bd) { bd = d; best = q; }
+    }
+    return bd < 300 ? [Math.round(best[0] * 1e6) / 1e6, Math.round(best[1] * 1e6) / 1e6] : p;
+  }
+  function startMultiPick(kind: "gate" | "power") {
+    if (multiPick === kind) { stopMultiPick(); return; }
+    setMultiPick(kind);
+    const go = () => mapApi.current?.armPick((lon, lat) => {
+      if (kind === "gate") setRoadGates((g) => [...g, snapToBoundary([lon, lat])]);
+      else setPowerPts((ps) => [...ps, { pt: [Math.round(lon * 1e6) / 1e6, Math.round(lat * 1e6) / 1e6], level: powerLevelRef.current }]);
+      go();
+    });
+    go();
+    setMsg(kind === "gate" ? t("Clicca sul confine del campo dove entrano le strade (si aggancia al bordo). Esc per finire.")
+      : t("Clicca dove arriva la corrente elettrica. Esc per finire."));
+  }
+  function stopMultiPick() { setMultiPick(""); mapApi.current?.disarmPick(); }
+  useEffect(() => {
+    if (!multiPick) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") stopMultiPick(); };
+    window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multiPick]);
+  useEffect(() => { if (tab !== "strade" && multiPick) stopMultiPick(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tab]);
+  // Strade dagli ingressi: per ogni campo con pivot, la rete più corta che dagli ingressi arriva al centro di ogni pivot
+  function genAccessRoads() {
+    if (!roadGates.length) { setMsg(t("Segna prima gli ingressi sul confine.")); return; }
+    const gl = roadGates.map((g) => [g, [g[0] + 1e-7, g[1]]]);
+    const stamp = Date.now() % 1e7; const add: RoadL[] = []; let km = 0;
+    for (const f of fields) {
+      const pv = pivots.filter((p) => p.field === f.id); if (!pv.length) continue;
+      const res = shortestPipes(gl, pv.map((p) => ({ lng: p.lng, lat: p.lat })), pv.length);
+      res.pipes.forEach((c, i) => add.push({ id: `acc${stamp}_${f.id}_${i}`, coords: c, width_m: roadWidth, owner: f.id, kind: "service" }));
+      km += res.lengthM / 1000;
+    }
+    if (!add.length) { setMsg(t("Nessun pivot da raggiungere: inserisci prima i pivot.")); return; }
+    setRoads((rs) => [...rs.filter((r) => !r.id.startsWith("acc")), ...add]);
+    setMsg(t("Strade dagli ingressi: {n} tratti, {km}, fino al centro di ogni pivot.", { n: add.length, km: uKm(km) }));
+  }
+  // Rete elettrica dai punti di consegna (AT, MT, BT) ai pivot e alle stazioni di pompaggio, lungo strade e tubi
+  const powerCache = useRef<{ sig: string; net: PowerNet } | null>(null);
+  function powerNetNow(stations?: PStation[]): PowerNet | null {
+    if (!powerPts.length) return null;
+    const st = (stations ?? pumpStationsList()).filter((s) => !s.pick?.diesel);
+    const loads = [
+      ...st.map((s) => ({ pt: s.pt, kW: s.pick ? s.pick.motor * s.nDuty : s.kW, name: s.name })),
+      ...pivots.map((pv, k) => ({ pv, k })).filter((x) => !x.pv.solar).map(({ pv, k }) => ({ pt: [pv.lng, pv.lat], kW: pivotKw(pv), name: `P${k + 1}` })),
+    ].filter((l): l is { pt: number[]; kW: number; name: string } => !!l.pt && l.kW > 0);
+    const lines = [...roads.filter((r) => !r.hidden).map((r) => r.coords), ...pivotLines.filter((l) => l.kind === "pipe").map((l) => l.coords)];
+    const sig = JSON.stringify([powerPts, loads.map((l) => [l.pt, Math.round(l.kW * 10)]), lines.length, lines.reduce((a, l) => a + l.length, 0), lines[0]?.[0], lvMax]);
+    if (powerCache.current?.sig === sig) return powerCache.current.net;
+    const net = designPower(powerPts, loads, lines, { lvMax });
+    powerCache.current = { sig, net };
+    return net;
+  }
+  // sulla mappa: ingressi, punti di consegna, cabine e linee (in ogni pagina, se ci sono)
+  useEffect(() => {
+    if (!powerPts.length && !roadGates.length) { mapApi.current?.showPower?.(null); return; }
+    const PN = powerNetNow();
+    const lab: Record<string, string> = { AT: t("Alta tensione"), MT: t("Media tensione"), BT: t("Bassa tensione") };
+    mapApi.current?.showPower?.({
+      pts: powerPts.map((p, i) => ({ ll: p.pt, level: p.level, label: `${lab[p.level]} · ${t("punto di consegna")} ${i + 1} (${t("clic destro per togliere")})`, onRemove: () => setPowerPts((ps) => ps.filter((_, k) => k !== i)) })),
+      cabins: (PN?.cabins ?? []).filter((c) => c.bt == null).map((c, i) => ({ ll: c.pt, label: `${t("Cabina MT/BT")} C${i + 1} · ${fmt(c.kVA)} kVA · ${fmt(Math.round(c.kW))} kW · ${c.loads.length} ${t("utenze")}` })),
+      mt: (PN?.mt ?? []).map((m) => m.coords), lv: (PN?.lv ?? []).map((r) => r.coords),
+      gates: roadGates.map((g, i) => ({ ll: g, onRemove: () => setRoadGates((gs) => gs.filter((_, k) => k !== i)) })),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [powerPts, roadGates, pivots, roads, pivotLines, lvMax, tapVer, lang]);
   function genServiceRoads() {
     if (!active) return needField();
     const fid = active.id;
@@ -4099,12 +4184,12 @@ export default function Page() {
     const lons = ring.map((p) => p[0]), lats = ring.map((p) => p[1]);
     const m = 0.005;                                    // margine ~500 m
     const s0 = Math.min(...lats) - m, w0 = Math.min(...lons) - m, n0 = Math.max(...lats) + m, e0 = Math.max(...lons) + m;
-    setBusy("osm"); setMsg(t("Ricerca strade OpenStreetMap…"));
+    setBusy("osm"); setMsg(t("Ricerca strade cartografate…"));
     try {
       const q = `[out:json][timeout:25];way["highway"](${s0},${w0},${n0},${e0});out geom;`;
       const r = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: "data=" + encodeURIComponent(q),
         headers: { "Content-Type": "application/x-www-form-urlencoded" } });
-      if (!r.ok) throw new Error(`OpenStreetMap ${r.status}`);
+      if (!r.ok) throw new Error(`${t("Servizio cartografico")} ${r.status}`);
       const js = await r.json();
       const inBox = (p: number[]) => p[0] >= w0 && p[0] <= e0 && p[1] >= s0 && p[1] <= n0;
       const have = new Set(roads.map((x) => x.id));
@@ -4119,9 +4204,9 @@ export default function Page() {
         for (const p of coords) { if (inBox(p)) cur.push(p); else flush(); }
         flush();
       }
-      if (!add.length) { setMsg(t("Nessuna strada OpenStreetMap in quest'area.")); return; }
+      if (!add.length) { setMsg(t("Nessuna strada cartografata in quest'area.")); return; }
       setRoads((rs) => [...rs, ...add]);
-      setMsg(t("Strade OpenStreetMap trovate: {n}.", { n: add.length }));
+      setMsg(t("Strade cartografate trovate: {n}.", { n: add.length }));
     } catch (e) { showErr(e); } finally { setBusy(""); }
   }
   function removeRoad(i: number) { setRoads((rs) => rs.filter((_, k) => k !== i)); }
@@ -6550,7 +6635,16 @@ export default function Page() {
       R.push({ cat: cE, item: `${tx("Quadro di comando delle pompe")} · ${pn.name}`, qty: 1, unit: tx("n."), note: `${pn.n} × ${fx(pn.kWp, { maximumFractionDigits: 1 })} kW` });
       if (pn.inverter) R.push({ cat: cE, item: `${tx("Inverter")} ${fx(pn.kWp, { maximumFractionDigits: 1 })} kW`, qty: pn.n, unit: tx("n.") });
     }
-    if (G.supply === "mt") R.push({ cat: cE, item: tx("Cabina di trasformazione MT/BT"), qty: G.kva, unit: "kVA", note: `${fx(Math.round(G.kW))} kW` });
+    const PN = powerNetNow(stl);
+    if (PN && (PN.cabins.length || PN.mt.length)) {
+      if (PN.atStations) R.push({ cat: cE, key: "power", item: tx("Stazione di trasformazione AT/MT"), qty: PN.atStations, unit: tx("n.") });
+      const mtBy = new Map<number, number>(); for (const m of PN.mt) mtBy.set(m.sec, (mtBy.get(m.sec) ?? 0) + m.L);
+      for (const [sec, m] of [...mtBy].sort((a, b) => a[0] - b[0])) R.push({ cat: cE, key: "power", item: tx("Linea MT interrata 20 kV, cavo Al 3×1×{s} mm²", { s: sec }), qty: Math.round(m * 1.03), unit: "m", note: tx("lungo strade e tubi, +3% di scorta") });
+      const cabBy = new Map<number, number>(); for (const c of PN.cabins) if (c.bt == null) cabBy.set(c.kVA, (cabBy.get(c.kVA) ?? 0) + 1);
+      for (const [kva, n] of [...cabBy].sort((a, b) => a[0] - b[0])) R.push({ cat: cE, key: "power", item: tx("Cabina di trasformazione MT/BT da {k} kVA", { k: fx(kva) }), qty: n, unit: tx("n.") });
+      const nBt = PN.cabins.filter((c) => c.bt != null).length;
+      if (nBt) R.push({ cat: cE, key: "power", item: tx("Punto di consegna in bassa tensione"), qty: nBt, unit: tx("n.") });
+    } else if (G.supply === "mt") R.push({ cat: cE, item: tx("Cabina di trasformazione MT/BT"), qty: G.kva, unit: "kVA", note: `${fx(Math.round(G.kW))} kW` });
     else if (G.supply === "bt") R.push({ cat: cE, item: tx("Punto di consegna in bassa tensione"), qty: Math.round(G.kW), unit: "kW" });
     else if (G.supply === "gen") R.push({ cat: cE, item: tx("Gruppo elettrogeno"), qty: G.kva, unit: "kVA" });
     // Pezzi speciali della rete e attacchi dei pivot
@@ -8130,8 +8224,11 @@ export default function Page() {
   }
   function cableRuns(stations?: PStation[]): CableRun[] {
     const out: CableRun[] = [];
-    const route = netPaths();
     const st = stations ?? pumpStationsList();
+    // rete elettrica progettata nella pagina Strade: la bassa tensione viene da lì (dalle cabine ai carichi)
+    const PN = powerNetNow(st);
+    if (PN && PN.lv.length) return PN.lv.map((r) => { const L = Math.max(10, Math.round(r.L * 1.03)); return { name: `${tx("alimentazione")} · ${r.name}`, kW: r.kW, L, ...cableFor(r.kW, L), coords: r.coords }; });
+    const route = netPaths();
     for (const s of st) {
       if (s.pick?.diesel) continue;                                  // motopompa: niente linea elettrica
       const kW = s.pick ? s.pick.motor * s.nDuty : s.kW;
@@ -8597,7 +8694,15 @@ export default function Page() {
         R.push({ codice: "ARGUS-QUADRO-POMPE", quantita: 1, unita: "pz", descrizione: `Quadro di comando e protezione · ${pn.name} · ${pn.n} × ${it(pn.kWp, 1)} kW` });
         if (pn.inverter) R.push({ codice: "ARGUS-INVERTER", quantita: pn.n, unita: "pz", descrizione: `Inverter per pompa da ${it(pn.kWp, 1)} kW (velocità variabile)` });
       }
-      if (G.supply === "mt") R.push({ codice: "ARGUS-CABINA-MT", quantita: 1, unita: "pz", descrizione: `Cabina di trasformazione MT/BT da ${it(G.kva)} kVA (${it(G.kW)} kW installati)` });
+      const PN = powerNetNow(stations);
+      if (PN && (PN.cabins.length || PN.mt.length)) {
+        if (PN.atStations) R.push({ codice: "ARGUS-STAZIONE-AT-MT", quantita: PN.atStations, unita: "pz", descrizione: "Stazione di trasformazione AT/MT" });
+        const mtBy = new Map<number, number>(); for (const m of PN.mt) mtBy.set(m.sec, (mtBy.get(m.sec) ?? 0) + m.L);
+        for (const [sec, m] of mtBy) R.push({ codice: `ARGUS-LINEA-MT-${sec}`, quantita: Math.round(m * 1.03), unita: "m", descrizione: `Linea MT interrata 20 kV, cavo Al 3×1×${sec} mm²` });
+        for (const c of PN.cabins) if (c.bt == null) R.push({ codice: "ARGUS-CABINA-MT", quantita: 1, unita: "pz", descrizione: `Cabina di trasformazione MT/BT da ${it(c.kVA)} kVA (${it(Math.round(c.kW))} kW serviti)` });
+        const nBt = PN.cabins.filter((c) => c.bt != null).length;
+        if (nBt) R.push({ codice: "ARGUS-CONSEGNA-BT", quantita: nBt, unita: "pz", descrizione: "Punto di consegna in bassa tensione con quadro generale" });
+      } else if (G.supply === "mt") R.push({ codice: "ARGUS-CABINA-MT", quantita: 1, unita: "pz", descrizione: `Cabina di trasformazione MT/BT da ${it(G.kva)} kVA (${it(G.kW)} kW installati)` });
       else if (G.supply === "bt") R.push({ codice: "ARGUS-CONSEGNA-BT", quantita: 1, unita: "pz", descrizione: `Punto di consegna in bassa tensione con quadro generale (${it(G.kW)} kW installati)` });
       else if (G.supply === "gen") R.push({ codice: "ARGUS-GRUPPO-ELETTROGENO", quantita: 1, unita: "pz", descrizione: `Gruppo elettrogeno da ${it(G.kva)} kVA per le ore senza sole` });
       add("Quadri ed energia", R);
@@ -9880,6 +9985,9 @@ export default function Page() {
       const ps = (st as { pivot_slope?: { on?: boolean; manual?: boolean; max?: number; tol?: number } }).pivot_slope;
       setFreeLayout((st as { free_layout?: boolean }).free_layout !== false);
       setPivSlope({ on: typeof ps?.on === "boolean" ? ps.on : true, manual: !!ps?.manual, max: num(ps?.max, 12) || 12, tol: num(ps?.tol, 5) }); }
+    { const pw = (st as { power?: { pts?: { pt: number[]; level: PwLevel }[]; lvMax?: number; gates?: number[][] } }).power ?? {};
+      setPowerPts(Array.isArray(pw.pts) ? pw.pts.filter((x) => Array.isArray(x?.pt) && ["AT", "MT", "BT"].includes(x.level)) : []);
+      setLvMax(num(pw.lvMax, 1000) || 1000); setRoadGates(Array.isArray(pw.gates) ? pw.gates.filter((g) => Array.isArray(g) && g.length >= 2) : []); }
     const sy = (st as { systems?: Record<string, SysDesign> }).systems;
     setSysDesigns(sy && typeof sy === "object" ? sy : {});
     projSaved.current = "";   // il primo salvataggio allinea le chiavi mancanti
@@ -9891,7 +9999,8 @@ export default function Page() {
     if (projectId == null || projLoaded.current !== projectId) return;
     const payload = { pivot_brand: pivotBrand, span_vmax: spanVmax, water_rules: waterRules, pivot_slope: pivSlope, free_layout: freeLayout, fonte: fonteState(), terra: { mounds: mounds.map((m) => [m.lon, m.lat, m.d, m.man ? 1 : 0]), cfg: termCfg, meta: termMeta, track: trackRes, ground: ground.map(({ flags: _f, ...L }) => L) }, terrain: { dem: demModel, smooth: demSmooth },
       crops: { base: farmCrops, fields: fieldCrops }, solar_pv: solarCfg, canal_design: { lin: canalLin, q: canalQ, fb: canalFb }, cu_model: cuModel, fert, ndvi, drain: { on: drainOn, c: drainC, s: drainS, b: drainB, prof: drainProf }, soil_sat: soilSat, irr_prog: { root: rootDepth, p: rawP, v100 },
-      systems: Object.fromEntries(Object.entries(sysDesigns).filter(([k]) => k.startsWith("a"))) };
+      systems: Object.fromEntries(Object.entries(sysDesigns).filter(([k]) => k.startsWith("a"))),
+      power: { pts: powerPts, lvMax, gates: roadGates } };
     const js = JSON.stringify(payload);
     if (js === projSaved.current) return;
     const pid = projectId;
@@ -9903,7 +10012,7 @@ export default function Page() {
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, pivotBrand, waterRules, pivSlope, freeLayout, mounds, termCfg, termMeta, trackRes, ground, srcPt, srcRoute, srcType, srcLabel, srcQmax, srcHours, srcRange, srcSediment, srcEnergy, pumpDrive, srcMonthly, srcSectors, stQmax,
-    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, fert, ndvi, drainOn, drainC, drainS, drainB, drainProf, soilSat, rootDepth, rawP, v100, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
+    resDepth, resDays, resEvapK, wtwEta, canalSlope, bankSlope, settleMm, filterCap, wellQ, srcShown, river, demModel, demSmooth, spanVmax, sysDesigns, powerPts, lvMax, roadGates, farmCrops, fieldCrops, solarCfg, canalLin, canalQ, canalFb, cuModel, fert, ndvi, drainOn, drainC, drainS, drainB, drainProf, soilSat, rootDepth, rawP, v100, cableM, costKwh, costDiesel, dieselLkWh, genShare, costMaintKw, costPvOm, costBattKwh, battLife]);
   useEffect(() => {
     if (projectId == null || projLoaded.current !== projectId || (!pivots.length && !fields.length)) return;
     const h = window.setTimeout(() => { void siteClimateCached(); }, 2500);
@@ -13793,6 +13902,68 @@ export default function Page() {
 
             {/* Livello Strade: linee disegnabili/importabili che i pivot rispettano */}
             <div className="bg-panel rounded-lg p-2">
+              <div className="seg mb-2" data-road-mode>
+                {([["manual", t("A mano")], ["auto", t("Dagli ingressi")], ["power", t("Rete elettrica")]] as const).map(([k, l]) => (
+                  <div key={k} className="seg-item" data-active={roadMode === k} data-road-mode-k={k} onClick={() => { setRoadMode(k); stopMultiPick(); }}>{l}</div>
+                ))}
+              </div>
+              {roadMode === "auto" && (
+                <div className="space-y-2 mb-2" data-road-auto>
+                  <p className="text-[11px] text-sage-dark leading-snug">{t("Segna sul confine i punti dove entrano le strade: il programma traccia la rete più corta che da quei punti arriva al centro di ogni pivot.")}</p>
+                  <div className="flex gap-2">
+                    <button className={(multiPick === "gate" ? "btn-primary" : "btn-ghost") + " flex-1 basis-0"} data-road-gate-pick onClick={() => startMultiPick("gate")}>
+                      {multiPick === "gate" ? t("Fine (Esc)") : t("Segna ingressi")}</button>
+                    <button className="btn-primary flex-1 basis-0" data-road-auto-go disabled={!roadGates.length || !pivots.length} onClick={genAccessRoads}>{t("Traccia le strade")}</button>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-sage-dark">
+                    <span className="flex-1">{t("{n} ingressi", { n: roadGates.length })}{roadGates.length ? ` · ${t("clic destro su un ingresso per toglierlo")}` : ""}</span>
+                    {roadGates.length > 0 && <button className="text-danger" onClick={() => setRoadGates([])}>{t("Togli tutti")}</button>}
+                  </div>
+                </div>
+              )}
+              {roadMode === "power" && (() => {
+                const PN = powerNetNow();
+                const lab: Record<PwLevel, string> = { AT: t("Alta tensione"), MT: t("Media tensione"), BT: t("Bassa tensione") };
+                const mtKm = (PN?.mt ?? []).reduce((a, m) => a + m.L, 0) / 1000, lvKm = (PN?.lv ?? []).reduce((a, r) => a + r.L, 0) / 1000;
+                const nCab = (PN?.cabins ?? []).filter((c) => c.bt == null).length, kW = (PN?.cabins ?? []).reduce((a, c) => a + c.kW, 0);
+                return (
+                  <div className="space-y-2 mb-2" data-power>
+                    <p className="text-[11px] text-sage-dark leading-snug">{t("Segna dove arriva la corrente e il livello di tensione. Le cabine MT/BT si mettono vicino ai carichi; la media tensione va dai punti di consegna alle cabine, la bassa tensione dalle cabine a pivot e pompe, lungo strade e tubi.")}</p>
+                    <div className="flex gap-2 items-center">
+                      <div className="seg flex-1">
+                        {(["AT", "MT", "BT"] as const).map((lv) => <div key={lv} className="seg-item" data-active={powerLevel === lv} onClick={() => setPowerLevel(lv)} title={lab[lv]}>{lv}</div>)}
+                      </div>
+                      <button className={(multiPick === "power" ? "btn-primary" : "btn-ghost") + " shrink-0"} data-power-pick onClick={() => startMultiPick("power")}>
+                        {multiPick === "power" ? t("Fine (Esc)") : t("Segna consegna")}</button>
+                    </div>
+                    {powerPts.length > 0 && (
+                      <ul className="space-y-0.5">
+                        {powerPts.map((p, i) => (
+                          <li key={i} className="flex items-center gap-1.5 text-[11px] bg-white/60 rounded px-1.5 py-0.5" data-power-row>
+                            <span className="text-brand-darker flex-1 truncate">⚡ {t("Consegna")} {i + 1}</span>
+                            <select className="field-input py-0 text-[11px] w-auto" value={p.level} onChange={(e) => setPowerPts((ps) => ps.map((q, k) => (k === i ? { ...q, level: e.target.value as PwLevel } : q)))}>
+                              {(["AT", "MT", "BT"] as const).map((lv) => <option key={lv} value={lv}>{lv} · {lab[lv]}</option>)}
+                            </select>
+                            <button className="text-brand-mid" title={t("Zoom")} onClick={() => mapApi.current?.flyTo(p.pt[1], p.pt[0], 15)}>⌖</button>
+                            <button className="text-danger" title={t("Rimuovi")} onClick={() => setPowerPts((ps) => ps.filter((_, k) => k !== i))}>✕</button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <label className="flex items-center gap-2 text-[11px] text-sage-dark">
+                      <span className="flex-1">{t("Distanza massima in bassa tensione (m)")}</span>
+                      <NumInput type="number" min={100} max={3000} step={50} value={lvMax} onChange={(e) => { const x = Number(e.target.value); if (x >= 100) setLvMax(Math.min(3000, x)); }} className="field-input w-20 py-0.5" />
+                    </label>
+                    {PN && (
+                      <div className="text-[11px] bg-white/60 rounded p-1.5 leading-relaxed" data-power-sum>
+                        <b className="text-brand-darker">{t("{n} cabine MT/BT", { n: nCab })}</b>{PN.atStations ? ` · ${t("{n} stazioni AT/MT", { n: PN.atStations })}` : ""} · {t("media tensione")} {uKm(mtKm, 2)} · {t("bassa tensione")} {uKm(lvKm, 2)} · {fmt(Math.round(kW))} kW
+                        {PN.unserved.length > 0 && <div className="text-danger">{t("{n} utenze non servite: aggiungi un punto MT o AT, o aumenta la distanza in bassa tensione.", { n: PN.unserved.length })}</div>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+              {roadMode === "manual" && (<>
               <div className="text-xs font-semibold text-sage-dark mb-2">{t("Strade")} · {roads.length}</div>
               <div className="flex gap-2">
                 <button className="btn-primary flex-1 basis-0" onClick={drawRoad}>{t("Traccia strada")}</button>
@@ -13803,8 +13974,9 @@ export default function Page() {
                 <button className="btn-ghost flex-1 basis-0" onClick={genServiceRoads}
                   title={t("Strade nei corridoi tra le file di pivot, con raccordi ortogonali al centro di ogni pivot e accesso dal bordo del campo o dalla strada esistente più vicina. Non contano come ostacolo per il layout.")}>{t("Genera strade di servizio")}</button>
                 <button className="btn-ghost flex-1 basis-0" disabled={busy === "osm"} onClick={detectOsmRoads}
-                  title={t("Strade e piste già mappate su OpenStreetMap attorno al campo attivo. La copertura varia: nelle zone rurali molte piste mancano.")}>{busy === "osm" ? "…" : t("Rileva strade esistenti (OSM)")}</button>
+                  title={t("Strade e piste già cartografate attorno al campo attivo. La copertura varia: nelle zone rurali molte piste mancano.")}>{busy === "osm" ? "…" : t("Rileva strade esistenti")}</button>
               </div>
+              </>)}
               <input ref={roadFileRef} type="file" accept=".geojson,.json,.kml,.kmz" multiple className="hidden"
                 onChange={(e) => { importRoads(e.target.files); if (e.target) e.target.value = ""; }} />
               <label className="flex items-center gap-2 text-[11px] text-sage-dark mt-1">
@@ -13816,7 +13988,7 @@ export default function Page() {
                 ? null
                 : (
                   <ul className="space-y-1 mt-1">
-                    {([["service", t("Strade di servizio")], ["osm", t("Strade OpenStreetMap")], ["existing", t("Strade esistenti")]] as [string, string][]).map(([kind, label]) => {
+                    {([["service", t("Strade di servizio")], ["osm", t("Strade cartografate")], ["existing", t("Strade esistenti")]] as [string, string][]).map(([kind, label]) => {
                       const items = roads.map((r, i) => ({ r, i })).filter((x) => (x.r.kind ?? "existing") === kind);
                       if (!items.length) return null;
                       const ids = new Set(items.map((x) => x.r.id));

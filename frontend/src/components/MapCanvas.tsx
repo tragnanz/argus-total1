@@ -103,6 +103,9 @@ export type MapHandle = {
   endPipeEdit: () => void;
   clearPivots: () => void;
   showDrops?: (pts: { ll: number[]; label: string }[]) => void;      // salti di quota dei canali
+  // rete elettrica: punti di consegna (AT/MT/BT), cabine, linee MT e BT; ingressi delle strade sul confine
+  showPower?: (d: { pts: { ll: number[]; level: string; label: string; onRemove?: () => void }[]; cabins: { ll: number[]; label: string }[];
+    mt: number[][][]; lv: number[][][]; gates: { ll: number[]; onRemove?: () => void }[] } | null) => void;
   showRoads: (roads: { coords: number[][]; width_m?: number; kind?: string }[], onRemove?: (i: number) => void) => void;
   drawRoadManual: (cb: (coords: number[][]) => void) => void;
   clearRoads: () => void;
@@ -272,6 +275,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   const drawModeRef = useRef<"river" | "canal" | "basin" | "canal-manual" | "road-manual" | "pipe-manual" | null>(null);
   const roadsRef = useRef<L.LayerGroup | null>(null);
   const dropsRef = useRef<L.LayerGroup | null>(null);
+  const powerRef = useRef<L.LayerGroup | null>(null);
   const hydroRef = useRef<L.LayerGroup | null>(null);
   const roadManualCbRef = useRef<((coords: number[][]) => void) | null>(null);
   const waterRemoveRef = useRef(false);
@@ -1214,6 +1218,31 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         try { (map as any).pm.enableDraw("Line", { allowSelfIntersection: true }); } catch { /* */ }
       },
       clearRoads() { roadsRef.current?.clearLayers(); },
+      showPower(d) {
+        const map = mapRef.current; if (!map) return;
+        if (!powerRef.current) powerRef.current = L.layerGroup().addTo(map);
+        const g = powerRef.current; g.clearLayers();
+        if (!d) return;
+        const LL = (c: number[][]) => c.map((q) => [q[1], q[0]] as [number, number]);
+        for (const c of d.lv) g.addLayer(L.polyline(LL(c), { color: "#f59e0b", weight: 2, opacity: 0.9, interactive: false, className: "pw-lv" }));
+        for (const c of d.mt) g.addLayer(L.polyline(LL(c), { color: "#dc2626", weight: 3.5, opacity: 0.95, dashArray: "10 6", interactive: false, className: "pw-mt" }));
+        const col: Record<string, string> = { AT: "#7c2d12", MT: "#dc2626", BT: "#f59e0b" };
+        for (const p of d.pts) {
+          const m = L.marker([p.ll[1], p.ll[0]], { zIndexOffset: 900, icon: L.divIcon({ className: "", iconSize: [26, 26], iconAnchor: [13, 13],
+            html: `<div data-pw-pt style="width:26px;height:26px;border-radius:50%;background:${col[p.level] ?? "#dc2626"};border:2px solid #fff;color:#fff;font:700 9px/22px system-ui;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.5)">⚡${p.level}</div>` }) })
+            .bindTooltip(p.label, { direction: "top" });
+          if (p.onRemove) m.on("contextmenu", () => p.onRemove!());
+          g.addLayer(m);
+        }
+        for (const c of d.cabins) g.addLayer(L.marker([c.ll[1], c.ll[0]], { zIndexOffset: 850, icon: L.divIcon({ className: "", iconSize: [16, 16], iconAnchor: [8, 8],
+          html: '<div data-pw-cab style="width:16px;height:16px;background:#fff;border:3px solid #dc2626;box-shadow:0 1px 3px rgba(0,0,0,.5)"></div>' }) }).bindTooltip(c.label, { direction: "top" }));
+        for (const q of d.gates) {
+          const m = L.marker([q.ll[1], q.ll[0]], { zIndexOffset: 880, icon: L.divIcon({ className: "", iconSize: [16, 16], iconAnchor: [8, 8],
+            html: '<div data-road-gate style="width:16px;height:16px;transform:rotate(45deg);background:#57534e;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.5)"></div>' }) });
+          if (q.onRemove) m.on("contextmenu", () => q.onRemove!());
+          g.addLayer(m);
+        }
+      },
       showDrops(pts) {
         const map = mapRef.current; if (!map) return;
         if (!dropsRef.current) dropsRef.current = L.layerGroup().addTo(map);
