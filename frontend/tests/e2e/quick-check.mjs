@@ -225,6 +225,8 @@ try {
   });
   if (ptOnPipe) { await page.mouse.click(ptOnPipe.x, ptOnPipe.y); await page.waitForTimeout(600); }
   const selTxt = await page.locator("body").innerText();
+  const cardP = (await page.locator("[data-comp-card]").count()) ? await page.locator("[data-comp-card]").innerText() : "";
+  ok(/DN \d+ · [\d.,]+ l\/s/.test(cardP) && !/DN – /.test(cardP), `DN dalla portata dei pivot: ${(cardP.match(/DN [^\n]*/) || ["-"])[0]}`);
   ok(!!ptOnPipe && /Tubazione · selezionato/.test(selTxt), `Clic sul tubo: ${(selTxt.match(/(Tubazione|Pivot P\d+) · selezionato/) || ["nessuna selezione"])[0]}`);
   await page.keyboard.press("Escape"); await page.waitForTimeout(300);
   // pivot selezionato: maniglie del raggio, Ctrl+C / Ctrl+V
@@ -234,7 +236,7 @@ try {
   const lb = (await lab.count()) ? await lab.boundingBox() : null;
   if (lb) {
     // si clicca dentro il cerchio ma lontano dal centro (dove arrivano le tubazioni): si prova qualche punto
-    const offs = [[28, -28], [-28, -28], [28, 18], [-28, 18], [0, -36], [36, 0], [-36, 0]];
+    const offs = [[28, -28], [-28, -28], [28, 18], [-28, 18], [0, -36], [36, 0], [-36, 0], [40, -40], [-40, -40], [40, 30], [-40, 30], [0, 45], [50, 0], [-50, 0]];
     let off = offs[0];
     for (const o of offs) {
       await page.keyboard.press("Escape"); await page.waitForTimeout(200);

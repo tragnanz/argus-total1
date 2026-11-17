@@ -46,6 +46,7 @@ export type PivotCbs = {
   onLineClick?: (idx: number) => void;   // clic su una tubazione (per modificarla)
   onCanalClick?: (idx: number) => void;  // clic su un canale (scheda del componente)
   onTapClick?: (lng: number, lat: number) => void;   // clic su una presa (stazione di pompaggio sul corso)
+  onTapMove?: (lng0: number, lat0: number, lng: number, lat: number) => void;   // presa trascinata
   tapTip?: (lng: number, lat: number) => string;     // descrizione della presa nel tooltip
 };
 // colori dei corsi d'acqua per tipo
@@ -941,13 +942,14 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             const size = isSinglePipe || pipeGroup ? 13 : 11;
             for (const q of taps) {
               const mk = L.marker([q[1], q[0]], {
-                interactive: !!cbs.onTapClick, zIndexOffset: 900,
+                interactive: !!cbs.onTapClick, draggable: !!cbs.onTapMove, zIndexOffset: 900,
                 icon: L.divIcon({ className: "", iconSize: [size, size], iconAnchor: [size / 2, size / 2],
                   html: '<div data-tap style="width:' + size + 'px;height:' + size + 'px;background:#b23b1e;border:2px solid #fff;cursor:pointer;'
                     + 'box-shadow:0 0 0 1px rgba(13,59,38,.5);border-radius:2px"></div>' }),
               });
               if (cbs.onTapClick) {
                 mk.on("click", (e) => { L.DomEvent.stop(e); cbs.onTapClick!(q[0], q[1]); });
+                if (cbs.onTapMove) mk.on("dragend", (e) => { const ll = (e.target as L.Marker).getLatLng(); cbs.onTapMove!(q[0], q[1], ll.lng, ll.lat); });
                 const tip = cbs.tapTip?.(q[0], q[1]); if (tip) mk.bindTooltip(tip, { direction: "top", offset: [0, -6] });
               }
               g.addLayer(mk);

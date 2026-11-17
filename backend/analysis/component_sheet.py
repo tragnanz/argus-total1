@@ -12,7 +12,7 @@ import os
 from datetime import date
 
 from .canal_design import design_canal, terrain_profile
-from .report import _ASSETS, _shape
+from .report import _ASSETS, _SAT_CREDIT, _satellite_bg, _shape, _unmerc
 
 IT = {
     "kicker": "TAVOLA DI PROGETTO",
@@ -87,6 +87,13 @@ def build_component_sheet(client, doc: dict) -> bytes:
     fig = plt.figure(figsize=(16.54, 11.69))
     names = " + ".join(f"{L[c['type']]} {c.get('name') or ''}".strip() for c in comps)
     fig.text(0.035, 0.955, S(L["kicker"]), fontsize=8.5, color=BLUE, fontweight="bold", family=famH)
+    # marchio Agrostar in alto a destra
+    logo_p = os.path.join(_ASSETS, "agrostar-logo.png")
+    logo_img = None
+    if os.path.exists(logo_p):
+        from PIL import Image as _PI
+        logo_img = np.asarray(_PI.open(logo_p).convert("RGBA"))
+        la = fig.add_axes([0.875, 0.905, 0.09, 0.075]); la.imshow(logo_img); la.axis("off")
     fig.text(0.035, 0.925, S(names), fontsize=19, color=NAVY, fontweight="bold", family=famH)
     sub = []
     if canal:
@@ -105,7 +112,27 @@ def build_component_sheet(client, doc: dict) -> bytes:
     span = max(max(xs) - min(xs), max(ys) - min(ys), 200.0)
     pad = span * 0.12 + 60
     x0, x1, y0, y1 = min(xs) - pad, max(xs) + pad, min(ys) - pad, max(ys) + pad
+    # il riquadro della pianta prende la forma del box (0,52 × 0,51 del foglio): l'ortofoto lo riempie tutto
+    box_r = (0.52 * 16.54) / (0.51 * 11.69)
+    if (x1 - x0) / (y1 - y0) > box_r:
+        d = ((x1 - x0) / box_r - (y1 - y0)) / 2; y0 -= d; y1 += d
+    else:
+        d = ((y1 - y0) * box_r - (x1 - x0)) / 2; x0 -= d; x1 += d
     pa = fig.add_axes([0.035, 0.37, 0.52, 0.51]); pa.set_aspect("equal")
+    # ortofoto sotto la pianta (Esri World Imagery): se le tessere non arrivano resta il fondo bianco
+    sat = False
+    try:
+        lon_a, lon_b = lon0 + x0 / kx, lon0 + x1 / kx
+        lat_a, lat_b = lat0 + y0 / ky, lat0 + y1 / ky
+        img, ext = _satellite_bg(lon_a, lat_a, lon_b, lat_b, max_tiles=64, max_px=1800, budget_s=20.0)
+        if img is not None:
+            left, right, bottom, top = ext
+            wl, sb_ = _unmerc(left, bottom); er, nt = _unmerc(right, top)
+            (xl, yb), (xr, yt) = P((wl, sb_)), P((er, nt))
+            pa.imshow(np.asarray(img.convert("RGB")), extent=[xl, xr, yb, yt], zorder=0, interpolation="bilinear")
+            img.close(); sat = True
+    except Exception:  # noqa: BLE001
+        sat = False
     ctx = doc.get("context") or {}
     ring = ctx.get("field_ring")
     if ring:
@@ -113,8 +140,8 @@ def build_component_sheet(client, doc: dict) -> bytes:
     for (lo, la, r) in ctx.get("pivots") or []:
         cx, cy = P((lo, la))
         if x0 - r < cx < x1 + r and y0 - r < cy < y1 + r:
-            pa.add_patch(Circle((cx, cy), r, fc="#16a34a18", ec="#15803d", lw=0.6))
-            pa.plot([cx], [cy], marker="^", ms=4, color="#15803d")
+            pa.add_patch(Circle((cx, cy), r, fc="#16a34a22" if sat else "#16a34a18", ec="#ffffff" if sat else "#15803d", lw=0.8 if sat else 0.6))
+            pa.plot([cx], [cy], marker="^", ms=4, color="#ffffff" if sat else "#15803d", mec="#15803d", mew=0.5)
 
     def band(coords, w, fc, ec):
         pts = [P(p) for p in coords]
@@ -135,7 +162,8 @@ def build_component_sheet(client, doc: dict) -> bytes:
             dx, dy = P(dr["ll"])
             pa.plot([dx], [dy], marker="v", ms=7, color="#dc2626", mec="white", mew=0.6)
             if len(des["drops"]) <= 25:
-                pa.text(dx, dy + span * 0.012, f"S{k + 1} {N(dr['h'], 1)} m", fontsize=6.5, color="#dc2626", ha="center")
+                pa.text(dx, dy + span * 0.012, f"S{k + 1} {N(dr['h'], 1)} m", fontsize=6.5, color="#dc2626", ha="center",
+                        bbox=dict(fc="white", ec="none", pad=0.6, alpha=0.85) if sat else None)
         a0 = P(canal["coords"][0]); pa.text(a0[0], a0[1] - span * 0.02, "▶ " + S(L["water"]), fontsize=7, color="#0369a1")
     pa.set_xlim(x0, x1); pa.set_ylim(y0, y1); pa.axis("off")
     # barra di scala e nord
@@ -147,6 +175,8 @@ def build_component_sheet(client, doc: dict) -> bytes:
     pa.annotate("N", xy=(x1 - pad * 0.3, y1 - pad * 0.2), xytext=(x1 - pad * 0.3, y1 - pad * 0.2 - (y1 - y0) * 0.06), ha="center", fontsize=9,
                 fontweight="bold", color=NAVY, arrowprops=dict(arrowstyle="-|>", color=NAVY, lw=1))
     fig.text(0.035, 0.885, S(L["plan"]), fontsize=8.5, color=BLUE, fontweight="bold", family=famH)
+    if sat:
+        fig.text(0.555, 0.362, _SAT_CREDIT, fontsize=6, color=MUT, ha="right")
     # scala nominale della pianta sull'A3 (0,52 × 420 mm)
     scale = (x1 - x0) / (0.52 * 0.420)
     sc_nom = min([500, 1000, 2000, 2500, 5000, 10000, 20000, 25000, 50000, 100000], key=lambda v: abs(v - scale))
@@ -264,11 +294,19 @@ def build_component_sheet(client, doc: dict) -> bytes:
             (L["scale"], f"1:{sc_nom:,}".replace(",", ".")), (L["date"], doc.get("date") or date.today().strftime("%d/%m/%Y")),
             (L["sheet"], doc.get("sheet", "C-01"))]
     cx0, cy0, cw, ch = 0.60, 0.06, 0.37, 0.12
-    fig.patches.append(Rectangle((cx0, cy0), cw, ch, transform=fig.transFigure, fc="white", ec=NAVY, lw=0.8))
+    lw_ = 0.075                                                   # cella del marchio a destra
+    fig.patches.append(Rectangle((cx0, cy0), cw, ch, transform=fig.transFigure, fc="none", ec=NAVY, lw=0.8))
+    fig.patches.append(Rectangle((cx0 + cw - lw_, cy0), lw_, ch, transform=fig.transFigure, fc="none", ec=NAVY, lw=0.6))
+    if logo_img is not None:
+        lb = fig.add_axes([cx0 + cw - lw_ + 0.006, cy0 + 0.012, lw_ - 0.012, ch - 0.024]); lb.imshow(logo_img); lb.axis("off"); lb.set_zorder(5)
+    cwc = cw - lw_
     for i, (k, v) in enumerate(cart):
         col, row = i % 3, i // 3
-        xx = cx0 + 0.008 + col * cw / 3; yy = cy0 + ch - 0.028 - row * 0.05
-        fig.text(xx, yy, S(k).upper(), fontsize=6.5, color=MUT); fig.text(xx, yy - 0.02, S(str(v))[:38], fontsize=9, color=NAVY, fontweight="bold")
-    fig.text(0.035, 0.03, S(L["foot"]), fontsize=7.5, color=MUT)
+        xx = cx0 + 0.008 + col * cwc / 3; yy = cy0 + ch - 0.028 - row * 0.05
+        fig.text(xx, yy, S(k).upper(), fontsize=6.5, color=MUT); fig.text(xx, yy - 0.02, S(str(v))[:30], fontsize=9, color=NAVY, fontweight="bold")
+    # piè di pagina Agrostar: ragione sociale e sito, poi la nota del disegno
+    note = str(L["foot"]).split("—", 1)[-1].strip()
+    fig.text(0.035, 0.03, "AGROSTAR S.r.l. · Via F.lli Corradini 54, 42021 Bibbiano (RE) · www.agrostar.it", fontsize=7.5, color=NAVY, fontweight="bold")
+    fig.text(0.035, 0.015, S(note), fontsize=7, color=MUT)
     buf = io.BytesIO(); fig.savefig(buf, format="pdf"); plt.close(fig)
     return buf.getvalue()

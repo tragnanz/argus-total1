@@ -23,7 +23,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.298";
+const REV = "v0.6.299";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -3525,6 +3525,17 @@ export default function Page() {
   }
   // Aggiorna i pivot modificati a mano: ricalcola meta e tiene `guided` in sincronia
   // (così statistiche, salvataggio ed esporto riflettono le modifiche).
+  // sposta un nodo della rete (centro di un pivot, presa…): tutte le tubazioni che ci passano lo seguono
+  function movePipeNode(from: number[], to: number[]) {
+    const k = (q: number[]) => `${q[0].toFixed(6)},${q[1].toFixed(6)}`, kf = k(from);
+    let hit = false;
+    const next = pivotLines.map((l) => {
+      if (l.kind !== "pipe" || !l.coords.some((q) => k(q) === kf)) return l;
+      hit = true;
+      return { ...l, coords: l.coords.map((q) => (k(q) === kf ? [to[0], to[1]] : q)), dn: undefined, qs: undefined };
+    });
+    if (hit) { setPivotLines(next); setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, next) } : gp)); }
+  }
   function commitPivots(next: PivotItem[]) {
     setPivots(next);
     setGuided((prev) => {
@@ -3604,7 +3615,20 @@ export default function Page() {
         setPipeSel({ mode: "none", idx: -1 }); setFieldPicked(false); setSrcPicked(false);
         setPivotSel((s) => (s.mode === "none" ? { mode: "group", idx: -1 } : { mode: "single", idx: real }));
       },
-      onMove: (i, lat, lng) => { const real = visIdx[i]; commitPivots(pivots.map((p, k) => (k === real ? { ...p, lat, lng } : p))); },
+      onMove: (i, lat, lng) => {
+        const real = visIdx[i], old = pivots[real];
+        commitPivots(pivots.map((p, k) => (k === real ? { ...p, lat, lng } : p)));
+        // le tubazioni attaccate al centro del pivot lo seguono: lunghezze, diametri e perdite si ricalcolano
+        if (old) movePipeNode([old.lng, old.lat], [lng, lat]);
+      },
+      onTapMove: (lng0, lat0, lng, lat) => {
+        // la stazione si sposta sulla fonte: si aggancia al punto più vicino del corso (entro 300 m)
+        let to = [lng, lat], bd = Infinity;
+        for (const ln of tapLinesLL()) { const e = nearestOnLine([lng, lat], ln); if (e.d < bd) { bd = e.d; to = e.q; } }
+        if (bd > 300) to = [lng, lat];
+        movePipeNode([lng0, lat0], to);
+        setMsg(t("Stazione spostata: lunghezze, diametri e perdite ricalcolati ✓"));
+      },
       onSector: (i, az, deg) => {
         const real = visIdx[i];
         commitPivots(pivots.map((p, k) => (k === real ? (deg >= 359.5 ? { ...p, deg: undefined, az: undefined } : { ...p, deg: Math.round(deg), az: Math.round(az) % 360 }) : p)));
@@ -5052,7 +5076,7 @@ export default function Page() {
   // al piede di ogni pivot: pressione richiesta e disponibile (bar)
   type TapPivot = { i: number; need: number; avail: number; hfPath: number; dz: number | null };
   type TapStation = { pt: number[]; piv: number[]; qLs: number; head: number; kW: number; L: number; dn: number; line: number; src: string;
-    branches: TapBranch[]; feet: TapPivot[]; zIn: number | null };
+    branches: TapBranch[]; feet: TapPivot[]; zIn: number | null; segs: [string, { dn: number; q: number }][] };
   const tapStations = useMemo((): TapStation[] => {
     const pipes = pivotLines.map((l, i) => ({ l, i })).filter(({ l }) => l.kind === "pipe" && l.coords.length >= 2);
     if (!pipes.length) return [];
@@ -5090,12 +5114,14 @@ export default function Page() {
       const hf = new Map<string, number>([[k, 0]]); let Ltot = 0, dn0 = 0;
       const lab = (n: string) => (n === k ? t("presa") : pivAt.has(n) ? `P${pivAt.get(n)! + 1}` : t("giunto"));
       const branches: TapBranch[] = [];
+      const segs: [string, { dn: number; q: number }][] = [];
       for (let h = 1; h < order.length; h++) {
         const n = order[h], pr = par.get(n)!, q = flow.get(n) ?? 0; const ps = pipeSizeLib(q, pr.L, DN_LIST, vMax, hwC);
         hf.set(n, (hf.get(pr.from) ?? 0) + ps.hf); Ltot += pr.L; if (pr.from === k) dn0 = Math.max(dn0, ps.dn);
         const za = zOf(pr.from), zb = zOf(n);
         const v = q > 0 ? (q / 1000 / ps.n) / (Math.PI * (ps.dn / 1000) ** 2 / 4) : 0;
         branches.push({ a: lab(pr.from), b: lab(n), L: pr.L, q, dn: ps.dn, n: ps.n, v, hf: ps.hf, dz: za != null && zb != null ? zb - za : null });
+        segs.push([pr.from < n ? `${pr.from}|${n}` : `${n}|${pr.from}`, { dn: ps.dn, q: Math.round(q * 10) / 10 }]);
       }
       const qLs = flow.get(k) ?? 0;
       // livello minimo dell'acqua alla presa: quota del terreno sulla sponda meno l'escursione
@@ -5108,7 +5134,7 @@ export default function Page() {
         return { i, need: pivotPressure(pivots[i]), avail: (head - 3 - hp - (r ?? 0)) / 10.2, hfPath: hp, dz: r };
       });
       return { pt: ptOf.get(k)!, piv, qLs, head, kW: (qLs * head * 9.81) / 1000 / eta, L: Ltot, dn: dn0, line, src: feedSrc?.label ?? "",
-        branches, feet, zIn };
+        branches, feet, zIn, segs };
     }).filter((x) => x.piv.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pivotLines, pivots, feedSrc, canals, tapElev, srcRange, wtwEta, vMax, hwC, pipeCanalIdx, watercourses]);
@@ -5132,6 +5158,31 @@ export default function Page() {
   }, [pivotLines]);
   tapRef.current = tapStations;
   useEffect(() => { setTapVer((v) => v + 1); }, [tapStations]);
+  // diametri e portate di ogni tubazione dalle portate dei pivot serviti (tratto per tratto): si scrivono
+  // sulle tubazioni, così scheda, tooltip, computo e tavole li hanno senza dover premere «Calcola diametri»
+  useEffect(() => {
+    if (!tapStations.length) return;
+    const seg = new Map<string, { dn: number; q: number }>();
+    for (const st of tapStations) for (const [k, v] of st.segs) seg.set(k, v);
+    const key = (q: number[]) => `${q[0].toFixed(6)},${q[1].toFixed(6)}`;
+    let changed = false;
+    const next = pivotLines.map((l) => {
+      if (l.kind !== "pipe" || l.coords.length < 2) return l;
+      const dn: number[] = [], qs: number[] = [];
+      let any = false;
+      for (let i = 0; i + 1 < l.coords.length; i++) {
+        const a = key(l.coords[i]), b = key(l.coords[i + 1]);
+        const v = seg.get(a < b ? `${a}|${b}` : `${b}|${a}`);
+        dn.push(v?.dn ?? 0); qs.push(v?.q ?? 0); if (v) any = true;
+      }
+      if (!any) return l;
+      if (JSON.stringify(dn) === JSON.stringify(l.dn ?? []) && JSON.stringify(qs) === JSON.stringify(l.qs ?? [])) return l;
+      changed = true;
+      return { ...l, dn, qs };
+    });
+    if (changed) setPivotLines(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tapStations]);
   function focusTap(i: number) {
     const st = tapStations[i]; if (!st) return;
     setTapSel(i); mapApi.current?.flyTo(st.pt[1], st.pt[0], 15);
@@ -11940,6 +11991,7 @@ export default function Page() {
                 ))}
               </tbody>
             </table>
+            <p className="text-[10px] text-brand-darker mt-1.5">{t("Trascina il quadratino sulla mappa per spostare la stazione lungo il corso: tubazioni, diametri e perdite si ricalcolano.")}</p>
             <p className="text-[10px] text-sage-dark mt-1.5">{t("Prevalenza: pressione al pivot più sfavorito + perdite di carico nei tubi + dislivello dal livello minimo del fiume + 3 m di filtri e pezzi speciali.")}</p>
           </div>
         );
