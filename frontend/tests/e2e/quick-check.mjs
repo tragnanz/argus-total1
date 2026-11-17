@@ -177,6 +177,19 @@ try {
   const mm = await page.locator("body").innerText();
   ok(/Misto: canale principale/.test(mm), `Misto: ${(mm.match(/Misto: canale principale[^\n]*/) || ["-"])[0]}`);
   await page.screenshot({ path: path.join(SH, "q7_misto.png") });
+  // tutti i fiumi come un'unica fonte: le tubazioni si allacciano al tratto più vicino
+  const riverTab = page.locator("[data-water-kinds] button", { hasText: /Fiume/ }).first();
+  if (await riverTab.count()) {
+    await riverTab.click(); await page.waitForTimeout(400);
+    await page.locator("[data-water-family-source]").click(); await page.waitForTimeout(600);
+    const gm = await page.locator("body").innerText();
+    ok(/Fonte idrica: tutti i fiumi/.test(gm), `Gruppo fonte: ${(gm.match(/Fonte idrica: tutti i fiumi[^\n]*/) || ["-"])[0].slice(0, 120)}`);
+    await page.locator('[data-dist-mode="pipes"]').click(); await page.waitForTimeout(300);
+    await page.locator("[data-dist-go]").click(); await page.waitForTimeout(1500);
+    const gp = await page.locator("body").innerText();
+    ok(/rami dalla fonte «Fiumi \(/.test(gp), `Tubazioni dal gruppo: ${(gp.match(/Tubazioni tracciate[^\n]*/) || ["-"])[0]}`);
+    await page.screenshot({ path: path.join(SH, "q8_gruppo.png") });
+  } else ok(false, "Gruppo fonte: scheda Fiumi assente");
   ok(errors.length === 0, `Nessun errore JavaScript${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; await page.screenshot({ path: path.join(SH, "q_err.png") }).catch(() => {}); }
 await browser.close();

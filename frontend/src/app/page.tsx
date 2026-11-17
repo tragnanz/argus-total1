@@ -22,7 +22,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.290";
+const REV = "v0.6.291";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1554,6 +1554,8 @@ export default function Page() {
   const [srcType, setSrcType] = useState<SrcType>("fiume");
   // nome della fonte (es. il fiume): auto = preso dal corso d'acqua su cui sta la presa, finché non lo si scrive a mano
   const [srcLabel, setSrcLabel] = useState<{ name: string; auto: boolean }>({ name: "", auto: true });
+  // fonte = gruppo di corsi dello stesso tipo (tutti i fiumi, tutti i canali…): le tubazioni si allacciano al più vicino
+  const [srcGroup, setSrcGroup] = useState<string | null>(null);
   const srcLabelRef = useRef(srcLabel); srcLabelRef.current = srcLabel;
   const [srcQmax, setSrcQmax] = useState(0);                         // portata disponibile (l/s); 0 = non limitata
   const [srcHours, setSrcHours] = useState(24);                      // ore di prelievo consentite al giorno
@@ -2839,6 +2841,7 @@ export default function Page() {
   // il corso diventa la fonte: presa nel suo punto più vicino ai pivot (o al campo), tipo, escursione e portata
   function takeWaterAsSource(i: number, at?: number[]) {
     const w = wcRef.current[i]; if (!w) return;
+    setSrcGroup(null);
     const cs = waterLineOf(w);
     const ref = pivots.length ? [pivots.reduce((a, p) => a + p.lng, 0) / pivots.length, pivots.reduce((a, p) => a + p.lat, 0) / pivots.length]
       : activeGeom ? (() => { const r = activeGeom.coordinates[0] as number[][]; return [r.reduce((a, p) => a + p[0], 0) / r.length, r.reduce((a, p) => a + p[1], 0) / r.length]; })()
@@ -2858,6 +2861,30 @@ export default function Page() {
       : t("Presa sul corso {c}{n}: {d} dal baricentro dei pivot.", { c: code, n: w.name ? " · " + w.name : "", d: uM(geoDist(ref, e.q)) }))
       + " " + (q != null ? t("Portata disponibile impostata a {q} l/s ({k}).", { q: fmt(Math.max(1, q)), k: w.q_known_ls != null ? t("portata nota") : t("stima di magra") }) : t("Portata disponibile da inserire: manca la stima della portata."))
       + (w.regime && w.regime !== "perennial" ? " " + t("Attenzione: corso non perenne, in secca in alcuni mesi.") : ""));
+  }
+  // famiglia di un corso d'acqua (fiumi, canali, dreni e fossi, impluvi)
+  const waterFam = (w: WaterL) => (w.kind === "ditch" ? "drain" : w.kind === "stream" ? "river" : w.kind);
+  const famName = (k: string) => (k === "drain" ? t("Dreni e fossi") : k === "drainage" ? t("Impluvi (DEM)") : k === "river" ? t("Fiumi") : t("Canali"));
+  // tutti i corsi di una famiglia diventano un'unica fonte: presa sul più vicino ai pivot
+  function takeGroupAsSource(fam: string) {
+    const idx = wcRef.current.map((w, i) => ({ w, i })).filter(({ w }) => w.geojson.type === "LineString" && !w.hidden && waterFam(w) === fam);
+    if (!idx.length) return;
+    const ref = pivots.length ? [pivots.reduce((a, p) => a + p.lng, 0) / pivots.length, pivots.reduce((a, p) => a + p.lat, 0) / pivots.length]
+      : activeGeom ? (() => { const r = activeGeom.coordinates[0] as number[][]; return [r.reduce((a, p) => a + p[0], 0) / r.length, r.reduce((a, p) => a + p[1], 0) / r.length]; })() : null;
+    const best = ref ? idx.reduce((a, b) => (nearestOnLine(ref, waterLineOf(b.w)).d < nearestOnLine(ref, waterLineOf(a.w)).d ? b : a)) : idx[0];
+    takeWaterAsSource(best.i);
+    setSrcGroup(fam);
+    const km = idx.reduce((a, { w }) => a + (w.length_m ?? 0), 0) / 1000;
+    setSrcLabel({ name: `${famName(fam)} (${idx.length})`, auto: false });
+    setMsg(t("Fonte idrica: tutti i {g} ({n} tratti, {km}); le tubazioni si allacciano al tratto più vicino. Presa principale sul più vicino ai pivot.", { g: famName(fam).toLowerCase(), n: idx.length, km: uKm(km, 1) }));
+  }
+  function groupWaterFamily(fam: string) {
+    const name = famName(fam);
+    setWatercourses((ws) => ws.map((w) => (w.geojson.type === "LineString" && waterFam(w) === fam ? { ...w, folder: name } : w)));
+    setWaterFolderOpen((o) => ({ ...o, [name]: true }));
+    const ids = wcRef.current.map((w, i) => (w.geojson.type === "LineString" && waterFam(w) === fam ? i : -1)).filter((i) => i >= 0);
+    setWaterCheck(new Set(ids));
+    setMsg(t("{n} tratti raggruppati nella cartella «{g}».", { n: ids.length, g: name }));
   }
   // corso d'acqua su cui sta la presa (entro 15 m)
   const srcOnWater = useMemo(() => {
@@ -4575,14 +4602,18 @@ export default function Page() {
       const cs = waterLineOf(w as WaterL); if (cs.length < 2) return;
       const d = nearestOnLine(srcPt, cs).d; if (d < bd) { bd = d; best = i; }
     });
+    if (srcGroup) {
+      const ls = (watercourses as WaterL[]).filter((w) => w.geojson.type === "LineString" && !w.hidden && waterFam(w) === srcGroup).map((w) => waterLineOf(w)).filter((c) => c.length >= 2);
+      if (ls.length) return { coords: best >= 0 ? waterLineOf(watercourses[best] as WaterL) : ls[0], lines: ls, label: `${famName(srcGroup)} (${ls.length})` };
+    }
     if (best >= 0 && bd <= 250) {
       const w = watercourses[best] as WaterL, code = waterCodes(watercourses)[best];
-      return { coords: waterLineOf(w), label: `${code}${w.name ? " · " + w.name : ""}` };
+      return { coords: waterLineOf(w), lines: undefined as number[][][] | undefined, label: `${code}${w.name ? " · " + w.name : ""}` };
     }
     const k = 1e-5;
-    return { coords: [[srcPt[0] - k, srcPt[1]], [srcPt[0] + k, srcPt[1]]], label: srcLabel.name || t("presa") };
+    return { coords: [[srcPt[0] - k, srcPt[1]], [srcPt[0] + k, srcPt[1]]], lines: undefined as number[][][] | undefined, label: srcLabel.name || t("presa") };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srcPt, srcType, watercourses, srcLabel, lang]);
+  }, [srcPt, srcType, watercourses, srcLabel, srcGroup, lang]);
   // ---- Accessori: tubazioni di adduzione dal canale ---------------------------
   // Traccia le tubazioni che si diramano dal canale e passano per i centri dei
   // pivot ESISTENTI del poligono, una per fila, tutte nella stessa direzione.
@@ -4598,7 +4629,7 @@ export default function Page() {
     // Fonte che non attraversa il campo (fiume corto o lontano, pozzo, presa in un punto): dalla presa parte
     // una condotta principale che entra nel campo e lo attraversa; le file di pivot si allacciano a quella.
     let trunk: number[][] | null = null;
-    if (fromSrc && srcPt) {
+    if (fromSrc && srcPt && !(feedSrc?.lines && feedSrc.lines.length > 1 && !mixed)) {
       const kx = 111320 * Math.cos((srcPt[1] * Math.PI) / 180);
       const nn = fieldPivs.map((p) => Math.min(...fieldPivs.filter((q) => q !== p).map((q) => Math.hypot((q.lng - p.lng) * kx, (q.lat - p.lat) * 110540)), Infinity));
       const pitch = nn.filter(Number.isFinite).sort((a, b) => a - b)[Math.floor(nn.length / 2)] || 800;
@@ -4636,7 +4667,19 @@ export default function Page() {
         }
       }
     }
-    const feeders = feederPipes(line, fieldPivs.map((p) => ({ lat: p.lat, lng: p.lng, r: p.r })), pipeMaxPerLine, ring);
+    let feeders: number[][][];
+    if (fromSrc && !mixed && feedSrc?.lines && feedSrc.lines.length > 1) {
+      // gruppo di corsi: ogni pivot va al tratto più vicino, e su ogni tratto si tracciano le sue tratte
+      const gl = feedSrc.lines;
+      const part = gl.map(() => [] as { lat: number; lng: number; r: number }[]);
+      for (const p of fieldPivs) {
+        let bi = 0, bd = Infinity;
+        gl.forEach((cs, k) => { const d = nearestOnLine([p.lng, p.lat], cs).d; if (d < bd) { bd = d; bi = k; } });
+        part[bi].push({ lat: p.lat, lng: p.lng, r: p.r });
+      }
+      feeders = gl.flatMap((cs, k) => (part[k].length ? feederPipes(cs, part[k], pipeMaxPerLine, ring) : []));
+      trunk = null;
+    } else feeders = feederPipes(line, fieldPivs.map((p) => ({ lat: p.lat, lng: p.lng, r: p.r })), pipeMaxPerLine, ring);
     const pipesLL = trunk && feeders.length ? [trunk, ...feeders] : feeders;
     if (!pipesLL.length) { setMsg(t("Nessuna tubazione tracciabile con questi pivot.")); return; }
     const newL = pipesLL.map((coords) => ({ kind: "pipe", coords, field: fid }));
@@ -9279,6 +9322,7 @@ export default function Page() {
     setSrcRoute(Array.isArray(fo.route) ? (fo.route as number[][]) : null);
     setSrcLabel({ name: typeof fo.name === "string" ? fo.name : "", auto: fo.nameAuto !== false });
     setDistMode(fo.dist === "canals" || fo.dist === "mixed" ? fo.dist : "pipes");
+    setSrcGroup(typeof fo.group === "string" ? fo.group : null);
     setPipeMaxPerLine(Math.max(1, Math.round(num(fo.perLine, 8))));
     setSrcType(ty); setSrcQmax(num(fo.qmax, 0)); setSrcHours(num(fo.hours, 24)); setSrcRange(num(fo.range, SRC_RANGE_DEF[ty]));
     setSrcSediment(typeof fo.sed === "boolean" ? fo.sed : ty === "fiume");
@@ -9299,7 +9343,7 @@ export default function Page() {
   // viaggiano con il progetto: si ritrovano su qualunque computer.
   const projLoaded = useRef<number | null>(null);
   const projSaved = useRef<string>("");
-  const fonteState = () => ({ dist: distMode, perLine: pipeMaxPerLine, pt: srcPt, route: srcRoute, type: srcType, name: srcLabel.name, nameAuto: srcLabel.auto, qmax: srcQmax, hours: srcHours, range: srcRange,
+  const fonteState = () => ({ group: srcGroup, dist: distMode, perLine: pipeMaxPerLine, pt: srcPt, route: srcRoute, type: srcType, name: srcLabel.name, nameAuto: srcLabel.auto, qmax: srcQmax, hours: srcHours, range: srcRange,
     sed: srcSediment, energy: srcEnergy, drive: pumpDrive, monthly: srcMonthly, sectors: srcSectors, stQmax, resDepth, resDays, resEvapK, eta: wtwEta,
     canalSlope, bankSlope, settleMm, filterCap, wellQ, shown: srcShown, cableM, river: river ? { ...river, data: { ...river.data, basin: river.data.basin ? { ...river.data.basin, ring: (river.data.basin.ring ?? []).filter((_, i) => i % 2 === 0) } : undefined } } : null, costs: { kwh: costKwh, diesel: costDiesel, lkwh: dieselLkWh, gen: genShare, mkw: costMaintKw, pvom: costPvOm, batt: costBattKwh, blife: battLife } });
   // ---- Cronologia Annulla/Ripristina UNIFICATA ----
@@ -9547,6 +9591,7 @@ export default function Page() {
       });
       if (best) { takeWaterAsSource((best as { i: number }).i, (best as { q: number[] }).q); return; }
       if (srcLabelRef.current.auto) setSrcLabel({ name: "", auto: true });
+      setSrcGroup(null);
       setSrcRoute(null); setSrcPt([lng, lat]);
     });
   }
@@ -13324,6 +13369,19 @@ export default function Page() {
                       <button className="text-brand-mid" onClick={() => setWaterKindMovable(waterSel.kind!, false)}>✕ {t("tutti fissi")}</button>
                     </div>
                   )}
+                  {waterSel.kind && waterSel.kind !== "drainage" && (
+                    <div className="mt-1 flex flex-wrap gap-1" data-water-family={waterSel.kind}>
+                      <button className="px-2 py-1 rounded border border-black/15 bg-white hover:bg-black/5 text-[11px]" data-water-family-check
+                        onClick={() => setWaterCheck(new Set(watercourses.map((w, i) => (w.geojson.type === "LineString" && waterFam(w as WaterL) === waterFam({ kind: waterSel.kind } as WaterL) ? i : -1)).filter((i) => i >= 0)))}>
+                        ☑ {t("Seleziona tutti")}</button>
+                      <button className="px-2 py-1 rounded border border-black/15 bg-white hover:bg-black/5 text-[11px]" data-water-family-group
+                        onClick={() => groupWaterFamily(waterFam({ kind: waterSel.kind } as WaterL))}>📁 {t("Unisci in un gruppo")}</button>
+                      <button className="btn-primary !py-1 !px-2 text-[11px]" data-water-family-source
+                        onClick={() => takeGroupAsSource(waterFam({ kind: waterSel.kind } as WaterL))}>
+                        📍 {t("Usa tutti i {g} come fonte idrica", { g: famName(waterFam({ kind: waterSel.kind } as WaterL)).toLowerCase() })}</button>
+                    </div>
+                  )}
+                  {srcGroup && <div className="mt-1 text-[11px] text-brand-darker">📍 {t("Fonte idrica")}: <b>{famName(srcGroup)}</b> · {t("le tubazioni si allacciano al tratto più vicino")}</div>}
                   {waterSel.idx != null && watercourses[waterSel.idx] && renderWaterCard(waterSel.idx, codes)}
                   {!!lines.length && (
                     <div className="mt-1 max-h-64 overflow-auto">
