@@ -23,7 +23,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.295";
+const REV = "v0.6.297";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1557,6 +1557,11 @@ export default function Page() {
   const [srcLabel, setSrcLabel] = useState<{ name: string; auto: boolean }>({ name: "", auto: true });
   // fonte = gruppo di corsi dello stesso tipo (tutti i fiumi, tutti i canali…): le tubazioni si allacciano al più vicino
   const [srcGroup, setSrcGroup] = useState<string | null>(null);
+  // stazioni di pompaggio sulle prese: selezione e versione (per ridisegnare i tooltip sulla mappa)
+  const [tapSel, setTapSel] = useState<number | null>(null);
+  const [tapVer, setTapVer] = useState(0);
+  const [tapElev, setTapElev] = useState<Record<string, number | null>>({});   // quote dei nodi delle tubazioni
+  const tapRef = useRef<{ pt: number[]; piv: number[]; qLs: number; head: number; kW: number }[]>([]);
   // contatore delle scelte dell'utente (fonte, distribuzione, pivot per tratta): fa ricalcolare i tracciati
   const [autoRoute, setAutoRoute] = useState(0);
   const srcLabelRef = useRef(srcLabel); srcLabelRef.current = srcLabel;
@@ -3629,9 +3634,19 @@ export default function Page() {
         setPipeSel({ mode: "single", idx: li });
         openPipeEditor(target);
       },
-    }, pipeSelForShow, waterLinesLL());
+      onTapClick: (lng, lat) => {
+        const T = tapRef.current;
+        const i = T.reduce((b, st, k) => (Math.hypot(st.pt[0] - lng, st.pt[1] - lat) < Math.hypot(T[b].pt[0] - lng, T[b].pt[1] - lat) ? k : b), 0);
+        if (T.length) setTapSel(i);
+      },
+      tapTip: (lng, lat) => {
+        const i = tapRef.current.findIndex((st) => Math.abs(st.pt[0] - lng) < 1e-6 && Math.abs(st.pt[1] - lat) < 1e-6);
+        const st = tapRef.current[i];
+        return st ? `${t("Stazione di pompaggio")} ${i + 1} · ${st.piv.length} ${t("Pivot")} · ${fmt(Math.round(st.qLs))} l/s · ${fmt(Math.round(st.head))} m · ${fmt(Math.round(st.kW))} kW` : t("Presa");
+      },
+    }, pipeSelForShow, tapLinesLL());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pivots, pivotLines, pivotSel, pipeSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses, pivotLabels, mm24, mmDes, hoursDay, imperial, phaseColors, solarCfg, pivotBrand]);
+  }, [pivots, pivotLines, pivotSel, pipeSel, hiddenPivotFields, hiddenPipeFields, canals, watercourses, pivotLabels, mm24, mmDes, hoursDay, imperial, phaseColors, solarCfg, pivotBrand, tapVer]);
 
   // Operazioni sul singolo pivot selezionato.
   const selPivot = pivotSel.mode === "single" && pivotSel.idx >= 0 ? pivots[pivotSel.idx] : null;
@@ -4785,6 +4800,16 @@ export default function Page() {
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRoute]);
+  // Linee da cui si preleva (prese): la fonte scelta (corso, gruppo, canale principale dalla fonte);
+  // senza fonte, tutte le linee d'acqua visibili.
+  function tapLinesLL(): number[][][] {
+    if (srcPt && feedSrc) {
+      const ls = [...(feedSrc.lines ?? [feedSrc.coords]), ...canals.filter((c) => c.srcTrunk && !c.hidden).map((c) => c.geojson.coordinates as number[][])];
+      if (pipeCanalIdx >= 0 && canals[pipeCanalIdx]) ls.push(canals[pipeCanalIdx].geojson.coordinates as number[][]);
+      return ls;
+    }
+    return waterLinesLL();
+  }
   // Linee d'acqua visibili (canali + corsi d'acqua lineari): servono al simbolo
   // della presa e al riaggancio automatico.
   function waterLinesLL(): number[][][] {
@@ -5012,6 +5037,98 @@ export default function Page() {
   // dei pivot che stanno a valle. Dal diametro minimo che rispetta la velocità
   // massima si sale al primo diametro commerciale disponibile.
   const DN_LIST = [110, 125, 140, 160, 180, 200, 225, 250, 280, 315, 355, 400, 450, 500, 560, 630, 710, 800, 900, 1000];
+  // Stazioni di pompaggio sulle prese: ogni tubazione che tocca la fonte con un'estremità è una presa; da lì
+  // si segue la rete fino ai pivot serviti. Portata, prevalenza (pressione al pivot + perdite + dislivello
+  // dal fiume) e potenza.
+  // ramo: tratto di tubazione fra due nodi (presa, pivot o giunto), con portata, diametro, velocità, perdite e dislivello
+  type TapBranch = { a: string; b: string; L: number; q: number; dn: number; n: number; v: number; hf: number; dz: number | null };
+  // al piede di ogni pivot: pressione richiesta e disponibile (bar)
+  type TapPivot = { i: number; need: number; avail: number; hfPath: number; dz: number | null };
+  type TapStation = { pt: number[]; piv: number[]; qLs: number; head: number; kW: number; L: number; dn: number; line: number; src: string;
+    branches: TapBranch[]; feet: TapPivot[]; zIn: number | null };
+  const tapStations = useMemo((): TapStation[] => {
+    const pipes = pivotLines.map((l, i) => ({ l, i })).filter(({ l }) => l.kind === "pipe" && l.coords.length >= 2);
+    if (!pipes.length) return [];
+    const W = tapLinesLL(); if (!W.length) return [];
+    const lat0 = pipes[0].l.coords[0][1], kx = 111320 * Math.cos((lat0 * Math.PI) / 180), ky = 110540;
+    const M = (q: number[]) => [q[0] * kx, q[1] * ky];
+    const WM = W.map((l) => l.map(M));
+    const dSeg = (p: number[], a: number[], b: number[]) => { const vx = b[0] - a[0], vy = b[1] - a[1], l2 = vx * vx + vy * vy || 1e-9; let t = ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / l2; t = Math.max(0, Math.min(1, t)); return Math.hypot(p[0] - a[0] - vx * t, p[1] - a[1] - vy * t); };
+    const onW = (q: number[]) => { const a = M(q); for (const w of WM) for (let i = 0; i + 1 < w.length; i++) if (dSeg(a, w[i], w[i + 1]) < 15) return true; return false; };
+    const key = (q: number[]) => `${q[0].toFixed(6)},${q[1].toFixed(6)}`;
+    const adj = new Map<string, { to: string; L: number; pt: number[] }[]>();
+    const ptOf = new Map<string, number[]>();
+    for (const { l } of pipes) for (let i = 0; i + 1 < l.coords.length; i++) {
+      const a = l.coords[i], b = l.coords[i + 1], ka = key(a), kb = key(b), L = Math.hypot((a[0] - b[0]) * kx, (a[1] - b[1]) * ky);
+      ptOf.set(ka, a); ptOf.set(kb, b);
+      (adj.get(ka) ?? adj.set(ka, []).get(ka)!).push({ to: kb, L, pt: b });
+      (adj.get(kb) ?? adj.set(kb, []).get(kb)!).push({ to: ka, L, pt: a });
+    }
+    const pivAt = new Map<string, number>(); pivots.forEach((p, i) => pivAt.set(key([p.lng, p.lat]), i));
+    const taps: { k: string; line: number }[] = [];
+    for (const { l, i } of pipes) for (const e of [l.coords[0], l.coords[l.coords.length - 1]]) if (onW(e) && !pivAt.has(key(e)) && !taps.some((x) => x.k === key(e))) taps.push({ k: key(e), line: i });
+    const tapSet = new Set(taps.map((x) => x.k));
+    const eta = Math.max(0.3, wtwEta / 100);
+    const zOf = (k: string) => { const z = tapElev[k]; return typeof z === "number" ? z : null; };
+    return taps.map(({ k, line }) => {
+      // albero dalla presa: BFS senza passare per altre prese
+      const par = new Map<string, { from: string; L: number }>(); const order: string[] = [k]; const seen = new Set([k]);
+      for (let h = 0; h < order.length; h++) for (const e of adj.get(order[h]) ?? []) {
+        if (seen.has(e.to) || tapSet.has(e.to)) continue;
+        seen.add(e.to); par.set(e.to, { from: order[h], L: e.L }); order.push(e.to);
+      }
+      const piv = order.map((n) => pivAt.get(n)).filter((x): x is number => x != null);
+      const flow = new Map<string, number>(order.map((n) => [n, pivAt.has(n) ? pivotFlow(pivots[pivAt.get(n)!]) : 0]));
+      for (let h = order.length - 1; h > 0; h--) { const n = order[h], pr = par.get(n)!; flow.set(pr.from, (flow.get(pr.from) ?? 0) + (flow.get(n) ?? 0)); }
+      const hf = new Map<string, number>([[k, 0]]); let Ltot = 0, dn0 = 0;
+      const lab = (n: string) => (n === k ? t("presa") : pivAt.has(n) ? `P${pivAt.get(n)! + 1}` : t("giunto"));
+      const branches: TapBranch[] = [];
+      for (let h = 1; h < order.length; h++) {
+        const n = order[h], pr = par.get(n)!, q = flow.get(n) ?? 0; const ps = pipeSizeLib(q, pr.L, DN_LIST, vMax, hwC);
+        hf.set(n, (hf.get(pr.from) ?? 0) + ps.hf); Ltot += pr.L; if (pr.from === k) dn0 = Math.max(dn0, ps.dn);
+        const za = zOf(pr.from), zb = zOf(n);
+        const v = q > 0 ? (q / 1000 / ps.n) / (Math.PI * (ps.dn / 1000) ** 2 / 4) : 0;
+        branches.push({ a: lab(pr.from), b: lab(n), L: pr.L, q, dn: ps.dn, n: ps.n, v, hf: ps.hf, dz: za != null && zb != null ? zb - za : null });
+      }
+      const qLs = flow.get(k) ?? 0;
+      // livello minimo dell'acqua alla presa: quota del terreno sulla sponda meno l'escursione
+      const zTap = zOf(k), zIn = zTap != null ? zTap - srcRange : null;
+      const rise = (i: number) => { const z = zOf(key([pivots[i].lng, pivots[i].lat])); return z != null && zIn != null ? z - zIn : null; };
+      const need = (i: number) => pivotPressure(pivots[i]) * 10.2 + (hf.get(key([pivots[i].lng, pivots[i].lat])) ?? 0) + Math.max(0, rise(i) ?? 0);
+      const head = piv.length ? Math.max(...piv.map(need)) + 3 : 0;
+      const feet: TapPivot[] = piv.map((i) => {
+        const hp = hf.get(key([pivots[i].lng, pivots[i].lat])) ?? 0, r = rise(i);
+        return { i, need: pivotPressure(pivots[i]), avail: (head - 3 - hp - (r ?? 0)) / 10.2, hfPath: hp, dz: r };
+      });
+      return { pt: ptOf.get(k)!, piv, qLs, head, kW: (qLs * head * 9.81) / 1000 / eta, L: Ltot, dn: dn0, line, src: feedSrc?.label ?? "",
+        branches, feet, zIn };
+    }).filter((x) => x.piv.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pivotLines, pivots, feedSrc, canals, tapElev, srcRange, wtwEta, vMax, hwC, pipeCanalIdx, watercourses]);
+  // quote dei nodi della rete (prese, pivot, giunti) dal modello del terreno: si chiedono solo quelle mancanti
+  useEffect(() => {
+    const pipes = pivotLines.filter((l) => l.kind === "pipe");
+    const need: number[][] = []; const seen = new Set<string>();
+    for (const l of pipes) for (const q of l.coords) { const k = `${q[0].toFixed(6)},${q[1].toFixed(6)}`; if (!seen.has(k) && !(k in tapElev)) { seen.add(k); need.push(q); } }
+    if (!need.length) return;
+    let stop = false;
+    const h = window.setTimeout(() => {
+      api.fetchElevation(need.slice(0, 3000)).then((res) => {
+        if (stop) return;
+        const add: Record<string, number | null> = {};
+        res.points.forEach((p, j) => { const q = need[j]; if (q) add[`${q[0].toFixed(6)},${q[1].toFixed(6)}`] = p.elev_m == null ? null : Number(p.elev_m); });
+        setTapElev((m) => ({ ...m, ...add }));
+      }).catch(() => { /* senza quote: dislivelli non calcolati */ });
+    }, 900);
+    return () => { stop = true; window.clearTimeout(h); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pivotLines]);
+  tapRef.current = tapStations;
+  useEffect(() => { setTapVer((v) => v + 1); }, [tapStations]);
+  function focusTap(i: number) {
+    const st = tapStations[i]; if (!st) return;
+    setTapSel(i); mapApi.current?.flyTo(st.pt[1], st.pt[0], 15);
+  }
   function computeHydraulics(apply: boolean, elev?: Map<string, number> | null, quiet = false) {
     const pipes = pivotLines.map((l, i) => ({ l, i })).filter((x) => x.l.kind === "pipe");
     if (!pipes.length) { if (!quiet) setMsg(t("Nessuna tubazione da dimensionare.")); return null; }
@@ -11702,11 +11819,92 @@ export default function Page() {
     );
   }
 
+  // elenco delle stazioni di pompaggio sulle prese (pagine Pompaggio e Tubazioni)
+  function renderTapList() {
+    if (!tapStations.length) return null;
+    const tot = tapStations.reduce((a, s2) => ({ q: a.q + s2.qLs, kW: a.kW + s2.kW, L: a.L + s2.L }), { q: 0, kW: 0, L: 0 });
+    return (
+      <div className="bg-panel rounded-lg p-2 mt-2" data-tap-list>
+        <div className="text-xs font-semibold text-brand-darker mb-1">{t("Stazioni di pompaggio sulle prese")} ({tapStations.length})</div>
+        <p className="text-[10px] text-sage-dark mb-1">{t("Una per ogni presa sul corso d'acqua: clic per la scheda e per vederla sulla mappa.")}</p>
+        <div className="max-h-56 overflow-auto">
+          <table className="w-full text-[11px]">
+            <thead><tr className="text-sage-dark text-left border-b border-black/10">
+              <th className="font-medium">#</th><th className="font-medium text-right">{t("Pivot")}</th><th className="font-medium text-right">l/s</th>
+              <th className="font-medium text-right">m</th><th className="font-medium text-right">kW</th><th className="font-medium text-right">DN</th></tr></thead>
+            <tbody>
+              {tapStations.map((st, i) => (
+                <tr key={i} className={"cursor-pointer hover:bg-black/5 " + (tapSel === i ? "bg-brand/10 font-semibold" : "")} onClick={() => focusTap(i)} data-tap-row={i}>
+                  <td>{i + 1}</td><td className="text-right">{st.piv.length}</td><td className="text-right">{fmt(Math.round(st.qLs))}</td>
+                  <td className="text-right">{fmt(Math.round(st.head))}</td><td className="text-right">{fmt(Math.round(st.kW))}</td><td className="text-right">{st.dn || "–"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="text-[11px] text-sage-dark mt-1">{t("Totale")}: <b>{fmt(Math.round(tot.q))} l/s</b> · <b>{fmt(Math.round(tot.kW))} kW</b> · {t("tubazioni")} <b>{uKm(tot.L / 1000, 1)}</b></div>
+      </div>
+    );
+  }
+
   const CC = tab === "rilievo" ? canalCalcs() : [];
   return (
     <main>
       <MapCanvas apiRef={mapApi} onCreate={addDrawnField} onEditActive={updateActiveGeom} onSelect={(id) => { selectField(id); setFieldPicked(true); setSrcPicked(false); setPivotSel({ mode: "none", idx: -1 }); setPipeSel({ mode: "none", idx: -1 }); }}
         onCanalProfile={(i) => setProfileCanal(i)} onDrawChange={setDrawing} />
+
+      {/* scheda della stazione di pompaggio su una presa */}
+      {tapSel != null && tapStations[tapSel] && (() => {
+        const st = tapStations[tapSel];
+        const row = (k: string, v: string) => <div className="flex justify-between gap-3 border-b border-black/5 py-0.5"><span className="text-sage-dark">{k}</span><b className="text-right">{v}</b></div>;
+        return (
+          <div data-tap-card className="ui-scale fixed bottom-14 left-1/2 -translate-x-1/2 z-[500] widget p-3 w-[640px] max-w-[96vw] max-h-[70vh] overflow-auto pointer-events-auto text-xs">
+            <div className="flex items-center gap-2 mb-2">
+              <b className="text-brand-darker text-sm flex-1">{t("Stazione di pompaggio")} {tapSel + 1} · {t("presa sul fiume")}</b>
+              <button className="btn-ghost py-0.5" onClick={() => setTapSel(null)} title={t("Chiudi")}>✕</button>
+            </div>
+            {row(t("Fonte"), st.src || "–")}
+            {row(t("Pivot serviti"), `${st.piv.length} · ${st.piv.map((i) => "P" + (i + 1)).join(", ")}`)}
+            {row(t("Portata"), `${fmt(Math.round(st.qLs))} l/s · ${fmt(Math.round(st.qLs * 3.6))} m³/h`)}
+            {row(t("Prevalenza"), `${fmt(Math.round(st.head))} m`)}
+            {row(t("Potenza assorbita"), `${fmt(Math.round(st.kW))} kW`)}
+            {row(t("Tubazioni a valle"), `${fmt(Math.round(st.L))} m${st.dn ? ` · DN ${st.dn} ${t("in partenza")}` : ""}`)}
+            {row(t("Coordinate"), `${st.pt[1].toFixed(5)}, ${st.pt[0].toFixed(5)}`)}
+            {st.zIn != null && row(t("Livello minimo dell'acqua alla presa"), `${fmt(Math.round(st.zIn * 10) / 10)} m`)}
+            <div className="mt-2 font-semibold text-brand-darker">{t("Rami di tubazione")}</div>
+            <table className="w-full text-[11px] mt-0.5" data-tap-branches>
+              <thead><tr className="text-sage-dark text-left border-b border-black/10">
+                <th className="font-medium">{t("Tratto")}</th><th className="font-medium text-right">L (m)</th><th className="font-medium text-right">Q (l/s)</th>
+                <th className="font-medium text-right">DN</th><th className="font-medium text-right">v (m/s)</th><th className="font-medium text-right">{t("perdite")} (m)</th><th className="font-medium text-right">Δz (m)</th></tr></thead>
+              <tbody>
+                {st.branches.map((b, j) => (
+                  <tr key={j} className="border-b border-black/5">
+                    <td>{b.a} → {b.b}</td><td className="text-right">{fmt(Math.round(b.L))}</td><td className="text-right">{fmt(Math.round(b.q))}</td>
+                    <td className="text-right">{b.n > 1 ? `${b.n}×` : ""}{b.dn}</td><td className="text-right">{fmt(b.v, { maximumFractionDigits: 2 })}</td>
+                    <td className="text-right">{fmt(b.hf, { maximumFractionDigits: 2 })}</td><td className="text-right">{b.dz == null ? "…" : (b.dz > 0 ? "+" : "") + fmt(b.dz, { maximumFractionDigits: 1 })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-2 font-semibold text-brand-darker">{t("Pressione al piede dei pivot")}</div>
+            <table className="w-full text-[11px] mt-0.5" data-tap-feet>
+              <thead><tr className="text-sage-dark text-left border-b border-black/10">
+                <th className="font-medium">{t("Pivot")}</th><th className="font-medium text-right">{t("necessaria")} (bar)</th><th className="font-medium text-right">{t("disponibile")} (bar)</th>
+                <th className="font-medium text-right">{t("perdite fino al pivot")} (m)</th><th className="font-medium text-right">{t("dislivello dalla presa")} (m)</th></tr></thead>
+              <tbody>
+                {st.feet.map((f) => (
+                  <tr key={f.i} className="border-b border-black/5">
+                    <td>P{f.i + 1}</td><td className="text-right">{fmt(f.need, { maximumFractionDigits: 2 })}</td>
+                    <td className={"text-right " + (f.avail + 0.005 < f.need ? "text-danger" : "")}>{fmt(f.avail, { maximumFractionDigits: 2 })}</td>
+                    <td className="text-right">{fmt(f.hfPath, { maximumFractionDigits: 2 })}</td><td className="text-right">{f.dz == null ? "…" : fmt(f.dz, { maximumFractionDigits: 1 })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-[10px] text-sage-dark mt-1.5">{t("Prevalenza: pressione al pivot più sfavorito + perdite di carico nei tubi + dislivello dal livello minimo del fiume + 3 m di filtri e pezzi speciali.")}</p>
+          </div>
+        );
+      })()}
 
       {/* Elemento selezionato: ⌫ (o il pulsante) lo elimina, Esc toglie la selezione */}
       {delTarget && !drawing && (
@@ -13344,6 +13542,7 @@ export default function Page() {
 
           <section hidden={tab !== "accessori"}>
             <SectionHead title={t("Tubazioni")} help={t("Infrastrutture accessorie del progetto. «Diramazioni da canale» posa in automatico una fila di pivot lungo il canale e traccia la tubazione più corta per alimentarli.")} />
+            {renderTapList()}
 
             <div className="bg-panel rounded-lg p-2">
               <div className="text-xs font-semibold text-sage-dark mb-1">{t("Tubazioni di adduzione")}</div>
@@ -13611,6 +13810,7 @@ export default function Page() {
           </section>
           <section hidden={tab !== "pompaggio"}>
             <SectionHead title={t("Stazione di pompaggio")} help={t("Dimensionamento consigliato della stazione di pompaggio in base alla potenza: numero e potenza delle pompe, scorte, potenza installata e consumo annuo di energia. Usa portate e fabbisogno della pagina Irrigazione, la prevalenza calcolata nella pagina Tubazioni e il clima del sito mese per mese.")} />
+            {renderTapList()}
             {renderPumpStation()}
           </section>
 

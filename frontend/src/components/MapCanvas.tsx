@@ -43,6 +43,8 @@ export type PivotCbs = {
   onBackground: () => void;
   onLineClick?: (idx: number) => void;   // clic su una tubazione (per modificarla)
   onCanalClick?: (idx: number) => void;  // clic su un canale (scheda del componente)
+  onTapClick?: (lng: number, lat: number) => void;   // clic su una presa (stazione di pompaggio sul corso)
+  tapTip?: (lng: number, lat: number) => string;     // descrizione della presa nel tooltip
 };
 // colori dei corsi d'acqua per tipo
 // colori per tipo: fiumi blu, canali verdi, dreni viola (lib/water.ts)
@@ -926,15 +928,22 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
               for (const w of waterM) for (let i = 0; i < w.length - 1; i++) if (dPtSeg(a0, w[i], w[i + 1]) < TOUCH) return true;
               return false;
             };
-            const taps = waterM.length ? ln.coords.filter(onWater) : (ln.coords[0] ? [ln.coords[0]] : []);
-            const size = isSinglePipe || pipeGroup ? 11 : 9;
+            // solo le estremità della tubazione che toccano l'acqua (non i pivot di passaggio vicino a un canale)
+            const ends = ln.coords.length ? [ln.coords[0], ln.coords[ln.coords.length - 1]] : [];
+            const taps = waterM.length ? ends.filter(onWater) : (ln.coords[0] ? [ln.coords[0]] : []);
+            const size = isSinglePipe || pipeGroup ? 13 : 11;
             for (const q of taps) {
-              g.addLayer(L.marker([q[1], q[0]], {
-                interactive: false, zIndexOffset: 900,
+              const mk = L.marker([q[1], q[0]], {
+                interactive: !!cbs.onTapClick, zIndexOffset: 900,
                 icon: L.divIcon({ className: "", iconSize: [size, size], iconAnchor: [size / 2, size / 2],
-                  html: '<div style="width:' + size + 'px;height:' + size + 'px;background:#b23b1e;border:2px solid #fff;'
+                  html: '<div data-tap style="width:' + size + 'px;height:' + size + 'px;background:#b23b1e;border:2px solid #fff;cursor:pointer;'
                     + 'box-shadow:0 0 0 1px rgba(13,59,38,.5);border-radius:2px"></div>' }),
-              }));
+              });
+              if (cbs.onTapClick) {
+                mk.on("click", (e) => { L.DomEvent.stop(e); cbs.onTapClick!(q[0], q[1]); });
+                const tip = cbs.tapTip?.(q[0], q[1]); if (tip) mk.bindTooltip(tip, { direction: "top", offset: [0, -6] });
+              }
+              g.addLayer(mk);
             }
           } else {
             g.addLayer(L.polyline(latlngs, { ...st, interactive: false }));

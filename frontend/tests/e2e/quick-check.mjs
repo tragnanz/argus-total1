@@ -200,6 +200,17 @@ try {
   await page.waitForFunction(() => /rami dalla fonte «(?!Fiumi)/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
   const al = await page.locator("body").innerText();
   ok(/Tubazioni tracciate: \d+ rami dalla fonte «(?!Fiumi)/.test(al), `Lista → automatico: ${(al.match(/Tubazioni tracciate[^\n]*/) || ["-"])[0]}`);
+  // stazioni di pompaggio sulle prese: elenco nella pagina Pompaggio e scheda al clic
+  await page.locator('button[title="Pompaggio"]').first().click(); await page.waitForTimeout(800);
+  const nRows = await page.locator("[data-tap-row]:visible").count();
+  const nTaps = await page.locator("div[data-tap]").count();
+  if (nRows) { await page.locator("[data-tap-row]:visible").first().click(); await page.waitForTimeout(800); }
+  const card = (await page.locator("[data-tap-card]").count()) ? await page.locator("[data-tap-card]").innerText() : "";
+  const nBr = await page.locator("[data-tap-branches] tbody tr").count(), nFt = await page.locator("[data-tap-feet] tbody tr").count();
+  ok(nBr > 0 && nFt > 0, `Rami calcolati: ${nBr} tratti, ${nFt} pivot · ${(await page.locator("[data-tap-branches] tbody tr").first().innerText().catch(() => "")).replace(/\s+/g, " ")}`);
+  ok(nRows > 0 && /Pivot serviti/.test(card), `Stazioni sulle prese: ${nRows} in elenco, ${nTaps} sulla mappa · ${card.split("\n").slice(0, 6).join(" | ").slice(0, 160)}`);
+  await page.screenshot({ path: path.join(SH, "q10_stazione.png") });
+  if (await page.locator("[data-tap-card] button").count()) await page.locator("[data-tap-card] button").first().click();
   // pivot selezionato: maniglie del raggio, Ctrl+C / Ctrl+V
   await page.locator('button[title="Impianti"]').first().click(); await page.waitForTimeout(800);
   // primo clic sul pivot: gruppo; secondo: il singolo (si clicca sull'etichetta, che lascia passare il clic al cerchio)
