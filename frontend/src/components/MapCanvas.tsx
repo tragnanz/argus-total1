@@ -888,31 +888,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           let t = ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / l2; t = Math.max(0, Math.min(1, t));
           return Math.hypot(p[0] - (a[0] + vx * t), p[1] - (a[1] + vy * t));
         };
-        const touchesLine = (pts: [number, number][], ln2: [number, number][]) => {
-          for (const p of pts) for (let i = 0; i < ln2.length - 1; i++) if (dPtSeg(p, ln2[i], ln2[i + 1]) < TOUCH) return true;
-          return false;
-        };
-        const pipeIdx = model.lines.map((l, i) => ({ l, i })).filter((x) => x.l.kind === "pipe").map((x) => x.i);
-        const pipeM = new Map<number, [number, number][]>();
-        for (const i of pipeIdx) pipeM.set(i, model.lines[i].coords.map(toM));
         const waterM = (waterLines ?? []).map((ln2) => ln2.map(toM));
-        const fedPipe = new Set<number>();
-        for (const i of pipeIdx) {
-          const pm = pipeM.get(i) as [number, number][];
-          if (waterM.some((w) => touchesLine(pm, w))) fedPipe.add(i);
-        }
-        for (let pass = 0; pass < 8; pass++) {
-          let grew = false;
-          for (const i of pipeIdx) {
-            if (fedPipe.has(i)) continue;
-            const pm = pipeM.get(i) as [number, number][];
-            for (const j of fedPipe) {
-              const qm = pipeM.get(j) as [number, number][];
-              if (touchesLine(pm, qm) || touchesLine(qm, pm)) { fedPipe.add(i); grew = true; break; }
-            }
-          }
-          if (!grew) break;
-        }
         model.lines.forEach((ln, li) => {
           const latlngs = ln.coords.map((p) => [p[1], p[0]] as [number, number]);
           const isSinglePipe = ln.kind === "pipe" && pipeSel?.mode === "single" && pipeSel.idx === li;
@@ -955,9 +931,6 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
                     + 'box-shadow:0 0 0 1px rgba(13,59,38,.5);border-radius:2px"></div>' }),
               }));
             }
-            // Tratteggiata SOLO se davvero senz'acqua: se è servita da un'altra
-            // tubazione collegata al canale, è alimentata anche lei.
-            if (!fedPipe.has(li)) pl.setStyle({ dashArray: "8,6" });
           } else {
             g.addLayer(L.polyline(latlngs, { ...st, interactive: false }));
             if (ln.kind === "canal" && cbs.onCanalClick) {
