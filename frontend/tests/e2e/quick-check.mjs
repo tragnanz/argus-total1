@@ -34,7 +34,12 @@ try {
   await page.goto(URL); await page.evaluate((t) => localStorage.setItem("argus-total-token", t), tok);
   await page.goto(URL); await page.waitForTimeout(3500);
   await page.locator(`select:has(option:text-is("${CN}"))`).selectOption({ label: CN }); await page.waitForTimeout(1200);
-  await page.locator(`select:has(option:text-is("${PN}"))`).selectOption({ label: PN }); await page.waitForTimeout(5000);
+  await page.locator(`select:has(option:text-is("${PN}"))`).selectOption({ label: PN }); await page.waitForTimeout(3000);
+  // ricaricando la pagina restano aperti cliente e progetto
+  await page.reload(); await page.waitForTimeout(5000);
+  const selC = await page.locator(`select:has(option:text-is("${CN}"))`).evaluate((e) => e.options[e.selectedIndex]?.text);
+  const selP = await page.locator(`select:has(option:text-is("${PN}"))`).evaluate((e) => e.options[e.selectedIndex]?.text);
+  ok(selC === CN && selP === PN, `Dopo il ricaricamento: cliente «${selC}», progetto «${selP}»`);
   const bar = page.locator("[data-quick-bar]");
   ok(await bar.isVisible(), "Barra del progetto rapido visibile");
   ok(/✓/.test(await stepInfo("aree")), `Passo 1 aree: ${(await stepInfo("aree")).replace(/\n/g, " ")}`);

@@ -23,7 +23,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.305";
+const REV = "v0.6.306";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1828,8 +1828,37 @@ export default function Page() {
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useEffect(() => { if (api.getToken()) refreshClients(); }, []);
-  useEffect(() => { refreshProjects(clientId); setProjectId(null); }, [clientId]);
+  // Cliente e progetto aperti restano aperti dopo un ricaricamento della pagina
+  const lastOpen = useRef<{ c: number | null; p: number | null } | null>((() => {
+    try { const v = JSON.parse(localStorage.getItem("argus.lastOpen") || "null"); return v && typeof v === "object" ? v : null; } catch { return null; }
+  })());
+  useEffect(() => {
+    if (!api.getToken()) return;
+    (async () => {
+      let cs: Awaited<ReturnType<typeof api.listClients>> = [];
+      try { cs = await api.listClients(); setClients(cs); } catch (e) { showErr(e); }
+      const L = lastOpen.current;
+      if (L?.c != null && cs.some((c) => c.id === L.c)) setClientId(L.c); else lastOpen.current = null;
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    const L = lastOpen.current;
+    (async () => {
+      let ps: Awaited<ReturnType<typeof api.listProjects>> = [];
+      try { ps = await api.listProjects(clientId); setProjects(ps); } catch (e) { showErr(e); }
+      if (L && L.c === clientId) {
+        if (L.p != null && ps.some((p) => p.id === L.p)) setProjectId(L.p);
+        lastOpen.current = null;
+      }
+    })();
+    if (!(L && L.c === clientId)) setProjectId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+  useEffect(() => {
+    if (lastOpen.current) return;                  // ripristino in corso: non sovrascrivere
+    try { localStorage.setItem("argus.lastOpen", JSON.stringify({ c: clientId, p: projectId })); } catch { /* */ }
+  }, [clientId, projectId]);
   useEffect(() => {
     if (projectId) { openProject(projectId); refreshShares(projectId); notifiedCommentIds.current = new Set(); refreshComments(projectId); }
     else { setAreas([]); setLayers([]); setShares([]); }
