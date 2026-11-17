@@ -157,6 +157,16 @@ try {
   const pm = await page.locator("body").innerText();
   ok(/rami dalla fonte/.test(pm), `Tubazioni dalla fonte: ${(pm.match(/Tubazioni tracciate[^\n]*/) || ["-"])[0]}`);
   await page.screenshot({ path: path.join(SH, "q6_tubazioni_fonte.png") });
+  // distribuzione dalla fonte: scelta tubazioni / canali / misto nella pagina Fonte d'acqua
+  await page.locator('button[title="Fonte d\'acqua"]').first().click(); await page.waitForTimeout(800);
+  ok(await page.locator("[data-dist]").count() > 0, "Fonte: scelta della distribuzione (tubazioni, canali, misto)");
+  await page.locator('[data-dist-mode="mixed"]').click(); await page.waitForTimeout(300);
+  const pl = page.locator("[data-dist-perline]"); await pl.click(); await page.keyboard.press("ControlOrMeta+a"); await page.keyboard.type("4");
+  await page.locator("[data-dist-go]").click();
+  await page.waitForFunction(() => /Misto: canale principale/.test(document.body.innerText), null, { timeout: 90000 }).catch(() => {});
+  const mm = await page.locator("body").innerText();
+  ok(/Misto: canale principale/.test(mm), `Misto: ${(mm.match(/Misto: canale principale[^\n]*/) || ["-"])[0]}`);
+  await page.screenshot({ path: path.join(SH, "q7_misto.png") });
   ok(errors.length === 0, `Nessun errore JavaScript${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; await page.screenshot({ path: path.join(SH, "q_err.png") }).catch(() => {}); }
 await browser.close();

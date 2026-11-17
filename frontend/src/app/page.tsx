@@ -22,7 +22,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.288";
+const REV = "v0.6.289";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -131,7 +131,7 @@ type Field = {
 
 // Wrapper front-end con visibilità per-oggetto e proprietario (campo) per il
 // pannello Livelli stile Photoshop: owner = id del campo a cui l'oggetto appartiene.
-type CanalL = Canal & { hidden?: boolean; uid?: number; owner?: number; exist?: boolean };   // exist: canale esistente (non entra nel computo)
+type CanalL = Canal & { hidden?: boolean; uid?: number; owner?: number; exist?: boolean; srcTrunk?: boolean };   // srcTrunk: canale principale dalla fonte (distribuzione mista)   // exist: canale esistente (non entra nel computo)
 type WaterL = Watercourse & { hidden?: boolean; uid?: number; owner?: number; folder?: string; pending?: boolean;
   // come era registrato (OpenStreetMap / rilevamento) prima che l'utente forzasse nome o tipo
   name_orig?: string | null; kind_orig?: string;
@@ -1494,6 +1494,8 @@ export default function Page() {
   const [advMaxR, setAdvMaxR] = useState(450);           // avanzata: raggio massimo del range (m)
   const [pipeCanalIdx, setPipeCanalIdx] = useState(-1);  // Tubazioni: -1 = fonte idrica scelta, ≥ 0 = canale tracciato
   const [pipeMaxPerLine, setPipeMaxPerLine] = useState(8); // max pivot collegati sulla stessa tubazione
+  // distribuzione dalla fonte ai pivot: tubazioni, canali (corridoi tra le file) o misto (canale principale + tubazioni)
+  const [distMode, setDistMode] = useState<"pipes" | "canals" | "mixed">("pipes");
   // Gerarchia pivot: modello modificabile (gruppo → singolo) derivato dal risultato.
   const [pivots, setPivots] = useState<PivotItem[]>([]);
   const [pivotLines, setPivotLines] = useState<PipeLine[]>([]);
@@ -4584,9 +4586,9 @@ export default function Page() {
   // ---- Accessori: tubazioni di adduzione dal canale ---------------------------
   // Traccia le tubazioni che si diramano dal canale e passano per i centri dei
   // pivot ESISTENTI del poligono, una per fila, tutte nella stessa direzione.
-  function generatePipes() {
+  async function generatePipes(mixed = false) {
     if (!active) return needField();
-    const fromSrc = pipeCanalIdx < 0 || !canals.length;
+    const fromSrc = mixed || pipeCanalIdx < 0 || !canals.length;
     if (fromSrc && !feedSrc) { setMsg(t("Scegli prima la fonte idrica (pagina Fonte d'acqua): le tubazioni partono da lì.")); return; }
     const fid = active.id;
     const fieldPivs = pivots.filter((p) => p.field === fid);
@@ -4605,7 +4607,7 @@ export default function Page() {
       // un estremo) entro la lunghezza di una fila; altrimenti serve la condotta principale
       const a0 = line[0], a1 = line[line.length - 1];
       const near = fieldPivs.filter((p) => { const e = nearestOnLine([p.lng, p.lat], line); return e.d <= reach && geoDist(e.q, a0) > 5 && geoDist(e.q, a1) > 5; }).length;
-      if (near < fieldPivs.length * 0.7) {
+      if (mixed || near < fieldPivs.length * 0.7) {
         const cx = fieldPivs.reduce((a, p) => a + p.lng, 0) / fieldPivs.length, cy = fieldPivs.reduce((a, p) => a + p.lat, 0) / fieldPivs.length;
         let ux = (cx - srcPt[0]) * kx, uy = (cy - srcPt[1]) * 110540; const L = Math.hypot(ux, uy) || 1; ux /= L; uy /= L;
         // si prosegue oltre il baricentro fino al bordo opposto del campo
@@ -4616,6 +4618,22 @@ export default function Page() {
           far = q;
         }
         trunk = [srcPt, far]; line = trunk;
+        if (mixed) {
+          // MISTO: il tronco principale è un canale a gravità dalla presa (tracciato sul terreno); le file di
+          // pivot si allacciano al canale con tubazioni
+          setBusy("pipes");
+          let cn: Canal | null = null;
+          try { cn = await api.fetchCanal(active.geom as Polygon, canalSlope, srcPt, far); } catch { cn = null; }
+          setBusy("");
+          const cc = cn?.geojson?.coordinates?.length ? cn.geojson.coordinates : trunk;
+          const Lm = Math.round(lineLenKm(cc) * 1000);
+          const item: CanalL = cn ? { ...cn, owner: fid, srcTrunk: true }
+            : { geojson: { type: "LineString", coordinates: cc }, length_m: Lm, drop_m: 0, mean_permille: canalSlope, target_permille: canalSlope,
+                start: cc[0], end: cc[cc.length - 1], elev_start_m: 0, elev_end_m: 0, profile: [], waypoints: [], owner: fid, srcTrunk: true };
+          const arr = [...canals.filter((c) => !(c.srcTrunk && c.owner === fid)), item];
+          setCanals(arr); renderCanals(arr);
+          trunk = null; line = cc;
+        }
       }
     }
     const feeders = feederPipes(line, fieldPivs.map((p) => ({ lat: p.lat, lng: p.lng, r: p.r })), pipeMaxPerLine, ring);
@@ -4636,7 +4654,9 @@ export default function Page() {
       }
       return s + L;
     }, 0) / 1000;
-    setMsg(fromSrc
+    setMsg(mixed
+      ? t("Misto: canale principale dalla fonte «{s}» e {n} tubazioni con al massimo {m} pivot per tratta · {km} km di tubi ✓", { n: pipesLL.length, s: feedSrc!.label, m: pipeMaxPerLine, km: fmt(km, { maximumFractionDigits: 1 }) })
+      : fromSrc
       ? t("Tubazioni tracciate: {n} rami dalla fonte «{s}» · {km} km ✓", { n: pipesLL.length, s: feedSrc!.label, km: fmt(km, { maximumFractionDigits: 1 }) })
       : t("Tubazioni tracciate: {n} rami dal canale · {km} km ✓", { n: pipesLL.length, km: fmt(km, { maximumFractionDigits: 1 }) }));
   }
@@ -9236,6 +9256,8 @@ export default function Page() {
     setSrcPt(Array.isArray(fo.pt) ? (fo.pt as number[]) : null);
     setSrcRoute(Array.isArray(fo.route) ? (fo.route as number[][]) : null);
     setSrcLabel({ name: typeof fo.name === "string" ? fo.name : "", auto: fo.nameAuto !== false });
+    setDistMode(fo.dist === "canals" || fo.dist === "mixed" ? fo.dist : "pipes");
+    setPipeMaxPerLine(Math.max(1, Math.round(num(fo.perLine, 8))));
     setSrcType(ty); setSrcQmax(num(fo.qmax, 0)); setSrcHours(num(fo.hours, 24)); setSrcRange(num(fo.range, SRC_RANGE_DEF[ty]));
     setSrcSediment(typeof fo.sed === "boolean" ? fo.sed : ty === "fiume");
     setSrcEnergy((["rete", "fv-gen", "fv-batt"].includes(fo.energy as string) ? fo.energy : "rete") as "rete" | "fv-gen" | "fv-batt");
@@ -9255,7 +9277,7 @@ export default function Page() {
   // viaggiano con il progetto: si ritrovano su qualunque computer.
   const projLoaded = useRef<number | null>(null);
   const projSaved = useRef<string>("");
-  const fonteState = () => ({ pt: srcPt, route: srcRoute, type: srcType, name: srcLabel.name, nameAuto: srcLabel.auto, qmax: srcQmax, hours: srcHours, range: srcRange,
+  const fonteState = () => ({ dist: distMode, perLine: pipeMaxPerLine, pt: srcPt, route: srcRoute, type: srcType, name: srcLabel.name, nameAuto: srcLabel.auto, qmax: srcQmax, hours: srcHours, range: srcRange,
     sed: srcSediment, energy: srcEnergy, drive: pumpDrive, monthly: srcMonthly, sectors: srcSectors, stQmax, resDepth, resDays, resEvapK, eta: wtwEta,
     canalSlope, bankSlope, settleMm, filterCap, wellQ, shown: srcShown, cableM, river: river ? { ...river, data: { ...river.data, basin: river.data.basin ? { ...river.data.basin, ring: (river.data.basin.ring ?? []).filter((_, i) => i % 2 === 0) } : undefined } } : null, costs: { kwh: costKwh, diesel: costDiesel, lkwh: dieselLkWh, gen: genShare, mkw: costMaintKw, pvom: costPvOm, batt: costBattKwh, blife: battLife } });
   // ---- Cronologia Annulla/Ripristina UNIFICATA ----
@@ -10439,6 +10461,50 @@ export default function Page() {
           )}
           {srcPt && srcType !== "pozzo" && renderRiver()}
         </div>
+
+        {/* distribuzione dalla fonte ai pivot */}
+        {srcPt && (
+          <div className="bg-panel rounded-lg p-2 space-y-2" data-dist>
+            <div className="text-xs font-semibold text-brand-darker">{t("Distribuzione dalla fonte ai pivot")}</div>
+            <div className="seg">
+              {([["pipes", t("Tubazioni")], ["canals", t("Canali")], ["mixed", t("Misto")]] as const).map(([k, lb]) => (
+                <div key={k} className="seg-item" data-active={distMode === k} data-dist-mode={k}
+                  onClick={() => {
+                    setDistMode(k);
+                    const tp: Transport = k === "canals" ? "canal" : "buried";
+                    if (cur.transport !== tp) patch({ transport: tp, slopeIdeal: SLOPE_PM[tp].ideal, slopeMax: SLOPE_PM[tp].max });
+                  }}>{lb}</div>
+              ))}
+            </div>
+            <p className="text-[11px] text-sage-dark leading-snug">
+              {distMode === "pipes" ? t("Tubazioni interrate dalla fonte: ogni tratta serve al massimo il numero di pivot indicato. Se il fiume attraversa il campo le tratte si allacciano al fiume, altrimenti a una condotta principale dalla presa.")
+                : distMode === "canals" ? t("Canali a gravità nei corridoi tra le file di pivot, con le strade di servizio e i tubi dal canale a ogni pivot.")
+                : t("Canale principale a gravità dalla presa attraverso il campo; dal canale partono le tubazioni, ognuna con al massimo il numero di pivot indicato.")}
+            </p>
+            {distMode !== "canals" ? (
+              <label className="block text-[11px] text-sage-dark">{t("Pivot al massimo sulla stessa tratta")}
+                <NumInput type="number" min={1} max={100} step={1} value={pipeMaxPerLine} data-dist-perline
+                  onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x)) setPipeMaxPerLine(Math.max(1, Math.min(100, Math.round(x)))); }}
+                  className="field-input mt-0.5 py-1 text-sm" /></label>
+            ) : (
+              <div className="seg" data-canal-rows>
+                {[2, 3].map((n) => (
+                  <div key={n} className="seg-item" data-active={(cur.canalRows ?? 2) === n} onClick={() => patch({ canalRows: n })}>
+                    {t("{n} per lato · un canale ogni {m} pivot", { n, m: 2 * n })}</div>
+                ))}
+              </div>
+            )}
+            {distMode === "canals" ? (
+              <button className="btn-primary w-full text-[12px]" onClick={() => { setTab("impianti"); setMsg(t("Canali: premi «Inserisci» nella pagina Impianti per posare i pivot in file con i corridoi dei canali.")); }}>
+                {t("Vai agli impianti per posare i pivot con i canali →")}</button>
+            ) : (
+              <button className="btn-primary w-full text-[12px]" data-dist-go disabled={!active || busy === "pipes" || !pivots.some((p) => p.field === active?.id)}
+                onClick={() => generatePipes(distMode === "mixed")}>
+                {busy === "pipes" ? "…" : distMode === "mixed" ? t("Traccia canale e tubazioni su «{name}»", { name: active?.name ?? "" }) : t("Traccia le tubazioni su «{name}»", { name: active?.name ?? "" })}</button>
+            )}
+            {active && !pivots.some((p) => p.field === active.id) && <p className="text-[10px] text-sage-dark">{t("Inserisci prima i pivot su questo poligono.")}</p>}
+          </div>
+        )}
 
         {S && (<>
           {/* 2 — dati */}
@@ -13078,7 +13144,7 @@ export default function Page() {
 
               <div className="flex gap-2 mt-2">
                 <button className="btn-primary flex-1 basis-0" disabled={!active || (!canals.length && !feedSrc)}
-                  onClick={generatePipes}>
+                  onClick={() => generatePipes()}>
                   {active ? t("Traccia tubazioni su «{name}»", { name: active.name }) : t("Traccia tubazioni")}
                 </button>
                 <button className="btn-ghost flex-1 basis-0" disabled={!nPipes} onClick={removePipes}>{t("Rimuovi tubazioni")}</button>
