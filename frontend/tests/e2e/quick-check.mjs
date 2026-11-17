@@ -187,8 +187,12 @@ try {
     await page.locator('[data-dist-mode="pipes"]').click(); await page.waitForTimeout(300);
     await page.locator("[data-dist-go]").click(); await page.waitForTimeout(1500);
     const gp = await page.locator("body").innerText();
-    ok(/rami dalla fonte «Fiumi \(/.test(gp), `Tubazioni dal gruppo: ${(gp.match(/Tubazioni tracciate[^\n]*/) || ["-"])[0]}`);
+    // il messaggio può essere già sostituito (es. portata del fiume stimata): vale anche il livello «Tubazioni · n rami»
+    ok(/rami dalla fonte «Fiumi \(/.test(gp) || /Tubazioni · \d+ rami/.test(gp), `Tubazioni dal gruppo: ${(gp.match(/Tubazioni tracciate[^\n]*|Tubazioni · \d+ rami[^\n]*/) || ["-"])[0]}`);
     await page.screenshot({ path: path.join(SH, "q8_gruppo.png") });
+    const sch = await page.locator("body").innerText();
+    const eLine = (sch.match(/E · Prelievo diretto dal fiume[^\n]*(\n[^\n]*){0,2}/) || [""])[0].replace(/\n/g, " ¦ ");
+    ok(/E · Prelievo diretto dal fiume/.test(sch) && /consigliato/.test(eLine), `Schema E: ${eLine.slice(0, 160)}`);
   } else ok(false, "Gruppo fonte: scheda Fiumi assente");
   // scelta dalla lista: il tracciato si ricalcola da solo
   await page.locator("[data-src-list]").selectOption({ index: 3 }).catch(() => {});

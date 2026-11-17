@@ -22,7 +22,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.292";
+const REV = "v0.6.293";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -4350,7 +4350,7 @@ export default function Page() {
       const sc = S ? (S.schemes.find((x) => x.key === (srcShown ?? S.best?.key)) ?? null) : null;
       let add: { kind: string; coords: number[][]; field?: number }[];
       if (S && sc && !pivotLines.some((l) => l.kind === "pipe")) {
-        const G = sectorGeo(S.secKMin);
+        const G = sectorGeo(S.secKMin, sc.key === "E" ? srcRiverLines() : null);
         add = [];
         for (const g of G.secs) for (const l of g.lines) add.push({ kind: "pipe", coords: l.coords, field: pivots[g.idx[0]]?.field });
         if (sc.main?.kind === "pipe") for (const b of sc.main.tree ?? []) add.push({ kind: "pipe", coords: b.coords });
@@ -4624,8 +4624,10 @@ export default function Page() {
   // Traccia le tubazioni che si diramano dal canale e passano per i centri dei
   // pivot ESISTENTI del poligono, una per fila, tutte nella stessa direzione.
   // allFields: tutti i poligoni con pivot (calcolo automatico dopo la scelta della fonte); altrimenti il selezionato
+  const pipeRun = useRef(0);   // ultimo calcolo richiesto: i risultati di uno precedente ancora in corso si scartano
   async function generatePipes(mixed = false, allFields = false) {
     if (!allFields && !active) return needField();
+    const run = ++pipeRun.current;
     const fromSrc = mixed || pipeCanalIdx < 0 || !canals.length;
     if (fromSrc && !feedSrc) { setMsg(t("Scegli prima la fonte idrica (pagina Fonte d'acqua): le tubazioni partono da lì.")); return; }
     const targets = allFields ? fields.filter((f) => f.geom && pivots.some((p) => p.field === f.id)) : [active!];
@@ -4666,6 +4668,7 @@ export default function Page() {
           let cn: Canal | null = null;
           try { cn = await api.fetchCanal(fld.geom as Polygon, canalSlope, srcPt, far); } catch { cn = null; }
           setBusy("");
+          if (run !== pipeRun.current) return;
           const cc = cn?.geojson?.coordinates?.length ? cn.geojson.coordinates : trunk;
           const Lm = Math.round(lineLenKm(cc) * 1000);
           const item: CanalL = cn ? { ...cn, owner: fid, srcTrunk: true }
@@ -9615,7 +9618,6 @@ export default function Page() {
         const d = w.geojson.type === "Polygon" && pointInPolygon(p, w.geojson.coordinates as number[][][]) ? 0 : e.d - (w.mean_width_m ?? 0) / 2;
         if (d <= tol && (!best || d < best.d)) best = { i, q: e.q, d };
       });
-      setAutoRoute((n) => n + 1);
       if (best) { takeWaterAsSource((best as { i: number }).i, (best as { q: number[] }).q); return; }
       if (srcLabelRef.current.auto) setSrcLabel({ name: "", auto: true });
       setSrcGroup(null);
@@ -9705,8 +9707,10 @@ export default function Page() {
   // kMin = numero minimo di settori; la portata massima per stazione ne impone comunque abbastanza.
   const sectorMemo = useRef(new Map<string, SecGeo>());
   type SecGeo = { lab: number[]; secs: { idx: number[]; st: number[]; distL: number; hfTo: number[]; lines: { coords: number[][]; dn: number; q: number }[] }[] };
-  function sectorGeo(kMin: number): SecGeo {
-    const sig = `${kMin}|${stQmax}|${vMax}|${hwC}|${fields.map((f) => f.id).join(",")}|` + pivots.map((p) => `${p.lng.toFixed(5)},${p.lat.toFixed(5)},${Math.round(p.r)},${pivotFlow(p).toFixed(1)},${p.field ?? -1}`).join(";");
+  // river: linee del corso d'acqua da cui si preleva direttamente (presa per settore): la stazione di ogni
+  // settore va sul corso, nel punto che rende minima portata × distanza dai suoi pivot
+  function sectorGeo(kMin: number, river?: number[][][] | null): SecGeo {
+    const sig = `${kMin}|${river ? river.map((l) => `${l.length}:${l[0]?.[0]?.toFixed(5)}`).join("/") : "-"}|${stQmax}|${vMax}|${hwC}|${fields.map((f) => f.id).join(",")}|` + pivots.map((p) => `${p.lng.toFixed(5)},${p.lat.toFixed(5)},${Math.round(p.r)},${pivotFlow(p).toFixed(1)},${p.field ?? -1}`).join(";");
     const hit = sectorMemo.current.get(sig); if (hit) return hit;
     const lat0 = pivots.reduce((a, p) => a + p.lat, 0) / Math.max(1, pivots.length), lon0 = pivots.reduce((a, p) => a + p.lng, 0) / Math.max(1, pivots.length);
     const F = localFrame(lon0, lat0);
@@ -9716,10 +9720,26 @@ export default function Page() {
     const inField = rings.length ? (q: { x: number; y: number }) => { const ll = F.from(q); return rings.some((r) => pointInPolygon([ll[0], ll[1]], r)); } : undefined;
     const kk = lab.length ? Math.max(...lab) + 1 : 0;
     const secs: SecGeo["secs"] = [];
+    // punti del corso ogni ~100 m (coordinate locali)
+    const rPts: { x: number; y: number }[] = [];
+    if (river) for (const l of river) {
+      for (let i = 0; i < l.length; i++) {
+        const a = F.to(l[i][0], l[i][1]); rPts.push(a);
+        if (i + 1 < l.length) {
+          const b = F.to(l[i + 1][0], l[i + 1][1]); const n = Math.floor(Math.hypot(b.x - a.x, b.y - a.y) / 100);
+          for (let k = 1; k < n; k++) rPts.push({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n });
+        }
+      }
+    }
     for (let j = 0; j < kk; j++) {
       const idx = pivots.map((_, i) => i).filter((i) => lab[i] === j); if (!idx.length) continue;
       const sp = idx.map((i) => P[i]);
-      const st = stationSpot(sp, P, inField);
+      let st = rPts.length ? null as { x: number; y: number } | null : stationSpot(sp, P, inField);
+      if (!st) {
+        let bc = Infinity;
+        for (const q of rPts) { let c = 0; for (const p of sp) c += p.q * Math.hypot(q.x - p.x, q.y - p.y); if (c < bc) { bc = c; st = q; } }
+      }
+      st = st!;
       const net = sectorNet(st, sp, DN_LIST, vMax, hwC);
       secs.push({ idx, st: F.from(st), distL: net.L, hfTo: net.hfTo,
         lines: net.edges.map((e) => ({ coords: [F.from(net.nodes[e.a]), F.from(net.nodes[e.b])], dn: e.dn, q: e.q })) });
@@ -9736,11 +9756,18 @@ export default function Page() {
     hd: number; distL: number; pathL: number; hfPath: number; hC: number };
   type MainBranch = { coords: number[][]; q: number; L: number; dn?: number; n?: number; sec?: CanalSection | null; routed?: boolean; profile?: number[][]; pipeFrom?: number };
   const canalSig = (R: number[], secs2: { center: number[] }[]) => JSON.stringify([R, ...secs2.map((x) => x.center)].map((q) => [+q[0].toFixed(5), +q[1].toFixed(5)]));
-  type Scheme = { key: "A" | "B" | "C" | "D"; name: string; ok: boolean; why?: string; stages: Stage[];
+  type Scheme = { key: "A" | "B" | "C" | "D" | "E"; name: string; ok: boolean; why?: string; stages: Stage[];
     main?: { kind: "pipe" | "canal"; L: number; dn?: number; n?: number; hf?: number; hiPt?: number; cutMax?: number; fillMax?: number; sec?: CanalSection | null;
       tree?: MainBranch[]; treeL?: number; treeCut?: number; treeFill?: number; drops?: number; dropM?: number; tailL?: number };
     res?: { vol: number; ha: number; r: number; evap: number; days: number }; sectors?: Sector[];
     mwh: number; kWabs: number; pvKwp: number; battKwh: number; solarPct: number; nStations: number };
+  // linee del corso da cui si può prelevare direttamente: il gruppo scelto o il corso su cui sta la presa
+  function srcRiverLines(): number[][][] | null {
+    if (srcType !== "fiume" && srcType !== "canale") return null;
+    if (srcGroup && feedSrc?.lines?.length) return feedSrc.lines;
+    if (srcOnWater && watercourses[srcOnWater.i]?.geojson.type === "LineString") return [waterLineOf(watercourses[srcOnWater.i] as WaterL)];
+    return null;
+  }
   function sourceSchemes() {
     if (!srcPt || !pivots.length) return null;
     const P = pumpStation();
@@ -10074,6 +10101,25 @@ export default function Page() {
           treeCut: lvD?.cut, treeFill: lvD?.fill, drops: lvD?.drops, dropM: lvD?.dropM, tailL: lvD?.tailL },
         sectors: secs.length ? secs.map((x, j) => ({ ...x, hC: stS[j].head })) : undefined }));
     }
+    // E — prelievo diretto dal fiume: una stazione per settore sulla sponda, nessuna condotta principale
+    const riverLL = srcRiverLines();
+    if (riverLL) {
+      const G = sectorGeo(secKMin, riverLL);
+      const secE: Sector[] = G.secs.map((g, j) => {
+        const idx = g.idx, qLs = (Qd * idx.reduce((a, i) => a + pivotFlow(pivots[i]), 0)) / Math.max(1e-9, P.qDes);
+        const zs = zPiv ? idx.map((i) => zPiv[i]).filter((v): v is number => v != null) : [];
+        const zTop = zs.length ? Math.max(...zs) : zP;
+        const hdS = Math.max(...idx.map((i, t) => pivotPressure(pivots[i]) * 10.2 + g.hfTo[t] + (zPiv && zPiv[i] != null && zTop != null ? (zPiv[i] as number) - zTop : 0))) + 3;
+        const head = Math.max(1, hdS + (zTop != null && zLow != null ? Math.max(0, zTop - zLow) : 0) + 1);   // + 1 m di aspirazione e griglia
+        return { i: j + 1, n: idx.length, qLs, head, kW: kWof(qLs, head), zTop, center: g.st, hd: hdS, distL: g.distL, pathL: 0, hfPath: 0, hC: head };
+      });
+      const stE: Stage[] = secE.map((x) => ({ name: tx("Stazione settore {i} ({n} pivot)", { i: x.i, n: x.n }) + " · " + tx("presa sul fiume"),
+        qLs: x.qLs, head: x.head, kW: x.kW, hours: hd, share: x.qLs / Math.max(1e-9, Qd), pt: x.center, hAvg: x.head - (drop - dropAvg) }));
+      let ok = secE.length > 0, why: string | undefined;
+      if (!qMaxOk(Qd)) { ok = false; why = tx("Servono {q} l/s, la fonte ne dà {m}.", { q: fx(Math.round(Qd)), m: fx(srcQmax) }); }
+      else if (srcHours < hd) { ok = false; why = tx("La fonte è disponibile {a} h al giorno, i pivot lavorano {b} h: serve un accumulo.", { a: fx(srcHours), b: fx(hd) }); }
+      out.push(finish({ key: "E", name: tx("Prelievo diretto dal fiume, una stazione per settore"), ok, why, nStations: stE.length, stages: stE, sectors: secE }));
+    }
     // Consigliato — rete: minor energia; FV + generatore: minor energia da
     // generatore; in entrambi entro il 3% vince lo schema con meno stazioni.
     // FV + batterie: entro il 10% di energia vince lo schema con meno kWh di
@@ -10091,6 +10137,9 @@ export default function Page() {
         best = band.reduce((a, x) => (x.nStations < a.nStations || (x.nStations === a.nStations && score(x) < score(a)) ? x : a));
       }
     }
+    // presa direttamente dal fiume scelto come fonte: è lo schema da usare se fattibile
+    const eS = out.find((x) => x.key === "E" && x.ok);
+    if (eS) best = eS;
     return { schemes: out, best, Qd, Vday, irrHa: P.irrHa, eRes, Hd, L, zS, zR, zP, zLow, R, ln, hasElev: !!E, psh, sunH, kCap, secKMin,
       drop, dropAvg, months: !!months, kAuto, kUse, secSave, prof, netMm };
   }
@@ -10164,7 +10213,7 @@ export default function Page() {
     const km = (m: number) => `${fx(m / 1000, { maximumFractionDigits: 1 })} km`;
     return {
       src: srcPt,
-      line: sc && S ? S.ln : null,
+      line: sc && S && sc.key !== "E" ? S.ln : null,          // E: presa direttamente sul fiume, nessuna adduttrice
       lineKind: (sc?.main?.kind ?? "pipe") as "pipe" | "canal",
       branches: (sc?.main?.tree ?? []).flatMap((b) => {
         if (b.pipeFrom == null || sc!.main!.kind !== "canal") return [b];
