@@ -232,6 +232,18 @@ try {
   const selTxt = await page.locator("body").innerText();
   const cardP = (await page.locator("[data-comp-card]").count()) ? await page.locator("[data-comp-card]").innerText() : "";
   ok(/DN \d+ · [\d.,]+ l\/s/.test(cardP) && !/DN – /.test(cardP), `DN dalla portata dei pivot: ${(cardP.match(/DN [^\n]*/) || ["-"])[0]}`);
+  // diametro scelto a mano: velocità e perdite si ricalcolano; «Automatico» torna al DN della portata
+  if (await page.locator("[data-pipe-dn]").count()) {
+    const hfOf = (x) => Number(((x.match(/perdite ([\d.,]+) m/) || [])[1] || "0").replace(/\./g, "").replace(",", "."));
+    const i0 = await page.locator("[data-pipe-info]").innerText();
+    const dn0 = Number((i0.match(/DN (\d+)/) || [])[1] || 0);
+    const big = [110, 125, 140, 160, 180, 200, 225, 250, 280, 315, 355, 400, 450, 500].find((d) => d >= dn0 * 1.4) || 500;
+    await page.locator("[data-pipe-dn]").selectOption(String(big)); await page.waitForTimeout(900);
+    const i1 = await page.locator("[data-pipe-info]").innerText();
+    await page.locator("[data-pipe-dn]").selectOption(""); await page.waitForTimeout(900);
+    const i2 = await page.locator("[data-pipe-info]").innerText();
+    ok(new RegExp(`DN ${big} `).test(i1) && hfOf(i1) < hfOf(i0) && new RegExp(`DN ${dn0} `).test(i2), `DN a mano: ${i0.split(" · v")[0]} perdite ${hfOf(i0)} m → DN ${big} perdite ${hfOf(i1)} m → automatico DN ${(i2.match(/DN (\d+)/) || [])[1]}`);
+  } else ok(false, "Scelta del diametro assente nella scheda della tubazione");
   ok(!!ptOnPipe && /Tubazione · selezionato/.test(selTxt), `Clic sul tubo: ${(selTxt.match(/(Tubazione|Pivot P\d+) · selezionato/) || ["nessuna selezione"])[0]}`);
   await page.keyboard.press("Escape"); await page.waitForTimeout(300);
   // pivot selezionato: maniglie del raggio, Ctrl+C / Ctrl+V

@@ -23,7 +23,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.306";
+const REV = "v0.6.307";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -542,6 +542,7 @@ function circleRing(lat: number, lng: number, r: number, n = 32): number[][] {
 // Una tubazione: tracciato + (dopo il calcolo idraulico) diametro e portata di
 // ogni tratto.
 type PipeLine = { kind: string; coords: number[][]; field?: number; dn?: number[]; qs?: number[];
+  dnFix?: number;                                                                   // diametro scelto a mano (vale per tutta la tubazione)
   cz?: { zH?: number; zT?: number; tp?: number; zMax?: number; zMin?: number };   // canali tra le file: quote e pendenza del terreno
   ov?: { b?: number; S?: number; m?: number; fb?: number; dropMax?: number };      // dimensioni del canale impostate a mano
   des?: import("@/lib/api").CanalDesign; desKey?: string };                       // profilo con i salti (dal terreno)
@@ -572,13 +573,14 @@ function pivotsFromFC(fc: any, defR: number): { pivots: PivotItem[]; lines: Pipe
         ...(pr.deg != null ? { deg: Number(pr.deg), az: Number(pr.az ?? 0) } : {}), ...(pr.gun ? { gun: Number(pr.gun) } : {}),
         ...(pr.fase ? { phase: Number(pr.fase) } : {}) });
     } else if (g?.type === "LineString") {
-      lines.push({ kind: k, coords: g.coordinates, field: f?.properties?.field, dn: f?.properties?.dn, qs: f?.properties?.qs });
+      lines.push({ kind: k, coords: g.coordinates, field: f?.properties?.field, dn: f?.properties?.dn, qs: f?.properties?.qs,
+        ...(f?.properties?.dnFix ? { dnFix: Number(f.properties.dnFix) } : {}) });
     }
   }
   return { pivots, lines };
 }
 // Ricostruisce il FeatureCollection dal modello (per salvataggio/esporto/statistiche).
-function fcFromModel(pivots: PivotItem[], lines: { kind: string; coords: number[][]; field?: number; dn?: number[]; qs?: number[] }[]) {
+function fcFromModel(pivots: PivotItem[], lines: { kind: string; coords: number[][]; field?: number; dn?: number[]; qs?: number[]; dnFix?: number }[]) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const feats: any[] = pivots.map((pv) => ({
     type: "Feature",
@@ -592,7 +594,7 @@ function fcFromModel(pivots: PivotItem[], lines: { kind: string; coords: number[
   }));
   for (const ln of lines) {
     feats.push({ type: "Feature", geometry: { type: "LineString", coordinates: ln.coords },
-      properties: { kind: ln.kind, field: ln.field, ...(ln.dn ? { dn: ln.dn } : {}), ...(ln.qs ? { qs: ln.qs } : {}) } });
+      properties: { kind: ln.kind, field: ln.field, ...(ln.dn ? { dn: ln.dn } : {}), ...(ln.qs ? { qs: ln.qs } : {}), ...(ln.dnFix ? { dnFix: ln.dnFix } : {}) } });
   }
   return { type: "FeatureCollection" as const, features: feats };
 }
@@ -5144,8 +5146,10 @@ export default function Page() {
     const key = (q: number[]) => `${q[0].toFixed(6)},${q[1].toFixed(6)}`;
     const adj = new Map<string, { to: string; L: number; pt: number[] }[]>();
     const ptOf = new Map<string, number[]>();
+    const fixOf = new Map<string, number>();          // tratto → DN scelto a mano sulla sua tubazione
     for (const { l } of pipes) for (let i = 0; i + 1 < l.coords.length; i++) {
       const a = l.coords[i], b = l.coords[i + 1], ka = key(a), kb = key(b), L = Math.hypot((a[0] - b[0]) * kx, (a[1] - b[1]) * ky);
+      if (l.dnFix) fixOf.set(ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`, l.dnFix);
       ptOf.set(ka, a); ptOf.set(kb, b);
       (adj.get(ka) ?? adj.set(ka, []).get(ka)!).push({ to: kb, L, pt: b });
       (adj.get(kb) ?? adj.set(kb, []).get(kb)!).push({ to: ka, L, pt: a });
@@ -5171,7 +5175,9 @@ export default function Page() {
       const branches: TapBranch[] = [];
       const segs: [string, { dn: number; q: number }][] = [];
       for (let h = 1; h < order.length; h++) {
-        const n = order[h], pr = par.get(n)!, q = flow.get(n) ?? 0; const ps = pipeSizeLib(q, pr.L, DN_LIST, vMax, hwC);
+        const n = order[h], pr = par.get(n)!, q = flow.get(n) ?? 0;
+        const fx = fixOf.get(pr.from < n ? `${pr.from}|${n}` : `${n}|${pr.from}`);
+        const ps = fx ? pipeSizeLib(q, pr.L, [fx], 1e9, hwC) : pipeSizeLib(q, pr.L, DN_LIST, vMax, hwC);
         hf.set(n, (hf.get(pr.from) ?? 0) + ps.hf); Ltot += pr.L; if (pr.from === k) dn0 = Math.max(dn0, ps.dn);
         const za = zOf(pr.from), zb = zOf(n);
         const v = q > 0 ? (q / 1000 / ps.n) / (Math.PI * (ps.dn / 1000) ** 2 / 4) : 0;
@@ -5238,6 +5244,13 @@ export default function Page() {
     if (changed) setPivotLines(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tapStations]);
+  // diametro di una tubazione scelto a mano (undefined = automatico dalla portata): ricalcola portate,
+  // velocità, perdite, pressioni ai pivot, stazioni e computo
+  function setPipeDn(li: number, dn: number | undefined) {
+    setPivotLines((ls) => ls.map((l, i) => (i === li ? { ...l, dnFix: dn } : l)));
+    setMsg(dn ? t("Tubazione {n}: DN {d} scelto a mano; perdite di carico, pressioni e computo ricalcolati.", { n: li + 1, d: dn })
+      : t("Tubazione {n}: diametro di nuovo automatico.", { n: li + 1 }));
+  }
   function focusTap(i: number) {
     const st = tapStations[i]; if (!st) return;
     setTapSel(i); mapApi.current?.flyTo(st.pt[1], st.pt[0], 15);
@@ -5346,7 +5359,7 @@ export default function Page() {
       const Q = flow[ei];                       // l/s
       if (Q <= 0) isolated++;
       const need = Math.sqrt((4 * (Q / 1000)) / (Math.PI * vMax)) * 1000;   // mm
-      const dn = DN_LIST.find((d) => d >= need) ?? DN_LIST[DN_LIST.length - 1];
+      const dn = pivotLines[e.pipe]?.dnFix ?? DN_LIST.find((d) => d >= need) ?? DN_LIST[DN_LIST.length - 1];   // DN scelto a mano o il primo che basta
       const D = dn / 1000;
       const hf = Q > 0 ? (10.67 * e.len * Math.pow(Q / 1000, 1.852)) / (Math.pow(hwC, 1.852) * Math.pow(D, 4.87)) : 0;
       hlMax = Math.max(hlMax, hf);
@@ -5405,6 +5418,14 @@ export default function Page() {
   const hydraOverride = useRef<HydraRes | null>(null);
   // l'override vale finché lo stato non riceve un calcolo diverso (pagina Tubazioni, variante caricata)
   useEffect(() => { if (hydra !== hydraOverride.current) hydraOverride.current = null; }, [hydra]);
+  // un diametro cambiato a mano: il calcolo della rete (computo, pezzi speciali, prevalenze) si rifà
+  const dnFixSig = pivotLines.map((l) => l.dnFix ?? 0).join(",");
+  const dnFixPrev = useRef(dnFixSig);
+  useEffect(() => {
+    if (dnFixPrev.current === dnFixSig) return; dnFixPrev.current = dnFixSig;
+    if (hydraNow()) { const h = computeHydraulics(false, null, true); hydraOverride.current = h; setHydra(h); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dnFixSig]);
   const hydraNow = (): HydraRes | null => hydraOverride.current ?? hydra;
   function ensureHydra(): HydraRes | null {
     const h0 = hydraNow(); if (h0) return h0;
@@ -10984,26 +11005,26 @@ export default function Page() {
                 : t("Canale principale a gravità dalla presa attraverso il campo; dal canale partono le tubazioni, ognuna con al massimo il numero di pivot indicato.")}
             </p>
             {distMode !== "canals" ? (
-              <label className="block text-[11px] text-sage-dark">{t("Pivot al massimo sulla stessa tratta")}
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-sage-dark leading-tight shrink-0 max-w-[7.5rem]">{t("Pivot al massimo sulla stessa tratta")}</span>
                 <NumInput type="number" min={1} max={100} step={1} value={pipeMaxPerLine} data-dist-perline
                   onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && e.target.value !== "") { setPipeMaxPerLine(Math.max(1, Math.min(100, Math.round(x)))); setAutoRoute((n) => n + 1); } }}
-                  className="field-input mt-0.5 py-1 text-sm" /></label>
-            ) : (
+                  className="field-input py-1 text-sm w-14 shrink-0 text-center" />
+                <button className="btn-primary flex-1 min-w-0 text-[12px] truncate" data-dist-go disabled={!active || busy === "pipes" || !pivots.some((p) => p.field === active?.id)}
+                  title={distMode === "mixed" ? t("Traccia canale e tubazioni su «{name}»", { name: active?.name ?? "" }) : t("Traccia le tubazioni su «{name}»", { name: active?.name ?? "" })}
+                  onClick={() => generatePipes(distMode === "mixed")}>
+                  {busy === "pipes" ? "…" : distMode === "mixed" ? t("Traccia canale e tubazioni su «{name}»", { name: active?.name ?? "" }) : t("Traccia le tubazioni su «{name}»", { name: active?.name ?? "" })}</button>
+              </div>
+            ) : (<>
               <div className="seg" data-canal-rows>
                 {[2, 3].map((n) => (
                   <div key={n} className="seg-item" data-active={(cur.canalRows ?? 2) === n} onClick={() => patch({ canalRows: n })}>
                     {t("{n} per lato · un canale ogni {m} pivot", { n, m: 2 * n })}</div>
                 ))}
               </div>
-            )}
-            {distMode === "canals" ? (
               <button className="btn-primary w-full text-[12px]" onClick={() => { setTab("impianti"); setMsg(t("Canali: premi «Inserisci» nella pagina Impianti per posare i pivot in file con i corridoi dei canali.")); }}>
                 {t("Vai agli impianti per posare i pivot con i canali →")}</button>
-            ) : (
-              <button className="btn-primary w-full text-[12px]" data-dist-go disabled={!active || busy === "pipes" || !pivots.some((p) => p.field === active?.id)}
-                onClick={() => generatePipes(distMode === "mixed")}>
-                {busy === "pipes" ? "…" : distMode === "mixed" ? t("Traccia canale e tubazioni su «{name}»", { name: active?.name ?? "" }) : t("Traccia le tubazioni su «{name}»", { name: active?.name ?? "" })}</button>
-            )}
+            </>)}
             {active && !pivots.some((p) => p.field === active.id) && <p className="text-[10px] text-sage-dark">{t("Inserisci prima i pivot su questo poligono.")}</p>}
           </div>
         )}
@@ -12155,9 +12176,28 @@ export default function Page() {
                 {inp({ k: "fill", label: t("Rilevato (m)"), value: road.fill_m, ph: "0.3", step: 0.1, on: (x) => setRoadDims(road.id, { fill_m: x }) })}
               </div>
             )}
-            {pl && !cr && !road && (
-              <div className="text-sage-dark">DN {Math.max(0, ...(pl.dn ?? [0])) || "–"} · {fmt(Math.max(0, ...(pl.qs ?? [0])))} l/s · {uKm(lineLenKm(pl.coords), 2)}</div>
-            )}
+            {pl && !cr && !road && (() => {
+              const q = Math.max(0, ...(pl.qs ?? [0])), dn = Math.max(0, ...(pl.dn ?? [0])), Lm = lineLenKm(pl.coords) * 1000;
+              const auto = q > 0 ? pipeSizeLib(q, Lm, DN_LIST, vMax, hwC).dn : 0;
+              const D = dn / 1000, Q = q / 1000;
+              const v = dn && q ? Q / (Math.PI * D * D / 4) : 0;
+              const hf = dn && q ? (10.67 * Lm * Math.pow(Q, 1.852)) / (Math.pow(Math.max(60, hwC), 1.852) * Math.pow(D, 4.87)) : 0;
+              return (
+                <div className="space-y-1.5" data-pipe-hyd>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sage-dark shrink-0">{t("Diametro")}</span>
+                    <select className="field-input py-0.5 flex-1" data-pipe-dn value={pl.dnFix ?? ""} onChange={(e) => setPipeDn(pli, e.target.value ? Number(e.target.value) : undefined)}>
+                      <option value="">{t("Automatico")}{auto ? ` (DN ${auto})` : ""}</option>
+                      {DN_LIST.map((d) => <option key={d} value={d}>DN {d} · {matOf(d) === "pvc" ? "PVC-U" : "PE100"}</option>)}
+                    </select>
+                  </div>
+                  <div className="text-sage-dark" data-pipe-info>
+                    DN {dn || "–"} · {fmt(Math.round(q * 10) / 10)} l/s · {uKm(Lm / 1000, 2)} · v {fmt(v, { maximumFractionDigits: 2 })} m/s · {t("perdite")} {fmt(hf, { maximumFractionDigits: 2 })} m ({fmt(hf / Math.max(0.001, Lm / 1000), { maximumFractionDigits: 2 })} m/km)
+                    {v > vMax + 0.01 && <span className="text-danger font-semibold"> · {t("velocità oltre il massimo di {v} m/s", { v: fmt(vMax, { maximumFractionDigits: 1 }) })}</span>}
+                  </div>
+                </div>
+              );
+            })()}
             <div className="flex flex-wrap gap-1.5 mt-2">
               <button className="btn-primary py-1 flex-1" data-comp-pdf disabled={busy === "sheet"} onClick={() => downloadSheet([me])}>{busy === "sheet" ? "…" : t("Tavola PDF")}</button>
               {mate && <button className="btn-ghost py-1 flex-1" data-comp-pdf-pair disabled={busy === "sheet"} onClick={() => downloadSheet(me.kind === "canal" ? [me, mate] : [mate, me])}>
