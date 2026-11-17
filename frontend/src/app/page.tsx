@@ -23,7 +23,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.304";
+const REV = "v0.6.305";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -451,6 +451,12 @@ async function inflateB64(b64: string): Promise<Uint8Array> {
   const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   const ds = new Blob([bin]).stream().pipeThrough(new DecompressionStream("deflate"));
   return new Uint8Array(await new Response(ds).arrayBuffer());
+}
+async function deflateB64(a: Uint8Array): Promise<string> {
+  const cs = new Blob([a]).stream().pipeThrough(new CompressionStream("deflate"));
+  const z = new Uint8Array(await new Response(cs).arrayBuffer());
+  let bin = ""; for (let i = 0; i < z.length; i += 0x8000) bin += String.fromCharCode(...z.subarray(i, i + 0x8000));
+  return btoa(bin);
 }
 // classi (OR dei bit) nel punto, da tutte le griglie che lo coprono
 function groundAt(layers: GroundL[], lon: number, lat: number): number {
@@ -4492,6 +4498,17 @@ export default function Page() {
       .then((out) => { if (alive) setGround(out); }).catch(() => { /* griglia illeggibile: resta senza */ });
     return () => { alive = false; };
   }, [ground]);
+  // toglie un'origine dalle griglie (bit azzerato, superficie a 0); la griglia salvata si ricomprime
+  async function removeGroundClass(k: string) {
+    const c = GROUND_CLS.find((q) => q.k === k); if (!c) return;
+    const out = await Promise.all(ground.map(async (L) => {
+      const fl = L.flags ?? await inflateB64(L.b64);
+      const nf = fl.map((v) => v & ~c.bit);
+      return { ...L, flags: nf, b64: await deflateB64(nf), ha: { ...(L.ha ?? {}), [k]: 0 } };
+    }));
+    setGround(out.some((L) => L.flags.some((v) => v)) ? out : []);
+    setMsg(t("«{g}» tolto dai problemi del terreno.", { g: t(c.label) }));
+  }
   // volume di un termitaio: cumulo a cono sopra il terreno + scavo del nido sotto (diametro metà)
   // impronta di un termitaio (m²): cerchio del diametro rilevato più la fascia di bonifica intorno
   const moundFoot = (m: Mound) => Math.PI * (m.d / 2 + (termCfg.buf ?? 0)) ** 2;
@@ -12537,6 +12554,8 @@ export default function Page() {
                           onClick={() => setGroundHide((h) => ({ ...h, [r.k]: !h[r.k] }))}>{groundHide[r.k] ? "○" : "◉"}</button>
                         <span className="w-2.5 h-2.5 mr-1 rounded-sm border shrink-0" style={{ background: groundHide[r.k] ? "transparent" : r.col, borderColor: r.col }} />
                         <button className="flex-1 text-left leading-tight" title={t("Zoom")} onClick={r.zoom}>{r.label} · {r.q}</button>
+                        <button className="text-danger w-4 shrink-0" title={t("Rimuovi")} data-ground-del={r.k}
+                          onClick={() => { if (r.k === "term") { setMounds([]); setTermMeta(null); setMsg(t("«{g}» tolto dai problemi del terreno.", { g: t("Termitai") })); } else removeGroundClass(r.k); }}>✕</button>
                       </li>
                     ))}
                   </ul>

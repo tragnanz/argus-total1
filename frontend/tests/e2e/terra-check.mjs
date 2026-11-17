@@ -108,6 +108,13 @@ try {
   await page.waitForTimeout(800);
   const body = await page.locator("body").innerText();
   ok(/Bonifiche del terreno/.test(body) && /Disboscamento/.test(body), `Computo: ${(body.match(/Disboscamento[^\n]*\n?[^\n]*/) || [""])[0].replace(/\s+/g, " ").slice(0, 160)}`);
+  // cancellazione di un solo livello: alberi e arbusti, poi i termitai; gli altri restano
+  const before = (await page.locator("[data-ground-row]").allInnerTexts()).map((x) => x.split("·")[0].trim());
+  await page.locator('[data-ground-del="wood"]').click(); await page.waitForTimeout(1500);
+  await page.locator('[data-ground-del="term"]').click(); await page.waitForTimeout(800);
+  const after = (await page.locator("[data-ground-row]").allInnerTexts()).map((x) => x.split("·")[0].trim());
+  const woodTab = (await txt('[data-terra-origin="wood"]')).replace(/\s+/g, " ");
+  ok(!after.some((x) => /Alberi|Termitai/.test(x)) && after.length === before.length - 2, `Cancellati singolarmente: ${before.join(", ")} → ${after.join(", ")} · tabella: ${woodTab}`);
   ok(errors.length === 0, `Nessun errore JavaScript${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; await page.screenshot({ path: path.join(SH, "t_err.png") }).catch(() => {}); }
 await browser.close();
