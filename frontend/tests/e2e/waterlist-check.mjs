@@ -23,7 +23,7 @@ await post("/areas", { project_id: p.id, name: "Area 1", geojson: { type: "Polyg
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ viewport: { width: 1700, height: 1000 } })).newPage();
 const errors = []; page.on("pageerror", (e) => errors.push(e.message));
-let promptAns = "Fiumi nord"; page.on("dialog", (d) => d.accept(d.type() === "prompt" ? promptAns : undefined));
+let prompts = 0; page.on("dialog", (d) => { if (d.type() === "prompt") prompts++; d.accept(); });
 const rows = () => page.locator('[data-water-list="free"] [data-wl-row]').count();
 try {
   await page.goto(URL); await page.evaluate((t) => localStorage.setItem("argus-total-token", t), tok);
@@ -119,6 +119,12 @@ try {
   await page.locator('[data-water-list="free"] [data-wl-check]').nth(0).click();
   await page.locator('[data-water-list="free"] [data-wl-check]').nth(2).click({ modifiers: ["Shift"] });
   await page.locator('[data-water-list="free"] [data-wl-folder]').click(); await page.waitForTimeout(600);
+  // nessuna finestra di dialogo: la cartella prende il nome da sola; doppio clic sul nome per rinominarla
+  const fo0 = page.locator("[data-wl-folder-row]").first();
+  const auto = (await fo0.innerText()).replace(/\n/g, " ");
+  ok(prompts === 0 && /\(3\)/.test(auto), `Cartella senza finestra: ${auto} · finestre ${prompts}`);
+  await fo0.locator('button[title="Doppio clic per rinominare"]').dblclick(); await page.waitForTimeout(200);
+  await page.locator("[data-wl-folder-name]").fill("Fiumi nord"); await page.keyboard.press("Enter"); await page.waitForTimeout(400);
   const fo = page.locator('[data-wl-folder-row="Fiumi nord"]');
   ok(await fo.isVisible() && /\(3\)/.test(await fo.innerText()), `Cartella: ${(await fo.innerText()).replace(/\n/g, " ")}`);
   await page.screenshot({ path: path.join(SH, "wl1_cartella.png") });

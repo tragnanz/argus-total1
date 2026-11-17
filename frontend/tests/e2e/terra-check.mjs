@@ -48,6 +48,14 @@ try {
   const woodHa = Number((wood.match(/disboscare ([\d.,]+)/) || [])[1]?.replace(/\./g, "").replace(",", ".") || 0);
   ok(woodHa > 0, `Per origine: ${wood} | ${salt} | ${wet}`);
   ok((await page.locator(".leaflet-image-layer").count()) > 0, "Griglia dei problemi sulla mappa");
+  // elenco a sinistra: una riga per origine; il pallino del gruppo spegne e riaccende tutto
+  const gRows = await page.locator("[data-ground-row]").allInnerTexts();
+  ok(gRows.length >= 2 && /Termitai · [\d.]+/.test(gRows.join("|")), `Elenco a sinistra: ${gRows.join(" | ")}`);
+  await page.locator("[data-ground-layers] > div button").first().click(); await page.waitForTimeout(500);
+  const offImg = await page.locator(".leaflet-image-layer").count();
+  await page.locator("[data-ground-layers] > div button").first().click(); await page.waitForTimeout(500);
+  const onImg = await page.locator(".leaflet-image-layer").count();
+  ok(offImg === 0 && onImg > 0, `Problemi spenti e riaccesi dall'elenco: griglie ${offImg} → ${onImg}`);
   const fHead = (await txt("[data-terra-fields] thead")).replace(/\s+/g, " ");
   ok(/Alberi/.test(fHead) && /Sale/.test(fHead), `Colonne per campo: ${fHead}`);
   await page.locator('[data-terra-origin="wood"] button').click(); await page.waitForTimeout(400);

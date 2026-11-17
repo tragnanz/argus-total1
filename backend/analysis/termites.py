@@ -139,7 +139,10 @@ def detect_termites(client, geom: dict, date: str | None = None, sens: int = 3,
         except Exception:  # noqa: BLE001
             continue
         blue, green, red, nir, swir, scl = b[0], b[1], b[2], b[4], b[5], b[6]
-        ok = inside & np.isfinite(red) & np.isfinite(nir) & ~np.isin(scl, CLOUD_SCL)
+        # CDSE restituisce 0 (non NaN) fuori dalla strisciata del satellite: SCL 0 = nessun dato. Senza
+        # questo controllo una scena che copre solo un angolo dell'area sembra la "più secca" (NDVI 0)
+        ok = (inside & np.isfinite(red) & np.isfinite(nir) & ~np.isin(scl, CLOUD_SCL) & (scl != 0)
+              & ((red + nir) > 1e-4))
         if ok.sum() < 0.8 * n_in or (scl[inside] == 11).mean() > 0.05:   # nuvole o neve
             continue
         ndvi = (nir - red) / (nir + red + 1e-6)

@@ -23,7 +23,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.301";
+const REV = "v0.6.302";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1327,6 +1327,7 @@ export default function Page() {
   const [waterCheck, setWaterCheck] = useState<Set<number>>(new Set());
   const waterLastCheck = useRef<number | null>(null);
   const [waterFolderOpen, setWaterFolderOpen] = useState<Record<string, boolean>>({});
+  const [foEdit, setFoEdit] = useState<string | null>(null);     // cartella in rinomina (doppio clic sul nome)
   useEffect(() => { setWaterCheck(new Set()); }, [watercourses.length]);   // gli indici cambiano: selezione azzerata
   useEffect(() => { wcRef.current = watercourses; }, [watercourses]);
   const waterBackup = useRef<WaterL[] | null>(null);   // elenco prima dell'anteprima: «Annulla» lo ripristina
@@ -4629,10 +4630,10 @@ export default function Page() {
     const tot = zero(); piv.forEach((q) => { for (const c of GROUND_CLS) tot[c.k] += q.a[c.k]; });
     return { piv, fld, tot };
   }, [ground, pivots, fields]);
-  // griglie sulla mappa (solo nella pagina Terraforming), una tinta per origine
+  // griglie sulla mappa, una tinta per origine; si accendono e spengono dall'elenco a sinistra
   useEffect(() => {
     const ready = ground.filter((L) => L.flags);
-    if (tab !== "terra" || !ready.length) { mapApi.current?.showGround(null); return; }
+    if (!ready.length || GROUND_CLS.every((c) => groundHide[c.k])) { mapApi.current?.showGround(null); return; }
     const imgs = ready.map((L) => {
       const cv = document.createElement("canvas"); cv.width = L.w; cv.height = L.h;
       const ctx = cv.getContext("2d")!, im = ctx.createImageData(L.w, L.h);
@@ -4687,7 +4688,7 @@ export default function Page() {
   }, [fields, wetZones]);
   // termitai sulla mappa: nella pagina Terraforming (o se ce ne sono) — rossi quelli sotto un pivot
   useEffect(() => {
-    if (!mounds.length && tab !== "terra") { mapApi.current?.showMounds(null); return; }
+    if ((!mounds.length && tab !== "terra") || (groundHide.term && !moundMode)) { mapApi.current?.showMounds(null); return; }
     mapApi.current?.showMounds(mounds.map((m, i) => ({ ...m, inPivot: terraPerPivot.moundIn[i] })), {
       mode: tab === "terra" ? moundMode : "",
       onAdd: (lon, lat) => setMounds((ms) => [...ms, { lon: Math.round(lon * 1e6) / 1e6, lat: Math.round(lat * 1e6) / 1e6, d: 15, man: true }]),
@@ -4695,7 +4696,7 @@ export default function Page() {
       tip: (i) => { const m = mounds[i], v = moundVol(m); return `${t("Termitaio")} ⌀ ${fmt(m.d, { maximumFractionDigits: 0 })} m · ${fmt(Math.round(v.cone + v.nest))} m³${m.man ? " · " + t("a mano") : ""}`; },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounds, moundMode, tab, terraPerPivot, termCfg]);
+  }, [mounds, moundMode, tab, terraPerPivot, termCfg, groundHide.term]);
   useEffect(() => { if (tab !== "terra" && moundMode) setMoundMode(""); }, [tab, moundMode]);
   // Linea da cui partono le tubazioni: la fonte idrica scelta. Se la presa sta su un corso d'acqua (fiume,
   // canale, invaso) si usa tutto il corso; altrimenti (pozzo, punto libero) un breve tratto nel punto di presa.
@@ -9124,16 +9125,35 @@ export default function Page() {
     setWaterCheck(new Set());
     setMsg(t("{n} elementi eliminati.", { n: ids.length }));
   }
+  // Raggruppa i selezionati in una cartella senza chiedere il nome: se sono tutti della stessa famiglia
+  // la cartella prende il suo nome («Canali», «Fiumi»…), altrimenti «Gruppo N». Se sono già tutti nella
+  // stessa cartella, il tasto li toglie dalla cartella. Il nome si cambia poi con un doppio clic.
   function waterBulkFolder(ids: number[]) {
     if (!ids.length) return;
-    const names = [...new Set(watercourses.map((w) => w.folder).filter(Boolean))] as string[];
-    const cur = watercourses[ids[0]]?.folder ?? "";
-    const v = window.prompt(t("Nome della cartella (vuoto = fuori dalle cartelle)") + (names.length ? `\n${t("Cartelle esistenti")}: ${names.join(", ")}` : ""), cur);
-    if (v == null) return;
-    const name = v.trim() || undefined, S = new Set(ids);
+    const S = new Set(ids), sel = ids.map((k) => watercourses[k]).filter(Boolean);
+    const f0 = sel[0]?.folder;
+    if (f0 && sel.every((w) => w.folder === f0)) {
+      setWatercourses((ws) => ws.map((w, k) => (S.has(k) ? { ...w, folder: undefined } : w)));
+      setWaterCheck(new Set());
+      setMsg(t("{n} elementi tolti dalla cartella «{g}».", { n: ids.length, g: f0 }));
+      return;
+    }
+    const names = new Set(watercourses.map((w) => w.folder).filter(Boolean) as string[]);
+    const fams = [...new Set(sel.map((w) => (w.geojson.type === "LineString" ? waterFam(w as WaterL) : "")))];
+    let name = fams.length === 1 && fams[0] ? famName(fams[0]) : "";
+    if (!name || (names.has(name) && !watercourses.every((w, k) => S.has(k) || w.folder !== name || waterFam(w as WaterL) === fams[0]))) {
+      let n = 1; while (names.has(`${t("Gruppo")} ${n}`)) n++;
+      name = `${t("Gruppo")} ${n}`;
+    }
     setWatercourses((ws) => ws.map((w, k) => (S.has(k) ? { ...w, folder: name } : w)));
-    if (name) setWaterFolderOpen((o) => ({ ...o, [name]: true }));
+    setWaterFolderOpen((o) => ({ ...o, [name]: true }));
     setWaterCheck(new Set());
+    setMsg(t("{n} elementi raggruppati nella cartella «{g}». Doppio clic sul nome per rinominarla.", { n: ids.length, g: name }));
+  }
+  function renameWaterFolder(fo: string, nn: string) {
+    const name = nn.trim(); if (!name || name === fo) return;
+    setWatercourses((ws) => ws.map((w) => (w.folder === fo ? { ...w, folder: name } : w)));
+    setWaterFolderOpen((o) => ({ ...o, [name]: true }));
   }
   // unisce le linee selezionate in una sola polilinea: concatena ogni volta il tratto con l'estremo più vicino
   function waterBulkMerge(ids: number[]) {
@@ -9234,7 +9254,7 @@ export default function Page() {
             onChange={(e) => { const n = new Set(waterCheck); ids.forEach((k) => (e.target.checked ? n.add(k) : n.delete(k))); setWaterChecked(n); }} data-wl-all={ctx} />
           <span className="flex-1 min-w-0 truncate">{sel.length ? t("{n} selezionati", { n: sel.length }) : t("{n} corsi d'acqua", { n: ids.length })}</span>
           <button className={btn + " w-6 text-center"} disabled={!sel.length} title={t("Mostra/Nascondi")} onClick={() => waterBulkHide(sel, !sel.every((k) => watercourses[k]?.hidden))}>◉</button>
-          <button className={btn + " w-6 text-center"} disabled={!sel.length} title={t("Cartella…")} onClick={() => waterBulkFolder(sel)} data-wl-folder>📁</button>
+          <button className={btn + " w-6 text-center"} disabled={!sel.length} title={t("Raggruppa in una cartella (di nuovo: toglie dalla cartella)")} onClick={() => waterBulkFolder(sel)} data-wl-folder>📁</button>
           <button className={btn + " w-6 text-center"} disabled={sel.length < 2} title={t("Unisci")} onClick={() => waterBulkMerge(sel)} data-wl-merge>⛓</button>
           <select className={btn + " !py-0 w-[4.6rem] shrink-0"} disabled={!sel.length} value="" title={t("Tipo…")} onChange={(e) => { if (e.target.value) bulkKind(e.target.value); }} data-wl-bulkkind>
             <option value="">{t("Tipo…")}</option>
@@ -9273,7 +9293,12 @@ export default function Page() {
                 <input type="checkbox" className="w-3 h-3" checked={fids.every((k) => waterCheck.has(k))}
                   onChange={(e) => { const n = new Set(waterCheck); fids.forEach((k) => (e.target.checked ? n.add(k) : n.delete(k))); setWaterChecked(n); }} />
                 <button className="text-brand-mid w-4" title={t("Mostra/Nascondi")} onClick={() => waterBulkHide(fids, !allHidden)}>{allHidden ? "○" : "◉"}</button>
-                <button className="flex-1 text-left" onClick={() => setWaterFolderOpen((o) => ({ ...o, [fo]: !open }))}>{open ? "▾" : "▸"} 📁 {fo} <span className="font-normal text-sage-dark">({its.length})</span></button>
+                {foEdit === fo
+                  ? <input autoFocus defaultValue={fo} className="flex-1 min-w-0 text-[11px] px-1 py-0 rounded border border-brand/40 bg-white" data-wl-folder-name
+                      onBlur={(e) => { renameWaterFolder(fo, e.target.value); setFoEdit(null); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); else if (e.key === "Escape") { e.stopPropagation(); (e.target as HTMLInputElement).value = fo; (e.target as HTMLInputElement).blur(); } }} />
+                  : <button className="flex-1 text-left" title={t("Doppio clic per rinominare")} onClick={() => setWaterFolderOpen((o) => ({ ...o, [fo]: !open }))}
+                      onDoubleClick={() => setFoEdit(fo)}>{open ? "▾" : "▸"} 📁 {fo} <span className="font-normal text-sage-dark">({its.length})</span></button>}
                 <button className="text-sage-dark w-4" title={t("Togli la cartella (gli elementi restano)")}
                   onClick={() => setWatercourses((ws) => ws.map((w) => (w.folder === fo ? { ...w, folder: undefined } : w)))}>⇱</button>
                 <button className="text-danger w-4" title={t("Elimina la cartella e il suo contenuto")} onClick={() => waterBulkRemove(fids)}>✕</button>
@@ -12486,6 +12511,38 @@ export default function Page() {
               );
             })()}
 
+            {/* Problemi del terreno rilevati (Terraforming): una riga per origine, con visibilità e zoom */}
+            {(mounds.length > 0 || ground.length > 0) && (() => {
+              const haOf = (k: string) => ground.reduce((a, L) => a + (L.ha?.[k] ?? 0), 0);
+              const gb = ground.length ? [Math.min(...ground.map((L) => L.bbox[0])), Math.min(...ground.map((L) => L.bbox[1])), Math.max(...ground.map((L) => L.bbox[2])), Math.max(...ground.map((L) => L.bbox[3]))] : null;
+              const rows = [
+                { k: "term", label: t("Termitai"), col: "#b91c1c", q: `${fmt(mounds.length)}`, n: mounds.length, zoom: () => zoomToCoords(mounds.map((m) => [m.lon, m.lat])) },
+                ...GROUND_CLS.map((c) => ({ k: c.k as string, label: t(c.label), col: `rgb(${c.rgb.join(",")})`, q: `${fmt(haOf(c.k), { maximumFractionDigits: 1 })} ha`, n: haOf(c.k),
+                  zoom: () => { if (gb) zoomToCoords([[gb[0], gb[1]], [gb[2], gb[3]]]); } })),
+              ].filter((r) => r.n > 0);
+              const allOff = rows.every((r) => groundHide[r.k]);
+              return (
+                <div className="mt-3 border-t border-brand/15 pt-2" data-ground-layers>
+                  <div className="flex items-center gap-1 mb-1">
+                    <button className="text-brand-mid w-4 text-[11px]" title={t("Mostra/Nascondi")}
+                      onClick={() => setGroundHide((h) => { const n = { ...h }; for (const k of ["term", ...GROUND_CLS.map((c) => c.k)]) n[k] = !allOff; return n; })}>{allOff ? "○" : "◉"}</button>
+                    <span className="flex-1 text-[11px] font-semibold text-sage-dark uppercase tracking-wide">{t("Problemi del terreno")}</span>
+                    <button className="text-danger w-4 text-[11px]" title={t("Rimuovi")}
+                      onClick={() => { setMounds((ms) => ms.filter((m) => m.man)); setGround([]); setTermMeta(null); }}>✕</button>
+                  </div>
+                  <ul className="space-y-0.5">
+                    {rows.map((r) => (
+                      <li key={r.k} data-ground-row={r.k} className="flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5">
+                        <button title={t("Mostra/Nascondi")} onClick={() => setGroundHide((h) => ({ ...h, [r.k]: !h[r.k] }))}
+                          className="w-2.5 h-2.5 ml-0.5 mr-1 rounded-sm border shrink-0" style={{ background: groundHide[r.k] ? "transparent" : r.col, borderColor: r.col }} />
+                        <button className="flex-1 text-left leading-tight" title={t("Zoom")} onClick={r.zoom}>{r.label} · {r.q}</button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })()}
+
             {/* I livelli (con visibilità, download, elimina) sono nel widget «Proprietà» a sinistra. */}
 
             {/* Stesse regole per tutti vs impostazioni per campo */}
@@ -13168,7 +13225,7 @@ export default function Page() {
               // riepilogo per origine: superficie sotto i pivot e quota; per i volumi i m³
               const origins: { k: string; label: string; col: string; ha: number | null; pct: number | null; q: string; hide?: string }[] = [
                 { k: "term", label: t("Termitai"), col: "#b91c1c", ha: mounds.length ? T.aM / 10000 : null, pct: mounds.length && aPtot ? (100 * T.aM) / aPtot : null,
-                  q: mounds.length ? `${fmt(T.nM)} · ${fmt(Math.round(T.vCone + T.vNest))} m³` : "" },
+                  q: mounds.length ? `${fmt(T.nM)} · ${fmt(Math.round(T.vCone + T.vNest))} m³` : "", hide: "term" },
                 ...GROUND_CLS.map((c) => ({ k: c.k, label: t(c.label), col: `rgb(${c.rgb.join(",")})`, ha: G ? G.tot[c.k] / 10000 : null, pct: G && aPtot ? (100 * G.tot[c.k]) / aPtot : null,
                   q: G ? `${fmt(G.tot[c.k] / 10000, { maximumFractionDigits: 1 })} ha` : "", hide: c.k })),
                 { k: "track", label: t("Pendenze delle carreggiate"), col: "#a16207", ha: null, pct: null, q: trackRes ? `${fmt(Math.round(T.vTrack))} m³` : "" },
