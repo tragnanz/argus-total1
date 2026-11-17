@@ -23,7 +23,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.303";
+const REV = "v0.6.304";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -12532,9 +12532,10 @@ export default function Page() {
                   </div>
                   <ul className="space-y-0.5">
                     {rows.map((r) => (
-                      <li key={r.k} data-ground-row={r.k} className="flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5">
-                        <button title={t("Mostra/Nascondi")} onClick={() => setGroundHide((h) => ({ ...h, [r.k]: !h[r.k] }))}
-                          className="w-2.5 h-2.5 ml-0.5 mr-1 rounded-sm border shrink-0" style={{ background: groundHide[r.k] ? "transparent" : r.col, borderColor: r.col }} />
+                      <li key={r.k} data-ground-row={r.k} className={"flex items-center gap-1 text-[11px] bg-panel rounded px-1.5 py-0.5" + (groundHide[r.k] ? " opacity-60" : "")}>
+                        <button className="text-brand-mid w-4 shrink-0" title={t("Mostra/Nascondi")} data-ground-eye={r.k}
+                          onClick={() => setGroundHide((h) => ({ ...h, [r.k]: !h[r.k] }))}>{groundHide[r.k] ? "○" : "◉"}</button>
+                        <span className="w-2.5 h-2.5 mr-1 rounded-sm border shrink-0" style={{ background: groundHide[r.k] ? "transparent" : r.col, borderColor: r.col }} />
                         <button className="flex-1 text-left leading-tight" title={t("Zoom")} onClick={r.zoom}>{r.label} · {r.q}</button>
                       </li>
                     ))}

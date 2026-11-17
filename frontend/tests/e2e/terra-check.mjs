@@ -56,6 +56,16 @@ try {
   await page.locator("[data-ground-layers] > div button").first().click(); await page.waitForTimeout(500);
   const onImg = await page.locator(".leaflet-image-layer").count();
   ok(offImg === 0 && onImg > 0, `Problemi spenti e riaccesi dall'elenco: griglie ${offImg} → ${onImg}`);
+  // un singolo livello: termitai spenti e riaccesi dal suo ◉
+  const m0 = await page.locator("[data-ground-row]").count();
+  const paths = async () => page.locator(".leaflet-overlay-pane path").count();
+  const pa0 = await paths();
+  await page.locator('[data-ground-eye="term"]').click(); await page.waitForTimeout(500);
+  const pa1 = await paths();
+  const eyeOff = await page.locator('[data-ground-eye="term"]').innerText();
+  await page.locator('[data-ground-eye="term"]').click(); await page.waitForTimeout(500);
+  const eyeOn = await page.locator('[data-ground-eye="term"]').innerText();
+  ok(m0 >= 2 && eyeOff === "○" && eyeOn === "◉" && pa1 < pa0 - 100, `Livello singolo «Termitai»: ${eyeOff} → ${eyeOn} · tracciati sulla mappa ${pa0} → ${pa1}`);
   const fHead = (await txt("[data-terra-fields] thead")).replace(/\s+/g, " ");
   ok(/Alberi/.test(fHead) && /Sale/.test(fHead), `Colonne per campo: ${fHead}`);
   await page.locator('[data-terra-origin="wood"] button').click(); await page.waitForTimeout(400);
