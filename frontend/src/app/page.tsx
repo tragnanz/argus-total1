@@ -24,7 +24,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.313";
+const REV = "v0.6.314";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1711,7 +1711,10 @@ export default function Page() {
   const surfTouched = useRef(false);
   const nrcsStore = (p: number | null | undefined) => (p == null ? 2 : p < 1 ? 12.7 : p < 3 ? 7.6 : p < 5 ? 2.5 : 0);
   useEffect(() => { if (!surfTouched.current && soilSat?.slope_pct != null) setSurfStore(nrcsStore(soilSat.slope_pct)); }, [soilSat?.slope_pct]);
-  const dmgRate = infiltration + (surfStore * 60 * Math.max(0.3, v100)) / PIVOT_WET_W;
+  // In piano un po' d'acqua che si sposta da un punto all'altro del campo non fa danni (non esce dal campo né
+  // incide solchi): si tollera una quota della dose che scorre in superficie, nulla oltre il 5% di pendenza.
+  const tolF = ((p: number | null | undefined) => (p == null ? 0.15 : p < 1 ? 0.25 : p < 3 ? 0.15 : p < 5 ? 0.05 : 0))(soilSat?.slope_pct);
+  const dmgRate = (infiltration + (surfStore * 60 * Math.max(0.3, v100)) / PIVOT_WET_W) / (1 - tolF);
   // raggio consigliato: intensità media al bordo ≤ soglia di danno.
   // I_bordo = 2π·R·Dg /(H·W) ≤ soglia → R ≤ soglia·H·W /(2π·Dg).
   const recRadius = useMemo(() => {
@@ -5142,13 +5145,14 @@ export default function Page() {
   // Ruscellamento: durante il passaggio il terreno assorbe soak×t e la superficie
   // ne trattiene un po' (invaso superficiale). Se l'acqua del giro supera i due,
   // il resto scorre via.
-  const runoffMm = (r: number) => Math.max(0, depthPass() - (infiltration * wetHours(r) + surfStore));
+  // oltre la quota tollerata in piano (tolF): ruscellamento che fa danni
+  const runoffMm = (r: number) => Math.max(0, depthPass() * (1 - tolF) - (infiltration * wetHours(r) + surfStore));
   // Giri/giorno minimi perché non ci sia ruscellamento al bordo esterno.
   const turnsNeeded = (r: number) => {
     for (let n = 1; n <= 24; n++) {
       const d = mm24 / n, th = Math.max(0.05, hoursDay / n);
       const tw = (Math.max(1, wetW) * th) / (2 * Math.PI * Math.max(1, r));
-      if (d <= infiltration * tw + surfStore) return n;
+      if (d * (1 - tolF) <= infiltration * tw + surfStore) return n;
     }
     return 0;
   };
@@ -6264,10 +6268,10 @@ export default function Page() {
     const u = pivotCU(pv); if (!u || !u.spk.length) return null;
     const last = u.spk[u.spk.length - 1], W = 2 * last.R, r = pv.r;
     const dose = depthPass(), Th = turnHours(), tw = (W * Th) / (2 * Math.PI * r);
-    const runoff = Math.max(0, dose - (infiltration * tw + surfStore));
+    const runoff = Math.max(0, dose * (1 - tolF) - (infiltration * tw + surfStore));
     let need = 0;
-    for (let n = 1; n <= 24; n++) { const d = mm24 / n, th = Math.max(0.05, hoursDay / n), t2 = (W * th) / (2 * Math.PI * r); if (d <= infiltration * t2 + surfStore) { need = n; break; } }
-    const k = mmDes / hoursDay - (infiltration * W) / (2 * Math.PI * r);            // mm/h netti a giro lento
+    for (let n = 1; n <= 24; n++) { const d = mm24 / n, th = Math.max(0.05, hoursDay / n), t2 = (W * th) / (2 * Math.PI * r); if (d * (1 - tolF) <= infiltration * t2 + surfStore) { need = n; break; } }
+    const k = ((1 - tolF) * mmDes) / hoursDay - (infiltration * W) / (2 * Math.PI * r);   // mm/h netti a giro lento
     const dMax = k > 0 ? (mmDes * (surfStore / k)) / hoursDay : Infinity;            // dose massima senza ruscellamento
     return { u, W, tw, dose, runoff, need, peak: u.peak, dMax };
   }
@@ -13333,7 +13337,8 @@ export default function Page() {
               <b className="text-brand-darker">{t("Danni da ruscellamento oltre {x} mm/h al bordo del pivot", { x: fmt(dmgRate, { maximumFractionDigits: 1 }) })}</b>
               <span className="text-sage-dark"> · {t("il suolo assorbe {i} mm/h e le depressioni del terreno trattengono {s} mm{p}; al giro più veloce ({v} m/min) l'acqua in più scorre via solo oltre questa intensità.", {
                 i: fmt(infiltration, { maximumFractionDigits: 1 }), s: fmt(surfStore, { maximumFractionDigits: 1 }),
-                p: soilSat?.slope_pct != null ? ` (${t("pendenza {p}%", { p: fmt(soilSat.slope_pct, { maximumFractionDigits: 1 }) })})` : "", v: fmt(v100, { maximumFractionDigits: 1 }) })}</span>
+                p: soilSat?.slope_pct != null ? ` (${t("pendenza {p}%", { p: fmt(soilSat.slope_pct, { maximumFractionDigits: 1 }) })})` : "", v: fmt(v100, { maximumFractionDigits: 1 }) })}
+                {tolF > 0 ? ` ${t("Si tollera che il {f}% della dose si sposti in superficie dentro il campo senza fare danni.", { f: fmt(Math.round(tolF * 100)) })}` : ""}</span>
             </div>
             <div className="flex items-center justify-between mt-2 text-xs">
               <span>{t("Raggio consigliato")}: <b>{recRadius} m</b></span>
