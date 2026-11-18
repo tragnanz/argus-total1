@@ -24,7 +24,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.310";
+const REV = "v0.6.311";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -6841,7 +6841,7 @@ export default function Page() {
   const [olyCustomers, setOlyCustomers] = useState<{ id: string; name: string }[] | null>(null);
   const [olyCust, setOlyCust] = useState("");
   const [finArea, setFinArea] = useState("");                             // pagina Finanziamento: area geografica scelta ("" = dal campo)
-  const [finBuyer, setFinBuyer] = useState<"tutti" | "priv" | "pub">("tutti");
+  const [finBuyer, setFinBuyer] = useState<"tutti" | "priv" | "pub" | "ppp">("tutti");
   const [olyTerr, setOlyTerr] = useState("");                            // r:<codice regione> | c:<ISO2>
   const [olyTerrs, setOlyTerrs] = useState<{ v: string; n: string }[]>([]);
   const [olyOpen, setOlyOpen] = useState(false);
@@ -14857,7 +14857,7 @@ export default function Page() {
                 { k: "eca", title: t("Credito acquirente con copertura SACE e contributo SIMEST"), who: t("Acquirente estero, pubblico o privato, di una fornitura italiana."),
                   how: t("Una banca presta all'acquirente il valore della fornitura; SACE assicura il prestito e SIMEST stabilizza il tasso al CIRR dell'OCSE per tutta la durata."),
                   terms: t("Almeno il 15% pagato in contanti entro la consegna, fino all'85% finanziato; dilazione di almeno 24 mesi; durata secondo il Consensus OCSE (fino a 15 anni dalla revisione 2023); contenuto italiano minimo 30, 50 o 70%."),
-                  fit: t("Forniture grandi verso governi, enti o grandi aziende agricole."), areas: ["africa", "altro"], buyers: ["pub", "priv"],
+                  fit: t("Forniture grandi verso governi, enti o grandi aziende agricole."), areas: ["africa", "altro"], buyers: ["pub", "priv", "ppp"],
                   links: [["SIMEST", "https://www.simest.it/"], ["SACE", "https://www.sace.it/"]] },
                 { k: "fornitore", title: t("Credito fornitore SACE e SIMEST"), who: t("Esportatore italiano che concede la dilazione al proprio cliente."),
                   how: t("L'esportatore concede il pagamento dilazionato e sconta i crediti in banca senza rivalsa, con la garanzia di SACE; SIMEST può contribuire sugli interessi."),
@@ -14867,21 +14867,27 @@ export default function Page() {
                 { k: "dfi", title: t("Banche di sviluppo e finanza sovrana"), who: t("Governi e programmi agricoli nazionali."),
                   how: t("Prestiti con garanzia dello Stato organizzati da banche di sviluppo africane e internazionali per meccanizzazione e irrigazione."),
                   terms: t("Durate lunghe (10 anni nell'esempio del Togo); spesso co-finanziati con agenzie di credito all'esportazione."),
-                  fit: t("Programmi pubblici con molti impianti. Esempio: AFC ha organizzato per il Togo un finanziamento a 10 anni che comprende 930 impianti di irrigazione."), areas: ["africa"], buyers: ["pub"],
+                  fit: t("Programmi pubblici con molti impianti. Esempio: AFC ha organizzato per il Togo un finanziamento a 10 anni che comprende 930 impianti di irrigazione."), areas: ["africa"], buyers: ["pub", "ppp"],
                   links: [["AFC", "https://www.africafc.org/news-and-insights/news/afc-arranges-over-eur-100-million-financing-to-strengthen-food-security-in-togo"], ["Afreximbank", "https://www.afreximbank.com/"], ["AfDB", "https://www.afdb.org/"]] },
                 { k: "pe", title: t("Fondi di private equity e private credit (es. AfricInvest)"), who: t("Aziende agricole e agroindustriali in crescita."),
                   how: t("Il fondo entra nel capitale (di solito con una quota di minoranza) o presta all'azienda, che usa i fondi per l'impianto e lo sviluppo."),
                   terms: t("Permanenza tipica 4–6 anni; serve un piano industriale con l'aumento di resa e i risparmi di acqua ed energia."),
-                  fit: t("Aziende con fatturato e gestione strutturata. AfricInvest investe in 35 paesi africani, anche nell'agribusiness."), areas: ["africa"], buyers: ["priv"],
+                  fit: t("Aziende con fatturato e gestione strutturata. AfricInvest investe in 35 paesi africani, anche nell'agribusiness."), areas: ["africa"], buyers: ["priv", "ppp"],
                   links: [["AfricInvest", "https://www.africinvest.com/the-firm/at-a-glance/"]] },
+                { k: "ppp", title: t("Project finance in partenariato pubblico-privato"), who: t("Società di progetto tra Stato e operatore privato."),
+                  how: t("Lo Stato mette a disposizione terra e acqua e si impegna con un contratto di concessione o di acquisto della produzione; l'operatore privato costruisce e gestisce l'impianto; banche di sviluppo e agenzie di credito all'esportazione prestano alla società di progetto sui flussi del progetto."),
+                  terms: t("Durate lunghe; garanzie pubbliche o di banche multilaterali sui rischi del contratto; servono concessione, contratti di vendita della produzione e studio di fattibilità."),
+                  fit: t("Grandi schemi irrigui su terra pubblica con gestione privata."), areas: ["africa", "altro", "europa"], buyers: ["ppp"],
+                  links: [["World Bank PPP", "https://ppp.worldbank.org/"], ["AfDB", "https://www.afdb.org/"]] },
                 { k: "bond", title: t("Bond verdi e sustainability-linked"), who: t("Grandi gruppi agroindustriali, banche e banche di sviluppo."),
                   how: t("Obbligazioni il cui ricavato finanzia progetti ambientali: la gestione sostenibile dell'acqua e del suolo rientra nelle categorie dei Green Bond Principles."),
                   terms: t("Servono un quadro di emissione, indicatori misurabili (acqua risparmiata, energia, superficie irrigata) e la rendicontazione annuale."),
-                  fit: t("Emittenti grandi; per le aziende medie, tramite le linee verdi delle banche che emettono questi bond."), areas: ["africa", "altro", "europa"], buyers: ["pub", "priv"],
+                  fit: t("Emittenti grandi; per le aziende medie, tramite le linee verdi delle banche che emettono questi bond."), areas: ["africa", "altro", "europa"], buyers: ["pub", "priv", "ppp"],
                   links: [["ICMA", "https://www.icmagroup.org/sustainable-finance/the-principles-guidelines-and-handbooks/green-bond-principles-gbp/"]] },
               ];
               const score = (x: Ins) => (x.areas.includes(area) ? 2 : 0) + (buyer === "tutti" || x.buyers.includes(buyer) ? 1 : 0);
-              const sorted = [...ins].sort((a, b) => score(b) - score(a));
+              // a parità, prima lo strumento fatto apposta per quell'acquirente (es. il project finance per il PPP)
+              const sorted = [...ins].sort((a, b) => score(b) - score(a) || (b.buyers.length === 1 && b.buyers[0] === buyer ? 1 : 0) - (a.buyers.length === 1 && a.buyers[0] === buyer ? 1 : 0));
               const dossier: [string, boolean][] = [
                 [t("Aree e superficie irrigabile"), fields.length > 0],
                 [t("Pivot posati"), pivots.length > 0],
@@ -14899,7 +14905,7 @@ export default function Page() {
                       </select></label>
                     <label className="text-[11px] text-sage-dark">{t("Acquirente")}
                       <select className="field-input mt-0.5 py-1 text-sm w-full" value={buyer} onChange={(e) => setFinBuyer(e.target.value as typeof finBuyer)}>
-                        <option value="tutti">{t("Tutti")}</option><option value="priv">{t("Privato")}</option><option value="pub">{t("Pubblico")}</option>
+                        <option value="tutti">{t("Tutti")}</option><option value="priv">{t("Privato")}</option><option value="pub">{t("Pubblico")}</option><option value="ppp">{t("Partenariato pubblico-privato")}</option>
                       </select></label>
                   </div>
                   {pivots.length > 0 && (
