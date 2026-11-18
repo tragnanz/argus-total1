@@ -317,6 +317,16 @@ try {
   const cmp = await page.locator("body").innerText();
   const pvcRow = (cmp.match(/Tubazione PVC-U PN10 DN \d+[^\n]*(\n[^\n]*){0,3}/) || [""])[0].replace(/\n/g, " ¦ ");
   ok(/Tubazione PVC-U PN10 DN \d+/.test(cmp) && /4% per i bicchieri/.test(cmp), `Computo tubazioni: ${pvcRow.slice(0, 140)}`);
+  // pagina Finanziamento: cinque strumenti, i più adatti all'area in alto, e il dossier tecnico
+  await page.locator('button[title="Finanziamento"]').first().click(); await page.waitForTimeout(600);
+  const finItems = await page.locator("[data-fin-item]").evaluateAll((es) => es.map((e) => e.getAttribute("data-fin-item") + (e.hasAttribute("open") ? "*" : "")));
+  const finArea = await page.locator("[data-fin-area]").inputValue();
+  const dossier = (await page.locator("[data-fin-dossier]").innerText()).replace(/\s+/g, " ");
+  ok(finItems.length === 5 && /✓ Pivot posati/.test(dossier), `Finanziamento (${finArea}): ${finItems.join(", ")} · ${dossier.slice(0, 120)}`);
+  await page.locator("[data-finance] select").nth(1).selectOption("pub"); await page.waitForTimeout(300);
+  const finPub = await page.locator("[data-fin-item]").evaluateAll((es) => es.map((e) => e.getAttribute("data-fin-item") + (e.hasAttribute("open") ? "*" : "")));
+  ok(/^eca\*/.test(finPub.join(",")) && finPub.includes("dfi*") && finPub.includes("pe"), `Acquirente pubblico: ${finPub.join(", ")}`);
+  await page.screenshot({ path: path.join(SH, "q99_finanza.png") });
   ok(errors.length === 0, `Nessun errore JavaScript${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (e) { console.log("ERRORE", e, "\nJS:", errors.join(" || ")); fail++; await page.screenshot({ path: path.join(SH, "q_err.png") }).catch(() => {}); }
 await browser.close();

@@ -24,7 +24,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.309";
+const REV = "v0.6.310";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -83,6 +83,7 @@ const TABS: { key: string; label: string }[] = [
   { key: "solare", label: "PV" },
   { key: "strade", label: "Strade" },
   { key: "informazioni", label: "Informazioni" },
+  { key: "finanza", label: "Finanziamento" },
   { key: "export", label: "Esporta" },
 ];
 
@@ -1174,10 +1175,12 @@ const IcoNavSolare = () => (<svg {...navProps}><circle cx="17" cy="6" r="2.4" />
 const IcoNavExport = () => (<svg {...navProps}><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M4 20h16" /></svg>);
 const IcoNavIrrigazione = () => (<svg {...navProps}><path d="M12 3s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z" /><path d="M10 13a2 2 0 0 0 4 0" /></svg>);
 const IcoNavInfo = () => (<svg {...navProps}><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 7.6v.6" /></svg>);
+// banconota stilizzata con freccia: strumenti di finanziamento
+const IcoNavFinanza = () => (<svg {...navProps}><rect x="2.5" y="6" width="19" height="12" rx="2" /><circle cx="12" cy="12" r="2.6" /><path d="M6 9.5v5M18 9.5v5" /></svg>);
 const TAB_ICONS = {
   analisi: IcoNavAnalisi, rilievo: IcoNavRilievo, drenaggio: IcoNavDrenaggio, impianti: IcoNavImpianti, terra: IcoNavTerra,
   fonte: IcoNavFonte, accessori: IcoNavAccessori, pompaggio: IcoNavPompaggio, solare: IcoNavSolare, strade: IcoNavStrade, irrigazione: IcoNavIrrigazione, export: IcoNavExport,
-  informazioni: IcoNavInfo,
+  informazioni: IcoNavInfo, finanza: IcoNavFinanza,
 };
 
 // Intestazione di sezione con testo-guida apribile/chiudibile da "?"
@@ -6837,6 +6840,8 @@ export default function Page() {
   const [olyMsg, setOlyMsg] = useState<{ bad: boolean; m: string } | null>(null);
   const [olyCustomers, setOlyCustomers] = useState<{ id: string; name: string }[] | null>(null);
   const [olyCust, setOlyCust] = useState("");
+  const [finArea, setFinArea] = useState("");                             // pagina Finanziamento: area geografica scelta ("" = dal campo)
+  const [finBuyer, setFinBuyer] = useState<"tutti" | "priv" | "pub">("tutti");
   const [olyTerr, setOlyTerr] = useState("");                            // r:<codice regione> | c:<ISO2>
   const [olyTerrs, setOlyTerrs] = useState<{ v: string; n: string }[]>([]);
   const [olyOpen, setOlyOpen] = useState(false);
@@ -14840,6 +14845,91 @@ export default function Page() {
           </section>
 
           {/* ---------------- Informazioni: riepilogo del progetto ------------- */}
+          <section hidden={tab !== "finanza"} data-finance>
+            <SectionHead title={t("Finanziamento")} help={t("Le strade per finanziare l'impianto, dal credito all'esportazione ai bond e ai fondi di investimento. Il progetto disegnato qui è la base tecnica del dossier per banche e investitori.")} />
+            {(() => {
+              const c0 = (() => { const fs = fields.filter((f) => !f.hidden && f.parentId == null); if (!fs.length) return null; const ring = (fs[0].geom.coordinates as number[][][])[0]; return [ring.reduce((a, q) => a + q[0], 0) / ring.length, ring.reduce((a, q) => a + q[1], 0) / ring.length]; })();
+              const guess = !c0 ? "altro" : (c0[0] > -20 && c0[0] < 52 && c0[1] > -36 && c0[1] < 36 && !(c0[0] > 34 && c0[1] > 13)) ? "africa" : (c0[0] > -11 && c0[0] < 40 && c0[1] >= 36) ? "europa" : "altro";
+              const area = finArea || guess, buyer = finBuyer;
+              const st = projectStats;
+              type Ins = { k: string; title: string; who: string; how: string; terms: string; fit: string; links: [string, string][]; areas: string[]; buyers: string[] };
+              const ins: Ins[] = [
+                { k: "eca", title: t("Credito acquirente con copertura SACE e contributo SIMEST"), who: t("Acquirente estero, pubblico o privato, di una fornitura italiana."),
+                  how: t("Una banca presta all'acquirente il valore della fornitura; SACE assicura il prestito e SIMEST stabilizza il tasso al CIRR dell'OCSE per tutta la durata."),
+                  terms: t("Almeno il 15% pagato in contanti entro la consegna, fino all'85% finanziato; dilazione di almeno 24 mesi; durata secondo il Consensus OCSE (fino a 15 anni dalla revisione 2023); contenuto italiano minimo 30, 50 o 70%."),
+                  fit: t("Forniture grandi verso governi, enti o grandi aziende agricole."), areas: ["africa", "altro"], buyers: ["pub", "priv"],
+                  links: [["SIMEST", "https://www.simest.it/"], ["SACE", "https://www.sace.it/"]] },
+                { k: "fornitore", title: t("Credito fornitore SACE e SIMEST"), who: t("Esportatore italiano che concede la dilazione al proprio cliente."),
+                  how: t("L'esportatore concede il pagamento dilazionato e sconta i crediti in banca senza rivalsa, con la garanzia di SACE; SIMEST può contribuire sugli interessi."),
+                  terms: t("Dilazione a medio termine; il rischio del cliente passa alla banca e a SACE; l'esportatore incassa subito."),
+                  fit: t("Forniture medie verso aziende agricole private."), areas: ["africa", "altro", "europa"], buyers: ["priv"],
+                  links: [["SIMEST", "https://www.simest.it/"], ["SACE", "https://www.sace.it/"]] },
+                { k: "dfi", title: t("Banche di sviluppo e finanza sovrana"), who: t("Governi e programmi agricoli nazionali."),
+                  how: t("Prestiti con garanzia dello Stato organizzati da banche di sviluppo africane e internazionali per meccanizzazione e irrigazione."),
+                  terms: t("Durate lunghe (10 anni nell'esempio del Togo); spesso co-finanziati con agenzie di credito all'esportazione."),
+                  fit: t("Programmi pubblici con molti impianti. Esempio: AFC ha organizzato per il Togo un finanziamento a 10 anni che comprende 930 impianti di irrigazione."), areas: ["africa"], buyers: ["pub"],
+                  links: [["AFC", "https://www.africafc.org/news-and-insights/news/afc-arranges-over-eur-100-million-financing-to-strengthen-food-security-in-togo"], ["Afreximbank", "https://www.afreximbank.com/"], ["AfDB", "https://www.afdb.org/"]] },
+                { k: "pe", title: t("Fondi di private equity e private credit (es. AfricInvest)"), who: t("Aziende agricole e agroindustriali in crescita."),
+                  how: t("Il fondo entra nel capitale (di solito con una quota di minoranza) o presta all'azienda, che usa i fondi per l'impianto e lo sviluppo."),
+                  terms: t("Permanenza tipica 4–6 anni; serve un piano industriale con l'aumento di resa e i risparmi di acqua ed energia."),
+                  fit: t("Aziende con fatturato e gestione strutturata. AfricInvest investe in 35 paesi africani, anche nell'agribusiness."), areas: ["africa"], buyers: ["priv"],
+                  links: [["AfricInvest", "https://www.africinvest.com/the-firm/at-a-glance/"]] },
+                { k: "bond", title: t("Bond verdi e sustainability-linked"), who: t("Grandi gruppi agroindustriali, banche e banche di sviluppo."),
+                  how: t("Obbligazioni il cui ricavato finanzia progetti ambientali: la gestione sostenibile dell'acqua e del suolo rientra nelle categorie dei Green Bond Principles."),
+                  terms: t("Servono un quadro di emissione, indicatori misurabili (acqua risparmiata, energia, superficie irrigata) e la rendicontazione annuale."),
+                  fit: t("Emittenti grandi; per le aziende medie, tramite le linee verdi delle banche che emettono questi bond."), areas: ["africa", "altro", "europa"], buyers: ["pub", "priv"],
+                  links: [["ICMA", "https://www.icmagroup.org/sustainable-finance/the-principles-guidelines-and-handbooks/green-bond-principles-gbp/"]] },
+              ];
+              const score = (x: Ins) => (x.areas.includes(area) ? 2 : 0) + (buyer === "tutti" || x.buyers.includes(buyer) ? 1 : 0);
+              const sorted = [...ins].sort((a, b) => score(b) - score(a));
+              const dossier: [string, boolean][] = [
+                [t("Aree e superficie irrigabile"), fields.length > 0],
+                [t("Pivot posati"), pivots.length > 0],
+                [t("Fonte d'acqua e portata"), !!srcPt || !!srcGroup?.length],
+                [t("Rete di tubazioni o canali"), pivotLines.length > 0 || canals.length > 0],
+                [t("Rete elettrica"), powerPts.length > 0],
+                [t("Strade"), roads.length > 0],
+              ];
+              return (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-[11px] text-sage-dark">{t("Area geografica")}
+                      <select className="field-input mt-0.5 py-1 text-sm w-full" value={area} data-fin-area onChange={(e) => setFinArea(e.target.value)}>
+                        <option value="africa">{t("Africa")}</option><option value="europa">{t("Europa")}</option><option value="altro">{t("Altri paesi")}</option>
+                      </select></label>
+                    <label className="text-[11px] text-sage-dark">{t("Acquirente")}
+                      <select className="field-input mt-0.5 py-1 text-sm w-full" value={buyer} onChange={(e) => setFinBuyer(e.target.value as typeof finBuyer)}>
+                        <option value="tutti">{t("Tutti")}</option><option value="priv">{t("Privato")}</option><option value="pub">{t("Pubblico")}</option>
+                      </select></label>
+                  </div>
+                  {pivots.length > 0 && (
+                    <div className="text-[11px] text-sage-dark bg-panel rounded-lg px-2 py-1.5">{t("Progetto")}: <b className="text-brand-darker">{fmt(st.n)} pivot · {uHa(st.irrHa)}</b></div>
+                  )}
+                  {sorted.map((x, xi) => { const fit = buyer !== "tutti" && score(x) >= 3; return (
+                    <details key={x.k + buyer + area} className={"rounded-lg border px-2.5 py-1.5 " + (fit ? "border-brand/50 bg-brand/5" : "border-brand/15 bg-white/60")} data-fin-item={x.k} open={buyer === "tutti" ? xi === 0 : fit}>
+                      <summary className="cursor-pointer text-[12px] font-semibold text-brand-darker">{x.title}{fit ? <span className="ml-1 text-[10px] font-normal text-brand">· {t("adatto")}</span> : null}</summary>
+                      <div className="text-[11px] text-sage-dark leading-snug space-y-1 mt-1">
+                        <p><b>{t("Per chi")}:</b> {x.who}</p>
+                        <p><b>{t("Come funziona")}:</b> {x.how}</p>
+                        <p><b>{t("Condizioni tipiche")}:</b> {x.terms}</p>
+                        <p><b>{t("Quando conviene")}:</b> {x.fit}</p>
+                        <p className="flex flex-wrap gap-x-2">{x.links.map(([n, u]) => <a key={u} href={u} target="_blank" rel="noreferrer" className="text-brand underline">{n} ↗</a>)}</p>
+                      </div>
+                    </details>
+                  ); })}
+                  <div className="bg-panel rounded-lg p-2" data-fin-dossier>
+                    <div className="text-[11px] font-semibold text-sage-dark mb-1">{t("Dossier tecnico per banche e investitori")}</div>
+                    <ul className="text-[11px] space-y-0.5">
+                      {dossier.map(([l, okk]) => <li key={l} className={okk ? "text-brand-darker" : "text-sage-dark"}>{okk ? "✓" : "○"} {l}</li>)}
+                    </ul>
+                    <p className="text-[10px] text-sage-dark mt-1 leading-snug">{t("Relazione tecnica, disegni e computo si scaricano da «Esporta»; i finanziatori chiedono anche il piano economico con i prezzi, che non è in Argus.")}</p>
+                  </div>
+                  <p className="text-[10px] text-sage-dark leading-snug">{t("Informazioni generali, non una consulenza finanziaria: condizioni e ammissibilità si verificano con banche, SACE, SIMEST e fondi.")}</p>
+                </div>
+              );
+            })()}
+          </section>
+
           <section hidden={tab !== "informazioni"}>
             <SectionHead title={t("Informazioni")} help={t("Numeri d'insieme di tutto ciò che è disegnato: macchine, acqua, rete e superfici. Si aggiornano da soli a ogni modifica.")} />
             {!pivots.length && !fields.length ? (
