@@ -671,14 +671,38 @@ def river_extra(lat: float, lon: float, user: User = Depends(get_current_user)):
     return out
 
 
+def _median_slope(client, lat: float, lon: float, half_m: float = 400.0) -> float | None:
+    """Pendenza mediana (%) del terreno in un quadrato di 800 m attorno al punto, dal DEM a 30 m."""
+    import numpy as np
+    from pyproj import Transformer
+    from processing.geo_prep import utm_epsg
+    try:
+        epsg = utm_epsg(lon, lat)
+        x, y = Transformer.from_crs(4326, epsg, always_xy=True).transform(lon, lat)
+        n = int(2 * half_m / 30)
+        z = np.asarray(client.fetch_dem([x - half_m, y - half_m, x + half_m, y + half_m], epsg, n, n), dtype=float)
+        if z.size < 9 or not np.isfinite(z).any() or (np.nanmax(z) == 0 and np.nanmin(z) == 0):   # mare o nessun dato
+            return None
+        gy, gx = np.gradient(z, 30.0)
+        s = np.hypot(gx, gy) * 100
+        return float(np.nanmedian(s))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @router.get("/soil")
-def site_soil(lat: float, lon: float, user: User = Depends(get_current_user)):
-    """Tessitura del suolo (SoilGrids, 0-30 cm), classe USDA, acqua disponibile e infiltrazione di base."""
-    from analysis.soil import soil_at
+def site_soil(lat: float, lon: float, client=Depends(get_client), user: User = Depends(get_current_user)):
+    """Tessitura del suolo (SoilGrids, 0-30 cm), classe USDA, acqua disponibile, Ks e soglia di ruscellamento
+    (intensità oltre la quale l'acqua non entra più e scorre in superficie), ridotta per la pendenza del DEM."""
+    from analysis.soil import soil_at, runoff_threshold
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         raise HTTPException(422, "Coordinate non valide.")
     try:
-        return soil_at(lat, lon)
+        out = dict(soil_at(lat, lon))
+        sl = _median_slope(client, lat, lon)
+        run = runoff_threshold(out["usda"], out.get("ks_mmh", out["inf_mmh"]), sl)
+        out.update({"slope_pct": None if sl is None else round(sl, 1), "run_mmh": run["run_mmh"], "slope_factor": run["slope_factor"]})
+        return out
     except ValueError as e:
         raise HTTPException(404, str(e))
     except Exception as e:  # noqa: BLE001

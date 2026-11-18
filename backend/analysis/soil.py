@@ -60,6 +60,48 @@ def saxton(sand: float, clay: float) -> dict:
     return {"fc": fc, "wp": wp, "taw_mm_m": (fc - wp) * 1000}
 
 
+# Intensità massima di pioggia (mm/h) che il campo assorbe senza ruscellare, su terreno piano (0-5%):
+# tabella NRCS (1984) delle intensità massime di irrigazione a pioggia per tipo di suolo (in/h → mm/h),
+# riportata in UC ANR 8216. Le classi intermedie sono interpolate fra quelle della tabella.
+RUNOFF_RANGE = {
+    "sand": (38.0, 51.0), "loamy sand": (25.0, 38.0), "sandy loam": (19.0, 25.0), "loam": (10.0, 19.0),
+    "silt loam": (7.6, 12.7), "silt": (7.6, 12.7), "sandy clay loam": (5.0, 10.0),
+    "clay loam": (3.0, 5.0), "silty clay loam": (3.0, 5.0), "sandy clay": (3.0, 5.0), "silty clay": (2.5, 4.0), "clay": (2.5, 4.0),
+}
+# Riduzione per la pendenza (stessa tabella NRCS: 5-8% ≈ ¾, 8-12% ≈ 0,55 del valore in piano; oltre 12% estrapolato)
+def slope_factor(slope_pct: float | None) -> float:
+    if slope_pct is None or slope_pct < 5:
+        return 1.0
+    if slope_pct < 8:
+        return 0.75
+    if slope_pct < 12:
+        return 0.55
+    return 0.4
+
+
+def saxton_rawls_ks(sand: float, clay: float, om_pct: float) -> float:
+    """Conducibilità idraulica a saturazione (mm/h) con Saxton & Rawls (2006): tessitura e sostanza organica."""
+    S, C, OM = max(0.02, min(0.95, sand / 100)), max(0.02, min(0.6, clay / 100)), max(0.0, min(8.0, om_pct))
+    t15 = -0.024 * S + 0.487 * C + 0.006 * OM + 0.005 * S * OM - 0.013 * C * OM + 0.068 * S * C + 0.031
+    th15 = t15 + (0.14 * t15 - 0.02)
+    t33 = -0.251 * S + 0.195 * C + 0.011 * OM + 0.006 * S * OM - 0.027 * C * OM + 0.452 * S * C + 0.299
+    th33 = t33 + (1.283 * t33 * t33 - 0.374 * t33 - 0.015)
+    ts = 0.278 * S + 0.034 * C + 0.022 * OM - 0.018 * S * OM - 0.027 * C * OM - 0.584 * S * C + 0.078
+    thS = th33 + ts + (0.636 * ts - 0.107) - 0.097 * S + 0.043
+    lam = (math.log(th33) - math.log(max(1e-3, th15))) / (math.log(1500) - math.log(33))
+    return 1930 * max(1e-4, thS - th33) ** (3 - lam)
+
+
+def runoff_threshold(usda: str, ks: float, slope_pct: float | None = None) -> dict:
+    """Intensità oltre la quale il suolo si satura in superficie e l'acqua ruscella: la Ks del suolo del
+    campo, tenuta dentro l'intervallo NRCS della sua classe (le croste e il compattamento abbassano
+    l'assorbimento in campo rispetto alla Ks), poi ridotta per la pendenza."""
+    lo, hi = RUNOFF_RANGE.get(usda, (5.0, 15.0))
+    flat = min(hi, max(lo, ks))
+    f = slope_factor(slope_pct)
+    return {"run_flat_mmh": round(flat, 1), "run_mmh": round(flat * f, 1), "run_lo": lo, "run_hi": hi, "slope_factor": f}
+
+
 def soil_at(lat: float, lon: float, timeout: float = 30.0) -> dict:
     key = (round(lat, 3), round(lon, 3))
     with _LOCK:
@@ -96,11 +138,16 @@ def soil_at(lat: float, lon: float, timeout: float = 30.0) -> dict:
     tot = vals["sand"] + vals["silt"] + vals["clay"]
     sand, silt, clay = (vals[k] * 100 / tot for k in ("sand", "silt", "clay"))
     cls = usda_class(sand, silt, clay)
-    k, inf = CLASS_KEY[cls]
+    k, _inf = CLASS_KEY[cls]
     sx = saxton(sand, clay)
+    om = vals.get("soc", 0) * 1.72 / 10                 # g/kg di carbonio organico → % di sostanza organica
+    ks = saxton_rawls_ks(sand, clay, om)
+    run = runoff_threshold(cls, ks)
+    inf = run["run_flat_mmh"]
     out = {"sand": round(sand, 1), "silt": round(silt, 1), "clay": round(clay, 1), "soc_gkg": round(vals.get("soc", 0), 1),
            "usda": cls, "key": k, "inf_mmh": inf, "fc": round(sx["fc"], 3), "wp": round(sx["wp"], 3),
-           "taw_mm_m": round(sx["taw_mm_m"]), "source": "SoilGrids 2.0 (ISRIC), 0-30 cm"}
+           "taw_mm_m": round(sx["taw_mm_m"]), "ks_mmh": round(ks, 1), "run_lo": run["run_lo"], "run_hi": run["run_hi"],
+           "source": "SoilGrids 2.0 (ISRIC), 0-30 cm"}
     with _LOCK:
         if len(_CACHE) > 500:
             _CACHE.pop(next(iter(_CACHE)))

@@ -574,7 +574,8 @@ export type NdviOut = { date: string; cloud: number | null; res_m: number; pivot
 export const pivotNdvi = (pivots: { lat: number; lng: number; r: number; deg?: number; az?: number }[]) =>
   req<NdviOut>("/api/project/pivot-ndvi", { method: "POST", body: JSON.stringify({ pivots }) });
 // Suolo del sito (SoilGrids 0-30 cm): tessitura, classe USDA, acqua disponibile, infiltrazione di base
-export type SoilOut = { sand: number; silt: number; clay: number; soc_gkg: number; usda: string; key: string; inf_mmh: number; fc: number; wp: number; taw_mm_m: number; source: string };
+export type SoilOut = { sand: number; silt: number; clay: number; soc_gkg: number; usda: string; key: string; inf_mmh: number; fc: number; wp: number; taw_mm_m: number; source: string;
+  ks_mmh?: number; run_lo?: number; run_hi?: number; slope_pct?: number | null; run_mmh?: number; slope_factor?: number };
 export async function siteSoil(lat: number, lon: number): Promise<SoilOut> {
   const tok = getToken();
   const res = await fetch(`${API_BASE}/api/project/soil?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}`, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} });

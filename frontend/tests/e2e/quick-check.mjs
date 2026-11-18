@@ -317,6 +317,10 @@ try {
   const cmp = await page.locator("body").innerText();
   const pvcRow = (cmp.match(/Tubazione PVC-U PN10 DN \d+[^\n]*(\n[^\n]*){0,3}/) || [""])[0].replace(/\n/g, " ¦ ");
   ok(/Tubazione PVC-U PN10 DN \d+/.test(cmp) && /4% per i bicchieri/.test(cmp), `Computo tubazioni: ${pvcRow.slice(0, 140)}`);
+  // soglia di ruscellamento proposta dal suolo del campo e dalla pendenza (letta da sola all'apertura del progetto)
+  await page.locator('button[title="Analisi"]').first().click(); await page.waitForTimeout(500);
+  const runTxt = await page.waitForFunction(() => { const e = document.querySelector("[data-runoff]"); return e && /ruscellare oltre/.test(e.textContent || "") ? e.textContent : null; }, null, { timeout: 90000 }).then((h) => h.jsonValue()).catch(() => "");
+  ok(/ruscellare oltre [\d,]+ mm\/h/.test(String(runTxt)), `Ruscellamento: ${String(runTxt).replace(/\s+/g, " ").slice(0, 160)}`);
   // pagina Finanziamento: cinque strumenti, i più adatti all'area in alto, e il dossier tecnico
   await page.locator('button[title="Finanziamento"]').first().click(); await page.waitForTimeout(600);
   const finItems = await page.locator("[data-fin-item]").evaluateAll((es) => es.map((e) => e.getAttribute("data-fin-item") + (e.hasAttribute("open") ? "*" : "")));

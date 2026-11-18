@@ -24,7 +24,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.311";
+const REV = "v0.6.312";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -6217,7 +6217,7 @@ export default function Page() {
     return { rows, z, okAll: need.every((r) => r.ok), battMax: Math.ceil(Math.max(0, ...need.map((r) => r.battNeed))), dayOnly: need.filter((r) => r.hNeed <= r.hSun + 1e-6).map((r) => r.m) };
   }
   // ---- SUOLO DAL SATELLITE ------------------------------------------------------
-  async function readSoil() {
+  async function readSoil(silent = false) {
     const pts = (fields.length ? fields : []).slice(0, 6).map((f) => { const r = f.geom.coordinates[0]; return [r.reduce((a, p) => a + p[0], 0) / r.length, r.reduce((a, p) => a + p[1], 0) / r.length]; });
     if (!pts.length && srcPt) pts.push(srcPt);
     if (!pts.length) return needField();
@@ -6229,12 +6229,25 @@ export default function Page() {
       const avg = (k: "sand" | "silt" | "clay" | "soc_gkg" | "taw_mm_m" | "inf_mmh" | "fc" | "wp") => res.reduce((a, r) => a + r[k], 0) / res.length;
       const cnt = new Map<string, number>(); res.forEach((r) => cnt.set(r.key, (cnt.get(r.key) ?? 0) + 1));
       const key = [...cnt.entries()].sort((a, b) => b[1] - a[1])[0][0], usda = res.find((r) => r.key === key)!.usda;
-      const out = { ...res[0], sand: avg("sand"), silt: avg("silt"), clay: avg("clay"), soc_gkg: avg("soc_gkg"), taw_mm_m: Math.round(avg("taw_mm_m")), inf_mmh: Math.round(avg("inf_mmh") * 10) / 10, fc: avg("fc"), wp: avg("wp"), key, usda, n: res.length };
+      const avgO = (k: "ks_mmh" | "run_mmh" | "slope_pct" | "slope_factor") => { const v = res.map((r) => r[k]).filter((x): x is number => typeof x === "number"); return v.length ? v.reduce((a, x) => a + x, 0) / v.length : undefined; };
+      const r1 = (x: number | undefined) => (x == null ? undefined : Math.round(x * 10) / 10);
+      const out = { ...res[0], sand: avg("sand"), silt: avg("silt"), clay: avg("clay"), soc_gkg: avg("soc_gkg"), taw_mm_m: Math.round(avg("taw_mm_m")), inf_mmh: Math.round(avg("inf_mmh") * 10) / 10, fc: avg("fc"), wp: avg("wp"), key, usda, n: res.length,
+        ks_mmh: r1(avgO("ks_mmh")), run_mmh: r1(avgO("run_mmh")), slope_pct: r1(avgO("slope_pct")) ?? null, slope_factor: avgO("slope_factor"),
+        run_lo: res.find((r) => r.usda === usda)?.run_lo, run_hi: res.find((r) => r.usda === usda)?.run_hi };
       setSoilSat(out); setSoilKey(key);
-      if (!infTouched.current) setInfiltration(out.inf_mmh);
-      setMsg(t("Suolo letto da SoilGrids ✓"));
-    } catch (e) { showErr(e); } finally { setBusy(""); }
+      if (!infTouched.current) setInfiltration(out.run_mmh ?? out.inf_mmh);
+      if (!silent) setMsg(t("Suolo letto da SoilGrids ✓"));
+    } catch (e) { if (!silent) showErr(e); } finally { setBusy(""); }
   }
+  // il suolo si legge da solo quando il progetto ha i campi e non è ancora stato letto (una volta per progetto)
+  const soilAuto = useRef<number | null>(null);
+  useEffect(() => {
+    if (projectId == null || projLoaded.current !== projectId || soilAuto.current === projectId || soilSat?.run_mmh != null || !fields.length || busy) return;
+    soilAuto.current = projectId;
+    const h = window.setTimeout(() => { void readSoil(true); }, 1500);
+    return () => window.clearTimeout(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, fields.length, soilSat, busy]);
   // ---- VERIFICA DEL RUSCELLAMENTO PER PIVOT (irrigatori reali) ----------------
   // Larghezza bagnata in punta = diametro bagnato dell'ultimo irrigatore dello sprinkler chart;
   // a parità di portata dose e tempo di bagnatura sono proporzionali alla durata del giro.
@@ -13269,7 +13282,7 @@ export default function Page() {
                   {SOILS.map((so) => <option key={so.key} value={so.key}>{t(so.label)}</option>)}
                 </select>
               </label>
-              <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Infiltrazione (mm/h)")}
+              <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0" title={t("Intensità di pioggia oltre la quale il suolo si satura in superficie e l'acqua inizia a ruscellare: il pivot non deve superarla al bordo.")}>{t("Infiltrazione (mm/h)")}
                 <NumInput type="number" min={0.5} max={200} step={0.5} value={infiltration}
                   onFocus={() => { infTouched.current = true; }}
                   onChange={(e) => setInfiltration(Number(e.target.value))} className="field-input mt-1 w-full px-2" /></label>
@@ -13280,19 +13293,33 @@ export default function Page() {
             {/* Il valore agronomico proposto resta visibile anche dopo una
                 correzione a mano: così si vede subito di quanto ci si discosta
                 e si può tornare indietro con un clic. */}
-            <div className="flex items-center gap-2 mt-1 text-[11px] text-sage-dark">
-              <span>
-                {t("Infiltrazione tipica per «{s}»", { s: t(soilOf(soilKey).label) })}:{" "}
-                <b className="text-brand-darker tabular-nums">{soilOf(soilKey).inf} mm/h</b>{" "}
-                <span className="opacity-80">({soilOf(soilKey).lo}–{soilOf(soilKey).hi})</span>
-              </span>
-              {Math.abs(infiltration - soilOf(soilKey).inf) > 0.05 && (
-                <button className="text-brand-mid underline shrink-0"
-                  onClick={() => { infTouched.current = false; setInfiltration(soilOf(soilKey).inf); }}>
-                  {t("Usa il valore consigliato")}
-                </button>
-              )}
-            </div>
+            {(() => {
+              // valore proposto: soglia di ruscellamento dal suolo del campo (SoilGrids) e dalla pendenza (DEM);
+              // senza dati del campo, il valore tipico della classe di suolo
+              const ss = soilSat?.run_mmh != null ? soilSat : null;
+              const prop = ss ? ss.run_mmh! : soilOf(soilKey).inf;
+              return (
+                <div className="flex items-start gap-2 mt-1 text-[11px] text-sage-dark" data-runoff>
+                  <span className="leading-snug">
+                    {ss ? (<>
+                      {t("Il campo inizia a ruscellare oltre")} <b className="text-brand-darker tabular-nums">{fmt(prop, { maximumFractionDigits: 1 })} mm/h</b>{" "}
+                      <span className="opacity-90">({t("suolo {u}: Ks {ks} mm/h, intervallo di campo {lo}–{hi} mm/h", { u: ss.usda, ks: fmt(ss.ks_mmh ?? 0, { maximumFractionDigits: 1 }), lo: fmt(ss.run_lo ?? 0, { maximumFractionDigits: 1 }), hi: fmt(ss.run_hi ?? 0, { maximumFractionDigits: 1 }) })}
+                        {ss.slope_pct != null ? `; ${t("pendenza {p}%", { p: fmt(ss.slope_pct, { maximumFractionDigits: 1 }) })}${(ss.slope_factor ?? 1) < 1 ? ` → −${fmt(Math.round((1 - (ss.slope_factor ?? 1)) * 100))}%` : ""}` : ""})</span>
+                    </>) : busy === "soil" ? t("Leggo il suolo…") : (<>
+                      {t("Infiltrazione tipica per «{s}»", { s: t(soilOf(soilKey).label) })}:{" "}
+                      <b className="text-brand-darker tabular-nums">{soilOf(soilKey).inf} mm/h</b>{" "}
+                      <span className="opacity-80">({soilOf(soilKey).lo}–{soilOf(soilKey).hi})</span>
+                    </>)}
+                  </span>
+                  {Math.abs(infiltration - prop) > 0.05 && (
+                    <button className="text-brand-mid underline shrink-0"
+                      onClick={() => { infTouched.current = false; setInfiltration(prop); }}>
+                      {t("Usa il valore consigliato")}
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
             <div className="flex items-center justify-between mt-2 text-xs">
               <span>{t("Raggio consigliato")}: <b>{recRadius} m</b></span>
               <button className="text-brand-mid" onClick={() => setPivotR(recRadius)}>{t("Usa raggio consigliato")}</button>
@@ -14362,7 +14389,7 @@ export default function Page() {
 
             <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2">{t("Assorbimento del terreno")}</h3>
             <div className="mb-2" data-soil>
-              <button className="btn-ghost w-full text-[12px]" disabled={busy === "soil" || (!fields.length && !srcPt)} onClick={readSoil}
+              <button className="btn-ghost w-full text-[12px]" disabled={busy === "soil" || (!fields.length && !srcPt)} onClick={() => readSoil()}
                 title={t("Tessitura del suolo dei campi (SoilGrids, ISRIC, 250 m, 0-30 cm): classe USDA, acqua disponibile e assorbimento tipico.")}>
                 {busy === "soil" ? t("Leggo il suolo…") : soilSat ? t("🛰 Rileggi il suolo dal satellite") : t("🛰 Leggi il suolo dal satellite (SoilGrids)")}</button>
               {soilSat && <p className="text-[11px] text-sage-dark mt-1 leading-snug">
