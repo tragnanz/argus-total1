@@ -24,7 +24,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.312";
+const REV = "v0.6.313";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1703,14 +1703,23 @@ export default function Page() {
   const [rawP, setRawP] = useState(0.5);                // frazione dell'acqua disponibile consumabile senza stress (FAO-56 p)
   const [v100, setV100] = useState(2.3);                // velocità dell'ultima torre al 100% del timer (m/min)
   const [et0Peak, setEt0Peak] = useState(7);               // mm/g
-  // raggio consigliato: intensità di pioggia di punta al bordo ≤ infiltrazione del suolo.
-  // I_picco = 2π·R·Dg /(H·w) ≤ infiltrazione → R ≤ infiltrazione·H·w /(2π·Dg).
+  // Soglia di danno: l'acqua che il suolo non assorbe resta nelle piccole depressioni (invaso superficiale,
+  // NRCS: 12,7 mm in piano, 7,6 mm all'1-3%, 2,5 mm al 3-5%, nulla oltre il 5%) e scorre via solo quando le
+  // riempie. Al giro più veloce (100% del timer) la punta bagna ogni punto per W/(60·v100) ore: in quel tempo
+  // il suolo assorbe infiltrazione·tw e l'invaso trattiene S, quindi l'intensità media al bordo oltre la quale
+  // l'acqua scorre via e fa danni è infiltrazione + S·60·v100/W.
+  const surfTouched = useRef(false);
+  const nrcsStore = (p: number | null | undefined) => (p == null ? 2 : p < 1 ? 12.7 : p < 3 ? 7.6 : p < 5 ? 2.5 : 0);
+  useEffect(() => { if (!surfTouched.current && soilSat?.slope_pct != null) setSurfStore(nrcsStore(soilSat.slope_pct)); }, [soilSat?.slope_pct]);
+  const dmgRate = infiltration + (surfStore * 60 * Math.max(0.3, v100)) / PIVOT_WET_W;
+  // raggio consigliato: intensità media al bordo ≤ soglia di danno.
+  // I_bordo = 2π·R·Dg /(H·W) ≤ soglia → R ≤ soglia·H·W /(2π·Dg).
   const recRadius = useMemo(() => {
     const dg = et0Peak * cur.kc / (cur.eff || 1);          // fabbisogno lordo (mm/g)
     if (dg <= 0) return cur.radius;
-    const rr = infiltration * cur.hours * PIVOT_WET_W / (2 * Math.PI * dg);
+    const rr = dmgRate * cur.hours * PIVOT_WET_W / (2 * Math.PI * dg);
     return Math.max(50, Math.min(800, Math.round(rr / 10) * 10));
-  }, [et0Peak, infiltration, cur.kc, cur.eff, cur.hours, cur.radius]);
+  }, [et0Peak, dmgRate, cur.kc, cur.eff, cur.hours, cur.radius]);
 
   const [tab, setTab] = useState("analisi");
   const tabRef = useRef(tab); tabRef.current = tab;
@@ -13274,7 +13283,7 @@ export default function Page() {
           </section>
 
           <section hidden={tab !== "analisi"} className="border-t border-black/5 pt-3">
-            <SectionHead title={t("Dimensione pivot consigliata")} help={t("Dal tipo di suolo (infiltrazione) e dall'ET₀ di punta stima il raggio massimo del pivot perché l'intensità di pioggia al bordo non superi l'infiltrazione del terreno. Il valore è usato come raggio di default nella pagina Impianti.")} />
+            <SectionHead title={t("Dimensione pivot consigliata")} help={t("Dal suolo del campo, dalla pendenza e dall'ET₀ di punta stima il raggio massimo del pivot perché l'intensità di pioggia al bordo non superi la soglia oltre la quale il ruscellamento fa danni (assorbimento del suolo più l'acqua trattenuta dalle depressioni del terreno). Il valore è usato come raggio di default nella pagina Impianti.")} />
             <div className="flex gap-2 items-end">
               <label className="text-xs text-sage-dark flex-1 basis-0 min-w-0">{t("Tipo di suolo")}
                 <select className="field-input mt-1 w-full px-2" value={soilKey}
@@ -13320,6 +13329,12 @@ export default function Page() {
                 </div>
               );
             })()}
+            <div className="mt-1.5 text-[11px] leading-snug rounded-lg bg-panel px-2 py-1.5" data-damage>
+              <b className="text-brand-darker">{t("Danni da ruscellamento oltre {x} mm/h al bordo del pivot", { x: fmt(dmgRate, { maximumFractionDigits: 1 }) })}</b>
+              <span className="text-sage-dark"> · {t("il suolo assorbe {i} mm/h e le depressioni del terreno trattengono {s} mm{p}; al giro più veloce ({v} m/min) l'acqua in più scorre via solo oltre questa intensità.", {
+                i: fmt(infiltration, { maximumFractionDigits: 1 }), s: fmt(surfStore, { maximumFractionDigits: 1 }),
+                p: soilSat?.slope_pct != null ? ` (${t("pendenza {p}%", { p: fmt(soilSat.slope_pct, { maximumFractionDigits: 1 }) })})` : "", v: fmt(v100, { maximumFractionDigits: 1 }) })}</span>
+            </div>
             <div className="flex items-center justify-between mt-2 text-xs">
               <span>{t("Raggio consigliato")}: <b>{recRadius} m</b></span>
               <button className="text-brand-mid" onClick={() => setPivotR(recRadius)}>{t("Usa raggio consigliato")}</button>
@@ -14419,7 +14434,7 @@ export default function Page() {
                 </select></label>
               <label className="text-[11px] text-sage-dark">{t("Invaso superficiale (mm)")}
                 <NumInput type="number" min={0} step={0.5} value={surfStore}
-                  onChange={(e) => setSurfStore(Math.max(0, Number(e.target.value)))} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
+                  onChange={(e) => { surfTouched.current = true; setSurfStore(Math.max(0, Number(e.target.value))); }} className="field-input mt-0.5 px-2 py-1.5 text-sm" /></label>
             </div>
 
             <h3 className="text-sm font-semibold text-brand-darker mt-3 mb-2">{t("Pressione del pivot")}</h3>

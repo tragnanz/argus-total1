@@ -321,6 +321,9 @@ try {
   await page.locator('button[title="Analisi"]').first().click(); await page.waitForTimeout(500);
   const runTxt = await page.waitForFunction(() => { const e = document.querySelector("[data-runoff]"); return e && /ruscellare oltre/.test(e.textContent || "") ? e.textContent : null; }, null, { timeout: 90000 }).then((h) => h.jsonValue()).catch(() => "");
   ok(/ruscellare oltre [\d,]+ mm\/h/.test(String(runTxt)), `Ruscellamento: ${String(runTxt).replace(/\s+/g, " ").slice(0, 160)}`);
+  const dmg = (await page.locator("[data-damage]").innerText()).replace(/\s+/g, " ");
+  const dmgV = Number((dmg.match(/oltre ([\d,]+) mm\/h/) || [])[1]?.replace(",", ".") || 0), runV = Number((String(runTxt).match(/oltre ([\d,]+) mm\/h/) || [])[1]?.replace(",", ".") || 0);
+  ok(dmgV > runV && /trattengono 12,7 mm/.test(dmg), `Soglia di danno: ${dmg.slice(0, 200)}`);
   // pagina Finanziamento: cinque strumenti, i più adatti all'area in alto, e il dossier tecnico
   await page.locator('button[title="Finanziamento"]').first().click(); await page.waitForTimeout(600);
   const finItems = await page.locator("[data-fin-item]").evaluateAll((es) => es.map((e) => e.getAttribute("data-fin-item") + (e.hasAttribute("open") ? "*" : "")));
