@@ -7,7 +7,7 @@ import type { MapHandle, PivotItem, PivotSel, CircleInfo } from "@/components/Ma
 import { WATER_COL } from "@/lib/water";
 import NumInput from "@/components/NumInput";
 import { joinTouchingWater } from "@/lib/waterjoin";
-import { shortestPipes } from "@/lib/ewpipes";
+import { shortestPipes, mergeIntakes } from "@/lib/ewpipes";
 import { designPower, type PowerNet, type Level as PwLevel } from "@/lib/power";
 import { useI18n, LANGS, type Lang, translateError, translatorFor } from "@/lib/i18n";
 import { parseFieldsFromFile, parseLinesFromFile } from "@/lib/importGeo";
@@ -24,7 +24,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.314";
+const REV = "v0.6.315";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -1508,6 +1508,7 @@ export default function Page() {
   const [advMaxR, setAdvMaxR] = useState(450);           // avanzata: raggio massimo del range (m)
   const [pipeCanalIdx, setPipeCanalIdx] = useState(-1);  // Tubazioni: -1 = fonte idrica scelta, ≥ 0 = canale tracciato
   const [pipeMaxPerLine, setPipeMaxPerLine] = useState(8); // max pivot collegati sulla stessa tubazione
+  const [pipeMergeM, setPipeMergeM] = useState(500);      // prese sul corso a meno di questa distanza → una stazione sola
   // distribuzione dalla fonte ai pivot: tubazioni, canali (corridoi tra le file) o misto (canale principale + tubazioni)
   const [distMode, setDistMode] = useState<"pipes" | "canals" | "mixed">("pipes");
   // Gerarchia pivot: modello modificabile (gruppo → singolo) derivato dal risultato.
@@ -4973,9 +4974,11 @@ export default function Page() {
     // condotta principale) nel punto più vicino; si tiene la più corta fra questa e le file
     {
       const gates = fromSrc && !mixed && feedSrc?.lines && feedSrc.lines.length > 1 ? feedSrc.lines : [line];
-      const ew = shortestPipes(gates, fieldPivs, pipeMaxPerLine);
+      const ew0 = shortestPipes(gates, fieldPivs, pipeMaxPerLine);
       const lenOf = (ps: number[][][]) => ps.reduce((a, c) => a + lineLenKm(c), 0);
-      if (ew.pipes.length && ew.lengthM / 1000 < lenOf(feeders)) feeders = ew.pipes;
+      // la scelta fra albero e file si fa sulla rete più corta; poi le prese vicine si accorpano
+      if (ew0.pipes.length && ew0.lengthM / 1000 < lenOf(feeders)) feeders = ew0.pipes;
+      if (pipeMergeM > 0) feeders = mergeIntakes(gates, feeders, pipeMergeM).pipes;
     }
     const pipesLL = trunk && feeders.length ? [trunk, ...feeders] : feeders;
     if (!pipesLL.length) continue;
@@ -5646,10 +5649,10 @@ export default function Page() {
     const fid = active.id;
     setMsg(mode === "branch"
       ? t("Clicca il punto di stacco su una tubazione esistente, poi i punti del ramo. Doppio clic per chiudere.")
-      : t("Clicca i punti della tubazione: si agganciano ai centri dei pivot e al canale. Doppio clic per chiudere."));
+      : t("Clicca i punti della tubazione: si agganciano ai centri dei pivot, al canale e alle altre tubazioni (tee). Doppio clic per chiudere."));
     mapApi.current?.drawPipeManual?.((coords) => {
       if (coords.length < 2) { setMsg(""); return; }
-      const next = [...pivotLines, { kind: "pipe", coords, field: fid }];
+      const next = teeInsert([...pivotLines, { kind: "pipe", coords, field: fid }], pivotLines.length);
       setPivotLines(next);
       setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, next) } : gp));
       // la tubazione appena tracciata resta in modifica: si possono spostare i punti e aggiungerne in mezzo
@@ -5661,14 +5664,42 @@ export default function Page() {
     [...canals.filter((c) => !c.hidden).map((c) => c.geojson.coordinates as number[][]),
      ...watercourses.filter((w) => !w.hidden && w.geojson?.type === "LineString")
        .map((w) => w.geojson.coordinates as unknown as number[][]),
-     // per un RAMO anche le tubazioni esistenti sono bersaglio di aggancio:
-     // lo stacco cade esattamente sulla linea da cui deriva
-     ...(mode === "branch" ? pivotLines.filter((l) => l.kind === "pipe").map((l) => l.coords) : [])]);
+     // anche le tubazioni esistenti sono bersaglio di aggancio: lo stacco cade esattamente sulla linea e
+     // diventa un tee (il punto si aggiunge anche alla tubazione da cui deriva)
+     ...pivotLines.filter((l) => l.kind === "pipe").map((l) => l.coords)]);
+  }
+  // Tee: un'estremità della tubazione `ti` che cade a metà di un tratto di un'altra tubazione diventa un nodo
+  // anche di quella (si inserisce il punto), così la rete è collegata e portate, diametri e perdite passano dal tee.
+  function teeInsert(ls: PipeLine[], ti: number): PipeLine[] {
+    const me = ls[ti]; if (!me || me.coords.length < 2) return ls;
+    const lat0 = me.coords[0][1], mx = 111320 * Math.cos((lat0 * Math.PI) / 180), my = 110540;
+    const d = (a: number[], b: number[]) => Math.hypot((a[0] - b[0]) * mx, (a[1] - b[1]) * my);
+    let out = ls;
+    for (const e of [me.coords[0], me.coords[me.coords.length - 1]]) {
+      out = out.map((l, k) => {
+        if (k === ti || l.kind !== "pipe" || l.coords.some((q) => d(q, e) < 1)) return l;
+        for (let i = 0; i + 1 < l.coords.length; i++) {
+          const A = l.coords[i], B = l.coords[i + 1];
+          const vx = (B[0] - A[0]) * mx, vy = (B[1] - A[1]) * my, l2 = vx * vx + vy * vy || 1e-9;
+          const tt = (((e[0] - A[0]) * mx) * vx + ((e[1] - A[1]) * my) * vy) / l2;
+          if (tt <= 0 || tt >= 1) continue;
+          const q = [A[0] + (B[0] - A[0]) * tt, A[1] + (B[1] - A[1]) * tt];
+          if (d(q, e) > 1.5) continue;
+          const coords = [...l.coords.slice(0, i + 1), [e[0], e[1]], ...l.coords.slice(i + 1)];
+          // i diametri per tratto si ricalcolano: il tratto spezzato tiene il suo DN su entrambe le metà
+          const dn = l.dn && l.dn.length === l.coords.length - 1 ? [...l.dn.slice(0, i + 1), l.dn[i], ...l.dn.slice(i + 1)] : l.dn;
+          const qs = l.qs && l.qs.length === l.coords.length - 1 ? [...l.qs.slice(0, i + 1), l.qs[i], ...l.qs.slice(i + 1)] : l.qs;
+          return { ...l, coords, dn, qs };
+        }
+        return l;
+      });
+    }
+    return out;
   }
   // Editor del tracciato di UNA tubazione (maniglie sui vertici, "+" a metà dei tratti per aggiungere punti).
   function openPipeEditor(target: number, coordsStart?: number[][]) {
     editPipeRef.current = target;
-    setMsg(t("Trascina i punti: si agganciano ai centri dei pivot e al canale. Trascina un «+» a metà di un tratto (o clicca la linea) per aggiungere un punto; doppio clic (o tasto destro) su un punto per eliminarlo."));
+    setMsg(t("Trascina i punti: si agganciano ai centri dei pivot, al canale e alle altre tubazioni (a metà di un tratto diventa un tee). Trascina un «+» a metà di un tratto (o clicca la linea) per aggiungere un punto; doppio clic (o tasto destro) su un punto per eliminarlo."));
     const openEditor = (coords0: number[][]) => {
       mapApi.current?.editPipe?.(coords0, (coords) => {
         // Se la modifica ha staccato la tubazione dall'acqua, viene riattaccata
@@ -5676,7 +5707,7 @@ export default function Page() {
         // mostrano la nuova presa invece di restare indietro.
         const fixed = reattachToWater(coords, target);
         setPivotLines((ls) => {
-          const arr = ls.map((l, k) => (k === target ? { ...l, coords: fixed } : l));
+          const arr = teeInsert(ls.map((l, k) => (k === target ? { ...l, coords: fixed } : l)), target);
           setGuided((gp) => (gp ? { ...gp, geojson: fcFromModel(pivots, arr) } : gp));
           return arr;
         });
@@ -5686,7 +5717,7 @@ export default function Page() {
         }
       },
       pivots.map((pv) => [pv.lng, pv.lat]),                       // aggancio ai centri dei pivot
-      waterLinesLL(),                                             // aggancio al canale / fiume
+      [...waterLinesLL(), ...pivotLines.filter((l, k) => k !== target && l.kind === "pipe").map((l) => l.coords)],   // canale / fiume e le altre tubazioni (tee)
       { pivot: t("Agganciato al centro del pivot"), canal: t("Agganciato al canale"), free: t("Punto libero") });
     };
     openEditor(coordsStart ?? pivotLines[target].coords);
@@ -9866,6 +9897,7 @@ export default function Page() {
     setSrcGroup(typeof fo.group === "string" ? fo.group : null);
     setPipeMat(fo.pipeMat === "pvc" || fo.pipeMat === "pe" ? fo.pipeMat : "auto");
     setPipeMaxPerLine(Math.max(1, Math.round(num(fo.perLine, 8))));
+    setPipeMergeM(Math.max(0, Math.round(num(fo.mergeM, 500))));
     setSrcType(ty); setSrcQmax(num(fo.qmax, 0)); setSrcHours(num(fo.hours, 24)); setSrcRange(num(fo.range, SRC_RANGE_DEF[ty]));
     setSrcSediment(typeof fo.sed === "boolean" ? fo.sed : ty === "fiume");
     setSrcEnergy((["rete", "fv-gen", "fv-batt"].includes(fo.energy as string) ? fo.energy : "rete") as "rete" | "fv-gen" | "fv-batt");
@@ -9885,7 +9917,7 @@ export default function Page() {
   // viaggiano con il progetto: si ritrovano su qualunque computer.
   const projLoaded = useRef<number | null>(null);
   const projSaved = useRef<string>("");
-  const fonteState = () => ({ pipeMat, group: srcGroup, dist: distMode, perLine: pipeMaxPerLine, pt: srcPt, route: srcRoute, type: srcType, name: srcLabel.name, nameAuto: srcLabel.auto, qmax: srcQmax, hours: srcHours, range: srcRange,
+  const fonteState = () => ({ pipeMat, mergeM: pipeMergeM, group: srcGroup, dist: distMode, perLine: pipeMaxPerLine, pt: srcPt, route: srcRoute, type: srcType, name: srcLabel.name, nameAuto: srcLabel.auto, qmax: srcQmax, hours: srcHours, range: srcRange,
     sed: srcSediment, energy: srcEnergy, drive: pumpDrive, monthly: srcMonthly, sectors: srcSectors, stQmax, resDepth, resDays, resEvapK, eta: wtwEta,
     canalSlope, bankSlope, settleMm, filterCap, wellQ, shown: srcShown, cableM, river: river ? { ...river, data: { ...river.data, basin: river.data.basin ? { ...river.data.basin, ring: (river.data.basin.ring ?? []).filter((_, i) => i % 2 === 0) } : undefined } } : null, costs: { kwh: costKwh, diesel: costDiesel, lkwh: dieselLkWh, gen: genShare, mkw: costMaintKw, pvom: costPvOm, batt: costBattKwh, blife: battLife } });
   // ---- Cronologia Annulla/Ripristina UNIFICATA ----
@@ -11173,7 +11205,7 @@ export default function Page() {
                 : distMode === "canals" ? t("Canali a gravità nei corridoi tra le file di pivot, con le strade di servizio e i tubi dal canale a ogni pivot.")
                 : t("Canale principale a gravità dalla presa attraverso il campo; dal canale partono le tubazioni, ognuna con al massimo il numero di pivot indicato.")}
             </p>
-            {distMode !== "canals" ? (
+            {distMode !== "canals" ? (<>
               <div className="flex items-center gap-2">
                 <span className="text-[11px] text-sage-dark leading-tight shrink-0 max-w-[7.5rem]">{t("Pivot al massimo sulla stessa tratta")}</span>
                 <NumInput type="number" min={1} max={100} step={1} value={pipeMaxPerLine} data-dist-perline
@@ -11184,7 +11216,13 @@ export default function Page() {
                   onClick={() => generatePipes(distMode === "mixed")}>
                   {busy === "pipes" ? "…" : distMode === "mixed" ? t("Traccia canale e tubazioni su «{name}»", { name: active?.name ?? "" }) : t("Traccia le tubazioni su «{name}»", { name: active?.name ?? "" })}</button>
               </div>
-            ) : (<>
+              <label className="flex items-center gap-2 text-[11px] text-sage-dark mt-1.5" title={t("Le prese sul corso d'acqua più vicine di questa distanza diventano una stazione di pompaggio sola, se il tubo in più non supera la stessa distanza e non attraversa il corso. 0 = nessun accorpamento.")}>
+                <span className="flex-1">{t("Accorpa le stazioni entro (m)")}</span>
+                <NumInput type="number" min={0} max={3000} step={50} value={pipeMergeM} data-dist-merge
+                  onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && e.target.value !== "") { setPipeMergeM(Math.max(0, Math.min(3000, Math.round(x)))); setAutoRoute((n) => n + 1); } }}
+                  className="field-input py-1 text-sm w-16 shrink-0 text-center" />
+              </label>
+            </>) : (<>
               <div className="seg" data-canal-rows>
                 {[2, 3].map((n) => (
                   <div key={n} className="seg-item" data-active={(cur.canalRows ?? 2) === n} onClick={() => patch({ canalRows: n })}>

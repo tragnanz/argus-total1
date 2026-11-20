@@ -905,6 +905,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           return Math.hypot(p[0] - (a[0] + vx * t), p[1] - (a[1] + vy * t));
         };
         const waterM = (waterLines ?? []).map((ln2) => ln2.map(toM));
+        const tapDone = new Set<string>();      // una presa sola dove più tubazioni partono dallo stesso punto
         model.lines.forEach((ln, li) => {
           const latlngs = ln.coords.map((p) => [p[1], p[0]] as [number, number]);
           const isSinglePipe = ln.kind === "pipe" && pipeSel?.mode === "single" && pipeSel.idx === li;
@@ -945,6 +946,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             const taps = waterM.length ? ends.filter(onWater) : (ln.coords[0] ? [ln.coords[0]] : []);
             const size = isSinglePipe || pipeGroup ? 13 : 11;
             for (const q of taps) {
+              const tk = `${q[0].toFixed(6)},${q[1].toFixed(6)}`; if (tapDone.has(tk)) continue; tapDone.add(tk);
               const mk = L.marker([q[1], q[0]], {
                 interactive: !!cbs.onTapClick, draggable: !!cbs.onTapMove, zIndexOffset: 900,
                 icon: L.divIcon({ className: "", iconSize: [size, size], iconAnchor: [size / 2, size / 2],

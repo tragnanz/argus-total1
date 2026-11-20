@@ -205,6 +205,16 @@ try {
   await page.waitForFunction(() => /rami dalla fonte «(?!Fiumi)/.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
   const al = await page.locator("body").innerText();
   ok(/Tubazioni tracciate: \d+ rami dalla fonte «(?!Fiumi)/.test(al), `Lista → automatico: ${(al.match(/Tubazioni tracciate[^\n]*/) || ["-"])[0]}`);
+  // accorpamento delle stazioni: con 0 m ogni tratta ha la sua presa, con 500 m quelle vicine si uniscono
+  const tapsNow = async () => page.locator("div[data-tap]").count();
+  const merge = page.locator("[data-dist-merge]");
+  if (await merge.count()) {
+    await merge.fill("0"); await merge.blur(); await page.waitForTimeout(4000);
+    const t0 = await tapsNow();
+    await merge.fill("500"); await merge.blur(); await page.waitForTimeout(4000);
+    const t5 = await tapsNow();
+    ok(t5 < t0 && t5 > 0, `Stazioni accorpate entro 500 m: ${t0} → ${t5}`);
+  } else ok(false, "Campo «Accorpa le stazioni» assente");
   // stazioni di pompaggio sulle prese: elenco nella pagina Pompaggio e scheda al clic
   await page.locator('button[title="Pompaggio"]').first().click(); await page.waitForTimeout(800);
   const nRows = await page.locator("[data-tap-row]:visible").count();
