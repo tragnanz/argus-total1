@@ -1,4 +1,5 @@
 "use client";
+import { esriMaxNative } from "@/lib/esri";
 // Relazione tecnica interattiva nel link di sola lettura: indice, capitoli, tabelle,
 // grafici con i valori al passaggio del mouse e figure su mappa. Stessi contenuti del PDF.
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -72,7 +73,7 @@ function FigureMap({ fc }: { fc: Any }) {
       const L = (await import("leaflet")).default;
       if (dead || !ref.current) return;
       map = L.map(ref.current, { scrollWheelZoom: false, attributionControl: true });
-      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagery © Esri" }).addTo(map);
+      const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagery © Esri" }).addTo(map);
       const g = L.geoJSON(fc, {
         style: (f: Any) => { const s = STY[f?.properties?.tipo] ?? { color: "#ffffff", weight: 1.5 }; return { color: s.color, weight: s.weight ?? 1.5, dashArray: s.dash, fillColor: s.fill ?? s.color, fillOpacity: s.fill && s.fill !== "transparent" ? 0.25 : 0 }; },
         pointToLayer: (_f: Any, ll: Any) => L.circleMarker(ll, { radius: 6, color: "#fff", weight: 2, fillColor: "#E11D48", fillOpacity: 1 }),
@@ -83,6 +84,8 @@ function FigureMap({ fc }: { fc: Any }) {
         },
       }).addTo(map);
       try { map.fitBounds(g.getBounds(), { padding: [16, 16] }); } catch { map.setView([0, 0], 2); }
+      // oltre il dettaglio Esri della zona si ingrandisce l'ultimo livello (niente «Map data not yet available»)
+      try { const c = map.getCenter(); const nz = await esriMaxNative(c.lat, c.lng); if (!dead && nz < 19) { sat.options.maxNativeZoom = nz; map.removeLayer(sat); sat.addTo(map); sat.bringToBack(); } } catch { /* */ }
     })();
     return () => { dead = true; try { map?.remove(); } catch { /* */ } };
   }, [fc]);

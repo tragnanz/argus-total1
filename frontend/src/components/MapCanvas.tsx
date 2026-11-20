@@ -2,6 +2,7 @@
 import { WATER_COL } from "@/lib/water";
 import { useEffect, useRef, type MutableRefObject } from "react";
 import L from "leaflet";
+import { esriMaxNative } from "@/lib/esri";
 import { useI18n } from "@/lib/i18n";
 import "@geoman-io/leaflet-geoman-free";
 import type { Polygon, GeoJSONFC } from "@/lib/api";
@@ -98,8 +99,10 @@ export type MapHandle = {
   setExcluded: (fcs: GeoJSONFC[]) => void;
   lastMouse?: () => number[] | null;   // ultima posizione del mouse sulla mappa (lon, lat)
   showPivots: (model: PivotModel, sel: PivotSel, cbs: PivotCbs, pipeSel?: PivotSel, waterLines?: number[][][]) => void;
+  // jointN: solo le prime jointN linee di snapLines (acqua) creano i giunti automatici agli incroci;
+  // le altre (es. altre tubazioni) servono solo all'aggancio, così un incrocio fra tubi non diventa un nodo
   editPipe: (coords: number[][], cb: (coords: number[][]) => void, snap?: number[][], snapLines?: number[][][],
-    labels?: { pivot: string; canal: string; free: string }) => void;
+    labels?: { pivot: string; canal: string; free: string }, jointN?: number, depth?: number) => void;
   endPipeEdit: () => void;
   clearPivots: () => void;
   showDrops?: (pts: { ll: number[]; label: string }[]) => void;      // salti di quota dei canali
@@ -166,6 +169,9 @@ const BASEMAPS: Record<string, { url: string; attr: string; max: number }> = {
   street: { url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", attr: "© OpenStreetMap", max: 19 },
   topo: { url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", attr: "© OpenTopoMap, © OpenStreetMap", max: 17 },
 };
+// Esri non ha immagini allo stesso dettaglio ovunque (es. Mauritania fino allo zoom 17): oltre il suo
+// livello risponde con la piastrella «Map data not yet available». Si chiede al servizio tilemap fin dove
+// arrivano le immagini attorno al centro della mappa e oltre si ingrandisce l'ultima disponibile.
 const LABELS_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}";
 // Campo attivo (in modifica): azzurro pieno. Campi inattivi: verde tratteggiato.
@@ -405,6 +411,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
   }
   // Callback sempre aggiornate (la mappa viene creata una sola volta).
   const baseRef = useRef<L.TileLayer | null>(null);
+  const baseKindRef = useRef<string>("sat");
+  const fitNativeRef = useRef<(() => void) | null>(null);
   const labelsRef = useRef<L.TileLayer | null>(null);
   // Suggerimenti di Geoman durante il disegno: traduzioni dell'app per ogni lingua
   // (Geoman di suo non conosce kazako, arabo, bulgaro, afrikaans, malese, vietnamita).
@@ -432,7 +440,25 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
     if (!elRef.current || mapRef.current) return;
     const map = L.map(elRef.current, { zoomControl: false, attributionControl: true, keyboard: false })
       .setView([44.6646, 10.4736], 12);
+    (window as unknown as { __argusMap?: L.Map }).__argusMap = map;   // per i controlli automatici
     baseRef.current = L.tileLayer(BASEMAPS.sat.url, { maxZoom: BASEMAPS.sat.max, attribution: BASEMAPS.sat.attr }).addTo(map);
+    baseKindRef.current = "sat";
+    // livello massimo delle immagini Esri nella zona: oltre si ingrandisce l'ultimo disponibile
+    let nativeSeq = 0;
+    const fitNative = () => {
+      if (baseKindRef.current !== "sat" || map.getZoom() < 15) return;
+      const c = map.getCenter(), seq = ++nativeSeq;
+      esriMaxNative(c.lat, c.lng).then((nz) => {
+        const cur = baseRef.current; if (seq !== nativeSeq || !cur || baseKindRef.current !== "sat") return;
+        const want = nz >= BASEMAPS.sat.max ? undefined : nz;
+        if (cur.options.maxNativeZoom === want) return;
+        const nl = L.tileLayer(BASEMAPS.sat.url, { maxZoom: BASEMAPS.sat.max, maxNativeZoom: want, attribution: BASEMAPS.sat.attr });
+        nl.addTo(map); nl.bringToBack(); baseRef.current = nl;
+        nl.once("load", () => { try { map.removeLayer(cur); } catch { /* */ } });
+        window.setTimeout(() => { try { if (map.hasLayer(cur) && baseRef.current !== cur) map.removeLayer(cur); } catch { /* */ } }, 4000);
+      });
+    };
+    map.on("moveend", fitNative); fitNativeRef.current = fitNative;
     L.control.zoom({ position: "bottomleft" }).addTo(map);
     fieldsGroupRef.current = L.layerGroup().addTo(map);
     macroRef.current = L.layerGroup().addTo(map);
@@ -921,7 +947,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             // Fascia di presa INVISIBILE sopra la linea: il tubo è sottile, ma il
             // clic viene raccolto entro ~9 px per lato, così non serve centrarlo.
             const hit = L.polyline(latlngs, { color: "#000", weight: 22, opacity: 0, interactive: true, pane: "argusPipeHit" });
-            hit.on("click", (e) => { L.DomEvent.stop(e); cbs.onLineClick?.(li); });
+            hit.on("click", (e) => { if (_mapBusy()) return; L.DomEvent.stop(e); cbs.onLineClick?.(li); });   // disegnando, il clic va al disegno
             // al passaggio il tubo si ingrossa: si vede che il clic andrà a lui
             hit.on("mouseover", () => { const w = (pl.options.weight ?? 3); pl.setStyle({ weight: w + 3, color: isSinglePipe ? "#f0b429" : "#0e7fb0" }); });
             hit.on("mouseout", () => { const w = (pl.options.weight ?? 6); pl.setStyle({ weight: Math.max(2, w - 3), color: st.color }); });
@@ -964,7 +990,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             g.addLayer(L.polyline(latlngs, { ...st, interactive: false }));
             if (ln.kind === "canal" && cbs.onCanalClick) {
               const hit = L.polyline(latlngs, { color: "#000", weight: 16, opacity: 0, interactive: true });
-              hit.on("click", (e) => { L.DomEvent.stop(e); cbs.onCanalClick?.(li); });
+              hit.on("click", (e) => { if (_mapBusy()) return; L.DomEvent.stop(e); cbs.onCanalClick?.(li); });
               hit.bindTooltip(ln.tip ?? tRef.current("Canale"), { direction: "top", sticky: true });
               g.addLayer(hit);
             }
@@ -1128,7 +1154,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
             ln.on("click", (e) => { L.DomEvent.stop(e); d.onPick?.(); });
             // bersaglio di clic più largo della linea visibile
             const hit = L.polyline(ll, { color: "#000", weight: 16, opacity: 0 });
-            hit.on("click", (e) => { L.DomEvent.stop(e); d.onPick?.(); });
+            hit.on("click", (e) => { if (_mapBusy()) return; L.DomEvent.stop(e); d.onPick?.(); });
             g.addLayer(hit);
           }
           g.addLayer(ln);
@@ -1690,12 +1716,13 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
       // Modifica di UNA tubazione: maniglie trascinabili su ogni vertice, clic
       // sulla linea per inserire un punto, doppio clic su una maniglia per
       // toglierlo. Ogni modifica richiama cb con il nuovo tracciato.
-      editPipe(coords, cb, snap, snapLines, labels) {
+      editPipe(coords, cb, snap, snapLines, labels, jointN, depth = 0) {
         const map = mapRef.current, g = canalEditRef.current;
         if (!map || !g) return;
         g.clearLayers();
         let pts = coords.map((p) => [...p]);
-        const redraw = () => { this.editPipe(pts, cb, snap, snapLines, labels); };
+        const redraw = (d = 0) => { this.editPipe(pts, cb, snap, snapLines, labels, jointN, d); };
+        const jointLines = (snapLines || []).slice(0, jointN ?? Infinity);
         const SNAP_PX = 22;     // distanza di aggancio
         const ON_PX = 7;        // "sta già sopra": crea il vertice automaticamente
         const px = (lng: number, lat: number) => map.latLngToContainerPoint([lat, lng]);
@@ -1755,7 +1782,7 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
               if (Math.hypot(a.x + dx * tt - q.x, a.y + dy * tt - q.y) > ON_PX) continue;
               mid.push({ t: tt, p: [s[0], s[1]] });
             }
-            for (const ln of snapLines || []) for (let k = 0; k < ln.length - 1; k++) {
+            for (const ln of jointLines) for (let k = 0; k < ln.length - 1; k++) {
               const c = px(ln[k][0], ln[k][1]), d = px(ln[k + 1][0], ln[k + 1][1]);
               const rx = dx, ry = dy, sx = d.x - c.x, sy = d.y - c.y;
               const den = rx * sy - ry * sx; if (Math.abs(den) < 1e-9) continue;
@@ -1844,7 +1871,8 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
           pts.splice(best + 1, 0, snapTo(cl.lng, cl.lat).p); fire(); redraw();
         });
         // All'apertura: crea subito i vertici sugli agganci già esistenti.
-        if (addJoints()) { fire(); redraw(); }
+        // al massimo due passate: linee quasi sovrapposte non devono generare giunti all'infinito
+        if (depth < 2 && addJoints()) { fire(); redraw(depth + 1); }
       },
       endPipeEdit() { canalEditRef.current?.clearLayers(); },
       drawCanalManual(cb) {
@@ -1902,8 +1930,10 @@ export default function MapCanvas({ onCreate, onEditActive, onSelect, onCanalPro
         const map = mapRef.current; if (!map) return;
         const cfg = BASEMAPS[kind] || BASEMAPS.sat;
         try { if (baseRef.current) map.removeLayer(baseRef.current); } catch { /* */ }
+        baseKindRef.current = BASEMAPS[kind] ? kind : "sat";
         baseRef.current = L.tileLayer(cfg.url, { maxZoom: cfg.max, attribution: cfg.attr }).addTo(map);
         try { baseRef.current.bringToBack(); } catch { /* */ }
+        fitNativeRef.current?.();
       },
       setMapLabels(on) {
         const map = mapRef.current; if (!map) return;

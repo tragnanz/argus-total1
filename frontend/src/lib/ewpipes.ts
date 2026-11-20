@@ -133,7 +133,15 @@ export function shortestPipes(lines: LL[][], piv: P[], K: number, mergeM = 0): {
  * di mergeM metri l'una dall'altra si spostano su un punto di presa comune (una stazione sola), se il tubo in
  * più non supera mergeM e il nuovo primo tratto non attraversa il corso. Vale per qualsiasi rete (albero o file).
  */
-export function mergeIntakes(lines: LL[][], pipes: LL[][], mergeM: number): { pipes: LL[][]; stations: number; before: number } {
+// barriers: tutti i corsi d'acqua e i canali che il tubo nuovo non deve attraversare (oltre a `lines`).
+// Si accorpano solo prese sulla STESSA SPONDA: i pivot serviti devono stare dalla stessa parte del corso
+// rispetto alla stazione scelta, e il tratto nuovo non deve attraversare né fiumi né canali.
+function dSegXY(p: number[], g: number[]) {
+  const vx = g[2] - g[0], vy = g[3] - g[1], l2 = vx * vx + vy * vy || 1e-9;
+  let t = ((p[0] - g[0]) * vx + (p[1] - g[1]) * vy) / l2; t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p[0] - g[0] - vx * t, p[1] - g[1] - vy * t);
+}
+export function mergeIntakes(lines: LL[][], pipes: LL[][], mergeM: number, barriers: LL[][] = []): { pipes: LL[][]; stations: number; before: number } {
   const all = pipes.flat(); if (!all.length || !lines.length || mergeM <= 0) return { pipes, stations: 0, before: 0 };
   const lat0 = all.reduce((a, p) => a + p[1], 0) / all.length, lon0 = all.reduce((a, p) => a + p[0], 0) / all.length;
   const { kx, ky } = frame(lat0);
@@ -141,6 +149,15 @@ export function mergeIntakes(lines: LL[][], pipes: LL[][], mergeM: number): { pi
   const from = (x: number, y: number) => [lon0 + x / kx, lat0 + y / ky];
   const segs: number[][] = [];
   for (const l of lines) for (let i = 0; i + 1 < l.length; i++) { const a = to(l[i]), b = to(l[i + 1]); segs.push([a[0], a[1], b[0], b[1]]); }
+  const bar: number[][] = segs.slice();
+  for (const l of barriers) for (let i = 0; i + 1 < l.length; i++) { const a = to(l[i]), b = to(l[i + 1]); bar.push([a[0], a[1], b[0], b[1]]); }
+  // sponda: segno del punto rispetto alla tangente del corso nel punto della presa
+  const side = (st: number[], q: number[]) => {
+    let bd = Infinity, sg = segs[0];
+    for (const g of segs) { const d = dSegXY(st, g); if (d < bd) { bd = d; sg = g; } }
+    const v = (sg[2] - sg[0]) * (q[1] - st[1]) - (sg[3] - sg[1]) * (q[0] - st[0]);
+    return v >= 0 ? 1 : -1;
+  };
   // prese: tubazioni il cui primo (o ultimo) punto tocca il corso; si orientano dalla presa verso il campo
   type In = { k: number; s: number[]; next: number[] };
   const ins: In[] = [];
@@ -156,7 +173,7 @@ export function mergeIntakes(lines: LL[][], pipes: LL[][], mergeM: number): { pi
   const crosses = (h: number[], st: number[]) => {
     const dx = h[0] - st[0], dy = h[1] - st[1], l = Math.hypot(dx, dy) || 1;
     const a = [st[0] + (dx / l) * 3, st[1] + (dy / l) * 3];
-    for (const sg of segs) {
+    for (const sg of bar) {
       if (Math.max(sg[0], sg[2]) < Math.min(a[0], h[0]) || Math.min(sg[0], sg[2]) > Math.max(a[0], h[0]) ||
           Math.max(sg[1], sg[3]) < Math.min(a[1], h[1]) || Math.min(sg[1], sg[3]) > Math.max(a[1], h[1])) continue;
       if (segCross(a, h, [sg[0], sg[1]], [sg[2], sg[3]])) return true;
@@ -179,6 +196,9 @@ export function mergeIntakes(lines: LL[][], pipes: LL[][], mergeM: number): { pi
       const m = [...cls[a].m, ...cls[b].m];
       for (const st of [cls[a].s, cls[b].s]) {
         let cost = 0, ok = true;
+        const sd = side(st, ins[m[0]].next);
+        for (const i of m) { if (side(st, ins[i].next) !== sd) { ok = false; break; } }
+        if (!ok) continue;
         for (const i of m) { cost += Math.hypot(ins[i].next[0] - st[0], ins[i].next[1] - st[1]); if (crosses(ins[i].next, st)) { ok = false; break; } }
         if (!ok) continue;
         const extra = cost - cls[a].cost - cls[b].cost;

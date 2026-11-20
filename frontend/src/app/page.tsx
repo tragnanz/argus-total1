@@ -24,7 +24,7 @@ import type {
 } from "@/lib/api";
 
 // Revisione software: aggiornare a ogni versione consegnata.
-const REV = "v0.6.316";
+const REV = "v0.6.317";
 
 const MapCanvas = dynamic(() => import("@/components/MapCanvas"), { ssr: false });
 const DrenaggioPanel = dynamic(() => import("@/components/DrenaggioPanel"), { ssr: false });
@@ -4978,7 +4978,7 @@ export default function Page() {
       const lenOf = (ps: number[][][]) => ps.reduce((a, c) => a + lineLenKm(c), 0);
       // la scelta fra albero e file si fa sulla rete più corta; poi le prese vicine si accorpano
       if (ew0.pipes.length && ew0.lengthM / 1000 < lenOf(feeders)) feeders = ew0.pipes;
-      if (pipeMergeM > 0) feeders = mergeIntakes(gates, feeders, pipeMergeM).pipes;
+      if (pipeMergeM > 0) feeders = mergeIntakes(gates, feeders, pipeMergeM, waterLinesLL()).pipes;
     }
     const pipesLL = trunk && feeders.length ? [trunk, ...feeders] : feeders;
     if (!pipesLL.length) continue;
@@ -5351,6 +5351,8 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pivotLines]);
   tapRef.current = tapStations;
+  // sola lettura, per i controlli automatici (stazioni, tubazioni e portate dei pivot)
+  useEffect(() => { (window as unknown as { __argusHydro?: unknown }).__argusHydro = { taps: tapStations, lines: pivotLines, flows: pivots.map((p) => pivotFlow(p)), pivots: pivots.map((p) => [p.lng, p.lat]), water: waterLinesLL() }; });
   useEffect(() => { setTapVer((v) => v + 1); }, [tapStations]);
   // diametri e portate di ogni tubazione dalle portate dei pivot serviti (tratto per tratto): si scrivono
   // sulle tubazioni, così scheda, tooltip, computo e tavole li hanno senza dover premere «Calcola diametri»
@@ -5718,7 +5720,8 @@ export default function Page() {
       },
       pivots.map((pv) => [pv.lng, pv.lat]),                       // aggancio ai centri dei pivot
       [...waterLinesLL(), ...pivotLines.filter((l, k) => k !== target && l.kind === "pipe").map((l) => l.coords)],   // canale / fiume e le altre tubazioni (tee)
-      { pivot: t("Agganciato al centro del pivot"), canal: t("Agganciato al canale"), free: t("Punto libero") });
+      { pivot: t("Agganciato al centro del pivot"), canal: t("Agganciato al canale"), free: t("Punto libero") },
+      waterLinesLL().length);                                      // giunti automatici solo sull'acqua, non sugli incroci fra tubi
     };
     openEditor(coordsStart ?? pivotLines[target].coords);
   }
@@ -12238,7 +12241,7 @@ export default function Page() {
       <div className="bg-panel rounded-lg p-2 mt-2" data-tap-list>
         <div className="text-xs font-semibold text-brand-darker mb-1">{t("Stazioni di pompaggio sulle prese")} ({tapStations.length})</div>
         <p className="text-[10px] text-sage-dark mb-1">{t("Una per ogni presa sul corso d'acqua: clic per la scheda e per vederla sulla mappa.")}</p>
-        <label className="flex items-center gap-2 text-[11px] text-sage-dark mb-1.5" title={t("Le prese sul corso d'acqua più vicine di questa distanza diventano una stazione di pompaggio sola, se il tubo in più non supera la stessa distanza e non attraversa il corso. 0 = nessun accorpamento.")}>
+        <label className="flex items-center gap-2 text-[11px] text-sage-dark mb-1.5" title={t("Le prese sul corso d'acqua più vicine di questa distanza diventano una stazione di pompaggio sola, se sono sulla stessa sponda, se il tubo in più non supera la stessa distanza e non attraversa fiumi o canali. 0 = nessun accorpamento.")}>
           <span className="flex-1">{t("Accorpa le stazioni entro (m)")}</span>
           <NumInput type="number" min={0} max={3000} step={50} value={pipeMergeM} data-dist-merge
             onChange={(e) => { const x = Number(e.target.value); if (Number.isFinite(x) && e.target.value !== "") { setPipeMergeM(Math.max(0, Math.min(3000, Math.round(x)))); setAutoRoute((n) => n + 1); } }}

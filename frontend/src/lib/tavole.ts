@@ -1,3 +1,4 @@
+import { esriMaxNative } from "./esri";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Motore delle TAVOLE PDF (A3/A4 orizzontali), portato da Ceres (mpBuildPdf, 78.34)
 // perché le tavole di Argus Total e di Ceres siano uguali: doppia cornice,
@@ -74,6 +75,7 @@ export async function satCanvas(pts: LL[], aspect: number, q = 0.85): Promise<Sa
   const bb = planBox(pts, aspect); if (!bb) return null;
   const { mnLa, mxLa, mnLn, mxLn } = bb, world = (z: number) => 256 * Math.pow(2, z);
   let z = 19; for (; z >= 3; z--) { const w = world(z); if ((mercX(mxLn) - mercX(mnLn)) * w <= 1900 && (mercY(mnLa) - mercY(mxLa)) * w <= 1900) break; }
+  z = Math.min(z, await esriMaxNative((mnLa + mxLa) / 2, (mnLn + mxLn) / 2));   // oltre: «Map data not yet available»
   const w = world(z), x0 = mercX(mnLn) * w, x1 = mercX(mxLn) * w, y0 = mercY(mxLa) * w, y1 = mercY(mnLa) * w;
   const cw = Math.max(1, Math.round(x1 - x0)), ch = Math.max(1, Math.round(y1 - y0));
   const cvs = document.createElement("canvas"); cvs.width = cw; cvs.height = ch;

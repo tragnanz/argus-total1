@@ -139,6 +139,7 @@ def _find_cjk() -> str | None:
 # ---------------------------------------------------------------------------
 _TILE_URL = ("https://server.arcgisonline.com/ArcGIS/rest/services/"
              "World_Imagery/MapServer/tile/{z}/{y}/{x}")
+_TILEMAP_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tilemap"
 _TILE_PX = 256
 _R_MERC = 6378137.0
 _WORLD = 2.0 * math.pi * _R_MERC
@@ -217,6 +218,31 @@ def _fetch_tile(z: int, x: int, y: int, timeout: float):
     return Image.open(io.BytesIO(raw)).convert("RGB")
 
 
+_NATIVE_CACHE: "dict[tuple[int, int], int]" = {}
+
+
+def _esri_max_native(lon: float, lat: float, timeout: float = 4.0) -> int:
+    """Zoom massimo con immagini vere attorno al punto. Oltre, Esri risponde con
+    la tessera «Map data not yet available» (es. Mauritania: fino al 17)."""
+    xf, yf = _tile_of(lon, lat, 11)
+    key = (int(xf), int(yf))
+    if key in _NATIVE_CACHE:
+        return _NATIVE_CACHE[key]
+    best = 20
+    for z in range(20, 12, -1):
+        xf, yf = _tile_of(lon, lat, z)
+        try:
+            r = _session().get(f"{_TILEMAP_URL}/{z}/{int(yf)}/{int(xf)}/1/1", timeout=(timeout, timeout))
+            if (r.json().get("data") or [0])[0] == 1:
+                best = z
+                break
+        except Exception:  # noqa: BLE001 - senza risposta si lascia il massimo
+            return 20
+        best = z - 1
+    _NATIVE_CACHE[key] = best
+    return best
+
+
 def _satellite_bg(lon_min: float, lat_min: float, lon_max: float, lat_max: float,
                   max_tiles: int = 80, max_zoom: int = 18, timeout: float = 6.0,
                   budget_s: float = 25.0, max_px: int = 2200):
@@ -234,6 +260,7 @@ def _satellite_bg(lon_min: float, lat_min: float, lon_max: float, lat_max: float
     except Exception:  # noqa: BLE001
         return None, None
 
+    max_zoom = min(max_zoom, _esri_max_native((lon_min + lon_max) / 2, (lat_min + lat_max) / 2))
     chosen = None
     for z in range(max_zoom, 2, -1):
         x0f, y0f = _tile_of(lon_min, lat_max, z)     # angolo alto-sinistra
